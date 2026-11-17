@@ -27,27 +27,31 @@ pub mod auth_error_registry;
 pub(crate) mod context_window;
 pub mod embedding_host;
 pub(crate) mod failure_copy;
+pub(crate) mod host_controls;
 pub mod host_runtime;
 pub mod http;
 pub mod model_context;
 pub mod ops;
 pub mod provider;
+pub mod provider_model;
+pub mod readiness;
+pub(crate) mod reasoning;
+pub mod registry;
+pub(crate) mod schema_fields;
 mod schemas;
 pub mod tokenjuice;
+pub mod turn_models;
 
-pub use ops as rpc;
 pub use schemas::{
     all_controller_schemas as all_inference_controller_schemas,
-    all_registered_controllers as all_inference_registered_controllers, INFERENCE_AGENT_CHAT,
+    all_registered_controllers as all_inference_registered_controllers,
 };
 
 // Re-export the types that external callers (voice, agent, etc.) import from inference
 pub use host_runtime::all_local_inference_controller_schemas;
 pub use host_runtime::all_local_inference_registered_controllers;
 pub use model_context::context_window_for_model;
-pub use tinyinference_local::status::{
-    LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiStatus, LocalAiTtsResult,
-};
+use tinyinference_local::status::LocalAiStatus;
 
 /// Wire label for the local vision mode: `"ondemand"` when a vision model is
 /// configured, `"disabled"` otherwise. Mirrors TinyInference's own label: the

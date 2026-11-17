@@ -7,34 +7,34 @@ fn lookup_returns_expected_capability() {
     assert_eq!(capability.status, CapabilityStatus::Beta);
 }
 
-/// PR #3090: the global push-to-talk feature is user-facing and must be
-/// discoverable in the capability catalog so the in-app /about surface and
-/// settings search can describe it. Pins the id, category, and the rough
-/// shape of the how_to / description so a future rewrite can't silently
-/// drop the entry or split it from the Conversation umbrella where the
-/// related voice capabilities live.
 #[test]
-fn capability_list_includes_voice_ptt() {
+fn doctor_health_is_advertised_as_an_intelligence_capability() {
+    let capability = lookup("intelligence.doctor_health")
+        .expect("the doctor health diagnostic is a user-facing capability");
+
+    assert_eq!(capability.domain, "doctor");
+    assert_eq!(capability.category, CapabilityCategory::Intelligence);
+    assert!(capability
+        .description
+        .to_ascii_lowercase()
+        .contains("diagnostic"));
+    assert!(capability.how_to.contains("doctor_health"));
+}
+
+/// The removed desktop push-to-talk server must not be advertised, while the
+/// mobile and live voice capabilities remain discoverable.
+#[test]
+fn capability_list_excludes_desktop_ptt_and_keeps_mobile_and_live_voice() {
     let caps = all_capabilities();
     assert!(
-        caps.iter().any(|c| c.id == "voice.ptt"),
-        "voice.ptt capability must be registered"
-    );
-
-    let ptt = lookup("voice.ptt").expect("voice.ptt should be registered");
-    assert_eq!(ptt.category, CapabilityCategory::Conversation);
-    assert_eq!(ptt.domain, "voice");
-    assert!(
-        ptt.how_to.contains("Push-to-Talk") || ptt.how_to.contains("push-to-talk"),
-        "how_to must mention Push-to-Talk, got: {}",
-        ptt.how_to
+        !caps.iter().any(|c| c.id == "voice.ptt"),
+        "the removed desktop push-to-talk server must not be registered"
     );
     assert!(
-        ptt.description.to_lowercase().contains("hold")
-            && ptt.description.to_lowercase().contains("hotkey"),
-        "description must describe the hold-to-talk hotkey behaviour, got: {}",
-        ptt.description
+        caps.iter().any(|c| c.id == "mobile.push_to_talk"),
+        "mobile push-to-talk must remain available"
     );
+    assert!(caps.iter().any(|c| c.id == "voice.live_agent"));
 }
 
 #[test]
@@ -433,6 +433,7 @@ fn local_ai_catalog_does_not_advertise_model_downloads_or_installers() {
         "local_ai.download_model",
         "local_ai.manage_model_assets",
         "local_ai.piper_installer",
+        "local_ai.python_runtime_installer",
     ] {
         assert!(lookup(removed).is_none(), "`{removed}` is still advertised");
     }
@@ -549,4 +550,42 @@ fn v1_memory_capabilities_are_not_advertised() {
             assert!(!text.contains(dead), "`{}` still mentions `{dead}`", c.id);
         }
     }
+}
+
+#[test]
+fn computer_capabilities_disclose_the_components_ceiling() {
+    for id in [
+        "settings.desktop_control",
+        "workflows.computer_browser_automation",
+    ] {
+        let capability = lookup(id).unwrap_or_else(|| panic!("{id} is in the catalog"));
+        assert!(
+            capability
+                .description
+                .contains("[components] computer = false"),
+            "{id} must name the ceiling that switches it off"
+        );
+        assert!(
+            capability
+                .description
+                .contains("COMPONENT_DISABLED:computer"),
+            "{id} must name the typed error a switched-off computer answers"
+        );
+    }
+}
+
+#[test]
+fn browser_automation_discloses_the_optional_upstream_proxy() {
+    let capability =
+        lookup("workflows.computer_browser_automation").expect("browser automation is listed");
+    assert!(capability
+        .description
+        .contains("[browser] upstream_proxies"));
+    let privacy = capability.privacy.expect("browser automation has privacy");
+    assert!(privacy
+        .destinations
+        .iter()
+        .any(|destination| destination.contains("upstream HTTP proxy")
+            && destination.contains("[browser] upstream_proxies")
+            && destination.contains("next core start")));
 }

@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import {
   CHAIN_GATES_NOT_FORWARDED,
   CHAIN_LOCAL_GATES,
+  checkLinkedModulesIsolation,
   checkProductForwarding,
+  checkTestOnlyGatesIsolation,
   diffChainForwarding,
   diffForwarding,
   formatChainReport,
@@ -21,6 +23,8 @@ import {
   parseProductFeatures,
   parseShellForwardedFeatures,
   resolveEnabledFeatures,
+  rpcForwardedGates,
+  SHELL_RPC_LOCAL_GATES,
   stripComments,
 } from '../lib/feature-forwarding.mjs';
 
@@ -62,7 +66,7 @@ default = ["voice"]
 
 test('parses the shell forwarded list across multiple lines', () => {
   const toml = `
-openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
+openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features = [
     "media",
     "voice",
 ] }
@@ -74,7 +78,7 @@ openhuman_core = { path = "../..", package = "openhuman", default-features = fal
 });
 
 test('detects when the shell inherits defaults instead of forwarding', () => {
-  const toml = 'openhuman_core = { path = "../..", package = "openhuman" }\n';
+  const toml = 'openhuman-rpc = { path = "../openhuman-rpc" }\n';
   assert.deepEqual(parseShellForwardedFeatures(toml), { defaultFeatures: true, features: [] });
 });
 
@@ -86,7 +90,7 @@ test('comment stripping does not truncate on a # inside a quoted value', () => {
 
 test('a commented-out gate does not count as forwarded', () => {
   const toml = `
-openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
+openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features = [
     # "voice",
     "media",
 ] }
@@ -204,6 +208,16 @@ test('a gate the shell forwards but the product does not claim is flagged', () =
   assert.deepEqual(result.unexpected, ['web3']);
 });
 
+test("the shell's openhuman-rpc local gates are not read as unexpected product gates", () => {
+  const result = checkProductForwarding({
+    productFeatures: PRODUCT,
+    coreFeatureNames: CORE_GATES,
+    shell: { defaultFeatures: false, features: ['server', 'http-client', 'jev', 'media', 'voice'] },
+  });
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(Object.keys(SHELL_RPC_LOCAL_GATES).sort(), ['http-client', 'jev', 'server']);
+});
+
 test('a product gate that is not a real core gate is flagged', () => {
   const result = checkProductForwarding({
     productFeatures: ['voice', 'vioce'],
@@ -265,7 +279,7 @@ test('the real product file and the real shell list are equal', () => {
   // Guards the guard: empty input would make every assertion below vacuous.
   assert.ok(productFeatures.length > 0, 'expected to parse at least one product gate');
   assert.ok(coreFeatureNames.length > 0, 'expected to parse at least one core gate name');
-  const result = checkProductForwarding({ productFeatures, coreFeatureNames, shell });
+  const result = checkProductForwarding({ productFeatures, coreFeatureNames, hostFeatureNames: parseCoreFeatureNames(readFileSync(resolve(REPO_ROOT, "crates/openhuman-rpc/Cargo.toml"), "utf8")), shell });
   assert.deepEqual(result.missing, [], 'product gates the shell does not forward');
   assert.deepEqual(result.unexpected, [], 'gates the shell forwards that the product omits');
   assert.deepEqual(result.unknown, [], 'product gates that are not real core gates');
@@ -466,7 +480,7 @@ test('reads TOML literal strings, not just basic strings', () => {
   assert.deepEqual(parseCoreFeatureGraph("[features]\ndefault = ['documents']\ndocuments = ['modules']\n").get('documents'), ['modules']);
   assert.deepEqual(
     parseShellForwardedFeatures(
-      "openhuman_core = { path = \"../..\", default-features = false, features = ['voice'] }\n",
+      "openhuman-rpc = { path = \"../openhuman-rpc\", default-features = false, features = ['voice'] }\n",
     ).features,
     ['voice'],
   );
@@ -690,65 +704,61 @@ test('a forward to a gate the crate below no longer has is named as drift', () =
     crate: 'openhuman-cli',
     features: parseFeatureTable(`
 [features]
-default = ["openhuman-core/default"]
-media = ["openhuman-core/media", "openhuman-tinyhumans/media"]
-voice = ["openhuman-core/voice", "openhuman-tinyhumans/voice"]
-e2e-test-support = ["openhuman-core/e2e-test-support"]
+default = ["media"]
+media = ["openhuman-rpc/media"]
+voice = ["openhuman-rpc/voice"]
 `),
-    sources: [
-      coreSource(),
-      // tinyhumans dropped `voice`; the cli still points at it.
-      { crate: 'openhuman-tinyhumans', gates: ['media'], required: false },
-    ],
+    // rpc dropped `voice`; the cli still points at it.
+    sources: [{ crate: 'openhuman-rpc', gates: ['media'], required: true }],
   });
   assert.equal(result.ok, false);
-  assert.deepEqual(result.dangling, [{ gate: 'voice', item: 'openhuman-tinyhumans/voice' }]);
+  assert.deepEqual(result.dangling, [{ gate: 'voice', item: 'openhuman-rpc/voice' }]);
   assert.match(formatChainReport(result), /no longer exists/);
 });
 
-test('the cli must forward to tinyhumans as well where tinyhumans has the gate', () => {
+test('a host forwarding a gate straight to the core is misrouted, not accepted', () => {
+  // The hosts sit on rpc alone: a forward that skips the chain is the edge
+  // `check-crate-chain.mjs` forbids, and this check names it too.
   const result = diffChainForwarding({
     crate: 'openhuman-cli',
     features: parseFeatureTable(`
 [features]
-default = ["openhuman-core/default"]
 media = ["openhuman-core/media"]
-voice = ["openhuman-core/voice"]
-e2e-test-support = ["openhuman-core/e2e-test-support"]
+voice = ["openhuman-rpc/voice"]
 `),
-    sources: [
-      coreSource(),
-      { crate: 'openhuman-tinyhumans', gates: ['media', 'voice'], required: false },
-    ],
+    sources: [{ crate: 'openhuman-rpc', gates: ['media', 'voice'], required: true }],
   });
   assert.equal(result.ok, false);
   assert.deepEqual(
     result.misrouted.map(m => m.expected),
-    ['openhuman-tinyhumans/media', 'openhuman-tinyhumans/voice']
+    ['openhuman-rpc/media']
   );
 });
 
-test('an optional source never demands a gate the crate below it does not have', () => {
-  // `e2e-test-support` is core-only: requiring `openhuman-tinyhumans/e2e-test-support`
-  // would be a forward to a gate that does not exist, i.e. a cargo error.
+test("a host need not forward rpc's own local gates", () => {
+  const rpc = parseFeatureTable(`
+[features]
+default = ["http-client", "server"]
+http-client = ["dep:reqwest"]
+server = ["http-server", "session-store"]
+session-store = []
+http-server = ["openhuman-tinyhumans/http-server"]
+voice = ["openhuman-tinyhumans/voice"]
+`);
+  assert.deepEqual(rpcForwardedGates(rpc), ['http-server', 'voice']);
   const result = diffChainForwarding({
-    crate: 'openhuman-cli',
+    crate: 'openhuman-tui',
     features: parseFeatureTable(`
 [features]
-default = ["openhuman-core/default"]
-media = ["openhuman-core/media", "openhuman-tinyhumans/media"]
-voice = ["openhuman-core/voice", "openhuman-tinyhumans/voice"]
-e2e-test-support = ["openhuman-core/e2e-test-support"]
+http-server = ["openhuman-rpc/http-server"]
+voice = ["openhuman-rpc/voice"]
 `),
-    sources: [
-      coreSource(),
-      { crate: 'openhuman-tinyhumans', gates: ['media', 'voice'], required: false },
-    ],
+    sources: [{ crate: 'openhuman-rpc', gates: rpcForwardedGates(rpc), required: true }],
   });
   assert.ok(result.ok, formatChainReport(result));
 });
 
-test('the checked-in embed, tinyhumans and cli manifests forward the whole chain', () => {
+test('the checked-in embed, tinyhumans, rpc, cli and tui manifests forward the whole chain', () => {
   const read = name => readFileSync(resolve(REPO_ROOT, `crates/${name}/Cargo.toml`), 'utf8');
   const core = parseCoreFeatureNames(
     readFileSync(resolve(REPO_ROOT, 'crates/openhuman-core/Cargo.toml'), 'utf8')
@@ -756,12 +766,16 @@ test('the checked-in embed, tinyhumans and cli manifests forward the whole chain
   const embed = parseFeatureTable(read('openhuman-embed'));
   const tinyhumans = parseFeatureTable(read('openhuman-tinyhumans'));
   const cli = parseFeatureTable(read('openhuman-cli'));
+  const rpc = parseFeatureTable(read('openhuman-rpc'));
+  const tui = parseFeatureTable(read('openhuman-tui'));
   // Guards the guard: empty tables would make every assertion below vacuous.
   assert.ok(core.length > 0, 'expected to parse at least one core gate');
   for (const [name, table] of [
     ['openhuman-embed', embed],
     ['openhuman-tinyhumans', tinyhumans],
     ['openhuman-cli', cli],
+    ['openhuman-rpc', rpc],
+    ['openhuman-tui', tui],
   ]) {
     assert.ok(table.size > 0, `expected to parse features from ${name}`);
   }
@@ -778,12 +792,19 @@ test('the checked-in embed, tinyhumans and cli manifests forward the whole chain
       sources: [{ crate: 'openhuman-embed', gates: gatesOf(embed), required: true }],
     },
     {
+      crate: 'openhuman-rpc',
+      features: rpc,
+      sources: [{ crate: 'openhuman-tinyhumans', gates: gatesOf(tinyhumans), required: true }],
+    },
+    {
       crate: 'openhuman-cli',
       features: cli,
-      sources: [
-        { crate: 'openhuman-core', gates: core, required: true },
-        { crate: 'openhuman-tinyhumans', gates: gatesOf(tinyhumans), required: false },
-      ],
+      sources: [{ crate: 'openhuman-rpc', gates: rpcForwardedGates(rpc), required: true }],
+    },
+    {
+      crate: 'openhuman-tui',
+      features: tui,
+      sources: [{ crate: 'openhuman-rpc', gates: rpcForwardedGates(rpc), required: true }],
     },
   ];
   for (const link of links) {
@@ -797,6 +818,31 @@ test('the checked-in embed, tinyhumans and cli manifests forward the whole chain
   }
 });
 
+test('rpc must forward every tinyhumans gate, jev included, and keep its own gates local', () => {
+  const rpc = parseFeatureTable(`
+[features]
+default = ["http-client", "server"]
+http-client = ["dep:reqwest"]
+server = ["http-server", "dep:axum", "session-store"]
+session-store = ["dep:tinyagents-session"]
+os-keyring = ["dep:keyring"]
+http-server = ["openhuman-tinyhumans/http-server"]
+voice = ["openhuman-tinyhumans/voice"]
+`);
+  const result = diffChainForwarding({
+    crate: 'openhuman-rpc',
+    features: rpc,
+    sources: [
+      { crate: 'openhuman-tinyhumans', gates: ['http-server', 'voice', 'jev'], required: true },
+    ],
+    localGates: CHAIN_LOCAL_GATES['openhuman-rpc'],
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.missing, [{ gate: 'jev', source: 'openhuman-tinyhumans' }]);
+  assert.deepEqual(result.unknown, [], 'http-client/server/session-store are rpc-local');
+  assert.deepEqual(result.staleLocal, []);
+});
+
 test('every chain allow-list entry carries a reason', () => {
   // A blank reason is how "excluded on purpose" and "forgotten" start looking
   // the same again — the ambiguity that let #4918 sit unnoticed.
@@ -808,6 +854,11 @@ test('every chain allow-list entry carries a reason', () => {
       }
     }
   }
+});
+
+test('session testkit stays local to the embed facade', () => {
+  assert.match(CHAIN_LOCAL_GATES['openhuman-embed'].testkit, /test-only/i);
+  assert.match(CHAIN_GATES_NOT_FORWARDED['openhuman-tinyhumans'].testkit, /test scaffolding/i);
 });
 
 test('the checker reports the chain and fails when a layer drops a gate', () => {
@@ -839,6 +890,8 @@ test('the checker reports the chain and fails when a layer drops a gate', () => 
         embedPath,
         resolve(REPO_ROOT, 'crates/openhuman-tinyhumans/Cargo.toml'),
         resolve(REPO_ROOT, 'crates/openhuman-cli/Cargo.toml'),
+        resolve(REPO_ROOT, 'crates/openhuman-rpc/Cargo.toml'),
+        resolve(REPO_ROOT, 'crates/openhuman-tui/Cargo.toml'),
       ],
       { encoding: 'utf8' }
     );
@@ -849,4 +902,109 @@ test('the checker reports the chain and fails when a layer drops a gate', () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('product gates may be owned by a host crate while still requiring shell forwarding', () => {
+  const input = {
+    productFeatures: ['voice', 'os-keyring'],
+    coreFeatureNames: ['voice'],
+    hostFeatureNames: ['os-keyring'],
+    shell: { defaultFeatures: false, features: ['voice', 'os-keyring'] },
+  };
+  assert.ok(checkProductForwarding(input).ok);
+  assert.deepEqual(checkProductForwarding({ ...input, shell: { defaultFeatures: false, features: ['voice'] } }).missing, ['os-keyring']);
+  assert.deepEqual(checkProductForwarding({ ...input, hostFeatureNames: [] }).unknown, ['os-keyring']);
+});
+
+test('OS keychain is owned by RPC and must be forwarded by CLI and TUI', () => {
+  const rpc = parseFeatureTable('[features]\nos-keyring = ["dep:keyring"]\nserver = ["os-keyring"]\n');
+  assert.deepEqual(rpcForwardedGates(rpc), ['os-keyring']);
+});
+
+test('core product builds omit host-owned OS keychain features', () => {
+  const result = spawnSync('bash', ['scripts/ci/product-features.sh', '--core'], { cwd: REPO_ROOT, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.trim().split(',').includes('storage-sqlite'));
+  assert.ok(!result.stdout.trim().split(',').includes('os-keyring'));
+});
+
+// ── linked-modules isolation (E0.2) ────────────────────────────────────────
+
+test('the real manifests keep linked-modules out of every shipped path', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+  const read = rel => readFileSync(join(root, rel), 'utf8');
+  assert.deepEqual(
+    checkLinkedModulesIsolation({
+      productFeatures: parseProductFeatures(read('scripts/ci/product-features.txt')),
+      shellToml: read('crates/openhuman-app/Cargo.toml'),
+      cliFeatures: parseFeatureTable(read('crates/openhuman-cli/Cargo.toml')),
+    }),
+    []
+  );
+  assert.ok('linked-modules' in CHAIN_LOCAL_GATES['openhuman-cli']);
+});
+
+test('deliberate violations of linked-modules isolation are each reported', () => {
+  const clean = { productFeatures: ['voice'], shellToml: '[dependencies]\nopenhuman-rpc = {}\n', cliFeatures: new Map() };
+  assert.deepEqual(checkLinkedModulesIsolation(clean), []);
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, productFeatures: ['voice', 'linked-modules'] }).length,
+    1
+  );
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, shellToml: 'openhuman-rpc = { features = ["linked-modules"] }\n' }).length,
+    1
+  );
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, shellToml: 'openhuman-modules-linked = { path = "x" }\n' }).length,
+    1
+  );
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, cliFeatures: new Map([['default', ['modules', 'linked-modules']]]) }).length,
+    1
+  );
+  // A mention in a comment is not a dependency on it.
+  assert.deepEqual(
+    checkLinkedModulesIsolation({ ...clean, shellToml: '# never linked-modules here\n[dependencies]\n' }),
+    []
+  );
+});
+
+// ── test-only gate isolation ───────────────────────────────────────────────
+
+test('the real manifests keep the test-only gates out of every shipped build', () => {
+  const read = rel => readFileSync(join(REPO_ROOT, rel), 'utf8');
+  const table = rel => parseFeatureTable(read(rel));
+  assert.deepEqual(
+    checkTestOnlyGatesIsolation({
+      productFeatures: parseProductFeatures(read('scripts/ci/product-features.txt')),
+      featureTables: {
+        openhuman: table('crates/openhuman-core/Cargo.toml'),
+        'openhuman-embed': table('crates/openhuman-embed/Cargo.toml'),
+        'openhuman-tinyhumans': table('crates/openhuman-tinyhumans/Cargo.toml'),
+        'openhuman-rpc': table('crates/openhuman-rpc/Cargo.toml'),
+        'openhuman-cli': table('crates/openhuman-cli/Cargo.toml'),
+        'openhuman-tui': table('crates/openhuman-tui/Cargo.toml'),
+        'openhuman-app': table('crates/openhuman-app/Cargo.toml'),
+      },
+    }),
+    []
+  );
+});
+
+test('a test-only gate in the product set or reached from a default is reported', () => {
+  const clean = {
+    productFeatures: ['voice'],
+    featureTables: { core: new Map([['default', ['voice']], ['voice', []], ['e2e-test-support', []]]) },
+  };
+  assert.deepEqual(checkTestOnlyGatesIsolation(clean), []);
+  assert.deepEqual(
+    checkTestOnlyGatesIsolation({ ...clean, productFeatures: ['voice', 'test-keyring-consent'] }),
+    ['test-keyring-consent is listed in the product feature set']
+  );
+  // Reached through another gate, not named in `default` itself.
+  const transitive = new Map([['default', ['voice']], ['voice', ['e2e-test-support']], ['e2e-test-support', []]]);
+  assert.deepEqual(checkTestOnlyGatesIsolation({ ...clean, featureTables: { core: transitive } }), [
+    "core's default features enable e2e-test-support",
+  ]);
 });

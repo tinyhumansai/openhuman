@@ -1,19 +1,26 @@
 //! Presentation layer for web-channel chat responses: store a finished reply,
-//! then announce it to the client as `chat_done` (or, for channel-specific
-//! callers, as human-feeling `chat_segment` bubbles).
+//! then announce it to the client as one unmodified `chat_done` message.
+
+use tinychannels_bus::web as bus_web;
 
 use crate::agent::tinyagents::host::LastTurnUsage;
-use crate::web_chat::{SubagentUsagePayload, TurnUsagePayload, WebChannelEvent};
+use crate::web_chat::{SubagentUsagePayload, TurnUsagePayload};
 
-use super::publish_web_channel_event;
-use tinychannels_bus::delivery::segment_delay;
-#[cfg(test)]
-use tinychannels_bus::delivery::segment_for_delivery;
+use super::publish_web_channel_event_in;
+
+fn cost_source(source: tinyagents_harness::cost::CostSource) -> bus_web::WebCostSource {
+    use tinyagents_harness::cost::CostSource;
+    match source {
+        CostSource::Charged => bus_web::WebCostSource::Charged,
+        CostSource::Estimated => bus_web::WebCostSource::Estimated,
+        CostSource::Unknown => bus_web::WebCostSource::Unknown,
+    }
+}
 
 /// Convert a turn's [`LastTurnUsage`] into the wire payload carried on
 /// `chat_done`. Returns `None` for a turn that recorded no spend at all (e.g. a
 /// synthetic budget-exhausted placeholder) so the event stays compact.
-fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
+pub(super) fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
     let usage = usage?;
     let subagents = usage
         .subagents
@@ -23,7 +30,7 @@ fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
             agent_id: s.agent_id.clone(),
             input_tokens: s.usage.input_tokens,
             output_tokens: s.usage.output_tokens,
-            cost_usd: s.usage.charged_amount_usd,
+            cost_usd: s.usage.cost().usd(),
         })
         .collect();
     Some(TurnUsagePayload {
@@ -31,7 +38,9 @@ fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
         output_tokens: usage.output_tokens,
         cached_input_tokens: usage.cached_input_tokens,
         cost_usd: usage.cost_usd,
+        cost_source: cost_source(usage.cost_source),
         context_window: usage.context_window,
+        context_tokens: usage.context_tokens,
         subagents,
     })
 }
@@ -49,197 +58,127 @@ fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
 /// (#6034). Pass `None` from a caller that has no workspace in scope; delivery
 /// then behaves exactly as it did when the renderer was the only writer.
 pub(crate) async fn deliver_response(
+    ctx: &crate::core::runtime::DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: &str,
     full_response: &str,
     user_message: &str,
-    citations: &[crate::memory::types::TurnCitation],
+    citations: &[crate::web_chat::TurnCitation],
     usage: Option<&LastTurnUsage>,
     workspace_dir: Option<&std::path::Path>,
-    timing: Option<super::turn_timing::TurnTimingSnapshot>,
+    timing: Option<bus_web::TurnTimingSnapshot>,
+    suggest_follow_ups: bool,
+) {
+    persist_reply(
+        ctx,
+        thread_id,
+        request_id,
+        full_response,
+        citations,
+        workspace_dir,
+    )
+    .await;
+    announce_reply(
+        ctx,
+        client_id,
+        thread_id,
+        request_id,
+        full_response,
+        user_message,
+        citations,
+        usage,
+        timing,
+        suggest_follow_ups,
+    );
+}
+
+/// Stores a single-bubble reply in the thread log before it is announced
+/// (#6034): once the row is on disk, a `chat_done` that is never delivered or
+/// painted costs the user a repaint, not the reply. A storage failure is
+/// logged and never blocks the announcement. `None` stores nothing.
+pub(crate) async fn persist_reply(
+    ctx: &crate::core::runtime::DispatchCtx,
+    thread_id: &str,
+    request_id: &str,
+    full_response: &str,
+    citations: &[crate::web_chat::TurnCitation],
+    workspace_dir: Option<&std::path::Path>,
+) {
+    if let Some(dir) = workspace_dir {
+        // The store appends under a process-wide lock and fsyncs, and its
+        // existence check folds the whole threads log (#5156) — blocking
+        // work that has no business holding a runtime worker while a turn
+        // is settling. Hand it to the blocking pool and await the handle,
+        // which keeps the ordering this whole change rests on.
+        let (dctx, dir, thread, request, reply, cites) = (
+            ctx.clone(),
+            dir.to_path_buf(),
+            thread_id.to_string(),
+            request_id.to_string(),
+            full_response.to_string(),
+            citations.to_vec(),
+        );
+        let persisted = tokio::task::spawn_blocking(move || {
+            super::reply_persistence::persist_delivered_reply(
+                &dctx, &dir, &thread, &request, &reply, &cites,
+            )
+        })
+        .await;
+        match persisted {
+            Ok(Ok(stored)) => {
+                if stored {
+                    log::debug!(
+                        "[web-channel] persisted reply before announcing it thread_id={thread_id} request_id={request_id}"
+                    );
+                }
+            }
+            // Deliberately non-fatal: announce anyway. The client's own
+            // append still persists the reply in the common case, and a
+            // storage failure must not also cost the user the delivery.
+            Ok(Err(err)) => log::warn!(
+                "[web-channel] could not persist reply before announcing it \
+                 thread_id={thread_id} request_id={request_id} error={err}"
+            ),
+            Err(err) => log::warn!(
+                "[web-channel] reply persistence task did not run \
+                 thread_id={thread_id} request_id={request_id} error={err}"
+            ),
+        }
+    }
+}
+
+/// Announces a reply already stored by [`persist_reply`]: the terminal
+/// `chat_done`, then (for the main chat turn) the follow-up suggestions.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn announce_reply(
+    ctx: &crate::core::runtime::DispatchCtx,
+    client_id: &str,
+    thread_id: &str,
+    request_id: &str,
+    full_response: &str,
+    user_message: &str,
+    citations: &[crate::web_chat::TurnCitation],
+    usage: Option<&LastTurnUsage>,
+    timing: Option<bus_web::TurnTimingSnapshot>,
     suggest_follow_ups: bool,
 ) {
     let usage_payload = usage_payload(usage);
     let timing_payload =
         timing.map(|snapshot| snapshot.into_payload(usage.map(|u| u.output_tokens)));
-
-    // Keep the response byte-for-byte in one assistant message. The legacy
-    // segmentation helpers remain available to channel-specific callers/tests,
-    // but the interactive web surface must not cut or reformat model output.
-    let segments = [full_response.to_string()];
-
-    if segments.len() <= 1 {
-        // Store the answer before announcing it. Ordering is the whole point:
-        // once the row is on disk, a `chat_done` that is never delivered, never
-        // painted, or never persisted by the client costs the user a repaint,
-        // not the reply (#6034). Only this single-bubble branch persists — the
-        // segmented branch below hands the client one row per segment to write,
-        // and a full-text row beside those would read as a duplicate answer.
-        if let Some(dir) = workspace_dir {
-            // The store appends under a process-wide lock and fsyncs, and its
-            // existence check folds the whole threads log (#5156) — blocking
-            // work that has no business holding a runtime worker while a turn
-            // is settling. Hand it to the blocking pool and await the handle,
-            // which keeps the ordering this whole change rests on.
-            let (dir, thread, request, reply, cites) = (
-                dir.to_path_buf(),
-                thread_id.to_string(),
-                request_id.to_string(),
-                full_response.to_string(),
-                citations.to_vec(),
-            );
-            let persisted = tokio::task::spawn_blocking(move || {
-                super::reply_persistence::persist_delivered_reply(
-                    &dir, &thread, &request, &reply, &cites,
-                )
-            })
-            .await;
-            match persisted {
-                Ok(Ok(stored)) => {
-                    if stored {
-                        log::debug!(
-                            "[web-channel] persisted reply before announcing it thread_id={thread_id} request_id={request_id}"
-                        );
-                    }
-                }
-                // Deliberately non-fatal: announce anyway. The client's own
-                // append still persists the reply in the common case, and a
-                // storage failure must not also cost the user the delivery.
-                Ok(Err(err)) => log::warn!(
-                    "[web-channel] could not persist reply before announcing it \
-                     thread_id={thread_id} request_id={request_id} error={err}"
-                ),
-                Err(err) => log::warn!(
-                    "[web-channel] reply persistence task did not run \
-                     thread_id={thread_id} request_id={request_id} error={err}"
-                ),
-            }
-        }
-
-        // Single bubble — emit chat_done directly.
-        publish_chat_done(
-            client_id,
-            thread_id,
-            request_id,
-            full_response,
-            citations,
-            usage_payload,
-            timing_payload,
-        );
-        if suggest_follow_ups {
-            super::suggestions::spawn_follow_up_suggestions(
-                client_id.to_string(),
-                thread_id.to_string(),
-                request_id.to_string(),
-                user_message.to_string(),
-                full_response.to_string(),
-            );
-        }
-        return;
-    }
-
-    let total = segments.len() as u32;
-
-    // Emit each segment as a separate bubble with a human-feeling delay.
-    for (i, segment) in segments.iter().enumerate() {
-        if i > 0 {
-            let delay_ms = segment_delay(&segments[i - 1]);
-            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-        }
-
-        publish_web_channel_event(WebChannelEvent {
-            event: "chat_segment".to_string(),
-            client_id: client_id.to_string(),
-            thread_id: thread_id.to_string(),
-            request_id: request_id.to_string(),
-            full_response: Some(segment.clone()),
-            message: None,
-            error_type: None,
-            error_source: None,
-            error_retryable: None,
-            error_retry_after_ms: None,
-            error_provider: None,
-            error_fallback_available: None,
-            copy_key: None,
-            copy_params: None,
-            tool_name: None,
-            skill_id: None,
-            args: None,
-            output: None,
-            success: None,
-            round: None,
-            segment_index: Some(i as u32),
-            segment_total: Some(total),
-            delta: None,
-            delta_kind: None,
-            tool_call_id: None,
-            failure: None,
-            subagent: None,
-            tool_display_label: None,
-            tool_display_detail: None,
-            elapsed_ms: None,
-            structured: None,
-            citations: if i == 0 && !citations.is_empty() {
-                Some(serde_json::json!(citations))
-            } else {
-                None
-            },
-            // Usage is attached only to the terminal `chat_done`, never segments.
-            usage: None,
-            seq: None,
-            ..Default::default()
-        });
-    }
-
-    // Final chat_done with full text (for deduplication / state sync).
-    publish_web_channel_event(WebChannelEvent {
-        event: "chat_done".to_string(),
-        client_id: client_id.to_string(),
-        thread_id: thread_id.to_string(),
-        request_id: request_id.to_string(),
-        full_response: Some(full_response.to_string()),
-        message: None,
-        error_type: None,
-        error_source: None,
-        error_retryable: None,
-        error_retry_after_ms: None,
-        error_provider: None,
-        error_fallback_available: None,
-        copy_key: None,
-        copy_params: None,
-        tool_name: None,
-        skill_id: None,
-        args: None,
-        output: None,
-        success: None,
-        round: None,
-        segment_index: None,
-        segment_total: Some(total),
-        delta: None,
-        delta_kind: None,
-        tool_call_id: None,
-        failure: None,
-        subagent: None,
-        tool_display_label: None,
-        tool_display_detail: None,
-        elapsed_ms: None,
-        structured: None,
-        citations: if citations.is_empty() {
-            None
-        } else {
-            Some(serde_json::json!(citations))
-        },
-        usage: usage_payload,
-        timing: timing_payload,
-        // Terminal delivery events are emitted outside the seq-stamping
-        // progress bridge; leave `seq` unset (older clients ignore it).
-        seq: None,
-        ..Default::default()
-    });
-
+    publish_chat_done(
+        ctx,
+        client_id,
+        thread_id,
+        request_id,
+        full_response,
+        citations,
+        usage_payload,
+        timing_payload,
+    );
     if suggest_follow_ups {
         super::suggestions::spawn_follow_up_suggestions(
+            ctx.clone(),
             client_id.to_string(),
             thread_id.to_string(),
             request_id.to_string(),
@@ -259,6 +198,7 @@ pub(crate) async fn deliver_response(
 /// segment beside that single row (#5933), so the conversational segmentation
 /// of [`deliver_response`] is deliberately not offered here.
 pub(crate) fn deliver_response_single_bubble(
+    ctx: &crate::core::runtime::DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: &str,
@@ -266,6 +206,7 @@ pub(crate) fn deliver_response_single_bubble(
     usage: Option<&LastTurnUsage>,
 ) {
     publish_chat_done(
+        ctx,
         client_id,
         thread_id,
         request_id,
@@ -278,60 +219,70 @@ pub(crate) fn deliver_response_single_bubble(
     );
 }
 
+/// The terminal `chat_done` for an unsegmented reply. Terminal delivery events
+/// are emitted outside the seq-stamping progress stream, so `seq` stays unset
+/// (older clients ignore it).
+pub(super) fn chat_done_event(
+    context: bus_web::WebEventContext,
+    full_response: &str,
+    citations: &[crate::web_chat::TurnCitation],
+    usage: Option<TurnUsagePayload>,
+    timing: Option<crate::web_chat::TurnTimingPayload>,
+) -> bus_web::WebChannelEvent {
+    bus_web::WebChannelEvent::ChatDone {
+        context,
+        full_response: Some(full_response.to_string()),
+        citations: (!citations.is_empty()).then(|| serde_json::json!(citations)),
+        usage,
+        timing,
+        parts: None,
+    }
+}
+
+/// The terminal `chat_done` of a finished turn, ready to publish.
+pub(super) fn announced_chat_done(
+    context: bus_web::WebEventContext,
+    full_response: &str,
+    citations: &[crate::web_chat::TurnCitation],
+    usage: Option<&LastTurnUsage>,
+    timing: Option<bus_web::TurnTimingSnapshot>,
+) -> bus_web::WebChannelEvent {
+    chat_done_event(
+        context,
+        full_response,
+        citations,
+        usage_payload(usage),
+        timing.map(|snapshot| snapshot.into_payload(usage.map(|u| u.output_tokens))),
+    )
+}
+
 /// Emit the terminal `chat_done` for an unsegmented reply.
 fn publish_chat_done(
+    ctx: &crate::core::runtime::DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: &str,
     full_response: &str,
-    citations: &[crate::memory::types::TurnCitation],
+    citations: &[crate::web_chat::TurnCitation],
     usage_payload: Option<TurnUsagePayload>,
     timing_payload: Option<crate::web_chat::TurnTimingPayload>,
 ) {
-    publish_web_channel_event(WebChannelEvent {
-        event: "chat_done".to_string(),
+    let context = bus_web::WebEventContext {
         client_id: client_id.to_string(),
         thread_id: thread_id.to_string(),
         request_id: request_id.to_string(),
-        full_response: Some(full_response.to_string()),
-        message: None,
-        error_type: None,
-        error_source: None,
-        error_retryable: None,
-        error_retry_after_ms: None,
-        error_provider: None,
-        error_fallback_available: None,
-        copy_key: None,
-        copy_params: None,
-        tool_name: None,
-        skill_id: None,
-        args: None,
-        output: None,
-        success: None,
-        round: None,
-        segment_index: None,
-        segment_total: None,
-        delta: None,
-        delta_kind: None,
-        tool_call_id: None,
-        failure: None,
-        subagent: None,
-        tool_display_label: None,
-        tool_display_detail: None,
-        elapsed_ms: None,
-        structured: None,
-        citations: if citations.is_empty() {
-            None
-        } else {
-            Some(serde_json::json!(citations))
-        },
-        usage: usage_payload,
-        timing: timing_payload,
-        // Terminal delivery events are emitted outside the seq-stamping
-        // progress bridge; leave `seq` unset (older clients ignore it).
-        seq: None,
         ..Default::default()
-    });
+    };
+    publish_web_channel_event_in(
+        ctx,
+        chat_done_event(
+            context,
+            full_response,
+            citations,
+            usage_payload,
+            timing_payload,
+        ),
+    );
 }
 
 #[cfg(any(test, debug_assertions))]

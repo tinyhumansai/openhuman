@@ -16,6 +16,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 
+// Deliberately local, not on the storage port: this file holds the local
+// encryption key and the keyring consent choice, which decide how secrets are
+// stored on this machine and are needed before any storage backend is open
+// (bootstrap config comes from env or a file, never from storage). The
+// onboarding flags beside them are tiny and per-install. Allowlisted in
+// `scripts/ci/check-storage-bypass.mjs`.
 pub(super) const APP_STATE_FILENAME: &str = "app-state.json";
 pub(super) static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 

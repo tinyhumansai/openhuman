@@ -11,7 +11,7 @@
 # ==========================================================================
 # Keep in step with rust-toolchain.toml; an older image makes rustup download the
 # pinned toolchain on every uncached build.
-FROM rust:1.96.1-bookworm AS builder
+FROM rust:1.99.1-bookworm AS builder
 
 # Docker builds often run on small VPS/CI builders. The crate's `ci` profile
 # keeps peak rustc memory lower than `release`; override with
@@ -50,20 +50,29 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs README.md ./
 COPY crates/openhuman-cli/Cargo.toml crates/openhuman-cli/Cargo.toml
 COPY crates/openhuman-core/Cargo.toml crates/openhuman-core/Cargo.toml
 COPY crates/openhuman-embed/Cargo.toml crates/openhuman-embed/Cargo.toml
+COPY crates/openhuman-modules-linked/Cargo.toml crates/openhuman-modules-linked/Cargo.toml
 COPY crates/openhuman-rpc/Cargo.toml crates/openhuman-rpc/Cargo.toml
 COPY crates/openhuman-tinyhumans/Cargo.toml crates/openhuman-tinyhumans/Cargo.toml
 COPY crates/openhuman-tui/Cargo.toml crates/openhuman-tui/Cargo.toml
+# openhuman-embed declares its tests and examples as explicit [[test]] /
+# [[example]] targets; cargo refuses to load the manifest if their files are
+# missing, even for a binary-only build.
+COPY crates/openhuman-embed/tests/ crates/openhuman-embed/tests/
+COPY crates/openhuman-embed/examples/ crates/openhuman-embed/examples/
 # Vendored TinyAgents SDK (git submodule; [patch.crates-io] points here, so
 # the dep-cache build below already resolves it). CI must init the submodule
 # before docker build — see the "Init tinyagents submodule" steps in
 # release-production.yml / release-staging.yml.
 COPY vendor/ vendor/
-# Create a dummy src to build deps
+# Create a dummy src to build deps. openhuman-modules-linked and openhuman-tui
+# keep theirs: the image never builds them, but cargo must load every member.
 RUN mkdir -p crates/openhuman-cli/src crates/openhuman-core/src crates/openhuman-embed/src \
-             crates/openhuman-rpc/src crates/openhuman-tinyhumans/src crates/openhuman-tui/src && \
+             crates/openhuman-modules-linked/src crates/openhuman-rpc/src \
+             crates/openhuman-tinyhumans/src crates/openhuman-tui/src && \
     echo 'fn main() {}' > crates/openhuman-cli/src/main.rs && \
     echo 'pub fn run_core_from_args(_: &[String]) -> anyhow::Result<()> { Ok(()) }' > crates/openhuman-core/src/lib.rs && \
     echo '' > crates/openhuman-embed/src/lib.rs && \
+    echo '' > crates/openhuman-modules-linked/src/lib.rs && \
     echo '' > crates/openhuman-rpc/src/lib.rs && \
     echo '' > crates/openhuman-tinyhumans/src/lib.rs && \
     echo 'fn main() {}' > crates/openhuman-tui/src/main.rs && \
@@ -97,6 +106,7 @@ RUN touch crates/openhuman-cli/src/main.rs crates/openhuman-core/src/lib.rs \
 FROM node:24-bookworm-slim AS modules
 WORKDIR /repo
 COPY scripts/lib/module-pins.mjs scripts/lib/module-pins.mjs
+COPY scripts/lib/git-env.mjs scripts/lib/git-env.mjs
 COPY scripts/ci/self-hosted/test-module-assets.mjs scripts/ci/self-hosted/test-module-assets.mjs
 COPY scripts/release/stage-modules.mjs scripts/release/stage-modules.mjs
 COPY crates/openhuman-core/src/modules/registry.rs crates/openhuman-core/src/modules/registry.rs

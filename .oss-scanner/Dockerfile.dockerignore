@@ -1,0 +1,11 @@
+# Override the production .dockerignore for this audit image. Keep .git,
+# .gitmodules, app/, scripts/ and tests/: recursive setup and auditing need them.
+**/target/
+**/node_modules/
+**/worktrees/
+app/dist/
+.vite/
+**/.env
+**/.env.*
+!**/.env.example
+**/.DS_Store

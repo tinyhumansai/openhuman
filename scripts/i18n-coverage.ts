@@ -12,7 +12,7 @@
  *   - placeholder/untranslated entries (value identical to English)
  *
  * Repo-wide:
- *   - unused keys (defined in en, never referenced via t('…') / t("…") in app/src)
+ *   - unused keys (defined in en, absent from UI literals/computed keys and core chat errors)
  *
  * Usage:  pnpm exec tsx scripts/i18n-coverage.ts [--json] [--locale es,fr] [--no-unused] [--out <dir>]
  *
@@ -42,8 +42,10 @@ const ALL_LOCALES = [
   "ru",
   "id",
   "it",
+  "ja",
   "ko",
   "pl",
+  "tr",
 ] as const;
 type Locale = (typeof ALL_LOCALES)[number];
 
@@ -145,10 +147,50 @@ async function collectUsedKeys(): Promise<Set<string>> {
   const files: string[] = [];
   await walkSourceFiles(APP_SRC, files);
   const used = new Set<string>();
+  const knownKeys = Object.keys(await loadLocale("en"));
   for (const f of files) {
     const src = await fs.readFile(f, "utf8");
+    const constants = new Map(
+      [...src.matchAll(/\bconst\s+(\w+)\s*=\s*['"]([^'"]+)['"]/g)].map(
+        (match) => [match[1], match[2]],
+      ),
+    );
     for (const m of src.matchAll(T_CALL_RE)) {
       used.add(m[2]);
+    }
+    // Domain codes and UI option maps pass literal keys through variables.
+    for (const key of knownKeys) {
+      if (src.includes(`'${key}'`) || src.includes(`"${key}"`)) used.add(key);
+    }
+    // Computed keys such as t(`keyring.settings.mode.${mode}`) consume
+    // each matching locale entry, not the template text itself.
+    for (const match of src.matchAll(/`([^`\n]+)`/g)) {
+      const template = match[1].replace(
+        /\$\{(\w+)\}/g,
+        (original, name: string) => constants.get(name) ?? original,
+      );
+      if (!/^[\w-]+\./.test(template)) continue;
+      const pattern = template
+        .split(/\$\{[^}]+\}/)
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join(".+");
+      const matcher = new RegExp(`^${pattern}$`);
+      for (const key of knownKeys) if (matcher.test(key)) used.add(key);
+    }
+  }
+  // The core supplies these keys on chat_error events; the UI translates
+  // event.copy_key rather than spelling each key in a literal t() call.
+  // Generic inference failures are owned by TinyInference; OpenHuman's table
+  // adds product-specific overrides. Both sets are emitted through the same
+  // chat_error event and translated by the UI's dynamic copy_key lookup.
+  const failureCopySources = [
+    "crates/openhuman-core/src/inference/failure_copy/table.rs",
+    "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm/src/failure/copy.rs",
+  ];
+  for (const source of failureCopySources) {
+    const failureCopy = await fs.readFile(path.join(ROOT, source), "utf8");
+    for (const match of failureCopy.matchAll(/"(chat_error\.[a-z_]+)"/g)) {
+      used.add(match[1]);
     }
   }
   return used;

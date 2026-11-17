@@ -1,4 +1,4 @@
-# `scripts/dep-audit/` — Cargo dependency audit
+# `scripts/dep-audit/`: Cargo dependency audit
 
 Finds dependencies we can drop, unify, or slim across OpenHuman **and every
 Cargo submodule under `vendor/`**, using
@@ -14,11 +14,11 @@ A full sweep of 24 targets takes about 20 seconds; nothing is compiled, the
 tool only runs `cargo metadata` and parses source.
 
 The run avoids side effects on the tree: `cargo metadata` rewrites a
-`Cargo.lock` that is stale relative to its manifest (`crates/openhuman-app`'s
+`Cargo.lock` that is stale relative to its manifest ([`crates/openhuman-app`](../../crates/openhuman-app/README.md)'s
 lockfile in particular), or creates one where a target had none, so `run.sh`
 records each target's lockfile state (present, with its exact contents, or
-absent) before analyzing it and restores that state afterwards — restoring on
-interruption too — printing which lockfiles it had to put back or remove. It
+absent) before analyzing it and restores that state afterwards, restoring on
+interruption too, printing which lockfiles it had to put back or remove. It
 refuses to analyze a target whose `Cargo.lock` is a symlink rather than
 backing up and writing through it. Refresh a lockfile deliberately (`cargo
 update` / `cargo generate-lockfile`) if you want it refreshed.
@@ -27,10 +27,10 @@ update` / `cargo generate-lockfile`) if you want it refreshed.
 
 | File | Role |
 | --- | --- |
-| `run.sh` | Discovers targets, runs `tinyanalyzer` once per target, then calls `report.mjs`. `--help` lists the flags. |
-| `report.mjs` | Folds the per-target JSON into `REPORT.md` and `summary.json`. Re-runnable on its own: `node scripts/dep-audit/report.mjs --reports target/dep-audit`. |
-| `tinyanalyzer.toml` | Shared analyzer config passed to every target (`--config`). Holds the `ignore_unused` list; see below before editing it. |
-| `../../docs/dep-audit/<date>.md` | Committed snapshots from `--snapshot` runs, for diffing against the next run. |
+| [`run.sh`](./run.sh) | Discovers targets, runs `tinyanalyzer` once per target, then calls `report.mjs`. `--help` lists the flags. |
+| [`report.mjs`](./report.mjs) | Folds the per-target JSON into `REPORT.md` and `summary.json`. Re-runnable on its own: `node scripts/dep-audit/report.mjs --reports target/dep-audit`. |
+| [`tinyanalyzer.toml`](./tinyanalyzer.toml) | Shared analyzer config passed to every target (`--config`). Holds the `ignore_unused` list; see below before editing it. |
+| [`../../docs/dep-audit/<date>.md`](../../docs/dep-audit/2026-09-19.md) | Committed snapshots from `--snapshot` runs, for diffing against the next run. |
 
 ## Prerequisites
 
@@ -43,8 +43,8 @@ update` / `cargo generate-lockfile`) if you want it refreshed.
 `run.sh` builds the target list itself, so a new submodule is picked up
 automatically:
 
-1. `root` — the OpenHuman workspace (`Cargo.toml` at the repo root).
-2. `openhuman-app` — the Tauri host. It is `exclude`d from the root
+1. `root`, the OpenHuman workspace ([`Cargo.toml`](../../Cargo.toml) at the repo root).
+2. `openhuman-app`, the Tauri host. It is `exclude`d from the root
    workspace and has its own `Cargo.lock`, so it is a separate graph.
 3. Every entry of `git submodule status --recursive` that has a `Cargo.toml`,
    named after its directory (`tinyagents`, `tinybus`, `tinycortex`, …).
@@ -63,7 +63,7 @@ siblings. `--keep-nested` analyzes every checkout regardless.
 One row per target with its commit and headline counts. "Crates in graph" is
 the `cargo metadata` resolve for every platform (no `--filter-platform`),
 using each package's **default features** (tinyanalyzer does not pass
-`--all-features`) — which is why Windows-only crates appear on a Linux run,
+`--all-features`), which is why Windows-only crates appear on a Linux run,
 why a duplicate listed here may not show in `cargo tree` on your host, and
 why a crate reachable only through a non-default optional feature will not
 appear at all.
@@ -71,12 +71,12 @@ appear at all.
 ### 1. Declared dependencies no source file names
 
 tinyanalyzer's check is textual: a dependency is "unused" if no `.rs` file in
-the package mentions it *the way Rust code references a dependency* —
+the package mentions it *the way Rust code references a dependency* , 
 `dep_name::…`, `use dep_name`, `extern crate dep_name`, or `dep_name!` (`_`
 for `-`; `dep_name` is the crate's rename alias when one is declared). That
 misses crate names inside attributes (`#[tokio::test]`,
 `#[derive(thiserror::Error)]`), so `report.mjs` re-checks every flag with a
-grep over the package's own sources — **the crate's own directory,
+grep over the package's own sources, **the crate's own directory,
 recursively, plus the exact file (not directory) of every `[[test]]` /
 `[[example]]` / `[[bench]]` / `[[bin]]` / build-script target declared by
 `path =` in its `Cargo.toml`** (the root crate keeps its integration tests in
@@ -117,7 +117,7 @@ Each version is compiled and linked separately. **Only the `root` (and
 where a requirement should move so the root can unify. Within a `root` /
 `openhuman-app` section, a duplicate reached only through a `development`
 dependency (see section 1's Kind column) costs test/CI build time, not the
-shipped binary — check the Kind before treating a row as production weight.
+shipped binary, check the Kind before treating a row as production weight.
 
 "Pulled in via" names the *direct* dependencies whose subtree carries that
 version, walked from tinyanalyzer's edge list. `direct dep of <pkg>` means one
@@ -135,7 +135,7 @@ of our own packages declares it. To unify:
 ### 3. Heaviest direct dependencies
 
 Per target, the direct dependencies with the largest **exclusive** transitive
-footprint — crates that would leave the build entirely if this one were
+footprint, crates that would leave the build entirely if this one were
 dropped. "Reaches" is the raw transitive count, most of which something else
 pulls in anyway. "Source" is checked-out source size, not binary size. Unlike
 section 1, this table excludes a dependency whose only edge kind is
@@ -144,8 +144,8 @@ shipped binary, so they do not belong in a shipped-build weight ranking.
 
 A high exclusive count usually means default features pulling in a subtree we
 do not use. Try `default-features = false` plus the two or three features
-needed, then re-run the audit and compare the row. `scripts/dep-sim.py` and
-`scripts/assert-shed.sh` remain the tools for *proving* a reduction before
+needed, then re-run the audit and compare the row. [`scripts/dep-sim.py`](../dep-sim.py) and
+[`scripts/assert-shed.sh`](../assert-shed.sh) remain the tools for *proving* a reduction before
 claiming it in a PR.
 
 ### 4. Version drift across repositories
@@ -177,3 +177,10 @@ listed; cargo unifies it.
   carry file, complexity and dead-code findings that this report ignores.
   `tinyanalyzer vendor/<name>` opens the interactive dashboard over the same
   data.
+
+## Further reading
+
+- [`scripts/README.md`](../README.md) for the rest of the tooling, and [`scripts/ci/`](../ci/README.md) for the merge gates.
+- [`docs/dep-audit/`](../../docs/dep-audit/2026-09-19.md), the committed snapshots.
+- [`AGENTS.md`](../../AGENTS.md) for the `assert-shed.sh` / `dep-sim.py` rule before claiming a dependency reduction.
+- [Building the Rust core](../../docs/gitbooks/en/developing/building-rust-core.md) and the [`vendor/`](../../vendor) submodules the audit walks.

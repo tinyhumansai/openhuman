@@ -5,6 +5,7 @@
 
 export type MemoryChip =
   | 'engine'
+  | 'migration'
   | 'ask'
   | 'explorer'
   | 'learnings'
@@ -15,6 +16,7 @@ export type MemoryChip =
 
 export const MEMORY_CHIPS: readonly MemoryChip[] = [
   'engine',
+  'migration',
   'ask',
   'explorer',
   'learnings',

@@ -3,12 +3,17 @@
 
 use super::agent_run::EMPTY_AGENT_OUTPUT;
 use super::failure_classification::AGENT_JOB_USER_FAILURE_MESSAGE;
+use super::origin_delivery::{deliver_to_origin, deliverable_reply, is_no_reply, origin_kind};
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::cron::{CronJob, DeliveryConfig, JobType};
 use anyhow::Result;
 use chrono::Utc;
+use {
+    tinyflows_bus::schedule::types::delivery_mode, tinyflows_bus::schedule::types::CronJob,
+    tinyflows_bus::schedule::types::DeliveryConfig, tinyflows_bus::schedule::types::DeliveryStatus,
+    tinyflows_bus::schedule::types::JobType,
+};
 
 pub(super) const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
 pub(super) const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
@@ -62,16 +67,27 @@ pub(super) fn cron_alert_body(job: &CronJob, output: &str) -> String {
 }
 
 /// Public entry point for delivering a job's output via the configured
-/// delivery mode (proactive / announce). Called by `cron_run` ("Run Now")
-/// so manual runs also push notifications and alerts. Manual runs are treated
-/// as `success = true` so the user always sees the result they explicitly
-/// triggered (empty output is still skipped).
-pub async fn deliver_job(config: &Config, job: &CronJob, output: &str) {
-    if let Err(e) = deliver_if_configured(config, job, output, true).await {
-        if job.delivery.best_effort {
-            tracing::warn!("[cron] delivery failed (best_effort, Run Now): {e}");
-        } else {
-            tracing::warn!("[cron] delivery failed (Run Now): {e}");
+/// delivery mode (proactive / announce / origin). Called by `cron_run` ("Run
+/// Now") so manual runs also push notifications and alerts. Manual runs are
+/// treated as `success = true` so the user always sees the result they
+/// explicitly triggered (empty output is still skipped). Returns how the
+/// delivery went, for the run record.
+pub async fn deliver_job(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    job: &CronJob,
+    run_id: &str,
+    output: &str,
+) -> DeliveryStatus {
+    match deliver_run(ctx, config, job, run_id, output, true).await {
+        Ok(status) => status,
+        Err(e) => {
+            if job.delivery.best_effort {
+                tracing::warn!("[cron] delivery failed (best_effort, Run Now): {e}");
+            } else {
+                tracing::warn!("[cron] delivery failed (Run Now): {e}");
+            }
+            DeliveryStatus::Failed
         }
     }
 }
@@ -96,12 +112,14 @@ pub(super) fn cron_result_should_alert(success: bool, output: &str) -> bool {
     !success || !cron_output_is_empty(output)
 }
 
-pub(super) async fn deliver_if_configured(
+pub(super) async fn deliver_run(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
+    run_id: &str,
     output: &str,
     success: bool,
-) -> Result<()> {
+) -> Result<DeliveryStatus> {
     let delivery: &DeliveryConfig = &job.delivery;
 
     // Don't post failed or empty cron runs into the user's chat: a failed turn
@@ -129,21 +147,56 @@ pub(super) async fn deliver_if_configured(
     // explicitly-silent background jobs with an unread alert every interval
     // (Codex #4166).
     let mode = delivery.mode.trim().to_ascii_lowercase();
-    let delivers = matches!(mode.as_str(), "proactive" | "announce");
-    let alert_to_notifications =
-        cron_result_should_alert(success, output) && (!success || delivers);
+    let delivers = matches!(
+        mode.as_str(),
+        delivery_mode::PROACTIVE | delivery_mode::ANNOUNCE | delivery_mode::ORIGIN
+    );
+    let reply = if delivers {
+        deliverable_reply(job, output)
+    } else {
+        None
+    };
+    if delivers && success && reply.is_some() && is_no_reply(output) {
+        tracing::info!(
+            job_id = %job.id,
+            run_id = %run_id,
+            mode = %mode,
+            "[cron] run answered NO_REPLY but the job must deliver; sending the fallback reminder"
+        );
+    }
+    // A delivering run that intentionally said nothing (blank, or `NO_REPLY`
+    // from a job that allows it) is not an event worth an alert.
+    let intentionally_silent = success && delivers && reply.is_none();
+    let alert_to_notifications = cron_result_should_alert(success, output)
+        && (!success || delivers)
+        && !intentionally_silent;
     let alert_body = if is_empty {
         "Scheduled job failed without output."
     } else {
-        output
+        reply.as_deref().unwrap_or(output)
+    };
+
+    let mut status = if delivers {
+        DeliveryStatus::Suppressed
+    } else {
+        DeliveryStatus::NotRequested
     };
 
     match mode.as_str() {
-        // Proactive delivery — the channels module decides where to send.
-        // Used by morning briefings, welcome messages, and other
-        // user-facing proactive agents.
-        "proactive" => {
+        // Origin delivery — commit the reply into the conversation that
+        // created the job and send it there once.
+        delivery_mode::ORIGIN => {
             if deliver_to_chat {
+                status = deliver_to_origin(ctx, config, job, run_id, output).await?;
+            }
+        }
+
+        // Proactive delivery — independent web and optional external-channel
+        // subscribers deliver the message to the tenant that ran this job.
+        // Used by morning briefings, welcome messages, and other user-facing
+        // proactive agents.
+        "proactive" => match reply.as_deref().filter(|_| deliver_to_chat) {
+            Some(message) => {
                 let source = format!("cron:{}", job.id);
                 tracing::debug!(
                     job_id = %job.id,
@@ -152,37 +205,69 @@ pub(super) async fn deliver_if_configured(
                 );
                 BUS.publish(DomainEvent::ProactiveMessageRequested {
                     source,
-                    message: output.to_string(),
+                    message: message.to_string(),
                     job_name: job.name.clone(),
+                    tenant: ctx.event_tenant(),
                 });
+                status = DeliveryStatus::Delivered;
             }
-        }
+            None if deliver_to_chat => log_suppressed(job, run_id),
+            None => {}
+        },
 
         // Announce delivery — the cron job specifies the exact channel
-        // and target. Used for explicit channel-targeted output.
-        "announce" if deliver_to_chat => {
-            let channel = delivery
-                .channel
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("delivery.channel is required for announce mode"))?;
-            let target = delivery
-                .to
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
+        // and target. Send synchronously so the recorded status reflects
+        // whether the channel runtime accepted the message.
+        "announce" if deliver_to_chat => match reply.as_deref() {
+            None => log_suppressed(job, run_id),
+            Some(message) => {
+                let channel = delivery.channel.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("delivery.channel is required for announce mode")
+                })?;
+                let target = delivery
+                    .to
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
 
-            tracing::debug!(
-                job_id = %job.id,
-                channel = %channel,
-                target = %target,
-                "[cron] publishing CronDeliveryRequested event"
-            );
-            BUS.publish(DomainEvent::CronDeliveryRequested {
-                job_id: job.id.clone(),
-                channel: channel.to_string(),
-                target: target.to_string(),
-                output: output.to_string(),
-            });
-        }
+                let idempotency_key = super::origin_delivery::origin_request_id(&job.id, run_id);
+                #[cfg(feature = "channels")]
+                let sent = crate::cron::channel_bridge::announce_to_channel(
+                    channel,
+                    target,
+                    None,
+                    message,
+                    &idempotency_key,
+                )
+                .await;
+                #[cfg(not(feature = "channels"))]
+                let sent: Result<(), String> = {
+                    let _ = (message, &idempotency_key);
+                    Err("channel delivery requires the channels feature".to_string())
+                };
+                match sent {
+                    Ok(()) => {
+                        tracing::debug!(
+                            job_id = %job.id,
+                            run_id = %run_id,
+                            channel = %channel,
+                            "[cron] announce delivery sent"
+                        );
+                        status = DeliveryStatus::Delivered;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            job_id = %job.id,
+                            run_id = %run_id,
+                            channel = %channel,
+                            target = %target,
+                            error = %error,
+                            "[cron] announce delivery failed"
+                        );
+                        status = DeliveryStatus::Failed;
+                    }
+                }
+            }
+        },
 
         // No delivery configured — output is stored in last_output only.
         // The failure still reaches the alerts tab via the hoisted
@@ -200,7 +285,17 @@ pub(super) async fn deliver_if_configured(
         push_cron_alert(config, job, alert_body);
     }
 
-    Ok(())
+    Ok(status)
+}
+
+fn log_suppressed(job: &CronJob, run_id: &str) {
+    tracing::info!(
+        job_id = %job.id,
+        run_id = %run_id,
+        mode = %job.delivery.mode,
+        origin = origin_kind(job),
+        "[cron] delivery suppressed: the run had nothing to send"
+    );
 }
 
 /// Insert a notification into the alerts tab for a completed cron job.
@@ -252,3 +347,10 @@ pub(super) fn push_cron_alert(config: &Config, job: &CronJob, output: &str) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "delivery_tests.rs"]
+pub(super) mod tests;
+
+#[cfg(test)]
+pub(super) use tests::deliver_if_configured;

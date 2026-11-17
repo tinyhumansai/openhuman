@@ -894,6 +894,18 @@ describe('WorkflowRunnerBody — recent runs status badges', () => {
     });
   });
 
+  it('shows a STOPPED run as a warning, not a failure', async () => {
+    hoisted.recentRuns.mockResolvedValue([makeRecentRun('STOPPED'), makeRecentRun('FAILED')]);
+    const Body = await importBody();
+    renderBody(Body);
+
+    const stopped = await screen.findByText('STOPPED');
+    expect(stopped.closest('[data-slot="badge"]')).toHaveAttribute('data-variant', 'warning');
+    expect(
+      screen.getByText('FAILED').closest('[data-slot="badge"]')
+    ).toHaveAttribute('data-variant', 'danger');
+  });
+
   it('expands a recent run row and shows tailing indicator', async () => {
     hoisted.recentRuns.mockResolvedValue([makeRecentRun('DONE')]);
     hoisted.readRunLog.mockResolvedValue({

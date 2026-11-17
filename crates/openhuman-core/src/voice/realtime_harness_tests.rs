@@ -102,7 +102,10 @@ fn spoken_delta_suppresses_internal_events() {
     );
     // Lifecycle events carry no spoken text.
     assert_eq!(
-        spoken_delta(&AgentProgress::TurnCompleted { iterations: 1 }),
+        spoken_delta(&AgentProgress::TurnCompleted {
+            iterations: 1,
+            stop: None
+        }),
         None
     );
 }

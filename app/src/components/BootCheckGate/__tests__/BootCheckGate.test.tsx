@@ -54,11 +54,13 @@ vi.mock('../../../services/bootCheckService', async importOriginal => {
 });
 
 const mockTestCoreRpcConnection = vi.fn();
+const mockProbeCoreRealtime = vi.fn();
 vi.mock('../../../services/coreRpcClient', () => ({
   callCoreRpc: vi.fn(),
   clearCoreRpcUrlCache: vi.fn(),
   clearCoreRpcTokenCache: vi.fn(),
   testCoreRpcConnection: (...args: unknown[]) => mockTestCoreRpcConnection(...args),
+  probeCoreRealtime: (...args: unknown[]) => mockProbeCoreRealtime(...args),
 }));
 
 vi.mock('../../../utils/configPersistence', async importOriginal => {
@@ -368,6 +370,8 @@ describe('BootCheckGate — picker (reached via Pick a Different Runtime)', () =
 describe('BootCheckGate — picker test connection', () => {
   beforeEach(() => {
     mockTestCoreRpcConnection.mockReset();
+    mockProbeCoreRealtime.mockReset();
+    mockProbeCoreRealtime.mockResolvedValue('ok');
   });
 
   function fillCloudInputs(url = 'https://core.example.com/rpc', token = 'tok-abc') {
@@ -379,6 +383,24 @@ describe('BootCheckGate — picker test connection', () => {
       target: { value: token },
     });
   }
+
+  it('flags a core with realtime (Socket.IO) disabled even though RPC works', async () => {
+    mockTestCoreRpcConnection.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ result: { ok: true } }),
+    } as unknown as Response);
+    mockProbeCoreRealtime.mockResolvedValue('disabled');
+
+    await renderPicker();
+    fillCloudInputs();
+    fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-status-socket-disabled')).toHaveTextContent('--jsonrpc-only');
+    });
+    expect(screen.queryByTestId('test-status-ok')).not.toBeInTheDocument();
+  });
 
   it('shows Connected on a 200 response', async () => {
     mockTestCoreRpcConnection.mockResolvedValue({

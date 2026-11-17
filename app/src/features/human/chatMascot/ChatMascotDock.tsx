@@ -22,13 +22,13 @@ const dockLog = debug('human:chat-mascot');
  * and the accessible label — which is why it is safe for it to sit inside the
  * composer without dragging Rive's per-frame re-render into the chat tree.
  *
- * [ui-flow] chat-mascot: dock click → expanded (stage) → mascot/collapse → docked
+ * [ui-flow] chat-mascot: dock click → expanded (stage) + live voice session → mascot/collapse → docked
  * [ui-flow] chat-mascot: dismiss (×) → confirm → hidden until re-enabled in settings
  */
 const ChatMascotDock = () => {
   const { t } = useT();
   const dispatch = useAppDispatch();
-  const { setDockNode, expand } = useChatMascot();
+  const { setDockNode, expandWithVoice } = useChatMascot();
   const expanded = useAppSelector(selectChatMascotExpanded);
   const dismissed = useAppSelector(selectChatMascotDismissed);
   const [confirmingDismiss, setConfirmingDismiss] = useState(false);
@@ -58,7 +58,7 @@ const ChatMascotDock = () => {
           aria-expanded={false}
           data-testid="chat-mascot-dock"
           data-analytics-id="chat-mascot-toggle"
-          onClick={expand}
+          onClick={expandWithVoice}
         />
 
         {/* Hidden until hover/focus so the mascot stays a mascot rather than a

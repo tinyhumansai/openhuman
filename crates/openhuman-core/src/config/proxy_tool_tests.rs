@@ -1,0 +1,417 @@
+use super::*;
+use crate::security::{AutonomyLevel, SecurityPolicy};
+use tempfile::TempDir;
+
+fn test_security() -> Arc<SecurityPolicy> {
+    Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::Supervised,
+        workspace_dir: std::env::temp_dir(),
+        ..SecurityPolicy::default()
+    })
+}
+
+/// Holds the crate-wide env lock and puts the process-wide runtime proxy back
+/// when the test ends.
+///
+/// The `set` action installs its proxy as `runtime_proxy_config()` for the whole
+/// process, and nothing else restores it: a test that sets one and returns leaves
+/// every later loopback client (MCP, composio, docker probes) dialling it, which
+/// reads as an unrelated "Connection refused" in whichever test runs next.
+struct RuntimeProxyRestore {
+    previous: crate::config::ProxyConfig,
+    _env: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl RuntimeProxyRestore {
+    async fn hold() -> Self {
+        let env = crate::config::TEST_ENV_LOCK.lock().await;
+        Self {
+            previous: runtime_proxy_config(),
+            _env: env,
+        }
+    }
+}
+
+impl Drop for RuntimeProxyRestore {
+    fn drop(&mut self) {
+        set_runtime_proxy_config(self.previous.clone());
+    }
+}
+
+async fn test_config(tmp: &TempDir) -> Arc<Config> {
+    let config = Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+    config.save().await.unwrap();
+    Arc::new(config)
+}
+
+#[tokio::test]
+async fn list_services_action_returns_known_keys() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
+
+    let result = tool
+        .execute(json!({"action": "list_services"}))
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    assert!(result.output().contains("provider.openai"));
+    assert!(result.output().contains("tool.http_request"));
+}
+
+#[tokio::test]
+async fn set_scope_services_requires_services_entries() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
+
+    let result = tool
+        .execute(json!({
+            "action": "set",
+            "enabled": true,
+            "scope": "services",
+            "http_proxy": "http://127.0.0.1:7890",
+            "services": []
+        }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(result.output().contains("proxy.scope='services'"));
+}
+
+#[tokio::test]
+async fn set_and_get_round_trip_proxy_scope() {
+    let _proxy = RuntimeProxyRestore::hold().await;
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
+
+    let set_result = tool
+        .execute(json!({
+            "action": "set",
+            "scope": "services",
+            "http_proxy": "http://127.0.0.1:7890",
+            "no_proxy": ["127.0.0.1", "localhost"],
+            "services": ["provider.openai", "tool.http_request"]
+        }))
+        .await
+        .unwrap();
+    assert!(!set_result.is_error, "{:?}", set_result.output());
+
+    let get_result = tool.execute(json!({"action": "get"})).await.unwrap();
+    assert!(!get_result.is_error);
+    assert!(get_result.output().contains("provider.openai"));
+    assert!(get_result.output().contains("services"));
+}
+
+#[tokio::test]
+async fn set_null_proxy_url_clears_existing_value() {
+    let _proxy = RuntimeProxyRestore::hold().await;
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
+
+    let set_result = tool
+        .execute(json!({
+            "action": "set",
+            "http_proxy": "http://127.0.0.1:7890",
+            "no_proxy": ["127.0.0.1", "localhost"]
+        }))
+        .await
+        .unwrap();
+    assert!(!set_result.is_error, "{:?}", set_result.output());
+
+    let clear_result = tool
+        .execute(json!({
+            "action": "set",
+            "http_proxy": null
+        }))
+        .await
+        .unwrap();
+    assert!(!clear_result.is_error, "{:?}", clear_result.output());
+
+    let get_result = tool.execute(json!({"action": "get"})).await.unwrap();
+    assert!(!get_result.is_error);
+    let parsed: Value = serde_json::from_str(&get_result.output()).unwrap();
+    // Only assert the *configured* proxy is cleared. `runtime_proxy.http_proxy`
+    // resolves through the process env (HTTP_PROXY / http_proxy) when the
+    // configured value is null, so on runners with those vars set the resolved
+    // field is non-null and unrelated to whether `set` cleared the config.
+    assert!(parsed["proxy"]["http_proxy"].is_null());
+}
+
+// ── parse_scope ──────────────────────────────────────────────────
+
+#[test]
+fn parse_scope_known_values() {
+    assert_eq!(
+        ProxyConfigTool::parse_scope("environment"),
+        Some(ProxyScope::Environment)
+    );
+    assert_eq!(
+        ProxyConfigTool::parse_scope("env"),
+        Some(ProxyScope::Environment)
+    );
+    assert_eq!(
+        ProxyConfigTool::parse_scope("openhuman"),
+        Some(ProxyScope::OpenHuman)
+    );
+    assert_eq!(
+        ProxyConfigTool::parse_scope("internal"),
+        Some(ProxyScope::OpenHuman)
+    );
+    assert_eq!(
+        ProxyConfigTool::parse_scope("core"),
+        Some(ProxyScope::OpenHuman)
+    );
+    assert_eq!(
+        ProxyConfigTool::parse_scope("services"),
+        Some(ProxyScope::Services)
+    );
+    assert_eq!(
+        ProxyConfigTool::parse_scope("service"),
+        Some(ProxyScope::Services)
+    );
+}
+
+#[test]
+fn parse_scope_case_insensitive() {
+    assert_eq!(
+        ProxyConfigTool::parse_scope("SERVICES"),
+        Some(ProxyScope::Services)
+    );
+    assert_eq!(
+        ProxyConfigTool::parse_scope("  ENV  "),
+        Some(ProxyScope::Environment)
+    );
+}
+
+#[test]
+fn parse_scope_unknown_returns_none() {
+    assert!(ProxyConfigTool::parse_scope("unknown").is_none());
+    assert!(ProxyConfigTool::parse_scope("").is_none());
+}
+
+// ── parse_string_list ────────────────────────────────────────────
+
+#[test]
+fn parse_string_list_from_csv() {
+    let result =
+        ProxyConfigTool::parse_string_list(&json!("provider.openai,tool.browser"), "services")
+            .unwrap();
+    assert_eq!(result, vec!["provider.openai", "tool.browser"]);
+}
+
+#[test]
+fn parse_string_list_from_array() {
+    let result =
+        ProxyConfigTool::parse_string_list(&json!(["provider.openai", "tool.browser"]), "services")
+            .unwrap();
+    assert_eq!(result, vec!["provider.openai", "tool.browser"]);
+}
+
+#[test]
+fn parse_string_list_trims_and_filters_empty() {
+    let result = ProxyConfigTool::parse_string_list(&json!("  a , , b  "), "services").unwrap();
+    assert_eq!(result, vec!["a", "b"]);
+}
+
+#[test]
+fn parse_string_list_rejects_non_string_array_elements() {
+    let result = ProxyConfigTool::parse_string_list(&json!([1, 2, 3]), "services");
+    assert!(result.is_err());
+}
+
+#[test]
+fn parse_string_list_rejects_object() {
+    let result = ProxyConfigTool::parse_string_list(&json!({}), "services");
+    assert!(result.is_err());
+}
+
+// ── parse_optional_string_update ─────────────────────────────────
+
+#[test]
+fn parse_optional_string_update_unset() {
+    let result = ProxyConfigTool::parse_optional_string_update(&json!({}), "http_proxy").unwrap();
+    assert!(matches!(result, MaybeSet::Unset));
+}
+
+#[test]
+fn parse_optional_string_update_null() {
+    let result =
+        ProxyConfigTool::parse_optional_string_update(&json!({"http_proxy": null}), "http_proxy")
+            .unwrap();
+    assert!(matches!(result, MaybeSet::Null));
+}
+
+#[test]
+fn parse_optional_string_update_empty_string_is_null() {
+    let result =
+        ProxyConfigTool::parse_optional_string_update(&json!({"http_proxy": ""}), "http_proxy")
+            .unwrap();
+    assert!(matches!(result, MaybeSet::Null));
+}
+
+#[test]
+fn parse_optional_string_update_set() {
+    let result = ProxyConfigTool::parse_optional_string_update(
+        &json!({"http_proxy": "http://proxy:8080"}),
+        "http_proxy",
+    )
+    .unwrap();
+    assert!(matches!(result, MaybeSet::Set(ref v) if v == "http://proxy:8080"));
+}
+
+#[test]
+fn parse_optional_string_update_rejects_non_string() {
+    let result =
+        ProxyConfigTool::parse_optional_string_update(&json!({"http_proxy": 42}), "http_proxy");
+    assert!(result.is_err());
+}
+
+// ── env_snapshot ─────────────────────────────────────────────────
+
+#[test]
+fn env_snapshot_returns_object() {
+    let snap = ProxyConfigTool::env_snapshot();
+    assert!(snap.is_object());
+    assert!(snap.get("HTTP_PROXY").is_some());
+    assert!(snap.get("HTTPS_PROXY").is_some());
+}
+
+// ── proxy_json ───────────────────────────────────────────────────
+
+#[test]
+fn proxy_json_returns_object_with_expected_fields() {
+    let config = ProxyConfig::default();
+    let json = ProxyConfigTool::proxy_json(&config);
+    assert!(json.get("enabled").is_some());
+    assert!(json.get("scope").is_some());
+    assert!(json.get("http_proxy").is_some());
+}
+
+// ── tool metadata ────────────────────────────────────────────────
+
+#[test]
+fn tool_name_and_description() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(
+        Arc::new(Config {
+            workspace_dir: tmp.path().to_path_buf(),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        }),
+        test_security(),
+    );
+    assert_eq!(tool.name(), "proxy_config");
+    assert!(!tool.description().is_empty());
+}
+
+#[tokio::test]
+async fn parameters_schema_is_valid() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
+    let schema = tool.parameters_schema();
+    assert!(schema.is_object());
+    assert!(schema.get("properties").is_some() || schema.get("type").is_some());
+}
+
+// ── require_write_access ─────────────────────────────────────────
+
+/// The tool does not police its own tier. The host authorization stage does,
+/// from the permission level the call declares, so every mutating action has to
+/// declare a write or a read-only session would reach it as a read.
+#[test]
+fn only_the_read_actions_declare_read_only() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(
+        Arc::new(Config {
+            workspace_dir: tmp.path().to_path_buf(),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        }),
+        test_security(),
+    );
+    for action in ["get", "list_services", "GET"] {
+        assert_eq!(
+            tool.permission_level_with_args(&json!({ "action": action })),
+            PermissionLevel::ReadOnly,
+            "{action} only reads"
+        );
+    }
+    assert_eq!(
+        tool.permission_level_with_args(&json!({})),
+        PermissionLevel::ReadOnly,
+        "a call with no action is a `get`"
+    );
+    for action in ["set", "disable", "apply_env", "clear_env", "Set", "explode"] {
+        assert_eq!(
+            tool.permission_level_with_args(&json!({ "action": action })),
+            PermissionLevel::Write,
+            "{action} must declare a write (unknown actions fail closed)"
+        );
+    }
+}
+
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_host_stage_blocks_mutating_actions_in_readonly_mode() {
+    use crate::agent::tinyagents::host::security_gate_test_support::{authorize_one, is_denied};
+    let tmp = TempDir::new().unwrap();
+    let readonly = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        ..SecurityPolicy::default()
+    });
+    let config = test_config(&tmp).await;
+    for args in [
+        json!({"action": "set", "enabled": true}),
+        json!({"action": "disable"}),
+        json!({"action": "apply_env"}),
+        json!({"action": "clear_env"}),
+    ] {
+        let tool = Box::new(ProxyConfigTool::new(config.clone(), readonly.clone()));
+        let decision = authorize_one(readonly.clone(), tool, args.clone()).await;
+        assert!(
+            is_denied(&decision),
+            "a read-only session must not run {args}; got {decision:?}"
+        );
+    }
+    for args in [json!({"action": "get"}), json!({"action": "list_services"})] {
+        let tool = Box::new(ProxyConfigTool::new(config.clone(), readonly.clone()));
+        let decision = authorize_one(readonly.clone(), tool, args.clone()).await;
+        assert!(
+            !is_denied(&decision),
+            "a read-only session may still run {args}; got {decision:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn missing_action_returns_error() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
+    let result = tool.execute(json!({})).await;
+    // Missing action may return Err or ToolResult::error
+    match result {
+        Err(_) => {}
+        Ok(r) => {
+            // Some implementations return success with help text; just verify it ran
+            let _ = r;
+        }
+    }
+}
+
+#[tokio::test]
+async fn unknown_action_returns_error() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
+    let result = tool.execute(json!({"action": "delete"})).await;
+    match result {
+        Err(e) => assert!(e.to_string().contains("Unknown action")),
+        Ok(r) => assert!(r.is_error, "expected error for unknown action"),
+    }
+}

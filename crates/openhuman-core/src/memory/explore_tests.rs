@@ -2,7 +2,6 @@ use super::*;
 
 use tinymemory_api::{ItemKind, MemoryEngine, MemoryMeta, SourceKind, SourceRef, StoreItem};
 
-use crate::memory::error::{INVALID_REQUEST, MEMORY_OFF};
 use crate::memory::ops;
 use crate::memory::test_fixtures::{bind_reference, config_in};
 use crate::memory::types::ItemsListParams;
@@ -157,7 +156,7 @@ async fn bad_requests_are_invalid_and_memory_off_is_reported() {
             .await
             .unwrap_err()
             .code(),
-        MEMORY_OFF
+        "MEMORY_OFF"
     );
     assert_eq!(
         items_get(
@@ -170,7 +169,7 @@ async fn bad_requests_are_invalid_and_memory_off_is_reported() {
         .await
         .unwrap_err()
         .code(),
-        MEMORY_OFF
+        "MEMORY_OFF"
     );
 
     bind_reference(&config);
@@ -190,7 +189,7 @@ async fn bad_requests_are_invalid_and_memory_off_is_reported() {
     ] {
         assert_eq!(
             explore(&config, bad).await.unwrap_err().code(),
-            INVALID_REQUEST
+            "INVALID_REQUEST"
         );
     }
     assert_eq!(
@@ -204,6 +203,6 @@ async fn bad_requests_are_invalid_and_memory_off_is_reported() {
         .await
         .unwrap_err()
         .code(),
-        INVALID_REQUEST
+        "INVALID_REQUEST"
     );
 }

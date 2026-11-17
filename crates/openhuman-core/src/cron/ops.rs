@@ -1,37 +1,33 @@
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::cron::{
-    self, add_shell_job, get_job, update_job, CronJob, CronJobPatch, CronRun, Schedule,
-};
 use crate::security::SecurityPolicy;
 use anyhow::Result;
-use once_cell::sync::Lazy;
 use serde_json::json;
-use std::collections::HashSet;
-use std::sync::Mutex;
+use {
+    crate::cron, crate::cron::add_shell_job, crate::cron::update_job,
+    tinyflows_bus::schedule::types::CronJob, tinyflows_bus::schedule::types::CronJobPatch,
+    tinyflows_bus::schedule::types::CronRun, tinyflows_bus::schedule::types::Schedule,
+};
 
-/// Guard against duplicate concurrent "Run Now" executions per job.
-/// Entries are inserted before spawning and removed when the task completes.
-static ACTIVE_RUNS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-
-/// RAII guard that removes a job ID from `ACTIVE_RUNS` when dropped.
-///
-/// Ensures cleanup runs on normal completion, panic, or future cancellation —
-/// so a hung or aborted background task can never permanently lock a job_id.
-struct ActiveRunGuard {
-    job_id: String,
-}
-
-impl Drop for ActiveRunGuard {
-    fn drop(&mut self) {
-        if let Ok(mut active) = ACTIVE_RUNS.lock() {
-            active.remove(&self.job_id);
+/// Loads `job_id` for a run, failing closed. The job document carries the
+/// run policy (retry budget, single-flight), so a store that cannot produce it
+/// refuses the run. A missing job reads as such; any other error is reduced to
+/// the job id, because backend error text can carry credentials or payloads.
+pub(crate) fn load_job_for_run(config: &Config, job_id: &str) -> Result<CronJob> {
+    cron::get_job(config, job_id).map_err(|error| {
+        if error.to_string() == format!("Cron job '{job_id}' not found") {
+            return error;
         }
-    }
+        tracing::warn!(job_id, "[cron_run] job unreadable; refusing to run");
+        anyhow::anyhow!("cron job {job_id} is unavailable; refusing to run it")
+    })
 }
 
 pub fn add_once(config: &Config, delay: &str, command: &str) -> Result<CronJob> {
-    let duration = parse_human_delay(delay)?;
+    let delay = delay.to_string();
+    let duration = crate::cron::client::blocking(config, move |config| async move {
+        crate::cron::client::parse_human_delay(&config, &delay).await
+    })?;
     let at = chrono::Utc::now() + duration;
     add_once_at(config, at, command)
 }
@@ -67,92 +63,11 @@ pub fn resume_job(config: &Config, id: &str) -> Result<CronJob> {
     )
 }
 
-/// Update an existing cron job using the same rules as the legacy CLI, but without CLI wiring.
-///
-/// `expression` and `tz` are merged with the existing [`Schedule::Cron`] fields; the
-/// existing `active_hours` is always preserved as-is.  To set or clear `active_hours`
-/// directly, use the RPC path (`cron.update` with a full [`CronJobPatch`]).
-pub fn update_cron_job(
-    config: &Config,
-    id: &str,
-    expression: Option<String>,
-    tz: Option<String>,
-    command: Option<String>,
-    name: Option<String>,
-) -> Result<CronJob> {
-    if expression.is_none() && tz.is_none() && command.is_none() && name.is_none() {
-        anyhow::bail!("At least one of --expression, --tz, --command, or --name must be provided");
-    }
-
-    // Merge expression/tz with the existing schedule so that
-    // tz alone updates the timezone and expression alone preserves the timezone.
-    let schedule = if expression.is_some() || tz.is_some() {
-        let existing = get_job(config, id)?;
-        let (existing_expr, existing_tz, existing_active) = match existing.schedule {
-            Schedule::Cron {
-                expr,
-                tz: existing_tz,
-                active_hours: existing_active,
-            } => (expr, existing_tz, existing_active),
-            _ => anyhow::bail!("Cannot update expression/tz on a non-cron schedule"),
-        };
-        Some(Schedule::Cron {
-            expr: expression.unwrap_or(existing_expr),
-            tz: tz.or(existing_tz),
-            active_hours: existing_active,
-        })
-    } else {
-        None
-    };
-
-    if let Some(ref cmd) = command {
-        let security = SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        );
-        if !security.is_command_allowed(cmd) {
-            anyhow::bail!("Command blocked by security policy: {cmd}");
-        }
-    }
-
-    let patch = CronJobPatch {
-        schedule,
-        command,
-        name,
-        ..CronJobPatch::default()
-    };
-
-    update_job(config, id, patch)
-}
-
-/// Parse a human-friendly delay string (e.g. "5m", "2h", "30s") into a
-/// `chrono::Duration`. Defaults to minutes when no unit is given.
-pub fn parse_human_delay(input: &str) -> Result<chrono::Duration> {
-    let input = input.trim();
-    if input.is_empty() {
-        anyhow::bail!("delay must not be empty");
-    }
-    let split = input
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(input.len());
-    let (num, unit) = input.split_at(split);
-    let amount: i64 = num.parse()?;
-    let unit = if unit.is_empty() { "m" } else { unit };
-    let duration = match unit {
-        "s" => chrono::Duration::seconds(amount),
-        "m" => chrono::Duration::minutes(amount),
-        "h" => chrono::Duration::hours(amount),
-        "d" => chrono::Duration::days(amount),
-        _ => anyhow::bail!("unsupported delay unit '{unit}', use s/m/h/d"),
-    };
-    Ok(duration)
-}
-
 pub async fn cron_list(config: &Config) -> Result<Outcome<Vec<CronJob>>, String> {
     if !config.cron.enabled {
         return Err("cron is disabled by config (cron.enabled=false)".to_string());
     }
+    crate::core::runtime::components::require_config(config, "tinyflows")?;
     let jobs = cron::list_jobs(config).map_err(|e| e.to_string())?;
     Ok(Outcome::single_log(jobs, "cron jobs listed"))
 }
@@ -168,6 +83,7 @@ pub async fn cron_update(
     if !config.cron.enabled {
         return Err("cron is disabled by config (cron.enabled=false)".to_string());
     }
+    crate::core::runtime::components::require_config(config, "tinyflows")?;
 
     if let Some(command) = &patch.command {
         let security = SecurityPolicy::from_config(
@@ -175,9 +91,8 @@ pub async fn cron_update(
             &config.workspace_dir,
             &config.action_dir,
         );
-        if !security.is_command_allowed(command) {
-            return Err(format!("Command blocked by security policy: {command}"));
-        }
+        crate::cron::scheduler::shell_job::authorize_shell_command(config, &security, command)
+            .await?;
     }
 
     let updated = cron::update_job(config, job_id.trim(), patch).map_err(|e| e.to_string())?;
@@ -197,6 +112,7 @@ pub async fn cron_remove(
     if !config.cron.enabled {
         return Err("cron is disabled by config (cron.enabled=false)".to_string());
     }
+    crate::core::runtime::components::require_config(config, "tinyflows")?;
 
     cron::remove_job(config, job_id.trim()).map_err(|e| e.to_string())?;
     Ok(Outcome::new(
@@ -205,7 +121,11 @@ pub async fn cron_remove(
     ))
 }
 
-pub async fn cron_run(config: &Config, job_id: &str) -> Result<Outcome<serde_json::Value>, String> {
+pub async fn cron_run(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    job_id: &str,
+) -> Result<Outcome<serde_json::Value>, String> {
     let job_id = job_id.trim();
     if job_id.is_empty() {
         return Err("Missing 'job_id' parameter".to_string());
@@ -213,83 +133,30 @@ pub async fn cron_run(config: &Config, job_id: &str) -> Result<Outcome<serde_jso
     if !config.cron.enabled {
         return Err("cron is disabled by config (cron.enabled=false)".to_string());
     }
+    crate::core::runtime::components::require_config(config, "tinyflows")?;
 
-    // Guard against duplicate concurrent executions for the same job.
-    {
-        let mut active = ACTIVE_RUNS
-            .lock()
-            .map_err(|_| "ACTIVE_RUNS lock poisoned".to_string())?;
-        if active.contains(job_id) {
-            tracing::debug!(job_id, "[cron_run] rejected duplicate concurrent execution");
-            return Err(format!("cron job '{job_id}' is already running"));
+    let job = load_job_for_run(config, job_id).map_err(|e| e.to_string())?;
+    cron::limits::check_run(config, &job).map_err(|e| e.to_string())?;
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let reply = cron::scheduler::run_job_now(
+        ctx,
+        config,
+        job,
+        run_id,
+        false,
+        tinyflows_bus::schedule::ManualDelivery::Requested,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    match reply {
+        tinyflows_bus::schedule::RunJobReply::Accepted { .. } => {}
+        tinyflows_bus::schedule::RunJobReply::Refused { reason } => {
+            return Err(format!("cron job '{job_id}' was not queued: {reason:?}"));
         }
-        active.insert(job_id.to_string());
+        tinyflows_bus::schedule::RunJobReply::Completed { .. } => {
+            return Err("cron module completed a detached run before acknowledgment".to_string());
+        }
     }
-
-    let job = match cron::get_job(config, job_id) {
-        Ok(j) => j,
-        Err(e) => {
-            if let Ok(mut active) = ACTIVE_RUNS.lock() {
-                active.remove(job_id);
-            }
-            return Err(e.to_string());
-        }
-    };
-
-    // Insert a "queued" placeholder run record immediately so the frontend
-    // poller can observe the run as soon as the RPC returns — otherwise the
-    // run list stays unchanged until execute_job_now finishes.
-    let queued_at = chrono::Utc::now();
-    let _ = cron::record_run(config, &job.id, queued_at, queued_at, "queued", None, 0);
-
-    let config_owned = config.clone();
-    let job_id_owned = job_id.to_string();
-
-    tracing::debug!(job_id, "[cron_run] enqueuing background execution");
-
-    // Spawn the execution as a background task so the RPC handler returns
-    // immediately instead of blocking for the full job duration.
-    tokio::spawn(async move {
-        // Drop guard ensures job_id is removed from ACTIVE_RUNS even on panic
-        // or future cancellation, not just on the normal completion path.
-        let _guard = ActiveRunGuard {
-            job_id: job_id_owned.clone(),
-        };
-
-        tracing::debug!(job_id = %job_id_owned, "[cron_run] background task started");
-
-        let started_at = chrono::Utc::now();
-        let (success, output) = cron::scheduler::execute_job_now(&config_owned, &job).await;
-        let finished_at = chrono::Utc::now();
-        let duration_ms = (finished_at - started_at).num_milliseconds();
-        let status = if success { "ok" } else { "error" };
-
-        tracing::debug!(
-            job_id = %job_id_owned,
-            status,
-            duration_ms,
-            "[cron_run] background task finished"
-        );
-
-        // Remove the "queued" placeholder before inserting the real result
-        // so we don't leave orphaned rows in the run history.
-        let _ = cron::delete_queued_runs(&config_owned, &job.id);
-
-        let _ = cron::record_run(
-            &config_owned,
-            &job.id,
-            started_at,
-            finished_at,
-            status,
-            Some(&output),
-            duration_ms,
-        );
-        let _ = cron::record_last_run(&config_owned, &job.id, finished_at, success, &output);
-
-        // Deliver via the same path as the scheduler loop so proactive
-        // messages and alerts are sent on "Run Now" too.
-        cron::scheduler::deliver_job(&config_owned, &job, &output).await;
-    });
 
     Ok(Outcome::new(
         json!({
@@ -298,6 +165,41 @@ pub async fn cron_run(config: &Config, job_id: &str) -> Result<Outcome<serde_jso
         }),
         vec![format!("cron job enqueued: {}", job_id)],
     ))
+}
+
+/// Run job `job_id` now and wait for it: the same execution, retry budget,
+/// delivery and run record as a scheduled run. Refused while a run of the job
+/// (scheduled or another Run Now) is already active.
+pub async fn run_job_now(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    job_id: &str,
+) -> Result<(bool, String), String> {
+    let job = load_job_for_run(config, job_id.trim()).map_err(|e| e.to_string())?;
+    cron::limits::check_run(config, &job).map_err(|e| e.to_string())?;
+    let run_id = uuid::Uuid::new_v4().to_string();
+    match cron::scheduler::run_job_now(
+        ctx,
+        config,
+        job.clone(),
+        run_id,
+        true,
+        tinyflows_bus::schedule::ManualDelivery::Requested,
+    )
+    .await
+    .map_err(|error| error.to_string())?
+    {
+        tinyflows_bus::schedule::RunJobReply::Completed {
+            success, attempt, ..
+        } => Ok((success, attempt.output)),
+        tinyflows_bus::schedule::RunJobReply::Refused { reason } => Err(format!(
+            "cron job '{}' was not admitted: {reason:?}",
+            job.id
+        )),
+        tinyflows_bus::schedule::RunJobReply::Accepted { .. } => {
+            Err("cron module accepted a synchronous run without completing it".to_string())
+        }
+    }
 }
 
 pub async fn cron_runs(
@@ -311,6 +213,7 @@ pub async fn cron_runs(
     if !config.cron.enabled {
         return Err("cron is disabled by config (cron.enabled=false)".to_string());
     }
+    crate::core::runtime::components::require_config(config, "tinyflows")?;
 
     let limit = limit.unwrap_or(20).max(1);
     let runs = cron::list_runs(config, job_id.trim(), limit).map_err(|e| e.to_string())?;
@@ -323,3 +226,7 @@ pub async fn cron_runs(
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "channels"))]
+#[path = "ops_delivery_tests.rs"]
+mod delivery_tests;

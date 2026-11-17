@@ -243,7 +243,7 @@ unsafe fn build_panel(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel>
 
         // Float above normal windows AND fullscreen apps. Status-bar level
         // (25) plus canJoinAllSpaces+transient is the same recipe used by
-        // the existing `configure_overlay_window_macos` helper.
+        // the app's main-window setup.
         panel.setLevel(25);
         panel.setCollectionBehavior(
             NSWindowCollectionBehavior::CanJoinAllSpaces

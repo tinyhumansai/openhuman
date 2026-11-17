@@ -433,6 +433,42 @@ describe('coreRpcClient', () => {
     }
   });
 
+  test.each([200, 503])('bounds body consumption after HTTP %s headers arrive', async status => {
+    vi.useFakeTimers();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let signal: AbortSignal | undefined;
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementationOnce(async (_url, init) => {
+      signal = init?.signal as AbortSignal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+          signal!.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return new Response(body, { status });
+    });
+    const pending = callCoreRpc({ method: 'openhuman.cost_get_dashboard' }).catch(error => error);
+
+    try {
+      await vi.advanceTimersByTimeAsync(CORE_RPC_TIMEOUT_MS + 1);
+
+      expect(signal?.aborted).toBe(true);
+      const error = (await pending) as CoreRpcError;
+      expect(error).toBeInstanceOf(CoreRpcError);
+      expect(error.kind).toBe('timeout');
+      expect(error.message).toContain(`timed out after ${CORE_RPC_TIMEOUT_MS}ms`);
+    } finally {
+      bodyController?.error(new Error('test cleanup'));
+      await pending;
+      vi.useRealTimers();
+    }
+  });
+
   test('does not trigger the timeout path when fetch resolves promptly', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({
@@ -521,7 +557,7 @@ describe('coreRpcClient', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  test('caches a missing token result after the first Tauri lookup failure', async () => {
+  test('looks the token up again after a failed Tauri lookup', async () => {
     vi.resetModules();
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -540,7 +576,7 @@ describe('coreRpcClient', () => {
     const tokenCalls = vi
       .mocked(invoke)
       .mock.calls.filter(([cmd]) => cmd === 'core_rpc_endpoint').length;
-    expect(tokenCalls).toBe(1);
+    expect(tokenCalls).toBe(2);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -782,6 +818,16 @@ describe('coreRpcClient', () => {
 describe('classifyRpcError', () => {
   test.each([
     ['GET /teams failed (401 Unauthorized): {"success":false}', undefined, 'auth_expired'],
+    [
+      'GET /teams failed (500 Internal Server Error): {"status":401,"error":"Unauthorized"}',
+      undefined,
+      'provider_auth',
+    ],
+    [
+      'GET /teams failed (500 Internal Server Error): {"error":"upstream failed (401 Unauthorized)"}',
+      undefined,
+      'provider_auth',
+    ],
     ['Session expired. Please log in again.', undefined, 'auth_expired'],
     ['some prefix Session expired suffix', undefined, 'auth_expired'],
     [
@@ -794,7 +840,6 @@ describe('classifyRpcError', () => {
     ['HTTP 429 rate-limit exceeded', undefined, 'rate_limited'],
     // #5157 verbatim from Sentry (CORE-RUST-1PY) — the running core does not
     // expose the method. Permanent, so pollers must be able to stop.
-    ['unknown method: openhuman.harness_init_status', undefined, 'method_not_found'],
     ['unknown method: openhuman.memory_tree_create_namespace', undefined, 'method_not_found'],
     ['Budget exceeded for current period', undefined, 'budget_exceeded'],
     ['Insufficient budget for request', undefined, 'budget_exceeded'],
@@ -861,6 +906,24 @@ describe('classifyRpcError', () => {
     expect(classifyRpcError('GET /teams/me/usage failed (401 Unauthorized)')).toBe('auth_expired');
   });
 
+  // #8081: TinyMemory words a hosted 403 (memory not in the plan) as "the
+  // session expired or the API key was rejected (HTTP 403 …)". Matching it as
+  // auth_expired signed a valid user out on opening a Memory tab.
+  test('a memory plan refusal or 403 is never auth_expired', () => {
+    for (const message of [
+      "unauthorized: [MEMORY_PLAN_REQUIRED] memory API memory/scopes on api.tinyhumans.ai: the session expired or the API key was rejected (HTTP 403 Forbidden); re-authenticate — memory is not included in this account's plan",
+      "plan required: [MEMORY_PLAN_REQUIRED] memory API memory/scopes on api.tinyhumans.ai: memory is not included in this account's plan (HTTP 403 Forbidden)",
+      'unauthorized: [FORBIDDEN] memory API memory/scopes on api.tinyhumans.ai: the session expired or the API key was rejected (HTTP 403 Forbidden); re-authenticate',
+    ]) {
+      expect(classifyRpcError(message)).not.toBe('auth_expired');
+    }
+    expect(
+      classifyRpcError(
+        'unauthorized: [UNAUTHORIZED] memory API memory/scopes on api.tinyhumans.ai: the session expired or the API key was rejected (HTTP 401 Unauthorized); re-authenticate'
+      )
+    ).toBe('auth_expired');
+  });
+
   test('http status 429 wins over message text', () => {
     expect(classifyRpcError('anything', 429)).toBe('rate_limited');
   });
@@ -869,9 +932,6 @@ describe('classifyRpcError', () => {
     // `dispatch::unknown_method_name` classifies with `strip_prefix`, so the
     // frontend anchors identically — a nested/quoted occurrence is not the
     // core telling us *this* call's method is absent.
-    expect(classifyRpcError('unknown method: openhuman.harness_init_status')).toBe(
-      'method_not_found'
-    );
     expect(classifyRpcError('tool failed: unknown method: openhuman.foo_bar')).toBe('unknown');
   });
 
@@ -1323,14 +1383,24 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     expect(headers.Authorization).toBe('Bearer cloud-token-abc');
   });
 
-  test('honours the host-injected notch core token before the cache/store', async () => {
-    // The notch / overlay WKWebViews have no Tauri IPC; the Rust host injects
-    // the bearer as a global, which must win ahead of the resolution cache.
+  test('uses the normal sidecar token even when a legacy notch token global exists', async () => {
     (globalThis as { __OPENHUMAN_NOTCH_CORE_TOKEN__?: string }).__OPENHUMAN_NOTCH_CORE_TOKEN__ =
-      'notch-bearer-xyz';
+      'stale-notch-token';
+    vi.doMock('../../utils/configPersistence', () => ({
+      peekStoredRpcUrl: () => null,
+      getStoredCoreToken: () => null,
+      normalizeRpcUrl: normalizeMockRpcUrl,
+    }));
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'core_rpc_endpoint') {
+        return { url: 'http://127.0.0.1:7788/rpc', token: 'normal-sidecar-token' };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
     try {
       const { getCoreRpcToken } = await import('../coreRpcClient');
-      await expect(getCoreRpcToken()).resolves.toBe('notch-bearer-xyz');
+      await expect(getCoreRpcToken()).resolves.toBe('normal-sidecar-token');
     } finally {
       delete (globalThis as { __OPENHUMAN_NOTCH_CORE_TOKEN__?: string })
         .__OPENHUMAN_NOTCH_CORE_TOKEN__;

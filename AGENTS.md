@@ -3,32 +3,47 @@
 OpenHuman is a React and Tauri v2 desktop assistant with an in-process Rust
 core. The core also exposes JSON-RPC and a CLI.
 
-Architecture: [overview](gitbooks/developing/architecture.md),
-[frontend](gitbooks/developing/architecture/frontend.md),
-[Tauri shell](gitbooks/developing/architecture/tauri-shell.md), and
-[agent harness](gitbooks/developing/architecture/agent-harness.md).
+Architecture: [overview](docs/gitbooks/en/developing/architecture.md),
+[frontend](docs/gitbooks/en/developing/architecture/frontend.md),
+[Tauri shell](docs/gitbooks/en/developing/architecture/tauri-shell.md), and
+[agent harness](docs/gitbooks/en/developing/architecture/agent-harness.md).
 
 ## Repository map
 
 | Path | Purpose |
 | --- | --- |
 | `app/src/` | Vite and React frontend |
-| `crates/openhuman-app/` | Thin desktop host; excluded from the root workspace, build with `--manifest-path crates/openhuman-app/Cargo.toml` |
+| `crates/openhuman-app/` | Thin desktop host; excluded from the root workspace, build with `--manifest-path crates/openhuman-app/Cargo.toml`. Depends on `openhuman-rpc` only and boots its in-process core with `openhuman_rpc::host::desktop` |
 | `crates/openhuman-core/` | Package `openhuman`: business domains under `src/<domain>/`, the controller contract, dispatch and auth under `src/core/` |
 | `crates/openhuman-core/src/<domain>/` | Flat business-domain modules (agent, memory, tools, security, channels, ...) |
+| `crates/openhuman-core/src/storage/` | The process's storage backend on the `tinystoragedrivers` ports: URL resolution (`OPENHUMAN_STORAGE_URL` / `[storage] url`), the install slot, agent scopes (`local` for the operator), and the base the domain stores build on. Features `storage-sqlite`, `storage-file`, `storage-mongodb`; see `docs/gitbooks/en/developing/architecture/storage.md` |
 | `crates/openhuman-core/src/core/` | CLI, controller contract (`Outcome`, schemas) and in-process dispatch, controller registry, event bus, runtime composition; no business logic and no JSON-RPC server |
-| `crates/openhuman-cli/` | The `openhuman-core` binary (`src/main.rs`), the developer/benchmark bins (`src/bin/`), and every root `tests/*.rs` / `examples/*.rs` target; depends on `openhuman-tinyhumans` for the backend transport the core does not carry |
-| `crates/openhuman-embed/` | Typed library facade for embedding the core in another product |
-| `crates/openhuman-rpc/` | JSON-RPC 2.0 over the core: envelopes, HTTP client, and the server (router, Socket.IO, listener, `run_server*`) used by app, CLI and TUI |
-| `crates/openhuman-tinyhumans/` | The TinyHumans layer above embed: SDK-backed backend transport, a `RuntimeBuilder` that boots connected, and the host-side login/session owner (login-token exchange, `/auth/me`, current-user cache, credential handoff) used by app and TUI |
-| `crates/openhuman-tui/` | Standalone terminal frontend |
+| `crates/openhuman-cli/` | The `openhuman-core` binary (`src/main.rs`, `openhuman_rpc::host::cli`), the ops bins (`src/bin/`: `openhuman-fleet`, `test-mcp-stub`), and every root `tests/*.rs` / `examples/*.rs` target. Normal dependency: `openhuman-rpc` only; the tests reach core, embed and tinyhumans through `[dev-dependencies]`. The benchmark bins live in the openhuman-benchmarks repository |
+| `crates/openhuman-embed/` | Library facade over the core (depends on core only): `Runtime`/`RuntimeBuilder` with host presets, `embed::process` (tokio runtime, logging, dotenv, master key, Sentry options), and the curated facades hosts use (`config`, `artifacts`, `chat_surface`, `modules`, `identity`). Its doc-hidden `__host` list is for tinyhumans and rpc only |
+| `crates/openhuman-rpc/` | Top of the library chain (depends on tinyhumans only). JSON-RPC 2.0 over the core: envelopes, HTTP client, and the server (router, Socket.IO, listener, `run_server*`); `host::{cli, desktop, tui}`, the shared host boot; re-exports `embed` and `tinyhumans` as the hosts' curated facade; plus `session_store` (`session-store` feature), the on-disk session store (`session_raw/`, `session_db/`, `tinyagents_store/`, turn states) behind TinyAgents' session store port, which the app, CLI and TUI install. Core and embed reach session state through the port (`agent::session_store`); a few legacy paths still fall back to workspace files when no store is installed. With a storage URL (`OPENHUMAN_STORAGE_URL` / `[storage] url`), `install_for_host` installs TinyAgents' `DriverSessionStores` over that backend instead (core `storage` domain) |
+| `crates/openhuman-tinyhumans/` | The TinyHumans layer above embed (depends on embed only), and the only owner of anything hosted: the backend transport port and its SDK implementation, the authenticated client, routes and RPC proxies, and the hosted providers (integrations, voice, inference, channels, memory), all plugged into the core through its generic registries; a `RuntimeBuilder` that boots connected; and the host-side login/session owner (login-token exchange, `/auth/me`, current-user cache, credential handoff) used by app and TUI |
+| `crates/openhuman-tui/` | Standalone terminal frontend; depends on `openhuman-rpc` only and boots with `openhuman_rpc::host::tui` |
 | `tests/` | Rust integration and JSON-RPC tests |
-| `gitbooks/` | Public product and contributor documentation |
-| `docs/` | Internal maintainer documentation |
+| `docs/gitbooks/` | Public product and contributor documentation, synced with GitBook (`en/` is canonical, `zh/` the translation) |
+| `docs/` | Everything else here is internal maintainer documentation |
 | `vendor/` | Recursive git submodules; root `Cargo.toml` `[patch]` tables point into this tree |
 
 Run commands from the repository root. The root package is a private pnpm
 workspace.
+
+The Rust crates form a strict chain; each one's normal dependencies name only
+the layer directly below it:
+
+```text
+openhuman-core -> openhuman-embed -> openhuman-tinyhumans -> openhuman-rpc -> { app, cli, tui }
+```
+
+Hosts (app, CLI, TUI) depend on `openhuman-rpc` alone and reach the core
+through its curated facade (`openhuman_rpc::host`, `openhuman_rpc::embed`,
+`openhuman_rpc::tinyhumans`), never through `__host` / `core_host` or an
+`openhuman_core::` path. `node scripts/ci/check-crate-chain.mjs` (part of
+`pnpm rust:layout`) enforces both. Dev-dependencies are exempt, which is how
+the root tests keep reaching into the core.
 
 ## Product boundaries
 
@@ -40,8 +55,9 @@ workspace.
 - The frontend and Tauri shell present or orchestrate core behavior. Do not
   duplicate core policy in TypeScript or shell code.
 - The desktop core runs as a tokio task managed by
-  `crates/openhuman-app/src/core_process.rs`. Frontend RPC uses the per-launch bearer
-  returned through the `core_rpc_token` command.
+  `crates/openhuman-app/src/core_process.rs` (`openhuman_rpc::host::desktop`).
+  Frontend RPC uses the per-launch bearer returned through the
+  `core_rpc_token` command.
 - `OPENHUMAN_CORE_REUSE_EXISTING=1` connects the shell to an external core for
   debugging.
 
@@ -112,6 +128,19 @@ DevTools client can attach to it. Run the same SPA in Chrome instead:
   desktop core's port; the default scans 7788-7808), `OPENHUMAN_CORE_TOKEN`, and
   `OPENHUMAN_WORKSPACE` (point it at a scratch dir for a clean profile).
 
+Scripted browser runs (Playwright, headless): `pnpm debug web` boots a
+throwaway stack (the mock backend, a fresh `openhuman-core serve` on a scratch
+workspace, Vite with `OPENHUMAN_VITE_NO_WATCH=1`) and signs in through the real
+GitHub button, which the mock answers like the backend. `--script <file.mjs>`
+runs a scenario against the signed-in page (default export receives `page`,
+`mock.set(key, value)` for mock behaviors such as `llmStreamScript`, `rpc`,
+`screenshot` and `log`); without it the stack stays up until Ctrl-C. Logs and
+screenshots go to `target/debug-logs/web-<ts>/`. Example:
+`scripts/debug/web-scripts/stop-mid-turn.mjs`. Set `OPENHUMAN_VITE_NO_WATCH=1`
+on any Vite run that dies with `ENOSPC: System limit for number of file
+watchers reached`. `--headed` needs the full Chromium build
+(`pnpm --filter openhuman-app exec playwright install chromium`).
+
 Long CI build or test commands must run through
 `scripts/ci-cancel-aware.sh`. Do not export `CARGO_TARGET_DIR`; the repository
 already configures shared build output where appropriate.
@@ -120,7 +149,8 @@ Keep matching profile settings synchronized between `Cargo.toml` and
 `crates/openhuman-app/Cargo.toml`:
 
 - Development dependencies use `debug = false`.
-- Release builds use thin LTO, one codegen unit, symbol stripping, and
+- Release builds use thin LTO, 16 codegen units (one unit pushed the desktop
+  release matrix from ~46 to ~84 min, 6941b18c85), symbol stripping, and
   `debug = "line-tables-only"`.
 
 ## Testing and CI
@@ -128,6 +158,12 @@ Keep matching profile settings synchronized between `Cargo.toml` and
 CI Lite runs area-specific checks and changed-line coverage on PRs to `main`
 or `release`. CI Full runs the complete suites for `release`. Changed-line
 coverage must be at least 80 percent.
+
+### Test ownership
+
+OpenHuman tests composition, host policy, adapters, RPC wire contracts, and data compatibility. Module behavior is tested in the owning `vendor/tiny*` repository. A host test that calls a vendor module's internals (for example, `tinychannels::providers::*` or `tinyinference_local::service::*`) belongs upstream. When code moves upstream, move its tests in the same upstream PR, then delete them in the host PR. Keep one host smoke test per module: load it and make one call through the bus. That is enough to test the host integration.
+
+A PR that only deletes tests is exempt from changed-line coverage because it has no changed lines for diff-cover to measure. CI Lite runs that changed-line check at an 80 percent threshold.
 
 - Frontend unit tests are colocated as `*.test.ts` or `*.test.tsx` under
   `app/src/`. Use Vitest and test behavior rather than implementation.
@@ -166,9 +202,10 @@ coverage must be at least 80 percent.
   need no entry. Run them as `cargo test -p openhuman-cli --test <name>`.
 - A suite that boots the core **in-process** and reaches the backend (mock)
   must call `tinyhumans_boot::boot()` from `tests/support/tinyhumans_boot.rs`
-  first; the core has no backend transport of its own, and without it every
-  backend call answers `BACKEND_UNAVAILABLE:`. Suites that spawn the
-  `openhuman-core` binary get it from `main.rs`.
+  first (it runs `openhuman_tinyhumans::install`, a dev-dependency of
+  `openhuman-cli`); the core has no hosted code of its own, and without it
+  every backend call answers `BACKEND_UNAVAILABLE:`. Suites that spawn the
+  `openhuman-core` binary get it from `main.rs` (`openhuman_rpc::host::cli`).
 
 Shared mock backend:
 
@@ -232,6 +269,17 @@ With the policy **disabled** (the default):
   `~/.aws`) and system roots stay unreachable. So do `..` traversal and null
   bytes in a path. Keep that floor.
 
+The floor is TinySecurity's. With **security disabled**
+(`security/switch.rs`: a build without `security-module`, or `[security] mode
+= "off"`) there is no path policy at all: paths resolve on the host with no
+floor, so file tools reach `~/.ssh` like any other path. Refusing `..` and null
+bytes stays, as input validation of a malformed argument, not as policy. Tool
+calls are not classified. `[privacy] mode = "local_only"` is its own network
+setting and stays enforced: egress descriptors are refused, and shell commands
+that may reach the network are refused by the host's conservative classifier
+(`security/policy/local_only_commands.rs`). Approvals a channel or flow demands
+still apply.
+
 With `[autonomy] enabled = true`:
 
 - `action_dir` is the agent's permitted read and write root — and is granted as
@@ -287,6 +335,14 @@ UI rules:
 - Use `isTauri()` or catch `invoke` failures. Do not inspect
   `window.__TAURI__` directly.
 - Canonical visual tokens live in `app/src/styles/tokens.css`.
+- Always build UI from the shadcn primitives in `app/src/components/ui/`
+  (`Button`, `Badge`, `Alert`, `Card`, `ModalShell`/`Dialog`, `Popover`,
+  `Tooltip`, `Tabs`/`ChipTabs`, `TextField`, `NativeSelect`, `Toast`, ...).
+  Do not hand-roll a surface a primitive already covers (a banner is an
+  `Alert`, a dismiss control is a `Button`, a notification is `toast.add`).
+  When a primitive is missing, add it to `components/ui/` from the shadcn
+  registry (`components.json`, `base-nova` style), adapted to the app's
+  tokens, `Button` and lucide icons, then use it.
 
 ## Tauri shell
 
@@ -324,11 +380,19 @@ Additional rules:
   namespace branches to `cli.rs` or the JSON-RPC server.
 - RPC namespace strings are wire contracts and do not follow directory
   renames.
-- Domain tools live with their domain and are re-exported through
-  `crates/openhuman-core/src/tools/mod.rs`. Keep only cross-cutting tools in
+- Domain tools live with their domain. Each domain builds its tool family
+  through a registration function; `tools::ops` composes those families before
+  applying capability filters. Preserve catalogue order when moving
+  registrations. Import concrete tools from their owning domain instead of
+  adding domain globs to `tools/mod.rs`. Keep only cross-cutting tools in
   `tools/impl/`.
-- Stable memory collection scope belongs in `metadata.path_scope`; item IDs
-  are deduplication keys.
+- Memory scope comes from the namespace, never from metadata or model
+  arguments: `memory::scope` resolves the acting identity to a layout root
+  and memory agent id, and under layout v3 the engine is bound with
+  `EngineSettings::scope_root` = `user:<id>` (`memory::scope::user_root`),
+  below which TinyMemory places `ws:`/`source:`/`agent:` nodes and
+  `app:<kind>` leaves (`vendor/tinymemory/docs/architecture/cortex-layout.md`).
+  Item ids are deduplication keys.
 - Update `crates/openhuman-core/src/platform/about_app/` when user-visible capabilities
   change.
 - The controller contract lives in core: every domain operation returns
@@ -342,16 +406,30 @@ Additional rules:
   (`http-client` feature), and the whole server (`server` feature): the axum
   router and handlers, auth middleware, Socket.IO, `/dev/connect`, the
   listener bind (`openhuman_rpc::server::serve`) and the `run_server*` entry
-  points. A host that runs `openhuman-core run`/`serve` calls
-  `openhuman_rpc::server::install_cli_server()` before `run_core_from_args`.
+  points. `openhuman_rpc::host::cli` gives the core this crate's server as
+  the `run`/`serve` launcher.
   Domain-owned HTTP handlers the router mounts (`inference::http`, the
   dictation WebSocket) stay in their domains behind core's `http-server`
   feature. The `http_host` static-directory file server lives here too
-  (`openhuman_rpc::http_host`); `install_cli_server()` and
+  (`openhuman_rpc::http_host`); `host::cli`, `host::desktop` and
   `build_core_http_router()` register its `http_host.*` controllers as a core
   extension, so a host without this crate has no `http_host` surface.
+- The hosts boot through `openhuman_rpc::host`: `host::cli(args)` is the
+  `openhuman-core` binary (and the app's `core` / `mcp` subcommands);
+  `host::desktop(DesktopOptions, shutdown, ready_tx)` is the desktop shell's
+  embedded server (in-memory bearer, preferred port with stale-listener
+  takeover, ready signal); `host::tui()` builds the TUI's runtime. Each
+  connects the TinyHumans backend itself. One embed runtime exists per
+  process, so a host that restarts its server must let the old task (and the
+  runtime it owns) drop before it spawns the next.
 
 ## Tool, harness, and runtime boundaries
+
+Embed public API documentation: [Embedding](docs/gitbooks/en/developing/embed/README.md),
+[concepts](docs/gitbooks/en/developing/embed/concepts/README.md), and the source-generated
+[builder setters](docs/gitbooks/en/developing/embed/builder-setters.md). Snippets come from
+compiled examples; run `pnpm docs:generate` and `pnpm docs:check` after changing them.
+
 
 `tinyagents` owns tool-call dialects, parsing, catalog rendering, transcript
 replay, session identity, and the agent loop. `tinytools` owns the shared
@@ -388,7 +466,7 @@ sandboxing, timeouts, and progress events.
   `include_user_skills(true)`.
 - Library mode has no user login: the runtime's API key rides managed
   inference as `Authorization: Bearer` and backend REST as `x-api-key`
-  (`security::credentials::api_key`, `session_support::BackendCredential`).
+  (`credentials::api_key`, `session_state::BackendCredential`).
   Every backend caller resolves its credential through
   `resolve_backend_credential` (or `backend_bearer_secret` for bearer-only
   seams), never `get_session_token`, so the key covers integrations, voice,
@@ -401,7 +479,7 @@ sandboxing, timeouts, and progress events.
   need a signed-in user.
 - The core never obtains, validates, exchanges or refreshes a credential.
   It takes one — a session JWT, an API key, or the offline local token —
-  through `auth.set_credential` (`security::credentials::ops::credential`)
+  through `auth.set_credential` (`credentials::ops::credential`)
   and does only what it owns with it: user-dir activation, gated services,
   the scheduler gate, Sentry and prompt identity. Login-token exchange,
   `GET /auth/me` and the current-user cache belong to the host's session
@@ -428,14 +506,20 @@ seed history by hand, or pick a transcript by recency.
 - **A resumed session's prompt is frozen.** It reuses its persisted system
   messages verbatim, which is what keeps the provider's prefix cache warm
   across a restart. The accepted consequence is that prompt edits, new skills
-  and newly connected integrations do not reach an existing thread.
+  and newly connected integrations do not reach an existing thread, unless
+  the agent's definition sets `refresh_prompt_on_resume`: then a resumed
+  thread is sent the prompt rendered now, and a changed prompt seals the
+  current generation and continues the conversation in the next
+  (`agent/session_host/runtime_session/prompt_refresh.rs`).
 - **So is the tool list it was sent.** Every turn records its tool
   declarations in the transcript (a `{"kind":"tools"}` record, written only
   when they change); resume restores them, the prefix, and the committed-turn
   count. The host never shrinks a thread's tools because a cache went cold:
   `session_host/recorded_tools.rs` rebuilds recorded Composio actions as
   deferred executors, and the prelude fetches integrations on the first turn
-  of every session instance, not only on a brand-new thread.
+  of every session instance, not only on a brand-new thread. Explicit embed
+  `Turn::tools` overrides and host-only belts are authoritative instead: they
+  do not restore revoked tools from an earlier transcript.
 - **Pre-identity conversations are adopted once**, on first resume, from the
   timestamped stems they were written to (`adopt_legacy_session_transcripts`).
   No legacy file is modified.
@@ -449,16 +533,44 @@ narrow capabilities.
 
 Cargo default features define the contributor build;
 `scripts/ci/product-features.txt` defines the shipped product. The Tauri shell
-disables default features, so product gates must be forwarded explicitly in
-`crates/openhuman-app/Cargo.toml` and checked by
-`scripts/ci/check-feature-forwarding.mjs`. The same gate checks the library
-chain: a core gate must be forwarded by `openhuman-embed`, then
-`openhuman-tinyhumans`, then `openhuman-cli`, or be listed in
+disables default features, so product gates must be forwarded explicitly on
+its `openhuman-rpc` dependency in `crates/openhuman-app/Cargo.toml` and
+checked by `scripts/ci/check-feature-forwarding.mjs`. The same gate checks the
+library chain: a core gate must be forwarded by `openhuman-embed`, then
+`openhuman-tinyhumans`, then `openhuman-rpc`, then the `openhuman-cli` and
+`openhuman-tui` hosts (each to `openhuman-rpc/<gate>`), or be listed in
+
+## Storage engine ownership
+
+tinystoragedrivers (`vendor/tinystoragedrivers`) is the only crate family that may
+depend on a storage engine. Engines (rusqlite, mongodb, aws-sdk-s3, lapin,
+object_store, sqlx, redb, sled, rocksdb, fs2, and their transitive deps) are
+reachable only from the following composition roots, which are the only
+packages listed in the ALLOWLIST in `scripts/ci/check-storage-owner.mjs`:
+
+  openhuman          core storage domain (installs and owns the backend)
+  openhuman-app      keyring secrets via rusqlite
+  openhuman-cli      keyring secrets via rusqlite
+  openhuman-tui      keyring secrets via rusqlite
+  openhuman-rpc      keyring secrets via rusqlite
+  tinychannels       iMessage chat.db reader (read-only SQLite)
+  tinybox-cli        bin target, bundles engine
+  tinyjuice          bin target, bundles engine
+
+Every other first-party crate must reach tinystoragedrivers only through
+`tinystoragedrivers-types`, `tinystoragedrivers-api`, `tinystoragedrivers-bus`
+or `tinystoragedrivers-busproxy`. The gate `node scripts/ci/check-storage-owner.mjs`
+walks the normal+build dependency closure of `--all-features` from every
+non-root first-party package and fails if it reaches an engine crate.
+Run in `pnpm rust:layout`.
+
 `CHAIN_GATES_NOT_FORWARDED` / `CHAIN_LOCAL_GATES` with a reason. Test both enabled and disabled
 builds after changing a gate. Use `scripts/assert-shed.sh` or
 `scripts/dep-sim.py` before claiming a dependency reduction.
 
 ## Loadable modules and bus contracts
+
+Hosts must interface with loadable components through their minimal `*-bus` contracts. Never import, re-export, link, or call their implementation libraries directly, including through wrapper crates or indirect dependencies. Execute component behavior through the compiled TinyBus module. If the required types or operations are missing, extend the contract and implementation in the owning repository and raise a PR against its canonical upstream first; then consume the released module and update OpenHuman’s gitlink and adapter. Do not introduce a host-side implementation workaround.
 
 ### Submodule ownership
 
@@ -482,6 +594,7 @@ Direct rendered submodules under `vendor/`:
 
 | Submodule | Owns |
 | --- | --- |
+| `tiny-artifacts` | Versioned artifacts as a plain library (no bus contract): the record and version model, the `Artifacts` service and its rules (content fits the kind, file paths stay inside the host's `FileRoots` and pass its guard, revisions append, kept version files, publishing), the agent artifact tools, and the file-system store. OpenHuman owns the ports: the document-backed store, the card UI bridge, the protected-path guard and the cloud-storage publisher (`artifacts/`). |
 | `tinyagents` | Provider-neutral agent harness and durable typed state graph: model/tool loop, tool-call dialects and parsing, middleware, retries, caching, sessions/transcripts, and graph execution. |
 | `tinybox` | Isolated execution environments for code the host does not trust; box lifecycle and isolation backends. |
 | `tinybus` | TinyBus runtime and module contracts: discovery/loading, ABI and manifest admission, transport, proxies, lifecycle, and module bus behavior. |
@@ -495,12 +608,12 @@ Direct rendered submodules under `vendor/`:
 | `tinyjuice` | Agent tool-output compression and recovery of omitted content. |
 | `tinymcp` | The TinyMCP module implementation and its bus contract. Put MCP module behavior and contract changes here; OpenHuman owns configuration, lifecycle, and host integration. |
 | `tinymemory` | Engine-neutral memory contracts, operations, and providers. Its nested TinyCortex submodule owns the TinyCortex memory engine. |
-| `tinyruntime` | Runtime discovery/installation and bounded pools of warm language interpreter processes, exposed as a TinyBus module. |
+| `tinystoragedrivers` | Storage ports, drivers (sqlite/file/mongodb/s3), secrets, storage bus contract; every module's tsd dependency is patched onto this checkout. |
 | `tinysearch` | Web-search module, provider dispatch, tool declarations, and execution behind its TinyBus contract. |
+| `tinysecurity` | Security decisions exposed by `tinysecurity-bus`: command and path policy, approval lifecycle and trust, action budgets, redaction and scans, privacy and egress, sandbox planning, audit, keyring and secret crypto, and device pairing. OpenHuman owns configuration translation, host callbacks, the approval surface, and execution orchestration. |
 | `tinyskills` | Host-independent skill/workflow bundle parsing, discovery, scope resolution, resource inventory, and safe reads. OpenHuman owns trust and execution policy. |
 | `tinyvoice` | Host-agnostic voice primitives such as audio framing, VAD, wake-word gating, routing, and STT hallucination detection. |
 | `tinywallet` | Multi-chain wallet: `tinywallet-crypto` (address, asset, chain, `rpc::Transport`, tx codec), `tinywallet-x402` (x402 wire, payment, spending ledger, `x402_request` tool), `tinywallet-web3` (wallet engine, per-chain build/sign/broadcast flows, swap/bridge/dapp quotes, agent tools) behind host seams (`WalletSigner`, `PaymentSigner`, `WalletAccounts`, `RpcEndpoints`, `QuoteScope`, `Web3Backend`, `ProxyPolicy`), and the loadable `tinywallet-module` that derives keys and signs. OpenHuman keeps keyring, consent, credentials, config, controllers and the seam impls under `web3/`. |
-| `motosan-ai-oauth` | Provider-agnostic PKCE OAuth login and token-refresh primitives. |
 
 Some rendered submodules are shared dependencies nested inside those projects,
 not separate OpenHuman feature implementations. Make changes to them in their
@@ -530,19 +643,21 @@ method constants, request and response types, and its contract version.
 | `tinydocs-bus` | `documents` |
 | `tinyvoice-bus` | `voice` |
 | `tinyjuice-bus` | inference kernel |
-| `tinyruntime-bus` | runtime clients |
 | `tinywallet-bus` | `web3` (contract; the chain primitives are in `tinywallet-crypto`) |
 | `tinymcp-bus` | `mcp` |
 | `tinychannels-bus` | channel vocabulary |
 | `tinyconnectors-bus` | OAuth connector (Composio) wire contract; called through `integrations/composio/module_client.rs` |
+| `tinysecurity-bus` | Security policy, approval, audit, redaction, egress, sandbox-plan, keyring, secret-cipher and device-pairing contracts; called through `modules/security/` |
 
 Rules:
 
 - Never redeclare a contract type in OpenHuman.
 - Call members through contract constants, not string literals.
 - Contract crates stay synchronous and free of I/O and runtime dependencies.
-- Shared wire behavior belongs in the contract. Runtime, config, and security
-  policy stay in the host.
+- Shared wire vocabulary belongs in the contract. Component algorithms and
+  security decisions execute in the compiled module. Runtime configuration,
+  host callbacks, user interaction, and external-effect execution stay in the
+  host.
 - Test the handwritten registry metadata against each contract's bus name and
   object path.
 - Initialize recursive submodules before building: `git submodule update
@@ -560,6 +675,27 @@ They share its privileges and crash domain.
 - Do not enable the `modules` feature directly on the unconditional
   `tinybus` dependency. Forward it from OpenHuman's own feature.
 
+Module sources (`OPENHUMAN_MODULE_SOURCE`, `[modules] source`; details in
+`crates/openhuman-core/src/modules/README.md`, "Module source"):
+
+- `release` is the registry-pinned, digest-checked GitHub artifact. CI and
+  shipped builds use `release` only; never document or configure `linked` or
+  `source` for CI or production.
+- `linked` (in-process factory) and `source` (a locally built artifact from the
+  gitlink) are local development and local tests only.
+- Iterate with `scripts/modules/build.mjs`, check the pin with
+  `scripts/modules/pin-status.mjs` before pushing, and release and re-pin with
+  `scripts/modules/release-and-repin.mjs`.
+
+`[components]` (`config.toml`, `OPENHUMAN_COMPONENT_<NAME>=0|1`) holds one bool
+per tiny dependency, all default true. It resolves to a `ComponentSet` that only
+narrows the host's `DomainSet`, `ServiceSet` and `ToolGroups`, and takes effect
+on the next core start. It adds no Cargo gate. A disabled component's module is
+never downloaded, mapped or registered (`ModuleState::Disabled`,
+`LoadError::Disabled`), its tools are not registered, its RPC namespace answers
+`COMPONENT_DISABLED:<name>`, and `about_app` marks its capabilities `disabled`.
+See `docs/gitbooks/en/developing/components.md`.
+
 Memory uses `tinymemory-api` as its contract. `memory::api` is a selective
 re-export of the wire surface, not a place to copy or widen the whole crate.
 Pass source scope and self-echo exclusions explicitly because task-local state
@@ -568,65 +704,92 @@ module release before migrating a host call to it.
 
 ## Backend API
 
-The core does not depend on `tinyhumans-sdk`. It reaches the hosted backend
-only through the port `crates/openhuman-core/src/backend/transport/`
-(`BackendTransport`, `BackendRequest`, `BackendTransportError`); the SDK-backed
-implementation is `crates/openhuman-tinyhumans` (`SdkBackendTransport`), which
-sits above `openhuman-embed` and is installed once per process
-(`openhuman_tinyhumans::install`, or `RuntimeBuilder` for library hosts, or
-`CoreBuilder::backend_transport`). A core with no transport installed runs
-agents, memory, tools and RPC without any TinyHumans connection and answers
-backend-touching calls with `BackendApiError::BackendUnavailable` /
-`BACKEND_UNAVAILABLE:`. Never add `tinyhumans-sdk` back to the core; the only
-crate allowed to depend on it is `openhuman-tinyhumans` (`cargo tree -p
-openhuman -i tinyhumans-sdk` must stay empty). Every host that boots a core
-(`crates/openhuman-app/src/main.rs` and `lib.rs::run`,
-`crates/openhuman-tui/src/runner.rs`, `crates/openhuman-cli/src/main.rs`)
-calls `openhuman_tinyhumans::install` first; it also registers the hosted RPC
-proxies (`billing`, `team`, `referral`, `announcements`, `webhooks`,
-`channel_link`, `oauth` — `crates/openhuman-tinyhumans/src/hosted/`) into the
-core's controller registry through `core::all::register_controller_extension`
-(`DomainGroup::Hosted`). New backend-only proxy domains belong there, not in
-the core.
+The core has no backend module, no hosted port, no hosted route and no
+TinyHumans hostname (`crates/openhuman-core/src/backend/` is gone, and
+`node scripts/ci/check-core-hosted-free.mjs`, part of `pnpm rust:layout`, fails
+on `crate::backend`, `tinyhumans.ai` and the hosted route literals
+`agent-integrations`, `/voice-agent`, `/openai/v1`, `/telemetry/langfuse`,
+`/memory/free-period` and `/teams/me` in core source outside comments and
+`_tests.rs`). The core does not depend on `tinyhumans-sdk`; the only crate that
+may is `openhuman-tinyhumans` (`cargo tree -p openhuman -i tinyhumans-sdk` must
+stay empty).
 
-Add missing backend routes to the vendored SDK (its unexposed-route registry
-is the route policy the transport enforces) and name them from the core;
-do not recreate route implementations in `crates/openhuman-core/src/backend/`.
+`crates/openhuman-tinyhumans` owns everything hosted: the transport port
+(`BackendTransport`, `BackendRequest`, `BackendTransportError`,
+`TransportProfile`, `BaseUrlPurpose` in `src/transport/port.rs`) and its
+SDK-backed implementation (`SdkBackendTransport`), the authenticated client
+(`src/client/`: `BackendClient`, `HostedApiError`, `flatten_authed_error`), the
+URL, header and product-identity policy (`src/backend/`: `url.rs`, `headers.rs`,
+`product.rs`), the hosted routes and RPC proxies (`src/hosted/`), and the hosted
+providers (`src/integrations/`, `src/voice/`, `src/inference/`,
+`src/channels/`, `src/memory/`). It builds one process-wide transport
+(`openhuman_tinyhumans::client::shared_transport`); the core holds no transport
+slot (`CoreBuilder::backend_transport` and the `CoreContext` accessor are
+removed). What a backend response *means* is decided in the transport
+(`tinyhumans_sdk::classify`, applied by `map_sdk_error`); the recovery lives in
+`BackendClient` and `IntegrationClient::map_transport_error`
+(`crates/openhuman-tinyhumans/src/integrations/client/errors.rs`). Add missing
+backend routes to the vendored SDK (its unexposed-route registry is the route
+policy the transport enforces), not to the core.
 
-The core holds no hosted URL, default, environment variable, header policy or
-product identity of its own any more — it only *asks* the installed
-transport, through `crates/openhuman-core/src/backend/mod.rs`'s
-`backend::base_url`, `backend::inference_base_url`, `backend::product_identity`
-and `backend::attribution_headers`. That state now lives with the transport
-implementation, in `crates/openhuman-tinyhumans/src/backend/`: `url.rs`
-(defaults, `BACKEND_URL`/`VITE_BACKEND_URL` overrides, the local-AI/inference
-guard), `headers.rs` (attribution headers and per-profile `reqwest` clients)
-and `product.rs` (`ProductIdentity`, re-exported at
-`openhuman_tinyhumans::{product_identity, set_product_identity,
-ProductIdentity}`).
+Tinyhumans plugs into the core only through generic registries, keyed by a
+slug or id, that know nothing about TinyHumans and that any other host could
+fill. `openhuman_tinyhumans::install` (or `RuntimeBuilder::connect`) registers
+them through `register_all` (`src/register.rs`), reaching the core via
+`openhuman_embed::__host`:
 
-`crates/openhuman-core/src/backend/client.rs` owns the authenticated JSON
-client (`BackendClient`, renamed from `BackendOAuthClient`) and error
-classification. Authenticated `BackendClient` requests go through
-`authed_json`, whose private `finish_authed_json` classifies transient
-transport failures and maps 401s and the transport's typed channel-message
-404s (`ChannelMessageNotFound` / `ChannelMessageRouteMissing`) to typed
-`BackendApiError` variants. What a backend response *means* is decided in
-the transport (`tinyhumans_sdk::classify`, applied by
-`openhuman-tinyhumans`'s `map_sdk_error`), never by reading bodies in the
-core; the recovery stays in the core. `IntegrationClient::map_transport_error`
-(`crates/openhuman-core/src/integrations/client/errors.rs`) plays the same
-role for integrations. Route new backend calls through those helpers instead
-of matching `BackendTransportError` by hand.
+| Hook | Core module path |
+| --- | --- |
+| Agent tool sources (media, file storage, integrations, google places, stock prices, web3) | `tools::sources` (`register_tool_source`) |
+| STT, TTS and viseme providers by slug | `voice::factory::registry` |
+| Live voice sessions by slug | `voice::live::registry` |
+| Chat models, embeddings and model catalogs by provider id | `inference::registry` |
+| Channel callback (`ChannelBackendRequest` to `ChannelBackendResult`) | `channels::callback_slot` |
+| Config enricher filling `Config.resolved_endpoints` | `config::register_enricher` (`config/enrichers.rs`) |
+| Memory engines by id and the free-background-work predicate | `memory::engine_registry` |
+| Composio route builder by mode | `integrations::composio::client::register_composio_route_builder` |
+| Connector proxy target by mode | `modules::connectors::register_proxy_target` |
+| Wallet backend handler | `modules::wallet_backend` (`register_wallet_backend`) |
+| Hosted RPC proxies (`billing`, `team`, `referral`, `announcements`, `webhooks`, `channel_link`, `oauth`) | controller extension via `core::all::register_controller_extension` (`DomainGroup::Hosted`) |
 
-Every TinyHumans backend request must carry a sanitized `x-sdk-name`, now
-stamped by the installed transport's `attribution_headers` (called through
-`backend::attribution_headers`):
+Registrations bind per process, or per `CoreContext` through
+`CoreBuilder::extensions` (the `*_in` variants). A core with nothing registered
+runs agents, memory, tools and RPC without any TinyHumans connection; hosted
+surfaces are missing and backend-touching calls answer `BACKEND_UNAVAILABLE:`
+(the generic sentinel prefixes stay in `core::observability`). The core reads
+resolved URLs, the socket URL, the tracing ingestion URL and headers, the
+attribution headers and the product identity from `Config.resolved_endpoints`,
+which the tinyhumans enricher fills on every config load; it never asks a
+transport. `Config.api_url` is honoured as an override exactly as before.
+
+Every host that boots a core (`crates/openhuman-app/src/core_process.rs` and
+`lib.rs::run_core_from_args`, `crates/openhuman-tui/src/runner.rs`,
+`crates/openhuman-cli/src/main.rs`) does it through an `openhuman_rpc::host`
+entry, which connects the TinyHumans layer
+(`openhuman_tinyhumans::RuntimeBuilder::connect`); library hosts call
+`openhuman_tinyhumans::install` or the `RuntimeBuilder` directly. Tests that
+boot the core in-process and reach the mock backend call
+`tinyhumans_boot::boot()`. New backend-only proxy domains belong in
+`crates/openhuman-tinyhumans/src/hosted/`, not in the core.
+
+**Hosted memory.** The `tinyhumans` memory engine is registered through
+`memory::engine_registry` by `crates/openhuman-tinyhumans/src/memory/`. It
+builds TinyMemory's CortexDB engine with `EngineSettings { endpoint, headers,
+scope_root, .. }` and `EngineCredential::Dynamic(HostBearer)`, and TinyMemory's
+own `reqwest` client (`tinymemory-integrations/src/cortex/transport`) calls the
+backend's memory routes directly: none of those requests pass through
+`SdkBackendTransport`, so transport-level policy (the route registry,
+`map_sdk_error`) does not apply to them. The credential comes from
+`resolve_backend_credential` on every request. The `cortexdb` engine likewise
+calls CortexDB directly with the user's key.
+
+Every TinyHumans backend request must carry a sanitized `x-sdk-name`, stamped by
+the tinyhumans attribution headers (`src/backend/headers.rs`):
 
 - `BackendClient`
 - `IntegrationClient`, except redirected file downloads
-- the host session owner's `POST /auth/login-token/consume` and
-  `GET /auth/me` (`openhuman_tinyhumans::session`, through `ClientHeaders`)
+- the host session owner's login-token consume and current-user requests
+  (`openhuman_tinyhumans::session`, through `ClientHeaders`)
 - the agent's Langfuse and OTLP ingestion push
 - the managed model catalog listing
 
@@ -686,3 +849,25 @@ serialization.
 - Standalone debugging uses `./target/debug/openhuman-core serve`. Public
   endpoints are `GET /health`, `GET /schema`, and `GET /events`, plus the
   debug-build-only `GET /dev/connect`.
+
+<!-- gitbook-agent-instructions:start -->
+
+## GitBook Documentation Editing
+
+This repository contains documentation synced with GitBook via Git Sync.
+
+Before editing GitBook-synced Markdown, YAML, or asset files, make sure the GitBook skill is available and up to date in your local agent environment. Prefer installing or updating it with:
+
+```bash
+npx skills add gitbookio/gitbook-skills
+```
+
+This command may add or update local agent skill files. Use them only as local agent instructions; do not commit those installed skill files or any tool-generated agent configuration unless the user explicitly asks for it.
+
+If `npx` is unavailable, load the skill from:
+
+https://gitbook.com/docs/skill.md
+
+When making changes, preserve GitBook sync metadata such as frontmatter, `SUMMARY.md`, `gitbook-docs.yaml`, `.gitbook/`, and asset links unless the requested edit explicitly requires changing them.
+
+<!-- gitbook-agent-instructions:end -->

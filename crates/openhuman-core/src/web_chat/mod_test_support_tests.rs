@@ -27,7 +27,7 @@ pub fn is_non_retryable_rate_limit_for_test(lower: &str) -> bool {
 }
 
 pub fn key_for_test(thread_id: &str) -> String {
-    super::key_for(thread_id)
+    super::key_for(&crate::core::runtime::DispatchCtx::ambient(), thread_id)
 }
 
 pub fn event_session_id_for_test(client_id: &str, thread_id: &str) -> String {

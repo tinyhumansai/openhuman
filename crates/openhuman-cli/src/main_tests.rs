@@ -1,55 +1,21 @@
 use super::*;
 
 #[test]
-fn scrubs_bearer_token() {
+fn release_tag_uses_the_crate_version() {
+    let tag = process::sentry::release_tag(env!("CARGO_PKG_VERSION"), None);
+    assert_eq!(tag, format!("openhuman@{}", env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
+fn the_shared_chain_scrubs_secrets() {
+    // The CLI no longer carries its own scrubber; this pins that the one it
+    // installs (embed's) still redacts the shapes the old one did.
     assert_eq!(
-        scrub_secrets("Authorization: Bearer abc123xyz"),
+        process::sentry::scrub_secrets("Authorization: Bearer abc123xyz"),
         "Authorization: Bearer [REDACTED]"
     );
-}
-
-#[test]
-fn scrubs_api_key() {
-    assert_eq!(scrub_secrets("api_key=sk-abc123"), "api_key=[REDACTED]");
-}
-
-#[test]
-fn scrubs_anthropic_key() {
     assert_eq!(
-        scrub_secrets("key: sk-ant-api03-abcdefghijklmnop"),
-        "key: [REDACTED]"
+        process::sentry::scrub_secrets("api_key=sk-abc123"),
+        "api_key=[REDACTED]"
     );
-}
-
-#[test]
-fn scrubs_openai_admin_key() {
-    assert_eq!(
-        scrub_secrets("key: sk-admin-abcdefghijkl"),
-        "key: [REDACTED]"
-    );
-}
-
-#[test]
-fn scrubs_openai_proj_key() {
-    assert_eq!(
-        scrub_secrets("key: sk-proj-abcdefghijkl"),
-        "key: [REDACTED]"
-    );
-}
-
-#[test]
-fn scrubs_generic_sk_key() {
-    assert_eq!(scrub_secrets("sk-abcdefghijklmnopqrstuvwx"), "[REDACTED]");
-}
-
-#[test]
-fn token_word_boundary_no_false_positive() {
-    let input = "cancellation_token=abc123 next_page_token=xyz789";
-    let result = scrub_secrets(input);
-    assert_eq!(result, input, "should not scrub compound token fields");
-}
-
-#[test]
-fn standalone_token_is_scrubbed() {
-    assert_eq!(scrub_secrets("token=secret_value_here"), "token=[REDACTED]");
 }

@@ -67,16 +67,23 @@ impl ConfigItem {
 pub enum SettingsAction {
     ViewAccount,
     Login,
+    LoginToken,
     Logout,
 }
 
 impl SettingsAction {
-    pub const ALL: [Self; 3] = [Self::ViewAccount, Self::Login, Self::Logout];
+    pub const ALL: [Self; 4] = [
+        Self::ViewAccount,
+        Self::Login,
+        Self::LoginToken,
+        Self::Logout,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::ViewAccount => "View account",
-            Self::Login => "Log in with one-time token",
+            Self::Login => "Sign in with your browser",
+            Self::LoginToken => "Paste a one-time login token",
             Self::Logout => "Log out",
         }
     }
@@ -86,7 +93,7 @@ impl SettingsAction {
 pub struct UiState {
     pub active_tab: AppTab,
     pub composer: Composer,
-    pub scroll_from_bottom: u16,
+    pub scroll_from_bottom: usize,
     pub spinner_tick: usize,
     pub thread_id: String,
     pub log_scroll_from_bottom: u16,
@@ -107,6 +114,36 @@ pub struct UiState {
     pub model_override: Option<String>,
     pub action_dir: String,
     pub queue_status: String,
+    pub theme: super::theme::Theme,
+    pub hits: Vec<super::actions::Hit>,
+    pub viewport: super::viewport::ViewportCache,
+    pub transcript_area: ratatui::layout::Rect,
+    pub composer_area: ratatui::layout::Rect,
+    pub composer_first_row: usize,
+    pub focus: usize,
+    pub agent_name: String,
+    pub mouse_enabled: bool,
+    pub stopping: bool,
+    pub demo: bool,
+    pub drafts: std::collections::HashMap<String, String>,
+    pub provider_id: String,
+    pub effective_model: String,
+    pub overlay_generation: u64,
+    pub overlay_tx: Option<tokio::sync::mpsc::UnboundedSender<super::effects::OverlayReply>>,
+    pub auth_tx: Option<tokio::sync::mpsc::UnboundedSender<super::account::Message>>,
+    pub auth_pending: bool,
+    pub auth_browser: bool,
+    pub policy_enabled: bool,
+    pub overlay_area: ratatui::layout::Rect,
+    pub suggestion_selected: usize,
+    pub auth_generation: u64,
+    pub auth_user_id: Option<String>,
+    pub auth_profile_id: Option<String>,
+    pub authenticated: bool,
+    pub auth_operation: Option<super::account::Operation>,
+    pub login_url: Option<zeroize::Zeroizing<String>>,
+    pub login_port: Option<u16>,
+    pub login_cancel: Option<super::session::LoginCancellation>,
 }
 
 impl UiState {
@@ -161,6 +198,40 @@ impl UiState {
             model_override: None,
             action_dir: String::new(),
             queue_status: String::new(),
+            theme: if std::env::var_os("NO_COLOR").is_some() {
+                super::theme::Theme::Mono
+            } else {
+                super::theme::Theme::System
+            },
+            hits: Vec::new(),
+            viewport: Default::default(),
+            transcript_area: Default::default(),
+            composer_area: Default::default(),
+            composer_first_row: 0,
+            focus: 0,
+            agent_name: "orchestrator".into(),
+            mouse_enabled: true,
+            stopping: false,
+            demo: false,
+            drafts: Default::default(),
+            provider_id: "openhuman".into(),
+            effective_model: "Model".into(),
+            overlay_generation: 0,
+            overlay_tx: None,
+            auth_tx: None,
+            auth_pending: false,
+            auth_browser: false,
+            policy_enabled: false,
+            overlay_area: Default::default(),
+            suggestion_selected: 0,
+            auth_generation: 0,
+            auth_user_id: None,
+            auth_profile_id: None,
+            authenticated: false,
+            auth_operation: None,
+            login_url: None,
+            login_port: None,
+            login_cancel: None,
         }
     }
 
@@ -174,6 +245,9 @@ impl UiState {
 
 impl Drop for UiState {
     fn drop(&mut self) {
+        if let Some(cancel) = &self.login_cancel {
+            cancel.cancel();
+        }
         if let Some(token) = &mut self.login_token {
             token.zeroize();
         }

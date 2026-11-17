@@ -24,7 +24,7 @@ export interface AmplitudeLipsync {
  * of times per turn, so it is cheap as a dependency, while the amplitude it
  * drives stays in a ref because that moves every frame. Reads the SDK accessor
  * out of a ref rather than props because the session lives inside
- * `RealtimeVoiceControls` (which owns its own `ConversationProvider`) — see
+ * `LiveVoiceControls` (which owns the session) — see
  * `RealtimeVoiceAudio`.
  *
  * State is committed only when the viseme code actually changes. The smoothed

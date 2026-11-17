@@ -1,30 +1,21 @@
 import debugFactory from 'debug';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useStore } from 'react-redux';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../../chat/promptInjectionGuard';
 import { trackAnalyticsEvent } from '../../components/analytics';
-import { AgentStatus } from '../../components/assistant-ui/elements/agent-status';
-import { TodoList } from '../../components/assistant-ui/elements/todo-list';
-import ChatFilesChip from '../../components/chat/ChatFilesChip';
 import WorkflowProposalCard from '../../components/chat/WorkflowProposalCard';
 import { ConfirmationModal } from '../../components/intelligence/ConfirmationModal';
 import { SidebarContent } from '../../components/layout/shell/SidebarSlot';
 import { ArtifactCardAdapter } from '../../features/conversations/aui/ArtifactCardAdapter';
+import { ArtifactPreviewPanel } from '../../features/conversations/aui/ArtifactPreviewPanel';
 import { ContextUsage } from '../../features/conversations/aui/ContextUsage';
 import { PlanReviewCardCore } from '../../features/conversations/aui/PlanReviewPart';
-import { toAuiTodoItems } from '../../features/conversations/aui/TodoListPart';
 import { useRunMode } from '../../features/conversations/aui/useRunMode';
-import {
-  formatTokens,
-  useLoadThreadGoal,
-  useThreadGoal,
-} from '../../features/conversations/aui/useThreadGoal';
-import {
-  useLoadThreadTodos,
-  useThreadTodos,
-} from '../../features/conversations/aui/useThreadTodos';
+import { useLoadThreadGoal } from '../../features/conversations/aui/useThreadGoal';
+import { useLoadThreadTodos } from '../../features/conversations/aui/useThreadTodos';
 import { AssistantUiChat } from '../../features/conversations/components/AssistantUiChat';
 import { TranscriptOverlays } from '../../features/conversations/components/aui/TranscriptOverlays';
 import {
@@ -43,6 +34,15 @@ import {
   useChatMascotSendBinding,
 } from '../../features/human/chatMascot';
 import MicComposer from '../../features/human/MicComposer';
+import type { VoiceNoteDraft } from '../../features/voiceNotes/useVoiceNoteRecorder';
+import {
+  storeVoiceNote,
+  transcribeVoiceNote,
+  VOICE_NOTE_SOURCE,
+  voiceNoteContentPart,
+  type VoiceNoteMeta,
+} from '../../features/voiceNotes/voiceNoteApi';
+import { VoiceNoteComposer } from '../../features/voiceNotes/VoiceNoteComposer';
 import { useFlowApprovalRequests } from '../../hooks/useFlowApprovalRequests';
 import { useUnroutedApprovals } from '../../hooks/useUnroutedApprovals';
 import { useUsageState } from '../../hooks/useUsageState';
@@ -51,7 +51,7 @@ import {
   ATTACHMENT_MAX_FILES,
   ATTACHMENT_MAX_IMAGES,
   attachmentMetadata,
-  buildMessageWithAttachments,
+  attachmentsToParts,
   imageMarkerCost,
   parseMessageImages,
   validateAndReadFile,
@@ -61,8 +61,17 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { decideApproval } from '../../services/api/approvalApi';
 import { threadApi } from '../../services/api/threadApi';
 import { fetchThreadTokenUsage } from '../../services/api/threadUsageApi';
-import { aiRegenerate, chatCancel, chatSend, useRustChat } from '../../services/chatService';
+import {
+  aiRegenerate,
+  chatCancel,
+  chatSend,
+  chatSendWithAck,
+  editMessage,
+  useRustChat,
+} from '../../services/chatService';
+import type { ContentPart } from '../../services/chatWire';
 import { callCoreRpc } from '../../services/coreRpcClient';
+import type { RootState } from '../../store';
 import {
   beginInferenceTurn,
   clearRuntimeForThread,
@@ -70,9 +79,11 @@ import {
   fetchAndHydrateTurnState,
   hydrateThreadUsage,
   markThreadSendPending,
+  openArtifact,
   type ProcessingTranscriptItem,
   setToolTimelineForThread,
   type ToolTimelineEntry,
+  workflowProposalKey,
 } from '../../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { pendingFollowupAdded } from '../../store/queueSlice';
@@ -83,13 +94,16 @@ import {
   clearThreadInferenceActive,
   createNewThread,
   deleteThread,
+  invalidateThreadSelection,
   loadThreadMessages,
   loadThreads,
   markThreadInferenceActive,
   setSelectedThread,
   THREAD_NOT_FOUND_MESSAGE,
+  truncateMessagesFrom,
   updateThreadTitle,
 } from '../../store/threadSlice';
+import { userScopedStorage } from '../../store/userScopedStorage';
 import type { ConfirmationModal as ConfirmationModalType } from '../../types/intelligence';
 import type { ThreadMessage } from '../../types/thread';
 import { chatThreadPath } from '../../utils/chatRoutes';
@@ -105,8 +119,15 @@ import {
   ReasoningEffortPicker,
   toReasoningEffortChoice,
 } from './aui/ReasoningEffortPicker';
+import { StallWarning } from './aui/StallWarning';
+import { ThreadWorkspaceChip } from './aui/ThreadWorkspaceChip';
 import { useChatSurfaceRegistration } from './hooks/useChatSurfaceRegistration';
+import { useThreadArtifactsHydration } from './hooks/useThreadArtifactsHydration';
+import { draftStorageKey, useThreadDraft } from './hooks/useThreadDraft';
 import { ThreadList } from './threadList/ThreadList';
+import { useThreadPins } from './threadList/useThreadPins';
+import { useUnreadThreads } from './threadList/useUnreadThreads';
+import { openTinyVoice } from './utils/openTinyVoice';
 
 const CHAT_MODEL_HINT = 'hint:chat';
 const debug = debugFactory('conversations');
@@ -114,6 +135,10 @@ const debug = debugFactory('conversations');
 // tool activity, or the core's 20s `inference_heartbeat`) before the chat
 // warns that it has gone quiet. A warning only — see `handleSilence`.
 const SILENCE_WARNING_MS = 120_000;
+// How long after a Stop the thread may still show a running turn before the
+// UI settles it locally. The core publishes `chat_cancelled` before it answers
+// the cancel RPC, so this only fires when that event never reached us.
+const STOP_SETTLE_FALLBACK_MS = 5_000;
 
 interface ConversationsProps {
   /**
@@ -155,10 +180,16 @@ interface ConversationsProps {
   projectThreadList?: boolean;
 }
 
+type ComposerModelClearBarrier = {
+  promise: Promise<void>;
+  status: 'pending' | 'resolved' | 'rejected';
+};
+
 // Stable empty reference so the `activeThreadIds` selector returns the same
 // object identity when the slice field is absent (narrow test stores),
 // avoiding spurious re-renders.
 const EMPTY_ACTIVE_THREADS: Record<string, true> = {};
+const EMPTY_PENDING_APPROVALS: Record<string, unknown> = {};
 
 // Stable empty live tool-timeline / processing-transcript for the selected
 // thread. A fresh `[]` here took a new identity every render, invalidating the
@@ -243,9 +274,11 @@ const Conversations = ({
   projectThreadList = false,
 }: ConversationsProps = {}) => {
   const [composerOverride, setComposerOverride] = useState<'mic-cloud' | 'text' | null>(null);
+  const activeArtifactId = useAppSelector(s => s.chatRuntime.activeArtifactId);
   const composer = composerOverride ?? composerProp;
   const { t } = useT();
   const dispatch = useAppDispatch();
+  const store = useStore<RootState>();
   const navigate = useNavigate();
   const location = useLocation();
   const { threadId: routeThreadId } = useParams<{ threadId?: string }>();
@@ -264,8 +297,18 @@ const Conversations = ({
     : false;
   const firstActiveThreadId = Object.keys(activeThreadIds)[0] ?? null;
 
-  const [inputValue, setInputValue] = useState('');
+  // Per-thread, reload-surviving draft (`useThreadDraft`): switching threads
+  // swaps it instead of carrying half-typed text into the next conversation.
+  const [inputValue, setInputValue] = useThreadDraft(selectedThreadId ?? null);
+  // The live selection, for async send paths that finish after the user may
+  // have switched threads.
+  const selectedThreadIdRef = useRef(selectedThreadId);
+  selectedThreadIdRef.current = selectedThreadId;
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Failed sends retain their attachments by originating thread. A send may
+  // reject after the user has navigated elsewhere, so restoring into the
+  // component-wide composer state would leak one thread's files into another.
+  const failedAttachmentsByThreadRef = useRef<Map<string, Attachment[]>>(new Map());
   // What ingest counts its budget against. Tracks state on every render (so a
   // removal or a send's clear is picked up) and is written synchronously as each
   // file is admitted, which is what keeps two overlapping ingests honest.
@@ -322,8 +365,15 @@ const Conversations = ({
   // that contributes to "Maximum update depth exceeded" (TAURI-REACT-2G).
   const sendErrorRef = useRef(sendError);
   sendErrorRef.current = sendError;
+  const preserveSendErrorForRestoredDraftRef = useRef(false);
+  // The user message is persisted before chatSend starts. Reuse it when an
+  // unchanged failed draft is retried instead of appending a second prompt.
+  const persistedFailedMessageByThreadRef = useRef<Map<string, ThreadMessage>>(new Map());
   const createThreadErrorRef = useRef(createThreadError);
   createThreadErrorRef.current = createThreadError;
+  // The Redux selection intent is updated by every setSelectedThread action,
+  // including worker-thread cards rendered inside the transcript. Async
+  // startup/create continuations compare against it before selecting a thread.
   const displayedSendError = deriveChatErrorBanner(
     sendError,
     createThreadError,
@@ -399,6 +449,10 @@ const Conversations = ({
   const pendingPlanReviewByThread = useAppSelector(
     state => state.chatRuntime.pendingPlanReviewByThread
   );
+  // Optional-chain + default: narrow test stores may omit the field.
+  const pendingApprovalByThread = useAppSelector(
+    state => state.chatRuntime.pendingApprovalByThread ?? EMPTY_PENDING_APPROVALS
+  );
   const pendingWorkflowProposalsByThread = useAppSelector(
     state => state.chatRuntime.pendingWorkflowProposalsByThread
   );
@@ -417,10 +471,6 @@ const Conversations = ({
   const rustChat = useRustChat();
   // Inline thread-title rename in the sidebar thread list — keyed by the
   // thread id being edited (null = none) so any row can rename in place.
-  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
-  const [editTitleValue, setEditTitleValue] = useState('');
-  const editTitleInputRef = useRef<HTMLInputElement>(null);
-  const ignoreNextTitleBlurRef = useRef(false);
 
   const {
     isAtLimit,
@@ -446,6 +496,8 @@ const Conversations = ({
   // (the same field Settings → Routing → "Default model" edits). `null` clears
   // the pin back to the managed default.
   const [composerModelOverride, setComposerModelOverride] = useState<string | null>(null);
+  const modelSettingsWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const composerModelClearBarrierRef = useRef<ComposerModelClearBarrier | null>(null);
   // `undefined` means no explicit picker selection, so usage-reported context
   // remains authoritative. `null` means the selected model did not report a
   // window, and the meter deliberately shows an unknown limit.
@@ -453,17 +505,43 @@ const Conversations = ({
     number | null | undefined
   >(undefined);
   // The composer's thinking level. Sent with every turn (`reasoning_effort`)
-  // so it applies immediately, and written to the core's
-  // `runtime.reasoning_effort` so it survives a restart and is the default for
-  // turns the composer does not start — the same split as the model pick.
-  const [composerReasoningEffort, setComposerReasoningEffort] =
+  // so it applies immediately, and written to the core so it survives a
+  // restart and is the default for turns the composer does not start — the
+  // same split as the model pick. It is remembered per model
+  // (`runtime.reasoning_effort_by_model`) when a model is picked, and globally
+  // (`runtime.reasoning_effort`) for the managed default; a model with no
+  // level of its own shows, and sends, the global one.
+  const [globalReasoningEffort, setGlobalReasoningEffort] =
     useState<ReasoningEffortChoice>('default');
+  const [reasoningEffortByModel, setReasoningEffortByModel] = useState<
+    Record<string, ReasoningEffortChoice>
+  >({});
+  // The model a turn runs on: this session's pick, else the persisted
+  // `default_model` (the core keys per-model levels by it after a restart,
+  // before anything is picked here).
+  const [persistedDefaultModel, setPersistedDefaultModel] = useState<string | null>(null);
+  // Set once the user picks or clears a model here, so a slow mount read of
+  // the persisted default can't overwrite that choice when it lands.
+  const composerModelChosenRef = useRef(false);
+  const reasoningModel = composerModelOverride ?? persistedDefaultModel;
+  const composerReasoningEffort: ReasoningEffortChoice =
+    (reasoningModel ? reasoningEffortByModel[reasoningModel] : undefined) ?? globalReasoningEffort;
   useEffect(() => {
     let cancelled = false;
     void openhumanGetClientConfig()
       .then(res => {
         if (!cancelled) {
-          setComposerReasoningEffort(toReasoningEffortChoice(res.result?.reasoning_effort));
+          setGlobalReasoningEffort(toReasoningEffortChoice(res.result?.reasoning_effort));
+          if (!composerModelChosenRef.current) {
+            setPersistedDefaultModel(res.result?.default_model?.trim() || null);
+          }
+          const byModel: Record<string, ReasoningEffortChoice> = {};
+          for (const [model, effort] of Object.entries(
+            res.result?.reasoning_effort_by_model ?? {}
+          )) {
+            byModel[model] = toReasoningEffortChoice(effort);
+          }
+          setReasoningEffortByModel(byModel);
         }
       })
       .catch((err: unknown) => {
@@ -475,42 +553,112 @@ const Conversations = ({
       cancelled = true;
     };
   }, []);
-  const applyComposerReasoningEffort = useCallback((value: ReasoningEffortChoice) => {
-    setComposerReasoningEffort(value);
-    void openhumanUpdateRuntimeSettings({ reasoning_effort: value === 'default' ? '' : value })
-      .then(() => {
-        console.debug('[chat][composer-reasoning] persisted reasoning_effort', { effort: value });
-      })
-      .catch((err: unknown) => {
-        // The per-send value still applies; only persistence failed.
-        console.warn('[chat][composer-reasoning] failed to persist reasoning_effort', {
-          message: err instanceof Error ? err.message : String(err),
+  const applyComposerReasoningEffort = useCallback(
+    (value: ReasoningEffortChoice) => {
+      const model = reasoningModel;
+      if (model) {
+        // `default` on a model drops its own level, falling back to the global one.
+        setReasoningEffortByModel(prev => {
+          const next = { ...prev };
+          if (value === 'default') delete next[model];
+          else next[model] = value;
+          return next;
         });
-      });
-  }, []);
-  const applyComposerModel = useCallback((value: string | null, contextWindow?: number | null) => {
-    setComposerModelOverride(value);
-    setComposerModelContextWindow(contextWindow ?? null);
-    void callCoreRpc({
-      method: 'openhuman.inference_update_model_settings',
-      params: { default_model: value ?? '' },
-    })
-      .then(() => {
-        console.debug('[chat][composer-model] persisted default_model', { pinned: value !== null });
+      } else {
+        setGlobalReasoningEffort(value);
+      }
+      void openhumanUpdateRuntimeSettings({
+        reasoning_effort: value === 'default' ? '' : value,
+        ...(model ? { reasoning_effort_model: model } : {}),
       })
-      .catch((err: unknown) => {
+        .then(() => {
+          console.debug('[chat][composer-reasoning] persisted reasoning_effort', {
+            effort: value,
+            perModel: Boolean(model),
+          });
+        })
+        .catch((err: unknown) => {
+          // The per-send value still applies; only persistence failed.
+          console.warn('[chat][composer-reasoning] failed to persist reasoning_effort', {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+    },
+    [reasoningModel]
+  );
+  const persistComposerModelSettings = useCallback((value: string | null) => {
+    const write = modelSettingsWriteQueueRef.current
+      .catch(() => undefined)
+      .then(() =>
+        callCoreRpc({
+          method: 'openhuman.inference_update_model_settings',
+          params: { default_model: value ?? '' },
+        })
+      );
+    modelSettingsWriteQueueRef.current = write.then(
+      () => undefined,
+      () => undefined
+    );
+    void write.then(
+      () => {
+        console.debug('[chat][composer-model] persisted default_model', { pinned: value !== null });
+      },
+      (err: unknown) => {
         // The in-session override still applies; only persistence failed.
         console.warn('[chat][composer-model] failed to persist default_model', {
           message: err instanceof Error ? err.message : String(err),
         });
-      });
+      }
+    );
+    return write;
   }, []);
+
+  const startComposerModelClear = useCallback(() => {
+    const promise = persistComposerModelSettings(null).then(
+      () => {
+        barrier.status = 'resolved';
+      },
+      error => {
+        barrier.status = 'rejected';
+        throw error;
+      }
+    );
+    const barrier: ComposerModelClearBarrier = { promise, status: 'pending' };
+    composerModelClearBarrierRef.current = barrier;
+    // Keep a failed clear available for the next explicit send retry while
+    // marking the rejection handled if the user does not submit again.
+    void promise.catch(() => undefined);
+    return promise;
+  }, [persistComposerModelSettings]);
+
+  const waitForComposerModelClear = useCallback(() => {
+    const barrier = composerModelClearBarrierRef.current;
+    if (!barrier) return null;
+    if (barrier.status === 'rejected') return startComposerModelClear();
+    return barrier.promise;
+  }, [startComposerModelClear]);
+
+  const applyComposerModel = useCallback(
+    (value: string | null, contextWindow?: number | null) => {
+      composerModelChosenRef.current = true;
+      setComposerModelOverride(value);
+      setPersistedDefaultModel(value);
+      setComposerModelContextWindow(contextWindow ?? null);
+      if (value === null) {
+        void startComposerModelClear();
+      } else {
+        composerModelClearBarrierRef.current = null;
+        void persistComposerModelSettings(value);
+      }
+    },
+    [persistComposerModelSettings, startComposerModelClear]
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const hint = composerModelOverride ?? CHAT_MODEL_HINT;
+        const hint = composerModelOverride ?? persistedDefaultModel ?? CHAT_MODEL_HINT;
         const res = await callCoreRpc<{ model: string }>({
           method: 'openhuman.inference_resolve_model',
           params: { hint },
@@ -527,7 +675,7 @@ const Conversations = ({
     return () => {
       cancelled = true;
     };
-  }, [composerModelOverride]);
+  }, [composerModelOverride, persistedDefaultModel]);
 
   // One-shot guard for the Stop/ESC partial-preservation path (#4862): request
   // ids whose partial reply has already been persisted, so a repeated Stop/ESC
@@ -537,6 +685,21 @@ const Conversations = ({
   // thread. Per-thread (a Set) so a send to thread B isn't blocked by an
   // in-flight send to thread A.
   const pendingSendsRef = useRef<Set<string>>(new Set());
+  // Threads whose Stop landed while their send RPC was still in flight. The
+  // core registers a turn only as that RPC returns, so the cancel found
+  // nothing to stop; the send path re-issues it once the turn exists.
+  const stopRequestedDuringSendRef = useRef<Set<string>>(new Set());
+  // A confirmed cancellation may lose its terminal event; the existing
+  // fallback is still allowed to settle that turn. An unconfirmed cancel must
+  // reconcile with core before local running state is cleared.
+  const confirmedCancellationRef = useRef<Set<string>>(new Set());
+  // Per-thread backstop armed by every Stop: if the thread still shows a
+  // running turn once it fires (the `chat_cancelled` event was lost, the cancel
+  // RPC failed), the local running state is settled so Stop never leaves a
+  // spinner the user cannot get rid of.
+  const stopSettleTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const inferenceTurnLifecycleRef = useRef(inferenceTurnLifecycleByThread);
+  inferenceTurnLifecycleRef.current = inferenceTurnLifecycleByThread;
   // Per-thread silence timers. Each in-flight turn gets its own 120s watchdog
   // keyed by thread id, so concurrent turns on different threads don't share
   // (and clobber) a single timeout.
@@ -544,19 +707,24 @@ const Conversations = ({
   // Threads whose turn has gone quiet past the silence window while the core
   // still reports it running (or cannot say). Drives a warning only — the turn
   // is never torn down client-side; the Stop button is how the user ends it.
-  const [stalledThreadIds, setStalledThreadIds] = useState<ReadonlySet<string>>(() => new Set());
+  // Value: epoch ms the thread last showed any inference signal (the stall
+  // moment minus the silence window), so the warning can say how long it has
+  // been quiet.
+  const [stalledThreadIds, setStalledThreadIds] = useState<ReadonlyMap<string, number>>(
+    () => new Map()
+  );
   const markThreadStalled = useCallback((threadId: string) => {
     setStalledThreadIds(prev => {
       if (prev.has(threadId)) return prev;
-      const next = new Set(prev);
-      next.add(threadId);
+      const next = new Map(prev);
+      next.set(threadId, Date.now() - SILENCE_WARNING_MS);
       return next;
     });
   }, []);
   const clearThreadStalled = useCallback((threadId: string) => {
     setStalledThreadIds(prev => {
       if (!prev.has(threadId)) return prev;
-      const next = new Set(prev);
+      const next = new Map(prev);
       next.delete(threadId);
       return next;
     });
@@ -586,9 +754,20 @@ const Conversations = ({
   // foreground turn's timer alive.
   const turnSignatureByThreadRef = useRef<Map<string, readonly unknown[]>>(new Map());
 
-  const handleCreateNewThread = async () => {
+  const handleCreateNewThread = async (fromInitialLoad = false) => {
+    if (!fromInitialLoad) dispatch(invalidateThreadSelection());
+    const selectionIntentAtCreate = store.getState().thread.selectionIntentVersion ?? 0;
     try {
       const thread = await dispatch(createNewThread()).unwrap();
+      const currentSelectionIntent = store.getState().thread.selectionIntentVersion ?? 0;
+      if (currentSelectionIntent !== selectionIntentAtCreate) {
+        debug(
+          '[chat] create thread selection superseded; dropping result intent_at_create=%d current_intent=%d',
+          selectionIntentAtCreate,
+          currentSelectionIntent
+        );
+        return;
+      }
       dispatch(setSelectedThread(thread.id));
       void dispatch(loadThreadMessages(thread.id));
       if (shouldSyncChatRoute) {
@@ -603,49 +782,18 @@ const Conversations = ({
     }
   };
 
-  const handleStartEditTitle = (threadId: string) => {
-    const thr = threads.find(t => t.id === threadId);
-    debug('[chat] thread rename: start thread=%s', threadId);
-    setEditTitleValue(thr?.title ?? '');
-    ignoreNextTitleBlurRef.current = true;
-    setEditingThreadId(threadId);
-    const scheduleSelect = window.requestAnimationFrame ?? window.setTimeout;
-    scheduleSelect(() => {
-      editTitleInputRef.current?.select();
-      ignoreNextTitleBlurRef.current = false;
-    });
-  };
-
-  const handleCommitTitle = (threadId: string) => {
-    const trimmed = editTitleValue.trim();
-    setEditingThreadId(null);
-    // Title length only — never log the title text itself (may carry PII).
-    if (!threadId || !trimmed) {
-      debug('[chat] thread rename: commit skipped thread=%s empty=%s', threadId, !trimmed);
-      return;
-    }
-    const currentTitle = threads.find(t => t.id === threadId)?.title?.trim();
-    if (trimmed === currentTitle) {
-      debug('[chat] thread rename: commit skipped thread=%s (unchanged)', threadId);
-      return;
-    }
-    debug('[chat] thread rename: commit thread=%s len=%d', threadId, trimmed.length);
-    void dispatch(updateThreadTitle({ threadId, title: trimmed }))
-      .unwrap()
-      .then(() => debug('[chat] thread rename: committed thread=%s', threadId))
-      .catch(err =>
-        debug(
-          '[chat] thread rename: failed thread=%s err=%s',
-          threadId,
-          err instanceof Error ? err.message : String(err)
-        )
-      );
-  };
-
   // Seed the composer footer with the selected thread's persisted token/cost
   // usage (read back from its session transcripts) so the totals reflect prior
   // turns instead of starting at zero. Best-effort; live turns accumulate on top
   // via recordChatTurnUsage and a brand-new thread (hasUsage=false) is left as-is.
+  useEffect(() => {
+    const failedAttachments = failedAttachmentsByThreadRef.current.get(selectedThreadId ?? '');
+    attachmentsRef.current = failedAttachments ? failedAttachments.slice() : [];
+    setAttachments(failedAttachments ? failedAttachments.slice() : []);
+    // A thread switch must not carry the previous thread's files into this
+    // composer. Failed attachments remain in the map for that thread.
+  }, [selectedThreadId]);
+
   useEffect(() => {
     if (!selectedThreadId) return;
     let cancelled = false;
@@ -659,10 +807,12 @@ const Conversations = ({
             outputTokens: u.outputTokens,
             cachedTokens: u.cachedInputTokens,
             costUsd: u.costUsd,
+            costSource: u.costSource,
             turns: u.turnCount,
             contextWindow: u.contextWindow,
             lastTurnInputTokens: u.lastTurnInputTokens,
             lastTurnOutputTokens: u.lastTurnOutputTokens,
+            lastTurnContextTokens: u.lastTurnContextTokens,
             subAgents: u.subagents,
           })
         );
@@ -677,11 +827,21 @@ const Conversations = ({
 
   useEffect(() => {
     let cancelled = false;
+    const selectionIntentAtLoad = store.getState().thread.selectionIntentVersion ?? 0;
 
     void dispatch(loadThreads())
       .unwrap()
       .then(data => {
-        if (cancelled) return;
+        const currentSelectionIntent = store.getState().thread.selectionIntentVersion ?? 0;
+        if (cancelled || currentSelectionIntent !== selectionIntentAtLoad) {
+          debug(
+            '[chat] initial thread load selection superseded; dropping result cancelled=%s intent_at_load=%d current_intent=%d',
+            cancelled,
+            selectionIntentAtLoad,
+            currentSelectionIntent
+          );
+          return;
+        }
         // Match the sidebar's default General filter here so initial/resume
         // selection can't auto-pick a thread hidden by the selected tab.
         const visibleThreads = data.threads.filter(t => isThreadVisibleInTab(t, GENERAL_TAB_VALUE));
@@ -734,7 +894,7 @@ const Conversations = ({
           dispatch(setSelectedThread(emptyThread.id));
           void dispatch(loadThreadMessages(emptyThread.id));
         } else {
-          void handleCreateNewThread();
+          void handleCreateNewThread(true);
         }
       })
       .catch(err => {
@@ -756,37 +916,9 @@ const Conversations = ({
   }, [selectedThreadId, dispatch]);
 
   useEffect(() => {
-    const onDictationInsert = (event: Event) => {
-      const customEvent = event as CustomEvent<{ text?: string; autoSend?: boolean }>;
-      const text = customEvent.detail?.text?.trim();
-      if (!text) return;
-
-      customEvent.preventDefault();
-
-      // When autoSend is set (hotkey dictation), dispatch the transcript directly
-      // to the agent without going through the text composer.
-      if (customEvent.detail?.autoSend) {
-        void handleSendMessageRef.current?.(text);
-        return;
-      }
-
-      // A dictated draft needs a text surface where the user can inspect and
-      // send it. The mic-first composer has neither, so hand it back first.
-      setComposerOverride('text');
-      setInputValue(prev => {
-        const base = prev.trim();
-        if (!base) return text;
-        return `${base}${base.endsWith(' ') ? '' : ' '}${text}`;
-      });
-    };
-
-    window.addEventListener('dictation://insert-text', onDictationInsert as EventListener);
-    return () =>
-      window.removeEventListener('dictation://insert-text', onDictationInsert as EventListener);
-  }, []);
-
-  useEffect(() => {
-    if (sendErrorRef.current && inputValue.length > 0) {
+    if (preserveSendErrorForRestoredDraftRef.current) {
+      preserveSendErrorForRestoredDraftRef.current = false;
+    } else if (sendErrorRef.current && inputValue.length > 0) {
       setSendError(null);
     }
     // The store-recorded create failure (#5156) dismisses on the same signal:
@@ -885,10 +1017,13 @@ const Conversations = ({
   useEffect(() => {
     isMountedRef.current = true;
     const timers = sendingTimeoutsRef.current;
+    const stopTimers = stopSettleTimersRef.current;
     return () => {
       isMountedRef.current = false;
       for (const timeout of timers.values()) clearTimeout(timeout);
       timers.clear();
+      for (const timeout of stopTimers.values()) clearTimeout(timeout);
+      stopTimers.clear();
     };
   }, []);
 
@@ -1102,7 +1237,10 @@ const Conversations = ({
     return run;
   };
 
-  const handleSendMessage = async (text?: string) => {
+  const handleSendMessage = async (
+    text?: string,
+    opts?: { voiceNote?: VoiceNoteMeta; voicePart?: ContentPart }
+  ) => {
     // Guard double-submit to the SAME thread only; a send to another thread
     // may proceed concurrently.
     if (selectedThreadId && pendingSendsRef.current.has(selectedThreadId)) return;
@@ -1151,24 +1289,94 @@ const Conversations = ({
     if (!sendingThreadId) return;
     pendingSendsRef.current.add(sendingThreadId);
     addPendingSendingThread(sendingThreadId);
+    // A new turn starts here: a Stop aimed at the previous one must not reach it.
+    stopRequestedDuringSendRef.current.delete(sendingThreadId);
+    clearStopSettleTimer(sendingThreadId);
     const pendingAttachments = attachments.slice();
-    const modelOverride = composerModelOverride ?? CHAT_MODEL_HINT;
-    let messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
+    failedAttachmentsByThreadRef.current.set(sendingThreadId, pendingAttachments);
+    const modelOverride = composerModelOverride ?? undefined;
+    const modelClearBarrier = modelOverride === undefined ? waitForComposerModelClear() : null;
+    // Originals ride beside the text as typed parts; the core stages them.
+    const attachmentParts = attachmentsToParts(pendingAttachments);
+    let messageText = trimmed;
+    let persistedMessageId: string | undefined;
+    let persistedAttachmentParts: ContentPart[] = [];
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
       content: messageText,
       type: 'text',
-      extraMetadata: attachmentMetadata(pendingAttachments),
+      extraMetadata: {
+        ...attachmentMetadata(pendingAttachments),
+        ...(opts?.voiceNote ? { voiceNote: opts.voiceNote } : {}),
+      },
       sender: 'user',
       createdAt: new Date().toISOString(),
     };
 
     try {
-      const persisted = await dispatch(
-        addMessageLocal({ threadId: sendingThreadId, message: userMessage })
-      ).unwrap();
-      // The core saved the originals before returning this durable reference.
-      messageText = persisted.message.content;
+      if (modelClearBarrier) {
+        try {
+          await modelClearBarrier;
+        } catch (error) {
+          // assistant-ui clears its composer when `onNew` resolves, so restore
+          // this draft when the clear barrier prevents the send from starting.
+          preserveSendErrorForRestoredDraftRef.current = true;
+          setInputValue(normalized);
+          if (selectedThreadId === sendingThreadId) {
+            attachmentsRef.current = pendingAttachments.slice();
+            setAttachments(pendingAttachments);
+          }
+          throw error;
+        }
+      }
+      const previousFailedMessage = persistedFailedMessageByThreadRef.current.get(sendingThreadId);
+      const retryingUnchangedMessage =
+        previousFailedMessage && previousFailedMessage.content === messageText;
+      if (retryingUnchangedMessage) {
+        // The core already has this exact prompt from the failed attempt.
+        messageText = previousFailedMessage.content;
+        persistedMessageId = previousFailedMessage.id;
+        persistedAttachmentParts = previousFailedMessage.attachments ?? [];
+      } else if (previousFailedMessage) {
+        // A corrected retry must replace the already-persisted failed prompt;
+        // appending it would leave both prompts in the transcript. The edit
+        // operation truncates the failed tail and starts the corrected turn.
+        dispatch(
+          truncateMessagesFrom({
+            threadId: sendingThreadId,
+            messageId: previousFailedMessage.id,
+            inclusive: true,
+          })
+        );
+        await editMessage({
+          threadId: sendingThreadId,
+          messageId: previousFailedMessage.id,
+          content: messageText,
+          attachments: attachmentParts,
+        });
+        setInputValue('');
+        setAttachments([]);
+        attachmentsRef.current = [];
+        failedAttachmentsByThreadRef.current.delete(sendingThreadId);
+        persistedFailedMessageByThreadRef.current.delete(sendingThreadId);
+        setSendError(null);
+        pendingSendsRef.current.delete(sendingThreadId);
+        removePendingSendingThread(sendingThreadId);
+        return;
+      } else {
+        const persisted = await dispatch(
+          addMessageLocal({
+            threadId: sendingThreadId,
+            message: userMessage,
+            attachments: attachmentParts,
+          })
+        ).unwrap();
+        // The core saved the originals before returning this durable reference.
+        messageText = persisted.message.content;
+        persistedMessageId = persisted.message.id;
+        persistedAttachmentParts = persisted.message.attachments ?? [];
+        persistedFailedMessageByThreadRef.current.set(sendingThreadId, persisted.message);
+      }
     } catch (error) {
       // RTK's unwrap() re-throws the rejectWithValue payload directly (a plain
       // string, not an Error). Check for the stale-thread sentinel before
@@ -1182,12 +1390,27 @@ const Conversations = ({
       }
       const msg = error instanceof Error ? error.message : String(error);
       setSendError(chatSendError('cloud_send_failed', msg));
+      // assistant-ui already cleared the composer; give the draft back to its
+      // own thread so a failed persist doesn't lose what the user typed.
+      failedAttachmentsByThreadRef.current.set(sendingThreadId, pendingAttachments);
+      if (selectedThreadIdRef.current === sendingThreadId) {
+        preserveSendErrorForRestoredDraftRef.current = true;
+        setInputValue(normalized);
+        attachmentsRef.current = pendingAttachments.slice();
+        setAttachments(pendingAttachments);
+      } else {
+        // The user moved on: keep it as that thread's draft, not this one's.
+        void userScopedStorage.setItem(draftStorageKey(sendingThreadId), normalized);
+      }
       pendingSendsRef.current.delete(sendingThreadId);
       removePendingSendingThread(sendingThreadId);
       return;
     }
     setInputValue('');
     setAttachments([]);
+    attachmentsRef.current = [];
+    failedAttachmentsByThreadRef.current.delete(sendingThreadId);
+    persistedFailedMessageByThreadRef.current.delete(sendingThreadId);
     setSendError(null);
     setAttachError(null);
     // Silence watchdog: fires only if 120s pass without ANY inference signal
@@ -1213,12 +1436,22 @@ const Conversations = ({
       await chatSend({
         threadId: sendingThreadId,
         message: messageText,
-        model: modelOverride,
+        ...(persistedAttachmentParts.length || opts?.voicePart
+          ? {
+              persistedMessageId,
+              attachments: [
+                ...persistedAttachmentParts,
+                ...(opts?.voicePart ? [opts.voicePart] : []),
+              ],
+            }
+          : {}),
+        ...(modelOverride !== undefined ? { model: modelOverride } : {}),
         locale: uiLocale,
         reasoningEffort: composerReasoningEffort,
+        ...(opts?.voiceNote ? { source: VOICE_NOTE_SOURCE } : {}),
       });
       trackAnalyticsEvent('chat_message_sent', {
-        send_mode: 'standard',
+        send_mode: opts?.voiceNote ? 'voice_note' : 'standard',
         has_attachments: pendingAttachments.length > 0,
       });
       // Backend accepted the send; lifecycle ('started' → 'streaming') now
@@ -1226,6 +1459,15 @@ const Conversations = ({
       // user turn isn't blocked by a stale ref/state.
       pendingSendsRef.current.delete(sendingThreadId);
       removePendingSendingThread(sendingThreadId);
+      // Stop was pressed while this RPC was in flight, before the core had a
+      // turn to cancel. The turn is registered now, so cancel it for real.
+      if (stopRequestedDuringSendRef.current.delete(sendingThreadId)) {
+        debug(
+          '[chat] stop generation: re-issuing Stop pressed during send thread=%s',
+          sendingThreadId
+        );
+        stopThreadTurn(sendingThreadId);
+      }
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
     } catch (err) {
@@ -1245,14 +1487,47 @@ const Conversations = ({
       } else {
         setSendError(chatSendError('cloud_send_failed', msg));
       }
+      // assistant-ui clears its composer after `onNew` resolves. Restore the
+      // draft when the core rejects the send so the user can correct and retry.
+      preserveSendErrorForRestoredDraftRef.current = true;
+      failedAttachmentsByThreadRef.current.set(sendingThreadId, pendingAttachments);
+      setInputValue(normalized);
+      if (selectedThreadId === sendingThreadId) {
+        attachmentsRef.current = pendingAttachments.slice();
+        setAttachments(pendingAttachments);
+      }
       dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
       dispatch(clearThreadInferenceActive(sendingThreadId));
       pendingSendsRef.current.delete(sendingThreadId);
       removePendingSendingThread(sendingThreadId);
+      // No turn was started, so a Stop pressed meanwhile has nothing to stop.
+      stopRequestedDuringSendRef.current.delete(sendingThreadId);
+      clearStopSettleTimer(sendingThreadId);
     }
   };
 
   handleSendMessageRef.current = handleSendMessage;
+
+  // Voice note: transcribe (the text the agent reads), keep the audio in the
+  // core, then send the transcript as a normal turn whose row points at the
+  // audio. A failure throws so the composer keeps the draft for another try.
+  const handleSendVoiceNote = async (draft: VoiceNoteDraft) => {
+    const transcript = await transcribeVoiceNote(draft.blob);
+    if (!transcript) throw new Error(t('voiceNote.transcribeFailed'));
+    const noteId = `vn_${globalThis.crypto.randomUUID().replace(/-/g, '')}`;
+    const { mime } = await storeVoiceNote(noteId, draft.blob);
+    const voicePart = await voiceNoteContentPart(
+      noteId,
+      mime,
+      draft.blob,
+      draft.durationMs,
+      draft.waveform
+    );
+    await handleSendMessage(transcript, {
+      voiceNote: { noteId, mime, durationMs: draft.durationMs, waveform: draft.waveform },
+      voicePart,
+    });
+  };
 
   // Queue a FOLLOW-UP on the selected thread while a turn is streaming
   // (queue_mode 'followup'): the backend sends it as a fresh turn once the
@@ -1270,8 +1545,10 @@ const Conversations = ({
     const pendingAttachments = attachments.slice();
     if (!normalized && pendingAttachments.length === 0) return;
 
-    const modelOverride = composerModelOverride ?? CHAT_MODEL_HINT;
-    const messageText = buildMessageWithAttachments(normalized, pendingAttachments);
+    const modelOverride = composerModelOverride ?? undefined;
+    const modelClearBarrier = modelOverride === undefined ? waitForComposerModelClear() : null;
+    const attachmentParts = attachmentsToParts(pendingAttachments);
+    const messageText = normalized;
     // Build the full user message exactly like a normal send (content +
     // attachment metadata) so the follow-up persists identically when it is
     // flushed into the transcript on turn end. Guard `crypto.randomUUID` like
@@ -1293,19 +1570,42 @@ const Conversations = ({
     setAttachError(null);
 
     try {
-      await chatSend({
+      if (modelClearBarrier) {
+        try {
+          await modelClearBarrier;
+        } catch (error) {
+          preserveSendErrorForRestoredDraftRef.current = true;
+          throw error;
+        }
+      }
+      const ack = await chatSendWithAck({
         threadId,
         message: messageText,
-        model: modelOverride,
+        attachments: attachmentParts,
+        ...(modelOverride !== undefined ? { model: modelOverride } : {}),
         locale: uiLocale,
         queueMode: 'followup',
         reasoningEffort: composerReasoningEffort,
       });
+      if (!ack.requestId) throw new Error('The core did not identify the queued follow-up');
+      if (attachmentParts.length > 0 && ack.queuedAttachments.length === 0) {
+        throw new Error(
+          'The core did not return staged attachment references for the queued follow-up'
+        );
+      }
       // Only clear the composer once the backend has accepted the queue, so a
       // failed send leaves the user's draft + attachments intact to retry.
       setInputValue('');
       setAttachments([]);
-      dispatch(pendingFollowupAdded({ threadId, message: followupMessage, text: messageText }));
+      dispatch(
+        pendingFollowupAdded({
+          threadId,
+          message: followupMessage,
+          text: messageText,
+          requestId: ack.requestId,
+          attachments: ack.queuedAttachments,
+        })
+      );
       trackAnalyticsEvent('chat_message_sent', {
         send_mode: 'followup',
         has_attachments: pendingAttachments.length > 0,
@@ -1316,7 +1616,12 @@ const Conversations = ({
       // assistant-ui clears its composer after `onNew` resolves. This path
       // handles the transport error locally, so restore the rejected follow-up
       // explicitly instead of letting the user's draft disappear.
+      failedAttachmentsByThreadRef.current.set(threadId, pendingAttachments);
       setInputValue(normalized);
+      if (selectedThreadId === threadId) {
+        attachmentsRef.current = pendingAttachments.slice();
+        setAttachments(pendingAttachments);
+      }
     }
   };
 
@@ -1335,13 +1640,70 @@ const Conversations = ({
   // `ChatRuntimeProvider.onCancelled` persists the partial and its processing
   // trail after the core confirms cancellation. Keeping that in one place also
   // covers turns superseded without a local Stop click.
-  const handleStopGeneration = useCallback(() => {
-    if (!selectedThreadId) {
-      debug('[chat] stop generation: no selected thread — noop');
-      return;
-    }
-    const threadId = selectedThreadId;
-    debug('[chat] stop generation: thread=%s', threadId);
+  function clearStopSettleTimer(threadId: string) {
+    const timer = stopSettleTimersRef.current.get(threadId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    stopSettleTimersRef.current.delete(threadId);
+  }
+
+  // End a thread's local running state without waiting for the core.
+  function settleStoppedThread(threadId: string, reason: string) {
+    debug('[chat] stop generation: settling local state thread=%s reason=%s', threadId, reason);
+    clearStopSettleTimer(threadId);
+    clearSilenceTimer(threadId);
+    turnSignatureByThreadRef.current.delete(threadId);
+    clearThreadStalled(threadId);
+    dispatch(clearRuntimeForThread({ threadId }));
+    dispatch(clearThreadInferenceActive(threadId));
+  }
+
+  function stopThreadTurn(threadId: string) {
+    const sendPending = pendingSendsRef.current.has(threadId);
+    confirmedCancellationRef.current.delete(threadId);
+    debug('[chat] stop generation: thread=%s sendPending=%s', threadId, sendPending);
+    // The core registers the turn only as the send RPC returns; until then
+    // this cancel may find nothing. Remember the Stop so the send path can
+    // re-issue it against the registered turn instead of letting it run.
+    if (sendPending) stopRequestedDuringSendRef.current.add(threadId);
+
+    clearStopSettleTimer(threadId);
+    stopSettleTimersRef.current.set(
+      threadId,
+      setTimeout(() => {
+        stopSettleTimersRef.current.delete(threadId);
+        if (!isMountedRef.current) return;
+        // A send in flight owns the thread's state (and re-issues the Stop).
+        if (pendingSendsRef.current.has(threadId)) return;
+        const lifecycle = inferenceTurnLifecycleRef.current[threadId];
+        if (lifecycle !== 'started' && lifecycle !== 'streaming') return;
+        if (confirmedCancellationRef.current.delete(threadId)) {
+          settleStoppedThread(threadId, 'confirmed cancellation without terminal event');
+          return;
+        }
+        // The cancel RPC may have failed before reaching core. Reconcile
+        // before clearing local state so a still-running turn is not hidden.
+        void threadApi
+          .getTurnState(threadId)
+          .then(state => {
+            if (!isMountedRef.current) return;
+            const stillRunning = state?.lifecycle === 'started' || state?.lifecycle === 'streaming';
+            if (!stillRunning) {
+              settleStoppedThread(threadId, 'core confirms no running turn after stop');
+            } else {
+              debug('[chat] stop generation: core still reports running thread=%s', threadId);
+            }
+          })
+          .catch(error => {
+            debug(
+              '[chat] stop generation: reconciliation failed thread=%s err=%o',
+              threadId,
+              error
+            );
+          });
+      }, STOP_SETTLE_FALLBACK_MS)
+    );
+
     void chatCancel(threadId).then(outcome => {
       const accepted = outcome?.accepted === true;
       const turnCancelled = outcome?.turnCancelled === true;
@@ -1351,31 +1713,34 @@ const Conversations = ({
         accepted,
         turnCancelled
       );
+      // A rejected cancel is left to the backstop above.
       if (!accepted) return;
-      if (!turnCancelled) {
-        // The core has nothing running on this thread, so no `cancelled`
-        // chat_error will ever arrive to clear the composer. Without this the
-        // thread stays "generating" with a Stop button that can never work —
-        // e.g. a turn whose terminal event was lost across a reconnect. A send
-        // still waiting on its RPC is skipped: its turn may not be registered
-        // yet, and its own completion path owns the state.
-        if (pendingSendsRef.current.has(threadId)) {
-          debug('[chat] stop generation: nothing in flight but send pending thread=%s', threadId);
-          return;
-        }
-        debug(
-          '[chat] stop generation: nothing in flight — settling local state thread=%s',
-          threadId
-        );
-        clearSilenceTimer(threadId);
-        turnSignatureByThreadRef.current.delete(threadId);
-        clearThreadStalled(threadId);
-        dispatch(clearRuntimeForThread({ threadId }));
-        dispatch(clearThreadInferenceActive(threadId));
+      if (turnCancelled) {
+        // The turn was registered after all; a `chat_cancelled` is on its way.
+        confirmedCancellationRef.current.add(threadId);
+        stopRequestedDuringSendRef.current.delete(threadId);
         return;
       }
+      // The core has nothing running on this thread, so no `cancelled`
+      // chat_error will ever arrive to clear the composer — e.g. a turn
+      // whose terminal event was lost across a reconnect. A send still
+      // waiting on its RPC is the exception: its turn is not registered
+      // yet, and the deferred Stop recorded above cancels it once it is.
+      if (pendingSendsRef.current.has(threadId)) {
+        debug('[chat] stop generation: deferring until send returns thread=%s', threadId);
+        return;
+      }
+      settleStoppedThread(threadId, 'nothing in flight');
     });
-  }, [selectedThreadId, dispatch, clearSilenceTimer, clearThreadStalled]);
+  }
+
+  function handleStopGeneration() {
+    if (!selectedThreadId) {
+      debug('[chat] stop generation: no selected thread — noop');
+      return;
+    }
+    stopThreadTurn(selectedThreadId);
+  }
 
   handleStopGenerationRef.current = handleStopGeneration;
 
@@ -1395,30 +1760,70 @@ const Conversations = ({
     true
   );
 
-  const handleComposerEscape = useCallback(() => {
-    if (!selectedThreadActive) return;
+  // The last *visible* user prompt (hidden system/injected messages are
+  // excluded to match how the transcript is rendered), as composer text.
+  const lastVisibleUserPrompt = useCallback((): string => {
+    const lastUserMessage = [...messages]
+      .reverse()
+      .find(m => m.sender === 'user' && !m.extraMetadata?.hidden);
+    return lastUserMessage ? parseMessageImages(lastUserMessage.content ?? '').text : '';
+  }, [messages]);
+
+  // Returns whether Escape did anything, so the composer only swallows the key
+  // when it acted and an open popover can still close on it.
+  const handleComposerEscape = useCallback((): boolean => {
+    if (!selectedThreadActive) return false;
     const composerEmpty = inputValue.trim().length === 0;
     debug(
       '[chat] esc interrupt: thread=%s composerEmpty=%s',
       selectedThreadId ?? 'none',
       composerEmpty
     );
-    handleStopGeneration();
+    handleStopGenerationRef.current?.();
     if (composerEmpty) {
-      // Restore the last *visible* user prompt (hidden system/injected
-      // messages are excluded here to match how the transcript is rendered).
-      const lastUserMessage = [...messages]
-        .reverse()
-        .find(m => m.sender === 'user' && !m.extraMetadata?.hidden);
-      const restored = lastUserMessage
-        ? parseMessageImages(lastUserMessage.content ?? '').text
-        : '';
+      const restored = lastVisibleUserPrompt();
       if (restored.length > 0) {
         debug('[chat] esc interrupt: restored prompt len=%d', restored.length);
         setInputValue(restored);
       }
     }
-  }, [handleStopGeneration, inputValue, messages, selectedThreadActive, selectedThreadId]);
+    return true;
+  }, [
+    handleStopGeneration,
+    inputValue,
+    lastVisibleUserPrompt,
+    selectedThreadActive,
+    selectedThreadId,
+    setInputValue,
+  ]);
+
+  // ArrowUp in an empty composer recalls this thread's last prompt for a
+  // quick resend or tweak. Returns whether it did, so the caret key otherwise
+  // behaves normally.
+  const handleRecallLastPrompt = useCallback((): boolean => {
+    if (inputValue.length > 0) return false;
+    const restored = lastVisibleUserPrompt();
+    if (restored.length === 0) return false;
+    debug('[chat] arrow-up recall: thread=%s len=%d', selectedThreadId ?? 'none', restored.length);
+    setInputValue(restored);
+    return true;
+  }, [inputValue, lastVisibleUserPrompt, selectedThreadId, setInputValue]);
+
+  // The composer's placeholder follows the thread: a turn parked on the user
+  // (approval, plan review, drafted workflow) asks for that answer first; a
+  // turn in flight takes the text as a queued follow-up.
+  const selectedThreadWaitingOnUser = selectedThreadId
+    ? Boolean(
+        pendingApprovalByThread[selectedThreadId] ||
+        pendingPlanReviewByThread[selectedThreadId] ||
+        pendingWorkflowProposalsByThread[selectedThreadId]
+      )
+    : false;
+  const composerPlaceholder = selectedThreadWaitingOnUser
+    ? t('composer.placeholder.waiting')
+    : selectedThreadActive
+      ? t('composer.placeholder.running')
+      : undefined;
 
   // The transcript itself renders from the assistant-ui runtime
   // (`AssistantUiChat`). What remains here is what the composer footer and the
@@ -1456,12 +1861,12 @@ const Conversations = ({
   // and its goal — driven by the dedicated `thread_todos_changed` /
   // `thread_goal_updated` core events (`aui/useThreadTodos.ts` /
   // `aui/useThreadGoal.ts`), primed on thread open by the RPC pair below.
-  // Rendered above the composer next to the gate cards so a five-step task
-  // shows as a checklist ticking off while the agent works through it.
-  useLoadThreadTodos(selectedThreadId ?? null);
-  useLoadThreadGoal(selectedThreadId ?? null);
-  const liveTodos = useThreadTodos(selectedThreadId ?? null);
-  const threadGoal = useThreadGoal(selectedThreadId ?? null);
+  // Progress cards are presented in the transcript by TurnTaskProvider.
+  const harnessStateRevision = selectedThreadId
+    ? (inferenceTurnLifecycleByThread[selectedThreadId] ?? 'idle')
+    : '';
+  useLoadThreadTodos(selectedThreadId ?? null, harnessStateRevision);
+  useLoadThreadGoal(selectedThreadId ?? null, harnessStateRevision);
   // A plan the orchestrator parked for interactive review (request_plan_review
   // gate). When present, the PlanReviewCard renders above the composer and
   // resolves the parked turn.
@@ -1551,13 +1956,31 @@ const Conversations = ({
       : { id: parentId, title: t('chat.parentThread') };
   }, [threads, selectedThreadId, t]);
 
+  // A thread is "running" for the sidebar while its send is pending, the core
+  // has marked it active, or its inference turn is started/streaming. Covers
+  // background threads too, so a row keeps shimmering after you switch away.
+  const isThreadRunning = useCallback(
+    (threadId: string): boolean => {
+      if (pendingSendingThreadIds.has(threadId) || activeThreadIds[threadId]) return true;
+      const lifecycle = inferenceTurnLifecycleByThread[threadId];
+      return lifecycle === 'started' || lifecycle === 'streaming';
+    },
+    [pendingSendingThreadIds, activeThreadIds, inferenceTurnLifecycleByThread]
+  );
+  const runningThreadIds = useMemo(
+    () => threads.filter(thread => isThreadRunning(thread.id)).map(thread => thread.id),
+    [threads, isThreadRunning]
+  );
+  const unreadThreadIds = useUnreadThreads(runningThreadIds, selectedThreadId ?? null);
+  const { isPinned: isThreadPinnedNow, togglePin: toggleThreadPin } = useThreadPins();
+
   // Thread list (left pane). Rendered through `TwoPanelLayout` below in page
   // mode; the embedded `variant="sidebar"` mode shows no thread list at all.
   const threadSidebar = (
     <ThreadList
       threads={sortedThreads}
       selectedThreadId={selectedThreadId ?? null}
-      onCreateThread={() => void handleCreateNewThread()}
+      onCreateThread={() => handleCreateNewThread()}
       onSelectThread={id => {
         dispatch(setSelectedThread(id));
         void dispatch(loadThreadMessages(id));
@@ -1566,6 +1989,10 @@ const Conversations = ({
         }
       }}
       resolveTitle={resolveThreadDisplayTitle}
+      isThreadRunning={isThreadRunning}
+      unreadThreadIds={unreadThreadIds}
+      isPinned={isThreadPinnedNow}
+      onTogglePin={toggleThreadPin}
       onRequestDelete={thread =>
         setDeleteModal({
           isOpen: true,
@@ -1586,22 +2013,8 @@ const Conversations = ({
           onCancel: () => {},
         })
       }
-      editingThreadId={editingThreadId}
-      editTitleValue={editTitleValue}
-      editTitleInputRef={editTitleInputRef}
-      onEditTitleValueChange={setEditTitleValue}
-      onStartEditTitle={handleStartEditTitle}
-      onCommitTitle={handleCommitTitle}
-      onCancelEditTitle={() => {
-        ignoreNextTitleBlurRef.current = true;
-        setEditingThreadId(null);
-      }}
-      onBlurTitle={id => {
-        if (ignoreNextTitleBlurRef.current) {
-          ignoreNextTitleBlurRef.current = false;
-          return;
-        }
-        handleCommitTitle(id);
+      onRenameThread={async (threadId, title) => {
+        await dispatch(updateThreadTitle({ threadId, title })).unwrap();
       }}
     />
   );
@@ -1612,41 +2025,6 @@ const Conversations = ({
   // doubles up.
   const agentGateCards = (
     <>
-      {/* Harness work state: the thread goal (as a compact `AgentStatus`
-          pill) and the agent's live todo list. Both are read-only progress
-          the agent wrote via its tools; they sit above the gate cards so a
-          parked decision is always the closest thing to the composer. */}
-      {selectedThreadId && threadGoal && (
-        <AgentStatus
-          data-testid="goal-banner"
-          data-goal-status={threadGoal.status}
-          state={
-            threadGoal.status === 'complete'
-              ? 'done'
-              : threadGoal.status === 'active'
-                ? 'working'
-                : 'waiting'
-          }
-          label={threadGoal.objective}
-          trailing={
-            <span data-testid="goal-objective" className="text-[10px] tabular-nums">
-              {threadGoal.token_budget !== undefined
-                ? `${formatTokens(threadGoal.tokens_used)} / ${formatTokens(threadGoal.token_budget)}`
-                : formatTokens(threadGoal.tokens_used)}
-            </span>
-          }
-          className="mb-2 self-start"
-        />
-      )}
-      {selectedThreadId && liveTodos && liveTodos.length > 0 && (
-        <TodoList
-          data-testid="todo-checklist"
-          items={toAuiTodoItems(liveTodos)}
-          title={t('conversations.todos.title')}
-          className="mb-2"
-        />
-      )}
-
       {/* Plan-mode review: the orchestrator parked the live turn on a
           thread-scoped plan (request_plan_review gate). Surface it for the
           user to Approve / Reject / send feedback on before anything
@@ -1673,11 +2051,12 @@ const Conversations = ({
           path from proposal to saved automation via "Save & enable"
           (`flows_create`), or the user can Dismiss it outright. */}
       {selectedThreadId && pendingWorkflowProposal && (
-        // Keyed by name so a second proposal in the same thread (before the
-        // first is resolved) remounts the card and resets its local
-        // saving/error state, matching the PlanReviewCard pattern above.
+        // Keyed by the proposal's identity (source message + name) so a
+        // second proposal in the same thread (before the first is resolved)
+        // remounts the card and resets its local saving/error state, matching
+        // the PlanReviewCard pattern above.
         <WorkflowProposalCard
-          key={pendingWorkflowProposal.name}
+          key={workflowProposalKey(pendingWorkflowProposal)}
           threadId={selectedThreadId}
           proposal={pendingWorkflowProposal}
         />
@@ -1706,20 +2085,30 @@ const Conversations = ({
       inferenceTurnLifecycleByThread[selectedThreadId] === 'streaming')
       ? (inferenceStatusByThread[selectedThreadId]?.phase ?? 'thinking')
       : null;
-  const stallWarningBanner = selectedStalledPhase ? (
-    <div className="mb-2" role="status">
-      <p
-        className="text-xs text-amber-700"
-        data-testid="chat-stall-warning"
-        data-chat-stall-phase={selectedStalledPhase}>
-        {t(
-          selectedStalledPhase === 'thinking'
-            ? 'chat.stallWarning.thinking'
-            : 'chat.stallWarning.working'
-        )}
-      </p>
-    </div>
-  ) : null;
+  // The most recently issued tool still running, so a long healthy step (a
+  // build, a CI watch) is named instead of reading as a stuck turn. Run-ledger
+  // rows and detached sub-agents can outlive the turn that started them, so
+  // they say nothing about whether THIS turn is still working.
+  const selectedRunningTool =
+    selectedStalledPhase && selectedThreadId
+      ? (toolTimelineByThread[selectedThreadId] ?? [])
+          .filter(
+            entry =>
+              entry.status === 'running' &&
+              entry.sourceToolName !== 'run_ledger' &&
+              entry.subagent?.mode !== 'async'
+          )
+          .sort((a, b) => b.seq - a.seq)[0]
+      : undefined;
+  const stallWarningBanner =
+    selectedStalledPhase && selectedThreadId ? (
+      <StallWarning
+        phase={selectedStalledPhase}
+        quietSince={stalledThreadIds.get(selectedThreadId)}
+        runningTool={selectedRunningTool}
+        onStop={handleStopGeneration}
+      />
+    ) : null;
 
   const sendAdvisoryBanner = sendAdvisory ? (
     <div className="flex items-center justify-between mb-2">
@@ -1842,9 +2231,7 @@ const Conversations = ({
 
   // Surface in-flight + failed artifact cards above the composer (#2779).
   // Mirrors the approval-card placement so the user sees the spinner / error
-  // without scrolling. `ready` cards are delegated to the header ChatFilesChip
-  // panel (#3024) so the chat scroll area isn't permanently occupied —
-  // restored decks are listable from the chip on demand.
+  // without scrolling.
   //
   // The failed-card Retry button re-dispatches the producing tool via
   // `ai_regenerate` (#3162): the core reloads the persisted creation args and
@@ -1856,12 +2243,19 @@ const Conversations = ({
   // (`MediaAndDocumentCalls.tsx`) instead, per the `ArtifactCardAdapter` doc.
   const liveArtifacts = artifactDeckThreadId
     ? (artifactsByThread[artifactDeckThreadId] ?? []).filter(
-        a => a.status !== 'ready' && !a.toolCallId
+        a =>
+          // Ready artifacts render inside their turn's reply, placed by the
+          // core's artifact rows (`MessageArtifactCards`); so does an
+          // in-progress one whose event names its turn. Here wait an
+          // in-progress artifact with no turn (an older core) and every failed
+          // one, which needs its Retry button.
+          !a.toolCallId &&
+          (a.status === 'failed' || (!a.ownerRequestId && a.status === 'in_progress'))
       )
     : [];
   const liveArtifactDeck =
     liveArtifacts.length > 0 && artifactDeckThreadId ? (
-      <div className="mb-2 flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         {liveArtifacts.map(artifact => (
           <ArtifactCardAdapter
             key={artifact.artifactId}
@@ -1871,18 +2265,18 @@ const Conversations = ({
                 console.warn('[artifact] regenerate failed:', err);
               });
             }}
+            onOpenPreview={id => dispatch(openArtifact(id))}
           />
         ))}
       </div>
     ) : null;
 
-  const chatFilesChip =
-    (selectedThreadId ?? firstActiveThreadId) ? (
-      <ChatFilesChip threadId={(selectedThreadId ?? firstActiveThreadId) as string} />
-    ) : null;
+  useThreadArtifactsHydration(selectedThreadId ?? firstActiveThreadId);
 
   const assistantComposerHeader = (
-    <>
+    <div
+      data-slot="composer-overlays"
+      className="chat-composer-surfaces pointer-events-none absolute inset-x-0 bottom-full z-20 flex max-h-[60dvh] min-w-0 flex-col items-start gap-2 overflow-y-auto pb-2 empty:hidden [&>*]:pointer-events-auto [&>*]:bg-background">
       {/* Turn gates first: a parked plan review and a drafted workflow both
           block progress until the user decides, so they sit above the transient
           attach error and the queued-followup strip. `ComposerHeader` is the
@@ -1910,10 +2304,13 @@ const Conversations = ({
       {sendErrorBanner}
       {stallWarningBanner}
       {sendAdvisoryBanner}
-      {liveArtifactDeck}
       {/* The core's run queue for this thread; renders nothing while empty. */}
       <ComposerMessageQueue />
-    </>
+      {/* Where this conversation works. Last, so it sits directly on the
+          input; renders only while the thread has no messages, since the
+          core fixes the folder at the first send. */}
+      <ThreadWorkspaceChip threadId={selectedThreadId ?? null} />
+    </div>
   );
 
   // Left-hand controls in the assistant-ui composer toolbar.
@@ -1922,8 +2319,13 @@ const Conversations = ({
       <ReasoningEffortPicker
         value={composerReasoningEffort}
         onChange={applyComposerReasoningEffort}
+        modelLabel={reasoningModel}
       />
-      {chatFilesChip}
+      <VoiceNoteComposer
+        disabled={composerInteractionBlocked || isSending || !selectedThreadId}
+        onSend={handleSendVoiceNote}
+        onError={message => setSendError(chatSendError('voice_transcription', message))}
+      />
     </>
   );
 
@@ -1935,7 +2337,7 @@ const Conversations = ({
   // the host's voice-chat control and the push-to-talk mic.
   const voiceComposer =
     composer === 'mic-cloud' ? (
-      <div className="flex flex-col gap-2" data-testid="voice-composer">
+      <div className="relative flex flex-col gap-2" data-testid="voice-composer">
         {assistantComposerHeader}
         {isSending && rustChat && (
           <div className="flex justify-start px-1">
@@ -2002,7 +2404,7 @@ const Conversations = ({
           : 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
       }>
       <AssistantUiChat
-        model={composerModelOverride ?? resolvedModel ?? CHAT_MODEL_HINT}
+        model={composerModelOverride ?? persistedDefaultModel ?? resolvedModel ?? CHAT_MODEL_HINT}
         modelContextWindow={composerModelContextWindow}
         composerHeader={assistantComposerHeader}
         composerFooterExtras={assistantComposerFooterExtras}
@@ -2010,6 +2412,8 @@ const Conversations = ({
         inputValue={inputValue}
         onInputValueChange={setInputValue}
         onEscape={handleComposerEscape}
+        onRecallLastPrompt={handleRecallLastPrompt}
+        composerPlaceholder={composerPlaceholder}
         attachments={attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={id => setAttachments(previous => previous.filter(a => a.id !== id))}
@@ -2017,12 +2421,15 @@ const Conversations = ({
         attachmentsEnabled={CHAT_ATTACHMENTS_ENABLED}
         attachmentInteractionBlocked={composerInteractionBlocked || isSending}
         onAttachmentOnlySend={() => void handleComposerSend()}
-        // Idle-composer shortcut to the full-bleed mascot stage. Chat and Human
-        // share one mascot (mascotSlice), so this is a change of venue for the
-        // same conversation partner, not a second one.
-        onOpenHumanMode={() => navigate('/human')}
+        // Clicking Tiny in the idle composer starts a live voice session with
+        // the agent on this thread: the mascot stage opens beside the chat and
+        // the stage's live voice control connects. Outside the chat page (no
+        // mascot provider) it falls back to the full-bleed Human page. Chat and
+        // Human share one mascot (mascotSlice), so either is the same partner.
+        onOpenHumanMode={() => openTinyVoice(chatMascot, navigate)}
         onSwitchToMicCloud={() => setComposerOverride('mic-cloud')}
         onModelChange={applyComposerModel}
+        afterMessages={liveArtifactDeck}
       />
       {/* The transcript-local overlays: background processes and the Agent
           Process Source panel. Mounted beside the Thread (not inside it)
@@ -2079,7 +2486,10 @@ const Conversations = ({
               {threadSidebar}
             </div>
           </SidebarContent>
-          <div className="flex h-full w-full">{mainPanel}</div>
+          <div className="flex h-full w-full min-w-0">
+            {mainPanel}
+            {activeArtifactId && <ArtifactPreviewPanel />}
+          </div>
         </>
       )}
       <ConfirmationModal

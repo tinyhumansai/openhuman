@@ -33,11 +33,14 @@ With no usable engine (signed out and no CortexDB key), memory is **off**:
 
 ## Who is acting (`memory::scope`)
 
-A `MemoryIdentity` (an agent definition and, for a team member, its team) is
-scoped around every turn: by the session host and channel dispatch for
-top-level agents, the sub-agent runner for children, the team runtime for
-members. Memory resolves it against the config of whoever reads or writes,
-first match wins:
+TinyMemory's `Identity` (an agent definition and, for a team member, its team)
+is carried explicitly on every turn's run context
+(`OpenHumanRunContext::memory_identity`): set by the session host and channel
+dispatch for top-level agents, derived with `child` by the sub-agent runner
+for children, and handed down by the team runtime for members. RPC handlers
+and the embed facade act as the root identity. OpenHuman adapts its config to
+`IdentityPins` in `memory::scope`; callers resolve the identity against
+those pins, first match wins:
 
 | | memory agent id | layout root |
 | --- | --- | --- |
@@ -65,6 +68,22 @@ Its calls are `agents`, `list` (whole root or one agent's node), `get`,
 `recall`, `fetch`, `learn`, `forget`, `forget_agent` and the brain calls. It
 does not use the ambient-config RPCs.
 
+The ambient-config RPCs (`openhuman.memory_recall`, `_fetch`, `_learn`,
+`_forget`, `_items_list`, `_explore`, `_items_get`) and the MCP memory tools,
+which dispatch through them, use upstream `Confinement` with `Policy::Refuse`
+for the config's root identity (`[memory] root`, else the root). An unset `reach` becomes
+`Reach::subtree(<root>)`; a caller's reach is kept only when it is
+`Reach::within` that subtree, and a wider one is refused with
+`INVALID_REQUEST`; `forget` and `items_get` skip ids outside it; `learn` with
+no namespace lands at the layout's learnings node, and one aimed outside the
+subtree is refused.
+
+A signed-out (local) session's scope root is `user:local-<install id>`, a
+random id recorded once in `<workspace>/memory/local_root.json`
+(`memory::local_root`). An install whose memory already lives under the
+older hostname-derived root (layout v3, or a layout migration under way)
+records that root instead, so nothing is orphaned.
+
 `RuntimeBuilder::memory_engine` (or `memory::engine::install_host_engine`)
 binds a host-supplied `MemoryEngine` for the whole process, ahead of the
 configured one. A host that owns its store, or a test using TinyMemory's
@@ -75,10 +94,10 @@ credential.
 
 | Hook | Where | What |
 | --- | --- | --- |
-| pre-turn | session host `before_turn` (`agent/session_host/runtime_session/memory_ingest.rs`), concurrently with request enrichment | `AgentMemory::pre_turn`: logs the user turn (accepted, not indexed) and recalls the turn's pack, under `[memory.recall] pre_turn_timeout_ms` |
+| pre-turn | session host `before_turn` (`memory/lifecycle/session_hooks.rs`) | `lifecycle::prefetch::pre_turn` takes a completed cached pack immediately, or none on a cold cache, and queues scoped `AgentMemory::pre_turn` logging and recall |
 | inject | `MemoryPackMiddleware` (`agent/tinyagents/middleware/memory_pack.rs`) | adds the pack, wrapped in `<memory-context>`, to every model request of the turn with `push_ephemeral_instruction` |
-| post-turn | session host, after the durable commit | `AgentMemory::post_turn`: logs the reply with its tool calls (name, id, and a one-line result per call), queues the belief build it hands back |
-| compaction | `MemoryRecallSummarizer` (`agent/tinyagents/memory_summarizer.rs`) wrapping the turn's summarizer | `AgentMemory::recall_for_compaction` over the dropped turns, concurrently with the summary; appended to the checkpoint under "Recalled from memory" |
+| post-turn | scoped background work after the durable commit | `AgentMemory::post_turn`: logs the reply with its tool calls (name, id, and a one-line result per call), queues the belief build it hands back |
+| compaction | `MemoryRecallSummarizer` (`agent/tinyagents/memory_summarizer.rs`) wrapping the turn's summarizer | Takes completed cached context for "Recalled from memory" and queues `AgentMemory::recall_for_compaction`; engine I/O never delays the inner summarizer |
 | session start | pre-turn, on the first turn of a session resumed after a compaction | `AgentMemory::start_session`: the thread's own earlier turns lead the pack |
 
 - **Turn indices** follow the committed transcript: the user message after
@@ -88,11 +107,16 @@ credential.
   the thread's persisted history and the provider's cached prefix are exactly
   as they were. The window of the thread still verbatim in the prompt (from
   the turn after the last compaction checkpoint) is left out of the pack.
-- **No hook fails a turn.** Each is bounded and logs instead of raising; a
-  timed-out pre-turn still finishes logging in the background.
+- **Automatic hooks never await remote memory on a live turn.** Scoped
+  workers handle user logging, date hints and context refresh with bounded
+  queues and deadlines. Cached packs expire after 60 seconds and identify
+  themselves as results of an earlier lookup. A cold cache supplies none.
+  The explicit/manual hooks retain configured pre-turn/compaction deadlines.
+- **No hook fails a turn.** An unavailable engine or a saturated background
+  queue degrades best-effort memory without holding up the model or summary.
 - **A refused recall is not an empty one.** When nothing was recalled because
   the engine refused the account (`INSUFFICIENT_CREDITS`, `UNAUTHORIZED`,
-  `UNAVAILABLE`), the turn is given a short notice saying memory is
+  `UNAVAILABLE`), the completed pack is a short notice saying memory is
   unavailable and why, so the model does not tell the user nothing is stored.
   TinyMemory's holistic recall reports a section's failure as a skip reason,
   so the hook reads the refusal back from there too.
@@ -120,15 +144,23 @@ its own schedule (`scheduled`); an engine that cannot consolidate answers
 
 ## The brain (`memory::brain`, `memory::sources`)
 
-- **Synced sources** (`folder`, `file`, `link`, `github`, `rss`, `composio`)
+- **Synced sources** (`folder`, `file`, `link`, `github`, `rss`)
   are filed under the brain source their items belong to: GitHub → `github`,
-  links and feeds → `web`, a Composio toolkit → its own source (`notion`,
-  `gmail`, …), local files by type (`pdf`, HTML → `web`, other text →
+  links and feeds → `web`, local files by type (`pdf`, HTML → `web`, other text →
   `markdown`). A source's `namespace` names the layout root it files under.
 - **Ingest** (`memory_brain_ingest`) files a local file (converted, its
   source picked from its format) or text, accepted without waiting for
-  indexing.
-- Each ingest or sync queues one belief build per brain source it touched.
+  indexing. Files are capped at 25 MB (`MAX_INGEST_BYTES`).
+- **A long document is several writes.** CortexDB refuses an event over
+  1 MiB, so tinymemory writes a document whose text is over about 256 KiB as
+  pieces of about 256 KiB each, cut at page breaks and headings (PDF pages
+  are joined with a form feed, U+000C, which the scrubber keeps). Each piece
+  is one write, and the hosted engine bills per write: a 25 MB text file is
+  about 100 billed writes. It still reads back as one item, and a search hit
+  on it is the matching piece, tagged `page:`/`section:`.
+- Each ingest or sync queues one belief build per brain source it touched,
+  unless the engine rebuilds beliefs on its own (`Consolidation::Automatic`),
+  which needs none.
 
 ## Config (`config.toml`)
 
@@ -137,6 +169,7 @@ its own schedule (`scheduled`); an engine that cannot consolidate answers
 engine = "tinyhumans"            # "tinyhumans" | "cortexdb"
 # agent_id = "employee-7"        # host binding (see "Who is acting")
 # root = "team:acme"
+# observed_actor = false         # attribute writes to who said or did them (cortexdb only)
 
 [memory.engines.cortexdb]
 endpoint = "https://api-v1.cortexdb.ai"   # key in the keychain as "memory-cortexdb"
@@ -152,7 +185,7 @@ brain_limit = 6
 history_limit = 6
 team_limit = 3                   # 0 leaves other agents' turns out
 build_beliefs_every = 10         # turns between belief builds; 0 = off
-pre_turn_timeout_ms = 1500
+pre_turn_timeout_ms = 10000
 compaction_timeout_ms = 8000
 build_delay_secs = 300
 
@@ -171,18 +204,57 @@ The hosted engine sends the installed transport's attribution headers
 (`x-sdk-name`, …) on every request; the CortexDB engine, a third party, does
 not.
 
+`observed_actor` (off by default) makes the CortexDB engine name who said or
+did what it stores (CortexDB's `observed_actor`, with the memory's owner as
+`subject`): an assistant turn its agent (`agent:<id>`), a synced email its
+sender (`user:<address>`, with the sender's name). An email address is
+trimmed and lower-cased, so one person is one actor; a phone number is kept as
+the connector's dial digits (`+15551234567`). Neither is redacted. A user
+turn whose origin is a channel message is observed from its sender
+(`memory::lifecycle::sender`): `user:+<dial digits>` for a phone on a
+phone-addressed channel, `user:<email>`, else `<channel>:<sender>` (a Telegram
+id, a WhatsApp `<lid>@lid`), with the channel's push or profile name (no
+channel exposes a saved contact name); a cron run is not attributed. Today
+the channel runtime runs its turns on the harness graph, which logs no turns
+(`memory::bus`), so this applies once a channel turn is logged. A write
+CortexDB refuses for it is written again without it (tinymemory's fallback). Off, and always on the hosted engine, nothing on the wire changes.
+
 ## Agent tool: `memory`
 
 One tool, `action` = `recall` | `fetch` | `learn` | `forget`:
-- `recall { question, filter? }` → `{answer, citations[]}`.
-- `fetch { query, mode?, filter?, limit? }` → `{hits[]}`; `mode` limited to the engine's `fetch_modes`.
-- `learn { text, kind?, confidence? }` → `{id}`. The host fills `meta`: the
+- `recall { question, filter?, refers_to? }` → `{evidence, items}`: the engine's
+  evidence (`RecallMode::Evidence`, no engine-written answer) as dated lines,
+  capped at about 2,500 tokens and cut only at line ends, and how many items it
+  rests on (their ids are recorded as the turn's citations); `{evidence: "",
+  note}` when nothing was recalled.
+- `fetch { query, mode?, filter?, refers_to?, cursor? }` → `{items, matches,
+  next_cursor?}`: five matches at a time, best first, as dated lines with their
+  ids; `next_cursor` continues the same search. `mode` is limited to the
+  engine's `fetch_modes`. The page size is the host's: the tool takes no `limit`.
+- `recall` and `fetch` leave out the calling thread's turns still verbatim in
+  the prompt (`ThreadWindow`), so the message being answered never comes back
+  as a memory while turns compacted out of a long thread stay readable. A run
+  that does not know its window (a sub-agent, a direct dispatch) leaves the
+  whole thread out. RPC `memory_recall` / `memory_fetch` keep their shapes.
+- `learn { text, kind?, confidence? }` → `{id, status: "queued; not yet saved to memory"}`. The host fills `meta`: the
   layout's learnings node, `workspace`, `thread_id`, `agent_id` (the memory
   agent id), `tool_call`, `source.kind = "agent"`.
-- `forget { ids }` → `{forgotten}`.
+- `forget { ids }` → `{queued, status: "queued; not yet removed from memory"}`.
 
 Every read and `forget` is confined to the identity's layout (its root's
 subtree); a `reach` in the model's filter is overwritten.
+
+Agent writes are admitted to a private durable outbox after validation,
+confinement and scrubbing; the acknowledgement confirms local acceptance, not
+remote completion. Background delivery resolves credentials at drain time,
+retries under the matching owner, and does not block the model. Explicit RPC
+and UI operations retain their direct, confirmed engine behavior.
+
+The agent tool bounds each call to 15 seconds and reserves from 30 seconds of
+aggregate time and eight attempts per retained run record. The tracker keeps
+128 records; idle eviction can reset a same-run record under churn, but cannot
+evict outstanding reservations. A timeout tells the model to continue without
+retrying memory in that run; a timed-out write admission may already be durable.
 
 ## RPC (`openhuman.memory_*`)
 
@@ -205,6 +277,7 @@ memory.
 | `memory_fetch` | `{query, mode?, filter?, limit?, cursor?}` | `{hits: Hit[], next_cursor?}` |
 | `memory_learn` | `{text, kind?, confidence?, meta?}` | `{id}` |
 | `memory_forget` | `{ids, reach?}` | `{forgotten}` |
+| `memory_erase_all` | `{confirm: true}` | `{erased_scopes}`; erases everything the bound engine holds, for good. Hosted: one `DELETE /memory`, the account's entire hosted memory. Direct: every kind scope of the bound layout; a shared legacy tree is left alone |
 | `memory_items_list` | `{filter?, limit?, cursor?, path?}` | `{items: Hit[], next_cursor?}` |
 | `memory_explore` | `{facet, path?, filter?, limit?, scan_limit?}` | `{facet, buckets: {value, count}[], total, missing, more_buckets, truncated}` |
 | `memory_items_get` | `{ids, reach?}` | `{items: Hit[]}` |
@@ -221,11 +294,44 @@ memory.
 | `memory_sources_sync` | `{id?}` | `{started: string[]}` |
 | `memory_jobs_list` | `{}` | `{pending: QueuedJob[], history: JobRun[]}` |
 | `memory_jobs_run` | `{id?}` | `{runs: JobRun[]}`; ignores the build delay |
-| `memory_import_scan` | `{}` | `{found, counts?: {documents, conversations, learnings}}` |
+| `memory_import_scan` | `{}` | `{found, counts?: {documents, conversations, learnings}}`; counts (and the import) leave out anything v1 synced from Composio/connectors (Gmail, Slack, Notion, Linear, GitHub, ClickUp, ...): `skill-*`/`source:*` documents, email and connector-prefixed chunk sources, `*-sync:*` chunk owners, `skill-*` profile facets and graph namespaces. Conversations, memory-source folders/files, learnings, events, graph, goals and persona still come across |
 | `memory_import_start` | `{consent: true}` | `{state: ImportState}` |
 | `memory_import_status` | `{}` | `{state: ImportState}` |
+| `memory_import_retry_failed` | `{}` | `{state: ImportState}`; stores again the items a finished import skipped because the engine refused them (`ImportState.failed` counts them) |
+| `memory_migration_scan` | `{}` | `{needed, shared}` |
+| `memory_migration_start` | `{takeover?}` | `{state: MigrationState, running, interrupted}` |
+| `memory_migration_status` | `{}` | `{state: MigrationState, running, interrupted}` |
+| `memory_migration_retry` | `{}` | `MigrationState` |
 
 `memory_context_*` and `memory_conversations_get/set` are retired.
+
+**Moving into the per-user layout.** Memory written before layout v3 lives
+under `app:tinymemory/…`. `memory_migration_*` stores each item again below
+the person's `org:<id>` root, verifies it, switches the layout once every
+item is copied, copies what arrived meanwhile, then removes the legacy copies
+it verified. Progress is saved after every page in
+`<workspace>/memory/layout_migration.json`, so the move resumes where it
+stopped. The memory background job runs it on its own only while moving is
+free (always off the hosted engine); `memory_migration_start` runs it now.
+
+**The `org:<id>` root.** One root per person, `org:<id>`, with no `user:`
+segment below it: chats at `org:<id>/ws:main/app:conversations`, the brain
+at `org:<id>/app:brain/source:<src>`, learnings at `org:<id>/app:learnings`.
+On a direct CortexDB the engine is rooted at `org:<id>` and owned by the
+actor `user:<id>`; on the hosted engine it sends paths relative to the
+tenant root memory-api pins (`org:<id>`). Earlier v3 clients rooted at
+`user:<id>` (hosted: `org:<id>/user:<id>/…`). While `[memory]
+legacy_user_segment_read` is on (the default), reads and forgets cover that
+path too, merged by item id, and writes go only to `org:<id>`. cortexdb-saas
+`reroot-user-segment` moves the hosted data; the flag is turned off once that
+is verified.
+On a self-hosted CortexDB every account on the machine shares the legacy
+tree: it moves only with `takeover: true`, and the first account to take it
+claims it in `<app>/memory/legacy_claims/`; other accounts have nothing
+to move and go on in their own per-user tree. A shared tree is cleaned up by
+forgetting moved items by id, never by erasing a whole scope, since other
+accounts may still write there. Items that could not be moved stay in the legacy tree;
+`memory_migration_retry` puts them back in line.
 
 **Past conversations.** `memory_conversations_backfill_start` walks the
 thread store and stores every earlier turn of every thread the way the

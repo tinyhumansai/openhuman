@@ -9,6 +9,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
+  actions: read
   contents: read
   packages: read
   pull-requests: read
@@ -20,3 +21,53 @@ concurrency:
 jobs:
   test:
     uses: ./.github/workflows/test-reusable.yml
+
+  desktop-compile:
+    name: Desktop compile (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CI: "true"
+    steps:
+      # The TinyFlows fixture tree contains paths beyond MAX_PATH. Configure
+      # Git before checkout so recursive submodule checkout can create them.
+      - name: Enable long Git paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/openhuman-app -> target
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo timeout 300 apt-get update
+          sudo timeout 300 apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libasound2-dev libudev-dev libdbus-1-dev patchelf
+      - name: Install dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+      - name: Build the desktop host
+        working-directory: app
+        run: |
+          bash ../scripts/ci-cancel-aware.sh pnpm tauri build --debug --no-bundle \
+            -c '{"bundle":{"createUpdaterArtifacts":false}}' -- --bin OpenHuman

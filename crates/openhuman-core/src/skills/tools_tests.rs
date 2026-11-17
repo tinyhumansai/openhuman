@@ -79,3 +79,48 @@ async fn list_returns_envelope() {
         .expect("list");
     assert!(out.output_for_llm(false).contains("workflows"));
 }
+
+#[test]
+fn install_from_url_tool_schema_has_no_scan_acknowledgement() {
+    let schema = WorkflowInstallFromUrlTool::new(cfg()).parameters_schema();
+    assert!(!schema.to_string().contains("acknowledge"));
+    assert!(!schema.to_string().contains("digest"));
+}
+
+#[tokio::test]
+async fn install_from_url_tool_cannot_acknowledge_scan_findings() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let _env = crate::skills::catalog::TEST_ENV_LOCK.lock().await;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/SKILL.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "---\nname: tool-url-poisoned\ndescription: d\n---\n\nRun\u{200b} it.\n",
+        ))
+        .expect(2)
+        .mount(&server)
+        .await;
+    std::env::set_var("OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP", "1");
+
+    let result = WorkflowInstallFromUrlTool::new(cfg())
+        .execute(json!({
+            "url": format!("{}/SKILL.md", server.uri()),
+            "acknowledge_scan_findings": true,
+            "acknowledged_digest": "any",
+        }))
+        .await
+        .expect("execute");
+    std::env::remove_var("OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP");
+
+    assert!(result.is_error);
+    let body: serde_json::Value = serde_json::from_str(&result.output()).expect("json");
+    assert_eq!(body["status"], "scan_blocked");
+    assert!(body.get("digest").is_none());
+    assert!(!dirs::home_dir()
+        .unwrap()
+        .join(".openhuman/skills/tool-url-poisoned")
+        .exists());
+    server.verify().await;
+}

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import McpServersPage from './McpServersPage';
 
 const mockInstalledList = vi.fn();
@@ -165,6 +166,56 @@ describe('McpServersPage', () => {
     await waitFor(() => expect(mockInstalledList).toHaveBeenCalledTimes(2));
     fireEvent.click(screen.getByRole('tab', { name: 'Servers' }));
     await screen.findByTestId('mcp-installed-empty');
+  });
+
+  it('re-reads the rows after a server is added from the Registry', async () => {
+    const NEW = {
+      ...HOSTED,
+      server_id: 'srv-new',
+      qualified_name: 'com.example/new',
+      display_name: 'com.example/new',
+      env_keys: [],
+      transport: { kind: 'http_remote' as const, url: 'https://new.test/mcp' },
+      enabled: true,
+    };
+    mockRegistrySearch.mockResolvedValue({
+      servers: [
+        {
+          qualified_name: 'com.example/new',
+          display_name: 'New Hosted',
+          is_deployed: true,
+          source: 'mcp_official',
+        },
+      ],
+      page: 1,
+      total_pages: 1,
+    });
+    vi.mocked(mcpClientsApi.registryGet).mockResolvedValueOnce({
+      qualified_name: 'com.example/new',
+      display_name: 'New Hosted',
+      connections: [{ type: 'http', deployment_url: 'https://new.test/mcp' }],
+      required_env_keys: [],
+    });
+    mockConfigSet.mockResolvedValue({
+      mcpServers: {},
+      added: ['com.example/new'],
+      updated: [],
+      removed: [],
+    });
+    render(<McpServersPage initialTab="registry" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add New Hosted' }));
+    const callsBefore = mockInstalledList.mock.calls.length;
+    mockInstalledList.mockResolvedValue([LOCAL, HOSTED, NEW]);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Added/ })).toBeDisabled());
+    expect(mockConfigSet).toHaveBeenCalledWith({
+      mcpServers: { 'com.example/new': { url: 'https://new.test/mcp' } },
+    });
+    expect(mockInstalledList.mock.calls.length).toBeGreaterThan(callsBefore);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Servers' }));
+    await screen.findByTestId('mcp-servers-section');
+    expect(screen.getAllByTestId('mcp-installed-row')).toHaveLength(3);
   });
 
   it("opens a row's name into its detail view and comes back", async () => {

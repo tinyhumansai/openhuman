@@ -1,6 +1,6 @@
 # Release Manual Smoke Checklist
 
-Run this checklist on every release-cut. Sign-off lives as a GitHub commit comment on the `v<version>-staging` tagged commit that QA validated (paste the checklist with checked items + the sign-off block at the bottom). Before approving the production run, the `Release-Approval` reviewer checks the sign-off exists **and** that the run targets that validated commit (staging SHA passed as `commit_sha`, or separated from the target only by `[skip ci]` version-bump commits). Owns OS-level surfaces that drivers cannot assert — everything else is automated under WDIO, Vitest, or Rust integration tests (see [Testing Strategy](../gitbooks/developing/testing-strategy.md)).
+Run this checklist on every release-cut. Sign-off lives as a GitHub commit comment on the `v<version>-staging` tagged commit that QA validated (paste the checklist with checked items + the sign-off block at the bottom). Before approving the production run, the `Release-Approval` reviewer checks the sign-off exists **and** that the run targets that validated commit (staging SHA passed as `commit_sha`, or separated from the target only by `[skip ci]` version-bump commits). Owns OS-level surfaces that drivers cannot assert — everything else is automated under WDIO, Vitest, or Rust integration tests (see [Testing Strategy](../docs/gitbooks/en/developing/testing-strategy.md)).
 
 This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-MATRIX.md`](./TEST-COVERAGE-MATRIX.md). If a feature has neither automated coverage nor an entry on this checklist, treat it as untested and open a coverage gap.
 
@@ -20,6 +20,11 @@ This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-M
 
 Applies to every release, all platforms.
 
+### Japanese UI
+
+- [ ] **Japanese language selection** — In the first-run language picker and Settings → Language, select **🇯🇵 日本語**. Verify that the labels immediately become Japanese, then visit Chat, Connections → Memory, Connections → LLM, and Gateway. Restart and confirm the selected language is retained. Switch back to English and confirm the labels update again.
+- [ ] **Japanese browser language** — With a fresh profile and browser language `ja-JP`, verify that Japanese is selected automatically. Check a message containing a count or model name: the value must appear in place of its placeholder and remain readable at the default window size.
+
 ### Conversation resume
 
 - [ ] **Default agent traces reach Langfuse** — With a signed-in staging test account, send a synthetic chat turn that spawns a subagent. Expected: the parent and child traces share one conversation session, include the intended input/output and model usage, and carry the authenticated user. Confirm `share_usage_data = false` stops export.
@@ -35,13 +40,26 @@ Applies to every release, all platforms.
 - [ ] **Discard and navigation release microphone capture**: Start dictation, then discard it or press Escape. Repeat while transcription is pending and while switching threads or opening Voice mode. Confirm the draft stays intact and the microphone indicator clears.
 - [ ] **Permission denial and missing voice support stay usable**: Deny microphone access and confirm a localized error with an editable draft. In a build with the voice feature disabled, confirm the Dictate control stays hidden.
 
+### Tool UI widgets in chat
+
+- [ ] **An MCP tool widget renders and works inline** — Connect an MCP server that declares a `ui://` widget (for example a food-ordering server) in a staging test profile and ask for something that returns one. Expected: the widget appears after the activity group and above the answer, its buttons work, a non-read-only action asks for confirmation, and with no widget a link result shows an Open in browser action and a phone QR.
+
+### Memory latency and queued writes (coverage 8.1 / 8.2)
+
+Use a disposable staging account/workspace and synthetic facts. Keep inference reachable while delaying or blocking only the memory endpoint.
+
+- [ ] **Automatic memory does not stall a chat or compaction** — Start a fresh conversation while memory reads take at least 60 seconds, then send another turn and trigger transcript compaction in a long test thread. Expected: inference and compaction proceed while memory refresh remains pending; an unavailable or expired pack is omitted. After restoring memory, a later turn can use the completed scoped pack. A different thread or account must not receive that context.
+- [ ] **Learn and forget acknowledge local queueing** — Ask the agent to learn a unique synthetic fact while memory writes are delayed, then forget its returned item ID. Expected: each tool result says queued without waiting for remote acceptance; the agent continues the requested work and does not claim the fact was saved or removed remotely. Quit after queue acknowledgement, relaunch and restore memory. Expected: retry processes learn before forget and the forgotten fact does not reappear. Repeat with memory explicitly disabled: new writes are refused and earlier pending writes remain unsent until re-enabled.
+- [ ] **Explicit recall/fetch stay bounded** — With memory reads blocked, ask the agent to use recall or fetch. Expected: a call stops waiting after at most 15 seconds, repeated optional memory calls share a 30-second/8-attempt budget while that run record remains tracked, and the agent continues without memory. Idle records can be evicted under heavy run churn. A new chat turn receives a fresh budget; inference/provider latency is measured separately.
+- [ ] **Erase all retires earlier queued learnings** — Queue a synthetic learning during a memory outage, then restore access and use Erase all with confirmation. Expected: the current mutation settles before erasure, older pending learnings are discarded, and none are replayed after restart. Queue a new learning after erasure and repeat Erase all in the same app process; it must also be removed. Verify another staging account's queued facts remain isolated.
+
 ### Refreshed application UI
 
 - [ ] **Settings, Connections, theme, and workflow surfaces remain usable** — On desktop, navigate between Settings sections and Connections tabs, switch between light/dark and at least one named theme family, export and re-import a custom theme, then open a workflow canvas and its run history. Expected: each route renders its own content without stale panels or horizontal overflow; imported themes can be selected and theme selection and run details survive a reload where persistence is expected.
 
 ### Native desktop control
 
-- [ ] **Connections enables the published desktop module on an unlocked macOS or Windows session** — Open Connections → Integrations → Desktop Control, verify the Early Alpha notice, enable it, grant Accessibility if prompted, and run the read-only test. Expected: the module loads from the pinned release, the panel reports the actual permission state, and the test sees an accessibility snapshot. Screen Recording is required only when testing capture. A locked macOS screen must not be reported as a successful probe.
+- [ ] **Connections enables the published desktop module on an unlocked macOS session** — Open Connections → Integrations → Desktop Control, verify the Early Alpha notice, enable it, grant Accessibility if prompted, and run the read-only test. Expected: the module loads from the pinned release, the panel reports the actual permission state, and the test sees an accessibility snapshot. Screen Recording is required only when testing capture. A locked macOS screen must not be reported as a successful probe.
 - [ ] **An agent completes a disposable desktop task without an approval wait by default** — In a fresh thread, ask the orchestrator to use a harmless app such as TextEdit or Calculator, make one visible change, and verify it through a new accessibility snapshot. Expected: `tool_search` discovers the deferred desktop tool, the released module performs the action, no approval card parks the turn, and the observed app state matches the request. Disable Desktop afterward and verify a subsequent tool call is refused.
 - [ ] **A scoped message goal sends exact text once** — With a consenting test contact and an unlocked desktop session, ask the agent to send one unique message through the native chat app. Expected: it confirms the active conversation header, preserves the requested text exactly, and verifies the outgoing message inside that conversation. A chat-list row alone must not count as success; an unverified delivered send must stop as uncertain without a second click. Inspect the chat independently for duplicates.
 
@@ -49,6 +67,7 @@ Applies to every release, all platforms.
 
 - [ ] **Browser readiness and setup** — Open Connections → Integrations → Computer → Browser on each desktop platform and verify the Early Alpha notice. Expected: the checksum-pinned TinyComputer module loads from the installer on Windows or the release cache on other platforms and passes TinyBus admission, module and Chrome readiness are reported separately, Test works, and saved viewport, profile, download folder, task limits, and allowed websites survive relaunch.
 - [ ] **Browser task and policy** — With an allowed Selenium test site, use a conversation to submit its web form and download File 1. Expected: `tool_search` discovers `browser`, consequential actions wait for the exact host approval, the submitted page shows “Received!”, and a completed download is verified on disk. Then restrict allowed websites and confirm a disallowed navigation is blocked.
+- [ ] **Browser learning** — In a conversation, ask for the same browser task on one allowed site twice. Expected: the second run starts without drafting a plan (debug log `[browser-sites] applied what the site's finished tasks left` with `reused_plan=true`) and ends the same way. Then click Browser → What tasks learn → Forget learned sites: it reports the sites forgotten, and the next run plans again. With Learn from finished tasks off, nothing is reused or kept.
 
 ### Wallet balances
 
@@ -62,11 +81,17 @@ Applies to every release, all platforms.
 
 - [ ] **`scripts/install.sh` downloads the latest asset on a proxy/VPN network** — From a clean checkout, run `bash scripts/install.sh --dry-run --verbose`, then run the public `curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash` flow on one macOS or Linux host. Expected: release metadata resolves, the asset downloads successfully, and transient GitHub/CDN HTTP/2 failures retry over HTTP/1.1 instead of surfacing `curl: (16) Error in the HTTP2 framing layer`.
 
+### Archived conversations
+
+- [ ] **An older conversation remains usable after tool retirement (4.4.7)** — In a staging profile, reopen a conversation saved before one of its tools was retired and send a follow-up. Expected: prior tool results remain visible, the turn can finish, and any attempted retired call returns an unavailable-tool result without executing the old tool. Check that an explicit current tool override or permission restriction still applies.
+
 ### Terminal agent cockpit
 
 - [ ] **`openhuman-tui --last` completes an interactive agent turn and restores the terminal** — In a real PTY, first run `openhuman-tui --new`, send `Remember marker TUI-SMOKE-42`, wait for completion, and exit with Ctrl+C. Run `openhuman-tui --last`, verify that marker and its answer are restored, send a multiline prompt, steer the active turn with Enter, then type a follow-up and press Tab while streaming; verify the queued follow-up executes after the active turn. Open `/help` and `/status`, exit with Ctrl+C, and confirm shell echo/line editing still work. Repeat the resume, one turn, and exit flow with `openhuman-tui --last --no-alt-screen`; confirm history renders in the current buffer and the shell is usable afterward.
 
 ### macOS
+
+- [ ] **Claude Code sign-in opens Terminal and reports launch failures** — In Connections > LLM > LLM Providers, use Claude Code Sign in. Allow the macOS Automation prompt and verify Terminal opens. On a separate fresh test account, deny Automation and verify the settings card reports a launch failure instead of success; the app must remain responsive. A permission prompt left unanswered must stop waiting within 30 seconds.
 
 - [ ] **Screenshot paste in normal chat (4.2.8)** — Copy a screenshot to the clipboard, focus the chat message input, and press Cmd+V. Expected: one image preview appears, the draft text is preserved, and no message is sent. Repeat via Edit → Paste, then paste plain text and confirm normal insertion.
 
@@ -81,7 +106,7 @@ Applies to every release, all platforms.
 
 ### Windows
 
-- [ ] **Bundled native modules work offline** — Install from the signed MSI or NSIS package on a fresh Windows account, disconnect the network, then open Desktop Control and Browser Control and load their modules. Expected: both modules reach Ready without a GitHub request, and the log records `[modules] loaded '<id>' from the installer bundle`. Reconnect before testing hosted features. Check both installer formats when both are shipped.
+- [ ] **Bundled native modules work offline** — Install from the signed MSI or NSIS package on a fresh Windows account, disconnect the network, then open Browser Control and load its module. Desktop Control should say it isn't available on Windows yet. Expected: the browser module reaches Ready without a GitHub request, and the log records `[modules] loaded '<id>' from the installer bundle`. Reconnect before testing hosted features. Check both installer formats when both are shipped.
 - [ ] **Custom window frame and exit** — Launch with no saved window geometry. Expected: the window opens near 800 × 720 with compact rounded corners; the top-right controls minimize, maximize/restore, and close. Drag the window from the top strip on both the loading screen and main app. Closing exits the host and its embedded core (no lingering `OpenHuman.exe` or core listener).
 - [ ] **SmartScreen does not block install** — Run the installer from a fresh download. Expected: SmartScreen passes (signed binary). If `Windows protected your PC` appears, the EV signature is missing or the reputation has not built up — escalate before shipping.
 - [ ] **Installer creates Start Menu + Desktop shortcuts** — Defaults preserved. Expected: both shortcuts launch the app.
@@ -98,6 +123,13 @@ Applies to every release, all platforms.
 - [ ] **Headless supervisor update stages without self-exit** — On a Linux service deployment with `[update] restart_strategy = "supervisor"` and `rpc_mutations_enabled = false`, stage a new core binary through the documented operator flow. Expected: the running process stays up until the supervisor restart, the staged binary is present on disk, and `systemctl restart openhuman` (or equivalent) picks up the new version.
 
 ### Cross-platform
+
+- [ ] **Existing desktop secrets survive the keyring host migration (16.1.28)** — Upgrade a signed build with an existing profile containing a saved provider key and encrypted config secret. Expected: both remain usable after restart without re-entry, the `openhuman` / `app:master_key` entry remains unchanged, and no new corruption quarantine appears. Repeat on macOS, Windows and Linux with their native credential store available. Deny or lock keychain access and confirm the consent flow appears without replacing the existing master key. Restore access, restart, and confirm the secrets decrypt again. Do not export keys or capture secret values in the smoke evidence.
+
+- [ ] **Embed capability report and storage configuration** — Run `openhuman-core embed info --json` from a headless install. Expected: versioned JSON lists compiled features and effective defaults without credentials, prompts, endpoint URLs or workspace paths. Run the Embed `storage` recipe with `storage-sqlite`: it writes, reads and deletes an item in its configured SQLite backend. For a release that includes `storage-mongodb`, repeat against an operator-provided test database using the recipe's explicit live settings; confirm the configured backend is reported as MongoDB without exposing its URL.
+- [ ] **Embed agents remain independent during streaming** — Run the offline `runtime_events`, `custom_provider` and `approvals` recipes. Expected: per-agent model routes and hooks stay isolated, events identify the acting agent without user content, and dropping an approval subscription cancels its pending callback. Run the stream cancellation integration test: dropping or externally cancelling a stream releases its model even while the receiver remains unread.
+
+- [ ] **Chat model picker selects the provider as well as the model (#6938)** — In an isolated test profile, switch the same thread from managed to Ollama, then to a configured BYOK provider, and back to a managed catalog model (including a `:free` variant). Verify the actual request endpoint and model match each selection, configured background routes stay unchanged, and reopening the app restores the selected provider/model. Selecting a workload hint must retain its configured route.
 
 - [ ] **Agent files land in a visible folder** — Ask the agent for a short document or deck. Expected: the file appears in `~/OpenHuman/projects/Files` under its title (not in `~/.openhuman`); **Show in folder** in the chat Files panel opens the file manager at it; Settings → Agent OS access → **Files folder** shows that path, **Show in folder** opens it, and choosing another folder sends the next file there while the earlier file still opens. On an upgraded install, files from before the upgrade have moved into the folder.
 - [ ] **Caller-owned inference works without an OpenHuman session** — In a local workspace without an OpenHuman login, configure Ollama/LM Studio/MLX/oMLX/local-openai or an independently authenticated Claude Code/Agent SDK provider. Run chat and an agent flow routed entirely to that provider. For a named harness agent, also configure the summarization route to managed inference and verify that the agent still uses its local route; reversing those routes must retain the managed agent's session requirement. Expected: no OpenHuman session requirement. Select managed inference instead: it must still require a backend session. With LocalOnly privacy enabled, local runtimes remain allowed and Claude subprocesses remain blocked as external inference.
@@ -118,11 +150,11 @@ Applies to every release, all platforms.
 
 ## Active release line
 
-> If multiple stable release lines are in flight (security backports, LTS), add a sub-section per line and check the same boxes for each. As of writing, `0.52.x` is the only active line — older minor versions are end-of-life. Fold this section to suit when more release lines exist.
+> One stable line is active at a time: the minor named by `[workspace.package] version` in the root `Cargo.toml`. Older minor versions are end-of-life. If more lines ever go in flight at once (security backports, LTS), add a sub-section per line and check the same boxes for each.
 
-### 0.52.x — current
+### Current stable line
 
-- [ ] **OAuth gate respects `VITE_MINIMUM_SUPPORTED_APP_VERSION`** (per [Release Policy](../gitbooks/developing/release-policy.md)) — Set the variable to a value above this build's version, build, attempt OAuth from the older binary. Expected: gate blocks the deep link; opens `VITE_LATEST_APP_DOWNLOAD_URL`.
+- [ ] **OAuth gate respects `VITE_MINIMUM_SUPPORTED_APP_VERSION`** (per [Release Policy](../docs/gitbooks/en/developing/release-policy.md)) — Set the variable to a value above this build's version, build, attempt OAuth from the older binary. Expected: gate blocks the deep link; opens `VITE_LATEST_APP_DOWNLOAD_URL`.
 - [ ] **Gmail connect succeeds on a fresh install from `releases/latest`** — Per release-policy step 4. Expected: token exchange completes, inbox lists in-app.
 
 ---

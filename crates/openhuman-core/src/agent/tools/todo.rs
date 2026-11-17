@@ -17,19 +17,37 @@
 //! (see [`current_scope`] / [`legacy_session_key`]) so an in-flight list isn't
 //! dropped by the rekey.
 
-use crate::agent::harness::fork_context::ParentExecutionContext;
-use crate::agent::todos::ops::{self, TodoScope};
+use crate::agent::subagent_host::ParentExecutionContext;
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tinyagents_graph::todos as graph_todos;
 use tinyagents_harness::context::RunContext;
 use tinyagents_harness::tool::{ToolDispatch, ToolExecutionContext};
+use tinyagents_harness_tools::todos::{self as harness_todos, store as todos_store};
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolRunContext};
 
 pub struct TodoTool {
-    inner: graph_todos::TodoTool,
+    inner: harness_todos::TodoTool,
     workspace_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TodoScope {
+    Session { id: String },
+    Scratch,
+}
+
+impl TodoScope {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Session { id } => Some(id),
+            Self::Scratch => None,
+        }
+    }
+
+    fn key(&self) -> &str {
+        self.session_id().unwrap_or("_scratch_")
+    }
 }
 
 pub(crate) struct TodoToolDispatch {
@@ -59,50 +77,63 @@ impl ToolDispatch<(), crate::agent::tinyagents::host::OpenHumanRunContext> for T
         let context = ToolExecutionContext::from_run_context(parent, call_id);
         let workspace_dir = match parent.data.parent.as_ref() {
             Some(parent_ctx) => parent_ctx.workspace_dir.clone(),
-            None => crate::config::Config::load_or_init()
+            None => crate::config::ops::load_current_or_init(&parent.data.dispatch_ctx())
                 .await
                 .map(|c| c.workspace_dir)
                 .map_err(|e| anyhow::anyhow!("[tool][todo] load config: {e}"))?,
         };
-        let is_write = arguments.get("todos").is_some();
+        let writes = writes_plan(&arguments);
         let scope = current_scope(parent.data.parent.as_ref(), Some(&context));
         let result = TodoTool::new(workspace_dir)
             .execute_with_parent_context(arguments, parent.data.parent.clone(), Some(&context))
             .await?;
-        // Only a whole-list write changes anything the frontend's todo drawer
-        // needs to hear about; a bare read (`{}`) re-reports the same list and
-        // would just be a redundant socket event.
-        if is_write && !result.is_error {
-            if let Some(id) = scope.session_id() {
-                match serde_json::from_str::<serde_json::Value>(&result.output())
-                    .ok()
-                    .and_then(|payload| payload.get("todos").cloned())
-                {
-                    Some(todos) => {
-                        crate::core::bus::BUS.publish(
-                            crate::core::events::DomainEvent::ThreadTodosChanged {
-                                thread_id: id.to_string(),
-                                todos,
-                            },
-                        );
-                    }
-                    None => {
-                        tracing::debug!(
-                            thread_id = id,
-                            "[tool][todo] write succeeded but result had no `todos` field — skipping ThreadTodosChanged"
-                        );
-                    }
-                }
-            }
+        if let (Some(id), Some(todos)) = (scope.session_id(), changed_todos(writes, &result)) {
+            crate::core::bus::BUS.publish(crate::core::events::DomainEvent::ThreadTodosChanged {
+                thread_id: id.to_string(),
+                todos,
+            });
         }
         Ok(result)
     }
 }
 
+/// Whether a `todo` call asks to change the plan: the whole list (`todos`), a
+/// `complete` or a `cancel`, in any of their shapes (one step, a list, a list
+/// sent as a string, or `complete` and `cancel` together). A read (`{}`) or a
+/// call that carries only notes (`facts`, `blockers`, `approach`, `retract`)
+/// leaves the plan as it was.
+fn writes_plan(arguments: &serde_json::Value) -> bool {
+    ["todos", "complete", "cancel"]
+        .iter()
+        .any(|key| arguments.get(*key).is_some())
+}
+
+/// The list to send the frontend's todo drawer after a call, or `None` when
+/// the plan did not change: the call did not ask to (`writes` from
+/// [`writes_plan`]), or it was refused (an out-of-order tick, a bad step), in
+/// which case the list is as it was. A re-sent unchanged list would only be a
+/// redundant socket event.
+fn changed_todos(writes: bool, result: &ToolResult) -> Option<serde_json::Value> {
+    if !writes || result.is_error {
+        return None;
+    }
+    let todos = serde_json::from_str::<serde_json::Value>(&result.output())
+        .ok()
+        .and_then(|payload| payload.get("todos").cloned());
+    if todos.is_none() {
+        tracing::debug!(
+            "[tool][todo] write succeeded but result had no `todos` field — skipping ThreadTodosChanged"
+        );
+    }
+    todos
+}
+
 impl TodoTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self {
-            inner: graph_todos::TodoTool::new(ops::store(&workspace_dir)),
+            inner: harness_todos::TodoTool::new(
+                crate::storage::sessions::stores_or_ephemeral(&workspace_dir).kv,
+            ),
             workspace_dir,
         }
     }
@@ -175,26 +206,23 @@ impl TodoTool {
             .await
     }
 
-    /// If `scope`'s list is empty and `legacy_key` has a non-empty one,
+    /// If `scope` has no stored list and `legacy_key` has a non-empty one,
     /// copy it forward under `scope`'s key so the rekey is transparent to an
-    /// in-flight session. Best-effort: any store error is logged and
-    /// swallowed — a failed migration just means the tool starts from an
-    /// empty list, same as any other first `todo` call.
+    /// in-flight session. A persisted empty list is authoritative too: it
+    /// records that the user cleared the migrated list and must not be treated
+    /// as an absent target. Best-effort: store errors are logged and swallowed;
+    /// the legacy value remains untouched unless the copy succeeds.
     async fn migrate_legacy_list_if_absent(&self, scope: &TodoScope, legacy_key: &str) {
-        let current = match ops::list(&self.workspace_dir, scope).await {
-            Ok(snapshot) => snapshot,
+        let store = crate::storage::sessions::stores_or_ephemeral(&self.workspace_dir).kv;
+        match todos_store::get(&store, scope.key()).await {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
             Err(e) => {
                 tracing::debug!(error = %e, "[tool][todo] legacy-migration: current list read failed");
                 return;
             }
-        };
-        if !current.items.is_empty() {
-            return;
         }
-        let legacy_scope = TodoScope::Session {
-            id: legacy_key.to_string(),
-        };
-        match ops::list(&self.workspace_dir, &legacy_scope).await {
+        match todos_store::list(&store, legacy_key).await {
             Ok(legacy) if !legacy.items.is_empty() => {
                 tracing::info!(
                     legacy_key,
@@ -202,7 +230,7 @@ impl TodoTool {
                     items = legacy.items.len(),
                     "[tool][todo] migrating legacy session-keyed list to thread-keyed list"
                 );
-                if let Err(e) = ops::replace(&self.workspace_dir, scope, legacy.items).await {
+                if let Err(e) = todos_store::replace(&store, scope.key(), legacy.items).await {
                     tracing::debug!(error = %e, "[tool][todo] legacy-migration: write failed");
                 }
             }

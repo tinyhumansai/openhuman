@@ -1,7 +1,6 @@
 import { fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 

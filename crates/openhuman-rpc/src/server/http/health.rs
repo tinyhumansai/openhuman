@@ -6,7 +6,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Serialize;
 
-use openhuman_core::core::types::AppState;
+use crate::core_host::core::types::AppState;
 
 /// Handler for the health check endpoint.
 ///
@@ -17,8 +17,8 @@ use openhuman_core::core::types::AppState;
 /// flag and per-component buckets in the body so readiness probes and operators
 /// can still see partial failures.
 pub(super) async fn health_handler() -> impl IntoResponse {
-    let snapshot = openhuman_core::platform::health::snapshot();
-    let verdict = openhuman_core::platform::health::verdict(&snapshot);
+    let snapshot = crate::core_host::platform::health::snapshot();
+    let verdict = crate::core_host::platform::health::verdict(&snapshot);
 
     let status = if verdict.healthy {
         StatusCode::OK
@@ -79,16 +79,16 @@ struct HttpMethodSchema {
     /// Human-readable description of what the method does.
     description: String,
     /// List of input parameters.
-    inputs: Vec<openhuman_core::core::FieldSchema>,
+    inputs: Vec<crate::core_host::core::FieldSchema>,
     /// List of output fields.
-    outputs: Vec<openhuman_core::core::FieldSchema>,
+    outputs: Vec<crate::core_host::core::FieldSchema>,
 }
 
 /// Aggregates schemas from all registered controllers into a single dump.
 ///
 /// Also includes built-in core methods like `core.ping` and `core.version`.
 fn build_http_schema_dump() -> HttpSchemaDump {
-    let mut methods: Vec<HttpMethodSchema> = openhuman_core::core::all::all_http_method_schemas()
+    let mut methods: Vec<HttpMethodSchema> = crate::core_host::core::all::all_http_method_schemas()
         .into_iter()
         .map(|method| HttpMethodSchema {
             method: method.method,

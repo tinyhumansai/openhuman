@@ -34,6 +34,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import {
   clearCoreRpcTokenCache,
   clearCoreRpcUrlCache,
+  probeCoreRealtime,
   testCoreRpcConnection,
 } from '../../../services/coreRpcClient';
 import { gatewaysAvailable } from '../../../services/gatewayService';
@@ -70,6 +71,7 @@ type TestStatus =
   | { kind: 'idle' }
   | { kind: 'testing' }
   | { kind: 'ok' }
+  | { kind: 'socketDisabled' }
   | { kind: 'auth' }
   | { kind: 'unreachable'; reason: string };
 
@@ -103,6 +105,17 @@ async function testCoreRpcConnectionWithTimeout(url: string, token?: string): Pr
   const timer = setTimeout(() => controller.abort(), CONNECTION_TEST_TIMEOUT_MS);
   try {
     return await testCoreRpcConnection(url, token, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Realtime (Socket.IO) availability probe with the same bounded deadline. */
+async function probeCoreRealtimeWithTimeout(url: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CONNECTION_TEST_TIMEOUT_MS);
+  try {
+    return await probeCoreRealtime(url, { signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -251,7 +264,8 @@ const CoreConnectionPanel = () => {
       } catch {
         /* reachable regardless of body shape */
       }
-      setTestStatus({ kind: 'ok' });
+      const realtime = await probeCoreRealtimeWithTimeout(validated.url);
+      setTestStatus({ kind: realtime === 'disabled' ? 'socketDisabled' : 'ok' });
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Connection failed';
       setTestStatus({ kind: 'unreachable', reason });
@@ -473,6 +487,11 @@ const CoreConnectionPanel = () => {
               {testStatus.kind === 'ok' && (
                 <span className="text-xs text-sage-600" data-testid="core-test-ok">
                   {t('bootCheck.connectedOk')}
+                </span>
+              )}
+              {testStatus.kind === 'socketDisabled' && (
+                <span className="text-xs text-coral-600" data-testid="core-test-socket-disabled">
+                  {t('bootCheck.socketDisabled')}
                 </span>
               )}
               {testStatus.kind === 'auth' && (

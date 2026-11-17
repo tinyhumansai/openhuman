@@ -26,9 +26,9 @@ source "$RUNTIME_VALIDATOR_SCRIPT_DIR/strip-appimage-graphics-libs.sh"
 # — the previous code duplicated the list, and the stale copy (libcef.so)
 # outlived CEF by two weeks.
 #
-# Verified against a real linuxdeploy bundle on both Linux arches: usr/bin/OpenHuman
-# declares and bundles libxdo.so.3 and libwebkit2gtk-4.1.so.0.
-APPIMAGE_PRODUCTION_NEEDED="libxdo.so.3 libwebkit2gtk-4.1.so.0"
+# Wry remains linked in the host. libxdo is now owned by the loaded Computer
+# module and is checked independently of the host ELF.
+APPIMAGE_PRODUCTION_NEEDED="libwebkit2gtk-4.1.so.0"
 
 runtime_validation_error() {
   echo "[appimage-runtime] ERROR: $*" >&2
@@ -136,6 +136,16 @@ validate_linuxdeploy_appdir() {
         || { runtime_validation_error "apprun-hooks/$(basename "$hook") is not sourced by AppRun"; return 1; }
     done < <(find "$appdir/apprun-hooks" -maxdepth 1 -type f -print0)
   fi
+
+  # The system-WebKit hook (#7652) must be installed with its version stamped,
+  # and sourced before every other hook so the bundled GTK hook cannot run first.
+  local webkit_hook="$appdir/apprun-hooks/$SYSTEM_WEBKIT_HOOK"
+  [ -f "$webkit_hook" ] \
+    || { runtime_validation_error "apprun-hooks/$SYSTEM_WEBKIT_HOOK is missing"; return 1; }
+  grep -q "^OPENHUMAN_BUNDLED_WEBKIT='libwebkit2gtk-4.1.so.0\." "$webkit_hook" \
+    || { runtime_validation_error "apprun-hooks/$SYSTEM_WEBKIT_HOOK has no bundled WebKit version stamped"; return 1; }
+  [ "$(grep -m 1 '^source .*apprun-hooks/' "$apprun")" = "source \"\$this_dir\"/apprun-hooks/\"$SYSTEM_WEBKIT_HOOK\"" ] \
+    || { runtime_validation_error "AppRun does not source $SYSTEM_WEBKIT_HOOK before the other hooks"; return 1; }
 
   local desktop_count
   desktop_count="$(find "$appdir/usr/share/applications" -maxdepth 1 -name '*.desktop' 2>/dev/null | wc -l | tr -d ' ')"
@@ -268,19 +278,11 @@ validate_extracted_appdir() {
     fi
   done
 
-  # Tripwire for libraries that have historically vanished from the bundle
-  # silently. libxdo is linked directly by enigo via #[link(name = "xdo")] - not
-  # through any crate, so it does not appear in Cargo.lock - and its absence
-  # segfaulted the app on launch (#4020). libcef.so used to be on this list; CEF
-  # was removed in #5456 and no build can produce it any more.
-  #
-  # Both halves are fatal, and they catch different regressions. A NEEDED entry
-  # that is not bundled is #4020 itself: the loader fails at startup. An entry
-  # that is no longer declared at all means the dependency was dropped upstream
-  # — no segfault, but a silent capability loss, which is precisely the class of
-  # regression this tripwire exists to surface. Warning instead would put it in a
-  # 90-minute release log where nobody reads it. If a drop is intentional, remove
-  # the name from APPIMAGE_PRODUCTION_NEEDED in the same commit.
+  # Loaded modules need their native runtime libraries in either layout, even
+  # when the host ELF has no corresponding NEEDED entry.
+  validate_module_runtime_libraries "$appdir" || return 1
+
+  # Host-linked dependencies still require both a NEEDED entry and a bundle.
   local expected_needed="${APPIMAGE_EXPECTED_NEEDED-$APPIMAGE_PRODUCTION_NEEDED}"
   local needed_name found
   for needed_name in $expected_needed; do
@@ -491,7 +493,7 @@ smoke_extracted_apprun() {
     return 1
   fi
 
-  grep -Ei 'loader|loading|cef|startup|started|ready' "$log_file" \
+  grep -Ei 'loader|loading|webkit|startup|started|ready' "$log_file" \
     | sed 's/^/[appimage-runtime]   /' \
     || true
   echo "[appimage-runtime] Application remained alive for the 15-second startup window"
@@ -535,7 +537,21 @@ validate_final_appimage() (
   validate_extracted_appdir "$appdir" || return 1
 
   if [ "${APPIMAGE_RUNTIME_SMOKE:-0}" = "1" ]; then
-    smoke_extracted_apprun "$appdir" "$foreign_cwd" "$smoke_log" || return 1
+    # On the runner the host WebKit matches the bundled one, so the default run
+    # takes the system-WebKit hook path (#7652). Smoke the bundled path as well,
+    # because hosts without webkit2gtk-4.1 still take it.
+    local host_notice='[openhuman] using host WebKitGTK from '
+    OPENHUMAN_APPIMAGE_WEBKIT= \
+      smoke_extracted_apprun "$appdir" "$foreign_cwd" "$smoke_log" || return 1
+    grep -Fq "$host_notice" "$smoke_log" \
+      || { runtime_validation_error "default smoke did not select the host WebKitGTK"; return 1; }
+    echo "[appimage-runtime] Smoking again with OPENHUMAN_APPIMAGE_WEBKIT=bundled"
+    OPENHUMAN_APPIMAGE_WEBKIT=bundled \
+      smoke_extracted_apprun "$appdir" "$foreign_cwd" "$smoke_log" || return 1
+    if grep -Fq "$host_notice" "$smoke_log"; then
+      runtime_validation_error "OPENHUMAN_APPIMAGE_WEBKIT=bundled smoke still selected the host WebKitGTK"
+      return 1
+    fi
   else
     echo "[appimage-runtime] Static validation complete; executable smoke disabled for this architecture"
   fi

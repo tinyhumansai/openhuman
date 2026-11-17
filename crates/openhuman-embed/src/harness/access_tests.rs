@@ -140,3 +140,57 @@ fn an_explicit_origin_overrides_the_preset() {
         })
     ));
 }
+
+#[test]
+fn approval_lists_are_inherited_until_the_agent_sets_them() {
+    let mut config = Config::default();
+    config.autonomy.auto_approve = vec!["boot_tool".into()];
+    config.autonomy.auto_approve_all = true;
+
+    Access::supervised().apply(&mut config);
+    assert_eq!(config.autonomy.auto_approve, ["boot_tool"]);
+    assert!(config.autonomy.auto_approve_all);
+
+    Access::supervised()
+        .auto_approve(["shell", "file_write"])
+        .auto_approve_all(false)
+        .apply(&mut config);
+    assert_eq!(config.autonomy.auto_approve, ["shell", "file_write"]);
+    assert!(!config.autonomy.auto_approve_all);
+}
+
+#[test]
+fn the_approval_gate_switch_is_independent_of_the_tier() {
+    let access = Access::supervised().approval_gate(false);
+    assert!(!access.approval_gate_enabled());
+    let mut config = Config::default();
+    access.apply(&mut config);
+    assert_eq!(config.autonomy.level, AutonomyLevel::Supervised);
+    assert!(access.turn_origin().is_none());
+
+    assert!(Access::full().approval_gate(true).approval_gate_enabled());
+}
+
+/// The core ships the policy off, which makes every tier inert. A scoped-down
+/// access level must switch it on, or `readonly()` would still let the agent
+/// write files and run commands.
+#[test]
+fn restrictive_tiers_switch_the_policy_on() {
+    for access in [Access::readonly(), Access::supervised()] {
+        let mut config = openhuman_core::config::Config::default();
+        config.autonomy.enabled = false;
+        access.apply(&mut config);
+        assert!(config.autonomy.enabled, "{access:?} must enable the policy");
+    }
+}
+
+/// `full()` leaves the switch where the base config put it.
+#[test]
+fn full_access_keeps_the_configured_policy_switch() {
+    for enabled in [false, true] {
+        let mut config = openhuman_core::config::Config::default();
+        config.autonomy.enabled = enabled;
+        Access::full().apply(&mut config);
+        assert_eq!(config.autonomy.enabled, enabled);
+    }
+}

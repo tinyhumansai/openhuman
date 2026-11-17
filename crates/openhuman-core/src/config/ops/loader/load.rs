@@ -1,9 +1,14 @@
 //! Loading persisted config with a timeout, anchored reloads, and the
 //! in-memory normalization that runs on every load.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::Path;
 
 use crate::config::Config;
+
+/// What a SaaS call that carries no context is told, instead of the operator's config.
+const NO_SAAS_CONFIG_SCOPE: &str =
+    "[saas] no config in scope: SaaS work must run under a user agent's or the operator's context";
 
 const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -28,8 +33,25 @@ const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// resolution found. Normalization still runs, because that is a shaping step
 /// handlers depend on, not a re-read.
 pub async fn load_config_with_timeout() -> Result<Config, String> {
-    if let Some(mut config) = crate::core::runtime::context::CoreContext::current_embedder_config()
-    {
+    // Transitional (#7801): callers that have no `DispatchCtx` of their own yet
+    // read the task's ambient context. SaaS reads only the task's own scope, as
+    // `Config::load_or_init` does, so a task that lost its user scope fails
+    // rather than getting the operator's.
+    load_config_in(&crate::core::runtime::DispatchCtx::ambient()).await
+}
+
+/// [`load_config_with_timeout`] for the context the caller was handed.
+///
+/// The context's embedder config, when it has one, short-circuits the disk
+/// read (see [`CoreContext::embedder_config`](crate::core::runtime::context::CoreContext::embedder_config)).
+/// In SaaS a call with no bound context fails instead of falling back to the
+/// operator's config; outside SaaS an unbound context reads the process
+/// default's, as an unscoped task always did.
+pub async fn load_config_in(ctx: &crate::core::runtime::DispatchCtx) -> Result<Config, String> {
+    if crate::core::runtime::is_saas() && ctx.core().is_none() {
+        return Err(NO_SAAS_CONFIG_SCOPE.to_owned());
+    }
+    if let Some(mut config) = ctx.embedder_config() {
         normalize_loaded_config(&mut config).await;
         return Ok(config);
     }
@@ -47,6 +69,26 @@ pub async fn load_config_with_timeout() -> Result<Config, String> {
         Ok(Err(e)) => Err(format!("{e:#}")),
         Err(_) => Err("Config loading timed out".to_string()),
     }
+}
+
+/// The config of the ambient context: an embedded agent's own config under
+/// its context, else the persisted config (initialised on first run).
+///
+/// The context-aware counterpart of [`Config::load_or_init`] for code that
+/// runs inside a turn: [`load_config_with_timeout`] with the context's
+/// inference route applied.
+pub async fn load_current_or_init(ctx: &DispatchCtx) -> anyhow::Result<Config> {
+    let mut config = ctx.load_config().await.map_err(anyhow::Error::msg)?;
+    if let Some(route) = config.ephemeral_route.clone() {
+        tracing::trace!(
+            agent = crate::core::runtime::agent_scope::current_agent_id()
+                .as_deref()
+                .unwrap_or(""),
+            "[config] applying the context's inference route"
+        );
+        crate::config::schema::ephemeral_route::apply(&mut config, route);
+    }
+    Ok(config)
 }
 
 /// Loads the config that belongs to `workspace_dir`, rather than whichever one
@@ -68,6 +110,7 @@ pub async fn load_config_with_timeout() -> Result<Config, String> {
 /// the process-global load with `workspace_dir` re-anchored — the previous
 /// behaviour, and still correct for a single-workspace host.
 pub async fn load_config_for_workspace_with_timeout(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
 ) -> Result<Config, String> {
     let candidate = [
@@ -105,7 +148,7 @@ pub async fn load_config_for_workspace_with_timeout(
         workspace = %workspace_dir.display(),
         "[config] no config.toml beside workspace; falling back to the process-global load"
     );
-    let mut config = load_config_with_timeout().await?;
+    let mut config = ctx.load_config().await?;
     config.workspace_dir = workspace_dir.to_path_buf();
     Ok(config)
 }
@@ -151,13 +194,19 @@ pub async fn reload_config_from_paths(
     }
 }
 
-async fn normalize_loaded_config(config: &mut Config) {
+pub(crate) async fn normalize_loaded_config(config: &mut Config) {
     // Welcome-agent routing normalization removed (the welcome agent has been
     // deleted; all chat turns route directly to the orchestrator). The
     // `chat_onboarding_completed` field is retained only for backward-compatible
     // deserialization.
 
+    if let Some(binding) = config.profile_providers.clone() {
+        binding.apply_chat(config);
+    }
     seed_and_enrich_model_registry(config);
+    // Hook point for a host's resolved endpoints; covers the embedder-supplied
+    // config path, which never goes through `Config::load_*`.
+    crate::config::enrichers::run_enrichers(config);
 }
 
 /// Populate per-token pricing on the model registry from the static catalog.
@@ -183,7 +232,7 @@ pub(crate) fn seed_and_enrich_model_registry(config: &mut Config) {
         log::debug!(
             "[config] seeded empty model_registry with {} catalogued models (as_of {})",
             config.model_registry.len(),
-            catalog::PRICING_AS_OF
+            tinyagents_registry::pricing::PRICING_AS_OF
         );
         return;
     }

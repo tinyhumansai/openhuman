@@ -96,13 +96,13 @@ Capability {
         name: "Browser Automation",
         domain: "workflows",
         category: CapabilityCategory::Workflows,
-        description: "Inspect pages and run bounded browser tasks in Chrome through TinyComputer, with a rescue model for failed steps.",
-        how_to: "Connections > Computer > Browser, then ask the assistant to use the browser",
+        description: "Inspect pages and run bounded browser tasks in Chrome through TinyComputer, with a rescue model for failed steps. A finished task's plan and the page elements it found are kept per site in the core's workspace, so the next task there starts sooner. An operator can route chosen domains through an upstream HTTP proxy ([browser] upstream_proxies) for sites that block this machine’s own address; TinySecurity still authorizes every routed page and the proxy itself. Switched off by [components] computer = false, which unregisters the browser tools and answers the browser RPCs with COMPONENT_DISABLED:computer.",
+        how_to: "Connections > Computer > Browser, then ask the assistant to use the browser; What tasks learn turns learning off or forgets learned sites",
         status: CapabilityStatus::Beta,
         privacy: Some(CapabilityPrivacy {
             leaves_device: true,
             data_kind: PrivacyDataKind::Raw,
-            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions"],
+            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions", "TypeSafe or Surplus Intelligence for captcha images, only when the captcha solver is on (captcha_provider)", "The operator’s upstream HTTP proxy, for the domains in [browser] upstream_proxies, only when set; adding, changing or removing it takes effect at the next core start"],
         }),
     },
 Capability {
@@ -145,7 +145,7 @@ Capability {
         category: CapabilityCategory::Workflows,
         description:
             "Composio real-time trigger webhooks (Gmail new-message, Slack new-message, …) \
-             currently arrive over wss://api.tinyhumans.ai/socket.io and require backend mode. \
+             currently arrive over the managed backend socket and require backend mode. \
              Direct-mode users get synchronous tool execution but not async trigger push in \
              this release.",
         how_to: "Switch to Backend mode to receive triggers, or wait for the direct trigger sink follow-up",
@@ -187,8 +187,8 @@ Capability {
         name: "Wallet Execution Tools",
         domain: "wallet",
         category: CapabilityCategory::Workflows,
-        description: "Read addresses and balances, prepare/confirm/execute native + token transfers (ERC20/SPL/TRC20/BEP20), and inspect transactions (status, receipt, lookup) across the connected wallet (EVM, BTC, Solana, Tron). Quote-first; signing stays local.",
-        how_to: "Use wallet.* RPC methods (balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx) via the agent or core_rpc_relay, or via Settings > Crypto > Wallet Balances.",
+        description: "Read addresses, native balances and token balances (USDC on Solana, via wallet.token_balances), prepare/confirm/execute native + token transfers (ERC20/SPL/TRC20/BEP20), and inspect transactions (status, receipt, lookup) across the connected wallet (EVM, BTC, Solana, Tron). Quote-first; signing stays local. Agent and automated executes run inside the [wallet_policy] spend policy (asset allowlist, per-transaction, rolling-day and per-recipient weekly caps) and are recorded in a persistent ledger. A secondary Solana account (index 1) can sign host-built program transactions only, under its own [wallet_policy.accounts.solana_1] program and mint allowlist with per-transaction and rolling-day caps. Switched off by [components] wallet = false, which answers COMPONENT_DISABLED:wallet and leaves keychain material, spending limits and RPC endpoints untouched.",
+        how_to: "Use wallet.* RPC methods (balances, token_balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx, policy_get, policy_update, ledger_list, account, prepare_program, execute_prepared_program) via the agent or core_rpc_relay. Settings > Crypto > Wallet Balances shows native balances only; token balances come from wallet.token_balances or the agent's wallet_balances tool.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
@@ -207,8 +207,8 @@ Capability {
         name: "x402 Machine Payments",
         domain: "x402",
         category: CapabilityCategory::Workflows,
-        description: "Automatic HTTP 402 payment handling for machine-payable APIs via the x402 protocol. When an API returns 402 Payment Required, the agent pays with USDC on Solana using the local wallet and retries. Budget enforcement with per-request, daily, and monthly caps.",
-        how_to: "Use x402.* RPC methods (get_summary, list_payments, update_budget) to manage spending. Payments happen automatically when the http_request tool encounters a 402 with a PAYMENT-REQUIRED header.",
+        description: "Automatic HTTP 402 payment handling for machine-payable APIs via the x402 protocol. When an API returns 402 Payment Required, the agent pays with USDC (Solana, or EVM chains such as Base, including the upto scheme that settles only what was used) from the local wallet and retries. Budget enforcement with per-request, daily, and monthly caps; automated turns (background jobs, approval-free workflows) pay within the budget without a prompt.",
+        how_to: "Use x402.* RPC methods (get_summary, list_payments, update_budget) to manage spending. Payments happen automatically when the http_request tool encounters a 402 with a PAYMENT-REQUIRED header; a local caller can make one paid HTTPS request with x402.fetch and an explicit maxAmountAtomic cap, pin the payment to one network with network (e.g. eip155:8453), or set signIn to answer the 402 with a Sign-In-With-X wallet signature that pays nothing.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
@@ -220,6 +220,21 @@ Capability {
         description: "Connect supported exchanges for trading and portfolio workflows.",
         how_to: "Connections",
         status: CapabilityStatus::ComingSoon,
+        privacy: None,
+    },
+Capability {
+        id: "automation.inbound_event_queues",
+        name: "Inbound Event Queues",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Composio triggers and agent webhooks are queued before \
+                      triage. A redelivered trigger is handled once, a flood is paced and \
+                      folded into one digest, a triage that asks to wait is retried when it \
+                      asked to instead of being dropped, and events that keep failing are \
+                      parked for review rather than lost. Runs in the TinyEventQueues module.",
+        how_to: "Configured with [components] eventqueues and [inbound] in config.toml; \
+                 inspect with the inbound.stats, inbound.dead and inbound.redrive RPC methods",
+        status: CapabilityStatus::Beta,
         privacy: None,
     },
 Capability {
@@ -272,7 +287,7 @@ Capability {
         domain: "flows",
         category: CapabilityCategory::Automation,
         description: "A `dedup` node inside a saved workflow graph, giving the flow durable \
-                      exactly-once processing per item with no agent turn or extra plumbing \
+                      per-item deduplication with no agent turn or extra plumbing \
                       involved. It drops an item whose per-item key was already committed by a \
                       prior successful run, and otherwise passes it through. Committing happens \
                       automatically: keys the node passes through are marked done only once the \
@@ -295,7 +310,7 @@ Capability {
         name: "View Cron Jobs",
         domain: "automation",
         category: CapabilityCategory::Automation,
-        description: "Review scheduled jobs available to the runtime.",
+        description: "Review scheduled jobs available to the runtime. A reminder or scheduled task you ask for in a chat (web or a channel such as Telegram) is delivered back into that same conversation.",
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Stable,
         privacy: None,
@@ -315,7 +330,7 @@ Capability {
         name: "View Execution History",
         domain: "automation",
         category: CapabilityCategory::Automation,
-        description: "Inspect past runs and results for scheduled jobs.",
+        description: "Inspect past runs and results for scheduled jobs, including completed work delegated to sub-agents.",
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Beta,
         privacy: None,

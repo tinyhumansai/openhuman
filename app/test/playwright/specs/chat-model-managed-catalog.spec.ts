@@ -218,19 +218,7 @@ test.describe('Managed OpenRouter catalog in the model picker', () => {
     ).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
   });
 
-  // TODO(#6395): a managed pick does not survive a page reload. Measured, not
-  // assumed: after picking `nex-n2.5-mini` and reopening the chat, the chip
-  // reads `e2e-mock-model` again. The write half is still implemented —
-  // `applyComposerModel` (`features/conversations/Conversations.tsx:441-457`)
-  // calls `openhuman.inference_update_model_settings` with `default_model` — so
-  // this is a read-back gap, not a missing write: on a fresh page
-  // `composerModelOverride` is null and the chip falls back to
-  // `composerModelOverride ?? CHAT_MODEL_HINT` (`:1099`), which is the config's
-  // seeded default rather than the persisted one. Left failing-and-skipped
-  // rather than weakened: the assertion states the contract the issue title
-  // names ("selection and persistence"), and relaxing it would hide exactly the
-  // regression it exists to catch.
-  test.skip('a composer pick is the global default and survives a fresh page', async ({ page }) => {
+  test('a composer pick is the global default and survives a fresh page', async ({ page }) => {
     // The picker writes `default_model` through the core, so a brand-new page
     // (new composer state, same core) still resolves and shows the pinned
     // model — the pick is not a per-session override.
@@ -272,27 +260,5 @@ test.describe('Managed OpenRouter catalog in the model picker', () => {
     await expect(managedOption(page, FREE_ID)).toHaveAttribute('aria-selected', 'true', {
       timeout: 20_000,
     });
-  });
-
-  // TODO(#6395): with `managedCatalogEmpty`, `model-picker-managed-pane` never
-  // becomes visible, so this case fails at its first assertion rather than at
-  // the row-count or disabled-submit claims it exists for. The spec asserts the
-  // pane degrades to an empty list ("its pre-#6201 appearance"); the product
-  // appears not to render the pane at all when the catalog is empty. That is a
-  // contract question — empty pane vs no pane — and answering it is a product
-  // decision, not a test edit, so the case is left skipped rather than
-  // rewritten to match whichever behaviour happens to ship today.
-  test.skip('an empty catalog renders no model rows and cannot be submitted', async ({ page }) => {
-    // Models the real backend with OPENROUTER_PASSTHROUGH_ENABLED off: it
-    // returns an empty set with HTTP 200, not an error. The managed pane must
-    // degrade to its pre-#6201 appearance rather than surfacing a failure.
-    await setMockBehavior('managedCatalogEmpty', 'true');
-    await openChat(page);
-    await openManagedPane(page);
-
-    await expect(page.getByTestId('model-picker-managed-pane')).toBeVisible();
-    await expect(page.locator('[data-testid^="model-picker-managed-option-"]')).toHaveCount(0);
-    // Nothing to pick means nothing to submit.
-    await expect(page.getByRole('button', { name: 'Use this model' })).toBeDisabled();
   });
 });

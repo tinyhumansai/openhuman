@@ -44,7 +44,11 @@ import {
   TURN_THREAD,
 } from '../../test/fixtures/streamedTurn';
 import type { ThreadMessage } from '../../types/thread';
-import { buildRuntimeMessages, STREAMING_TAIL_ID } from '../assistantUiMessages';
+import {
+  buildRuntimeMessages,
+  STREAMING_TAIL_ID,
+  streamingMessageId,
+} from '../assistantUiMessages';
 import ChatRuntimeProvider from '../ChatRuntimeProvider';
 
 vi.mock('../../services/chatService', async () => {
@@ -209,11 +213,11 @@ describe('live ≡ history rendering of one turn', () => {
       // Deltas are coalesced per frame; the next non-delta event flushes them,
       // and the last run is flushed by waiting for the frame.
       const tail = project().at(-1);
-      if (tail?.id === STREAMING_TAIL_ID) snapshots.push(arrayParts(tail));
+      if (tail?.id === streamingMessageId(TURN_REQUEST)) snapshots.push(arrayParts(tail));
     }
     await waitFor(() => {
       const tail = project().at(-1);
-      expect(tail?.id).toBe(STREAMING_TAIL_ID);
+      expect(tail?.id).toBe(streamingMessageId(TURN_REQUEST));
       expect(shape(partsOf(tail)).at(-1)).toEqual({ type: 'text', text: FINAL_ANSWER });
     });
     snapshots.push(arrayParts(project().at(-1)));
@@ -314,7 +318,7 @@ describe('live ≡ history rendering of one turn', () => {
 
     expect(seen.length).toBeGreaterThan(0);
     let swaps = 0;
-    let previousId = STREAMING_TAIL_ID;
+    let previousId = streamingMessageId(TURN_REQUEST);
     for (const messages of seen) {
       const assistants = messages.filter(message => message.role === 'assistant');
       // Never the reply AND the tail at once.
@@ -331,7 +335,7 @@ describe('live ≡ history rendering of one turn', () => {
       previousId = turn?.id ?? previousId;
     }
     // Exactly one transition from the live tail to the persisted reply.
-    expect(swaps).toBe(1);
+    expect(swaps).toBe(0);
     expect(previousId).not.toBe(STREAMING_TAIL_ID);
     expect(
       store.getState().chatRuntime.settledTurnsByThread[TURN_THREAD]?.[TURN_REQUEST]

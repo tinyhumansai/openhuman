@@ -1,0 +1,31 @@
+id = "image_agent"
+display_name = "Image Creator"
+when_to_use = "Image-generation specialist: create images from a prompt, or edit/restyle a reference image. Route make/generate/draw/edit-an-image requests here. Saves each result to the configured Files folder and returns its local path; paths from earlier media calls there can be reused as references."
+temperature = 0.6
+max_iterations = 8
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+
+# Pinned to a dedicated OpenRouter passthrough model rather than the
+# deprecated `hint:vision` (regression R4). This exact id is in
+# `MANAGED_MULTIMODAL_MODELS`, so it keeps the multimodal tier needed to
+# review the images it generates (and any reference images) via the
+# image_info / inline-image path, then iterate. Actual image generation goes
+# through `media_generate_image`, which defaults to
+# `bytedance-seed/seedream-5-0-lite` on OpenRouter — a separate model from
+# the one this agent's own turns run on.
+[model]
+exact = "openrouter/qwen/qwen3.5-flash-02-23"
+
+[tools]
+# media_generate_image submits the generation and returns a saved local path;
+# media_list_models surfaces the catalog so the agent can pick a model; the
+# remaining tools let it inspect reference images and read prior outputs.
+named = [
+    "media_generate_image",
+    "media_list_models",
+    "image_info",
+    "file_read",
+]

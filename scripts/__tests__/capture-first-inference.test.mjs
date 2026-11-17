@@ -11,8 +11,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, "..", "debug", "capture-first-inference.mjs");
 
 test("capture proxy --help prints usage without opening a listener", () => {
+  const helpEnv = { ...process.env };
+  delete helpEnv.FORCE_COLOR;
   const result = spawnSync(process.execPath, [SCRIPT, "--help"], {
     encoding: "utf8",
+    env: helpEnv,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(

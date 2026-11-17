@@ -25,15 +25,6 @@ export interface ModelRoute {
 /** Authentication header style. Matches Rust AuthStyle enum. */
 export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none';
 
-/** @deprecated Use AuthStyle. Kept for back-compat with old wire format. */
-export type CloudProviderType =
-  | 'openhuman'
-  | 'openai'
-  | 'anthropic'
-  | 'openrouter'
-  | 'orcarouter'
-  | 'custom';
-
 /**
  * Endpoint config for one cloud LLM provider (new slug-keyed shape).
  * API keys are NOT carried here — they live in `auth-profiles.json`
@@ -48,6 +39,8 @@ export interface CloudProviderCreds {
   label: string;
   endpoint: string;
   auth_style: AuthStyle;
+  /** Optional PEM CA bundle trusted only for this provider. */
+  ca_cert_pem?: string | null;
 }
 
 /**
@@ -122,6 +115,11 @@ export interface RuntimeSettingsUpdate {
   reasoning_enabled?: boolean | null;
   /** Default thinking level for agent turns; `''` clears it to the provider default. */
   reasoning_effort?: string | null;
+  /**
+   * When set, `reasoning_effort` is saved as this model id's own level
+   * (`runtime.reasoning_effort_by_model`) and `''` removes the model's entry.
+   */
+  reasoning_effort_model?: string | null;
 }
 
 export interface BrowserSettingsUpdate {
@@ -136,6 +134,7 @@ export interface BrowserSettingsUpdate {
   download_dir?: string | null;
   max_task_steps?: number;
   task_timeout_secs?: number;
+  learn_from_tasks?: boolean;
 }
 
 export interface LocalAiSettingsUpdate {
@@ -216,6 +215,8 @@ export interface ClientConfig {
    * provider decides. Absent on cores that predate it.
    */
   reasoning_effort?: string | null;
+  /** Per-model thinking levels keyed by model id; outrank `reasoning_effort`. */
+  reasoning_effort_by_model?: Record<string, string> | null;
   app_version: string;
   api_key_set: boolean;
   /** Legacy per-task-hint model overrides (deprecated; will be removed). */
@@ -476,7 +477,7 @@ export async function openhumanGetAutonomySettings(): Promise<CommandResponse<Au
  * already-canonicalised path strings; the UI renders them verbatim instead of
  * hard-coding defaults like `~/OpenHuman/projects`.
  *
- * - `action_dir` — agent CWD for `shell` / `node_exec` / `npm_exec` / file
+ * - `action_dir` — agent CWD for `shell` / file
  *   writes. Defaults to `projects_dir`; overridable via `OPENHUMAN_ACTION_DIR`.
  * - `workspace_dir` — internal product state (memory / sessions / vault).
  *   Agent-blocked.
@@ -644,6 +645,32 @@ export async function openhumanGetAnalyticsSettings(): Promise<
   });
 }
 
+/** The user's time zone setting (Settings → Account), the device's zone, and the one in effect. */
+export interface UserTimezoneSettings {
+  /** IANA zone the user chose; `null` follows the device. */
+  timezone: string | null;
+  /** The device's IANA zone, when the core can resolve one. */
+  device: string | null;
+  /** The zone dates are read in: the user's, else the device's, else `UTC`. */
+  effective: string;
+}
+
+export async function openhumanGetUserTimezone(): Promise<CommandResponse<UserTimezoneSettings>> {
+  return await callCoreRpc<CommandResponse<UserTimezoneSettings>>({
+    method: CORE_RPC_METHODS.configGetUserTimezone,
+  });
+}
+
+/** Set the user's IANA time zone; `null` follows the device again. */
+export async function openhumanUpdateUserTimezone(
+  timezone: string | null
+): Promise<CommandResponse<ConfigSnapshot>> {
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateUserTimezone,
+    params: { timezone },
+  });
+}
+
 /** Capability role a search provider can serve; each role is one agent tool. */
 export type SearchRole = 'search' | 'answer' | 'contents';
 
@@ -735,14 +762,14 @@ export interface SearchSettingsUpdate {
   allow_all?: boolean;
 }
 
-export interface DiagramViewerSettings {
-  enabled: boolean;
-  source_url: string;
-  refresh_interval_seconds: number;
-}
-
 export interface DashboardSettings {
-  diagram_viewer: DiagramViewerSettings;
+  event_stream: { enabled: boolean; max_entries: number; new_entries: string };
+  model_health: {
+    enabled: boolean;
+    hallucination_threshold: number;
+    min_tasks_for_rating: number;
+    evaluation_window_tasks: number;
+  };
 }
 
 export async function openhumanGetDashboardSettings(): Promise<CommandResponse<DashboardSettings>> {

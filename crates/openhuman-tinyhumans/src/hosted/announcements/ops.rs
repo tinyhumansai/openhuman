@@ -9,8 +9,8 @@
 use serde_json::Value;
 use tinyhumans_sdk::Error as SdkError;
 
-use openhuman_core::config::Config;
-use openhuman_core::core::Outcome;
+use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::core::Outcome;
 
 use crate::hosted::client::HostedClient;
 
@@ -31,7 +31,7 @@ fn is_not_found<T>(result: &Result<T, SdkError>) -> bool {
 /// that no longer matches the announcement schema, session expiry, …) still
 /// propagates.
 pub async fn get_latest_announcement(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let result = client
         .sdk()
         .announcements()

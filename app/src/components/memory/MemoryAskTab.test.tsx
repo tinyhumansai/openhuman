@@ -164,7 +164,37 @@ describe('MemoryAskTab', () => {
     hoisted.recall.mockRejectedValue(new Error('ENGINE: upstream timeout'));
     renderWithProviders(<MemoryAskTab fetchModes={['hybrid']} />);
     ask('anything');
-    expect(await screen.findByTestId('memory-ask-error')).toHaveTextContent('upstream timeout');
+    const error = await screen.findByTestId('memory-ask-error');
+    expect(error).toHaveTextContent('upstream timeout');
+    expect(error).toHaveAttribute('data-variant', 'destructive');
+    expect(screen.queryByTestId('memory-top-up')).not.toBeInTheDocument();
+  });
+
+  it('prompts a top-up, not an error, when recall is out of credits', async () => {
+    hoisted.recall.mockRejectedValue(
+      Object.assign(new Error('insufficient credits: [USER_INSUFFICIENT_CREDITS] HTTP 402'), {
+        data: { code: 'INSUFFICIENT_CREDITS', kind: 'INSUFFICIENT_CREDITS' },
+      })
+    );
+    renderWithProviders(<MemoryAskTab fetchModes={['hybrid']} />);
+    ask('anything');
+    const prompt = await screen.findByTestId('memory-ask-error');
+    expect(prompt).toHaveAttribute('data-kind', 'out-of-credits');
+    expect(prompt).toHaveAttribute('data-variant', 'warning');
+    expect(prompt).toHaveTextContent('Out of credits');
+    expect(prompt).toHaveTextContent('Top up to restore it');
+    expect(prompt).not.toHaveTextContent('HTTP 402');
+    expect(screen.getByTestId('memory-top-up')).toHaveTextContent('Top up');
+  });
+
+  it('prompts a top-up for a core that only sends the code as text', async () => {
+    hoisted.recall.mockRejectedValue(new Error('INSUFFICIENT_CREDITS: top up'));
+    renderWithProviders(<MemoryAskTab fetchModes={['hybrid']} />);
+    ask('anything');
+    expect(await screen.findByTestId('memory-ask-error')).toHaveAttribute(
+      'data-kind',
+      'out-of-credits'
+    );
   });
 
   it('previews the pack a turn would get for a chosen agent', async () => {

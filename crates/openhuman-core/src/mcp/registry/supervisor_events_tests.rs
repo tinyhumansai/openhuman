@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tinymcp::{ProbeOutcome, ServerRef, SupervisorEvent, TickReport};
+use tinymcp_bus::{ProbeOutcome, ServerRef, SupervisorEvent, TickReport};
 
 use super::*;
 use crate::core::events::DomainEvent;
@@ -21,6 +21,11 @@ fn server() -> ServerRef {
 }
 
 #[test]
+fn an_unknown_supervisor_event_has_no_host_domain_event() {
+    assert!(domain_events_for(workspace(), &[SupervisorEvent::Unknown]).is_empty());
+}
+
+#[test]
 fn an_answered_probe_is_not_an_event() {
     // One row per server per minute would bury everything else in the log.
     let events = domain_events_for(
@@ -31,6 +36,11 @@ fn an_answered_probe_is_not_an_event() {
         }],
     );
     assert!(events.is_empty());
+}
+
+#[test]
+fn an_unknown_supervisor_event_without_a_server_is_skipped() {
+    assert!(domain_events_for(workspace(), &[SupervisorEvent::Unknown]).is_empty());
 }
 
 #[test]

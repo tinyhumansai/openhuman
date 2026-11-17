@@ -18,4 +18,7 @@ test("CORS allows every product identity header used by browser requests", () =>
     .map(header => header.trim().toLowerCase());
   assert.ok(allowedHeaders.includes("x-sdk-name"));
   assert.ok(allowedHeaders.includes("x-web-version"));
+  // Dev builds send it on every backend request (services/apiClient.ts);
+  // without it a browser dev build fails every preflight to the mock.
+  assert.ok(allowedHeaders.includes("ngrok-skip-browser-warning"));
 });

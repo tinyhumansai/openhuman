@@ -1,5 +1,49 @@
 use super::*;
 
+use crate::config::SttEngine;
+
+#[tokio::test]
+async fn legacy_always_on_voice_fields_are_ignored_and_dropped_on_save() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[voice_server]
+stt_engine = "openai"
+always_on_enabled = true
+wake_word = "Hey Tiny"
+vad_onset_threshold = 0.01
+vad_hangover_ms = 800
+vad_min_speech_ms = 300
+vad_max_utterance_secs = 30.0
+"#,
+    )
+    .unwrap();
+
+    let config = load_or_init_for_workspace(tmp.path()).await;
+    assert_eq!(config.voice_server.stt_engine, SttEngine::Openai);
+    config.save().await.unwrap();
+
+    let saved = std::fs::read_to_string(config_path).unwrap();
+    assert!(
+        saved.contains("stt_engine = \"openai\""),
+        "retained voice setting was not loaded and saved:\n{saved}"
+    );
+    for retired in [
+        "always_on_enabled",
+        "wake_word",
+        "vad_onset_threshold",
+        "vad_hangover_ms",
+        "vad_min_speech_ms",
+        "vad_max_utterance_secs",
+    ] {
+        assert!(
+            !saved.contains(retired),
+            "retired voice setting {retired} survived config save:\n{saved}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn load_or_init_recovers_from_non_utf8_using_valid_backup() {
     let tmp = tempfile::tempdir().unwrap();
@@ -60,8 +104,8 @@ async fn load_or_init_non_utf8_falls_back_to_defaults_when_backup_also_non_utf8(
 
     assert_eq!(
         config.default_model.as_deref(),
-        Some(crate::config::schema::DEFAULT_MODEL),
-        "must fall back to defaults when both config and backup have non-UTF-8 content"
+        None,
+        "bare core fallback keeps default_model absent when no provider is installed"
     );
 
     // The primary should be renamed.
@@ -139,27 +183,126 @@ async fn load_from_config_path_sets_recovery_flag_on_non_utf8() {
     );
 }
 
-#[test]
-fn redact_url_strips_basic_auth_and_query() {
-    let out = redact_url_for_log(
-        "https://user:token@api.example.com/v1/chat/completions?api_key=sk-x&debug=1",
-    );
-    assert!(!out.contains("token"), "got: {out}");
-    assert!(!out.contains("sk-x"), "got: {out}");
-    assert!(out.starts_with("https://api.example.com"), "got: {out}");
+#[tokio::test]
+async fn load_from_config_path_disables_legacy_sqlite_memory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let workspace = tmp.path().join("workspace");
+    write_file(
+        &config_path,
+        r#"
+[memory]
+backend = "sqlite"
+embedding_model = "local-embedding"
+"#,
+    )
+    .await;
+
+    let config = Config::load_from_config_path(&config_path, &workspace)
+        .await
+        .expect("legacy config must load");
+
+    assert_eq!(config.memory.engine, "");
+    assert_eq!(config.memory.embedding_model, "local-embedding");
 }
 
-#[test]
-fn redact_url_handles_plain_url() {
-    let out = redact_url_for_log("https://api.openai.com/v1/chat/completions");
-    assert_eq!(out, "https://api.openai.com/v1/chat/completions");
+#[tokio::test]
+async fn load_from_config_path_preserves_explicit_memory_engine() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let workspace = tmp.path().join("workspace");
+    write_file(
+        &config_path,
+        r#"
+[memory]
+backend = "sqlite"
+engine = "tinyhumans"
+"#,
+    )
+    .await;
+
+    let config = Config::load_from_config_path(&config_path, &workspace)
+        .await
+        .expect("modern config must load");
+
+    assert_eq!(config.memory.engine, "tinyhumans");
 }
 
-#[test]
-fn redact_url_fallback_masks_userinfo_when_unparseable() {
-    let out = redact_url_for_log("not-a-scheme://user:secret@host/path?token=1");
-    assert!(!out.contains("secret"), "got: {out}");
-    assert!(!out.contains("token=1"), "got: {out}");
+#[tokio::test]
+async fn load_or_init_disables_and_persists_legacy_memory_backend() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(
+        &tmp.path().join("config.toml"),
+        r#"
+[memory]
+backend = "sqlite"
+"#,
+    )
+    .await;
+
+    let config = load_or_init_for_workspace(tmp.path()).await;
+
+    assert_eq!(config.memory.engine, "");
+    assert!(!crate::memory::engine::is_on(&config).await);
+    let off = crate::memory::engine::resolve(&config)
+        .await
+        .engine()
+        .unwrap_err();
+    assert_eq!(off.code(), "MEMORY_OFF");
+    assert!(off.to_string().contains("legacy memory backend"));
+    config.save().await.unwrap();
+
+    let saved = tokio::fs::read_to_string(tmp.path().join("config.toml"))
+        .await
+        .unwrap();
+    assert!(saved.contains("engine = \"\""));
+    let saved_config: toml::Value = toml::from_str(&saved).unwrap();
+    assert!(!saved_config["memory"]
+        .as_table()
+        .unwrap()
+        .contains_key("backend"));
+
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+
+    assert_eq!(reloaded.memory.engine, "");
+    assert!(!crate::memory::engine::is_on(&reloaded).await);
+    let off = crate::memory::engine::resolve(&reloaded)
+        .await
+        .engine()
+        .unwrap_err();
+    assert_eq!(off.code(), "MEMORY_OFF");
+    assert!(off.to_string().contains("legacy memory backend"));
+}
+
+#[tokio::test]
+async fn recovery_migrates_the_backup_when_primary_is_toml_but_not_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_file(
+        &tmp.path().join("config.toml"),
+        r#"
+[memory]
+engine = 42
+"#,
+    )
+    .await;
+    write_file(
+        &tmp.path().join("config.toml.bak"),
+        r#"
+[memory]
+backend = "sqlite"
+"#,
+    )
+    .await;
+
+    let config = load_or_init_for_workspace(tmp.path()).await;
+
+    assert_eq!(config.memory.engine, "");
+    let reason = crate::memory::engine::resolve(&config)
+        .await
+        .engine()
+        .unwrap_err()
+        .to_string();
+    assert!(reason.contains("legacy memory backend"));
 }
 
 #[test]
@@ -176,15 +319,31 @@ fn migrate_legacy_inference_url_moves_external_chat_completions() {
 }
 
 #[test]
-fn migrate_legacy_inference_url_clears_openhuman_backend_form() {
+fn migrate_legacy_inference_url_clears_managed_backend_form() {
     let mut cfg = Config::default();
-    cfg.api_url = Some("https://api.tinyhumans.ai/openai/v1/chat/completions".to_string());
+    cfg.resolved_endpoints.managed_hosts = vec!["api.managed.test".to_string()];
+    cfg.api_url = Some("https://api.managed.test/openai/v1/chat/completions".to_string());
     cfg.inference_url = None;
     migrate_legacy_inference_url(&mut cfg);
-    // The OpenHuman host is the default backend — both fields end up None so
-    // inference flows through the derived default `{backend}/openai/v1/...`.
+    // The managed host is the default backend — both fields end up None so
+    // inference flows through the derived default.
     assert_eq!(cfg.api_url, None);
     assert_eq!(cfg.inference_url, None);
+}
+
+#[test]
+fn migrate_legacy_inference_url_keeps_a_managed_looking_url_without_managed_hosts() {
+    // With no host registered nothing is managed, so the URL is moved as an
+    // external one rather than silently dropped.
+    let mut cfg = Config::default();
+    cfg.api_url = Some("https://api.managed.test/openai/v1/chat/completions".to_string());
+    cfg.inference_url = None;
+    migrate_legacy_inference_url(&mut cfg);
+    assert_eq!(cfg.api_url, None);
+    assert_eq!(
+        cfg.inference_url.as_deref(),
+        Some("https://api.managed.test/openai/v1/chat/completions")
+    );
 }
 
 #[test]
@@ -227,7 +386,6 @@ fn migrate_cloud_provider_slugs_routes_cloud_to_legacy_custom_when_primary_is_op
             endpoint: "https://api.example.com/v1/".into(),
             auth_style: crate::config::schema::AuthStyle::Bearer,
             default_model: Some("gpt-4o-mini".into()),
-            ..Default::default()
         },
     ];
 
@@ -250,7 +408,7 @@ fn migrate_cloud_provider_slugs_keeps_cloud_on_openhuman_without_legacy_custom()
         id: "p_oh".into(),
         slug: "openhuman".into(),
         label: "OpenHuman".into(),
-        endpoint: "https://api.tinyhumans.ai/v1".into(),
+        endpoint: "https://api.managed.test/v1".into(),
         auth_style: crate::config::schema::AuthStyle::OpenhumanJwt,
         ..Default::default()
     }];
@@ -543,90 +701,5 @@ fn resolve_action_dir_rejects_empty_override() {
         resolve_action_dir(&over),
         default_projects_dir(),
         "empty override must be ignored, falling back to default"
-    );
-}
-
-// ── fresh-install provider seeding (#6205) ──────────────────────────────
-//
-// The case neither the original fix nor its tests covered, and the one that
-// regressed: a workspace created *today*, not one migrated from an older
-// schema.
-
-/// A brand-new workspace must be born with the managed `openhuman` cloud
-/// provider.
-///
-/// `load_or_init` stamps a fresh config with `CURRENT_SCHEMA_VERSION`, so the
-/// `run_pending` call that follows crosses no gate at all — including the
-/// `== 1` step that is the only place this entry has ever been seeded. Without
-/// creation-site seeding the list is empty, and no later migration can repair
-/// it, because the workspace is already past every gate that would have.
-///
-/// This is what made `inference_list_models("openhuman")` fail its lookup in
-/// `inference::provider::ops::models` before any HTTP request was made, which
-/// is what #6201's model picker surfaced as "Could not load models from this
-/// provider."
-#[tokio::test]
-async fn a_brand_new_workspace_is_born_with_the_managed_provider() {
-    use crate::config::schema::cloud_providers::AuthStyle;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let config = load_or_init_for_workspace(tmp.path()).await;
-
-    let managed = config
-        .cloud_providers
-        .iter()
-        .find(|p| p.slug == "openhuman")
-        .unwrap_or_else(|| {
-            panic!(
-                "a fresh workspace must carry the managed provider, got {:?}",
-                config
-                    .cloud_providers
-                    .iter()
-                    .map(|p| p.slug.as_str())
-                    .collect::<Vec<_>>()
-            )
-        });
-    assert_eq!(managed.auth_style, AuthStyle::OpenhumanJwt);
-    assert!(
-        !managed.endpoint.trim().is_empty(),
-        "the seeded entry needs a resolvable endpoint"
-    );
-
-    // Seeded before the first `save`, so it is on disk from the very first
-    // write — not merely in memory awaiting some later persist.
-    let on_disk = tokio::fs::read_to_string(&config.config_path)
-        .await
-        .unwrap();
-    assert!(
-        on_disk.contains("slug = \"openhuman\""),
-        "the seeded entry must be persisted by the initial save, got:\n{on_disk}"
-    );
-}
-
-/// Re-opening that workspace must not seed a second copy.
-///
-/// `seed_cloud_providers` early-returns on a non-empty list, and the version
-/// gate is already past, so the second load has to be a no-op. A duplicate here
-/// would mean the entry is being created on a path that does not check first.
-#[tokio::test]
-async fn reopening_a_seeded_workspace_does_not_duplicate_the_provider() {
-    let tmp = tempfile::tempdir().unwrap();
-    let first = load_or_init_for_workspace(tmp.path()).await;
-    let seeded = first
-        .cloud_providers
-        .iter()
-        .filter(|p| p.slug == "openhuman")
-        .count();
-    assert_eq!(seeded, 1, "first load seeds exactly one managed entry");
-
-    let second = load_or_init_for_workspace(tmp.path()).await;
-    assert_eq!(
-        second
-            .cloud_providers
-            .iter()
-            .filter(|p| p.slug == "openhuman")
-            .count(),
-        1,
-        "re-opening the workspace must not seed a second managed entry"
     );
 }

@@ -1,17 +1,15 @@
-//! This host's binding of the authoring-draft store to its workspace.
-//!
-//! Same shape and same reason as [`super::store`]: the storage lives in
-//! `tinyflows_sqlite::drafts` and takes a directory; this supplies the
-//! directory. Drafts land in `<workspace_dir>/flows/drafts/<id>.json`.
+//! Host clients for TinyFlows Catalog draft operations.
 
-use super::store::dir;
-use crate::config::Config;
 use anyhow::Result;
 use serde_json::Value;
-use tinyflows_catalog::{DraftOrigin, FlowDraft};
+use tinyflows_bus::catalog::{
+    self, CreateDraftRequest, DraftIdRequest, DraftOrigin, FlowDraft, UpdateDraftRequest,
+};
 
-/// Binds [`tinyflows_sqlite::drafts::create_draft`] to this host's catalog directory.
-#[inline]
+use crate::config::Config;
+use crate::flows::{catalog_storage, store};
+
+/// Create a module-owned editable workflow draft.
 pub fn create_draft(
     config: &Config,
     flow_id: Option<String>,
@@ -19,17 +17,30 @@ pub fn create_draft(
     graph: Value,
     origin: DraftOrigin,
 ) -> Result<FlowDraft> {
-    tinyflows_sqlite::drafts::create_draft(&dir(config), flow_id, name, graph, origin)
+    let storage = catalog_storage::register_blocking(config)?;
+    let request = CreateDraftRequest {
+        storage,
+        flow_id,
+        name,
+        graph,
+        origin,
+    };
+    store::call_catalog::<FlowDraft, _>(config, catalog::members::CREATE_DRAFT, (request,))
 }
 
-/// Binds [`tinyflows_sqlite::drafts::get_draft`] to this host's catalog directory.
-#[inline]
+/// Read one module-owned draft.
 pub fn get_draft(config: &Config, id: &str) -> Result<Option<FlowDraft>> {
-    tinyflows_sqlite::drafts::get_draft(&dir(config), id)
+    let storage = catalog_storage::register_blocking(config)?;
+    let request = DraftIdRequest {
+        storage,
+        id: id.to_owned(),
+    };
+    let draft: Option<FlowDraft> =
+        store::call_catalog(config, catalog::members::GET_DRAFT, (request,))?;
+    Ok(draft)
 }
 
-/// Binds [`tinyflows_sqlite::drafts::update_draft`] to this host's catalog directory.
-#[inline]
+/// Patch a module-owned draft.
 pub fn update_draft(
     config: &Config,
     id: &str,
@@ -37,17 +48,31 @@ pub fn update_draft(
     graph: Option<Value>,
     flow_id: Option<Option<String>>,
 ) -> Result<FlowDraft> {
-    tinyflows_sqlite::drafts::update_draft(&dir(config), id, name, graph, flow_id)
+    let storage = catalog_storage::register_blocking(config)?;
+    let request = UpdateDraftRequest {
+        storage,
+        id: id.to_owned(),
+        name,
+        graph,
+        flow_id,
+    };
+    store::call_catalog(config, catalog::members::UPDATE_DRAFT, (request,))
 }
 
-/// Binds [`tinyflows_sqlite::drafts::list_drafts`] to this host's catalog directory.
-#[inline]
+/// List module-owned drafts.
 pub fn list_drafts(config: &Config) -> Result<Vec<FlowDraft>> {
-    tinyflows_sqlite::drafts::list_drafts(&dir(config))
+    let storage = catalog_storage::register_blocking(config)?;
+    let drafts: Vec<FlowDraft> =
+        store::call_catalog(config, catalog::members::LIST_DRAFTS, (storage,))?;
+    Ok(drafts)
 }
 
-/// Binds [`tinyflows_sqlite::drafts::delete_draft`] to this host's catalog directory.
-#[inline]
+/// Delete one draft, returning whether a record was removed.
 pub fn delete_draft(config: &Config, id: &str) -> Result<bool> {
-    tinyflows_sqlite::drafts::delete_draft(&dir(config), id)
+    let storage = catalog_storage::register_blocking(config)?;
+    let request = DraftIdRequest {
+        storage,
+        id: id.to_owned(),
+    };
+    store::call_catalog(config, catalog::members::DELETE_DRAFT, (request,))
 }

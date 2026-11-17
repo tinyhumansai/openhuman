@@ -17,3 +17,9 @@ core, which keeps the rest of the channel controllers (connect, status, bot-toke
 Discord discovery, messaging) and the credential controllers. The core's
 `OpenHumanChannelBackend` still implements the four contract methods, but only
 to answer `BACKEND_UNAVAILABLE:`, since nothing in the core dispatches them any more.
+
+## Further reading
+
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`crates/openhuman-tinyhumans/src/hosted/README.md`](../README.md): hosted proxies.
+- [`vendor/tinyhumans-sdk/README.md`](../../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

@@ -1,10 +1,10 @@
 //! Drops and eagerly re-warms the integrations cache when the user flips
 //! Composio between backend and direct mode.
 
+use crate::core::runtime::DispatchCtx;
 use async_trait::async_trait;
 use tinybus::EventHandler;
 
-use crate::config::rpc as config_rpc;
 use crate::core::events::DomainEvent;
 use crate::integrations::composio::ops;
 use crate::integrations::composio::FetchConnectedIntegrationsStatus;
@@ -50,7 +50,16 @@ impl EventHandler<DomainEvent> for ComposioConfigChangedSubscriber {
     }
 
     async fn handle(&self, event: &DomainEvent) {
-        let DomainEvent::ComposioConfigChanged { mode, api_key_set } = event else {
+        let DomainEvent::ComposioConfigChanged {
+            mode,
+            api_key_set,
+            tenant,
+        } = event
+        else {
+            return;
+        };
+        let Some(ctx) = DispatchCtx::for_event(tenant.as_ref()) else {
+            tracing::debug!("[composio-cache] config change has no tenant; eager warm skipped");
             return;
         };
 
@@ -62,7 +71,7 @@ impl EventHandler<DomainEvent> for ComposioConfigChangedSubscriber {
         ops::invalidate_connected_integrations_cache();
 
         tokio::spawn(async move {
-            let config = match config_rpc::load_config_with_timeout().await {
+            let config = match ctx.load_config().await {
                 Ok(config) => config,
                 Err(error) => {
                     tracing::debug!(

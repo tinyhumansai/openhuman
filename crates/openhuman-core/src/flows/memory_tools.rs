@@ -23,20 +23,19 @@
 //! (`flow:<id>` or `flows`), so it never reaches the user's own memory.
 
 use std::sync::Arc;
+use tinyagents_harness_tools::static_schema;
 
 use async_trait::async_trait;
 use serde_json::json;
-use tinymemory_api::{
-    Citation, ForgetTarget, LearningKind, MemoryMeta, MetaFilter, SourceKind, SourceRef,
-};
+use tinymemory_api::{Citation, LearningKind, MemoryMeta, MetaFilter, SourceKind, SourceRef};
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
-use crate::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
 use crate::config::Config;
-use crate::memory::types::{LearnParams, RecallParams};
-use crate::memory::{MemoryError, MemoryResult};
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use crate::memory::types::{ForgetParams, ItemsListParams, LearnParams, RecallParams, MAX_LIMIT};
 use crate::security::policy::ToolOperation;
 use crate::security::SecurityPolicy;
+use tinymemory_api::{Error, Result};
 
 /// Prefix of a flow's own tag (see [`flow_tag`]).
 pub const FLOW_TAG_PREFIX: &str = "flow:";
@@ -59,12 +58,12 @@ const FLOW_KEY_INFIX: &str = ":key:";
 /// by a prompt-injected caller. Writes refuse when this is `None`; the
 /// read-only recall falls back to the argument (cross-flow reads are already
 /// open by design, so an argument grants no new read privilege).
-fn trusted_flow_id() -> Option<String> {
-    match turn_origin::current() {
+fn trusted_flow_id(origin: Option<&AgentTurnOrigin>) -> Option<String> {
+    match origin {
         Some(AgentTurnOrigin::TrustedAutomation {
             job_id,
             source: TrustedAutomationSource::Workflow { .. },
-        }) => Some(job_id),
+        }) => Some(job_id.clone()),
         _ => None,
     }
 }
@@ -98,19 +97,13 @@ pub fn flow_key_of(meta: &MemoryMeta) -> Option<&str> {
 /// The filter matching every item `flow_id` wrote.
 #[must_use]
 pub fn flow_filter(flow_id: &str) -> MetaFilter {
-    MetaFilter {
-        tags_any: vec![flow_tag(flow_id)],
-        ..MetaFilter::default()
-    }
+    MetaFilter::tags_any([flow_tag(flow_id)])
 }
 
 /// The filter matching every flow-written item, of any flow.
 #[must_use]
 pub fn cross_flow_filter() -> MetaFilter {
-    MetaFilter {
-        tags_any: vec![FLOWS_TAG.to_string()],
-        ..MetaFilter::default()
-    }
+    MetaFilter::tags_any([FLOWS_TAG])
 }
 
 /// Host metadata for an item `flow_id` writes: `source.kind = agent` with the
@@ -132,49 +125,63 @@ pub fn flow_meta(flow_id: &str, extra: &[String]) -> MemoryMeta {
 
 /// Forgets every item matching `filter` (which must be non-empty). Memory
 /// off forgets nothing.
-pub async fn forget_matching(config: &Config, filter: MetaFilter) -> MemoryResult<usize> {
+pub async fn forget_matching(config: &Config, filter: MetaFilter) -> Result<usize> {
     if filter.is_empty() {
-        return Err(MemoryError::invalid(
-            "refusing to forget with an empty filter",
+        return Err(Error::InvalidRequest(
+            ("refusing to forget with an empty filter").into(),
         ));
     }
-    let bound = match crate::memory::engine::resolve(config).engine() {
-        Ok(bound) => bound,
-        Err(MemoryError::Off(_)) => {
+    match crate::memory::ops::forget_filter(config, filter).await {
+        Ok(forgotten) => Ok(forgotten),
+        Err(Error::Off(_)) => {
             tracing::debug!("[flows:memory] forget skipped: memory is off");
-            return Ok(0);
+            Ok(0)
         }
-        Err(error) => return Err(error),
-    };
-    let report = bound.engine.forget(ForgetTarget::Filter(filter)).await?;
-    tracing::debug!(
-        engine = %bound.id,
-        forgotten = report.forgotten,
-        "[flows:memory] forgot items by tag filter"
-    );
-    Ok(report.forgotten)
+        Err(error) => Err(error),
+    }
 }
 
 /// Stores `content` as `flow_id`'s value for `key`, replacing an earlier
-/// value under the same key. Returns the stored item's id.
+/// value under the same key. It snapshots matching ids, stores the new value,
+/// and only then forgets the old snapshot, so a failed write preserves the
+/// previous value and concurrent writes after the snapshot survive. Returns
+/// the stored item's id.
 pub async fn remember_keyed(
     config: &Config,
     flow_id: &str,
     key: &str,
     content: &str,
     kind: LearningKind,
-) -> MemoryResult<String> {
+) -> Result<String> {
     // Fail with MEMORY_OFF before touching anything.
-    crate::memory::engine::resolve(config).engine()?;
+    crate::memory::engine::resolve(config).await.engine()?;
     let key_tag = flow_key_tag(flow_id, key);
-    let replaced = forget_matching(
-        config,
-        MetaFilter {
-            tags_any: vec![key_tag.clone()],
-            ..MetaFilter::default()
-        },
-    )
-    .await?;
+    // Take a scoped snapshot before writing. If learning fails, this leaves
+    // the prior value intact; deleting by these ids after learning also keeps
+    // a concurrent write that was absent from the snapshot.
+    let mut old_ids = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = crate::memory::ops::items_list(
+            config,
+            ItemsListParams {
+                filter: Some(MetaFilter::tags_any([key_tag.clone()])),
+                limit: Some(MAX_LIMIT),
+                cursor,
+                ..ItemsListParams::default()
+            },
+        )
+        .await?;
+        old_ids.extend(page.items.into_iter().map(|item| item.id.0));
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    // A flow's own key/value state: searchable, but nothing is derived from
+    // it as memory about the user.
+    let mut meta = flow_meta(flow_id, &[key_tag]);
+    meta.derive = Some(false);
     let view = crate::memory::ops::learn(
         config,
         LearnParams {
@@ -183,9 +190,23 @@ pub async fn remember_keyed(
             confidence: None,
             meta: None,
         },
-        Some(flow_meta(flow_id, &[key_tag])),
+        Some(meta),
     )
     .await?;
+    let obsolete_ids: Vec<String> = old_ids.into_iter().filter(|id| id != &view.id).collect();
+    let replaced = if obsolete_ids.is_empty() {
+        0
+    } else {
+        crate::memory::ops::forget(
+            config,
+            ForgetParams {
+                ids: obsolete_ids,
+                reach: None,
+            },
+        )
+        .await?
+        .forgotten
+    };
     tracing::debug!(
         flow_id = %flow_id,
         key_chars = key.chars().count(),
@@ -288,6 +309,18 @@ impl Tool for FlowMemoryRecallTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        tool_context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let origin =
+            crate::agent::tinyagents::host::run_context::turn_origin_for_tool(tool_context);
         let query = match args.get("query").and_then(|v| v.as_str()) {
             Some(q) => q.trim(),
             None => return Ok(ToolResult::error("Missing 'query' parameter".to_string())),
@@ -299,7 +332,7 @@ impl Tool for FlowMemoryRecallTool {
 
         // SECURITY: inside a running flow the trusted origin wins over the
         // model-supplied `flow_id` argument.
-        let flow_id = match trusted_flow_id() {
+        let flow_id = match trusted_flow_id(origin.as_ref()) {
             Some(trusted_id) => {
                 tracing::debug!(
                     target: "flows",
@@ -330,14 +363,18 @@ impl Tool for FlowMemoryRecallTool {
             .and_then(serde_json::Value::as_u64)
             .map_or(5, |v| v as usize);
 
-        let config = match crate::config::rpc::load_config_with_timeout().await {
-            Ok(config) => config,
-            Err(error) => {
-                return Ok(ToolResult::error(format!(
-                    "Flow memory recall failed: {error}"
-                )))
-            }
-        };
+        let config =
+            match crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                .load_config()
+                .await
+            {
+                Ok(config) => config,
+                Err(error) => {
+                    return Ok(ToolResult::error(format!(
+                        "Flow memory recall failed: {error}"
+                    )))
+                }
+            };
         tracing::debug!(
             target: "flows",
             scope,
@@ -348,6 +385,7 @@ impl Tool for FlowMemoryRecallTool {
         match crate::memory::ops::recall(
             &config,
             RecallParams {
+                refers_to: None,
                 question: query.to_string(),
                 filter: Some(filter),
                 limit: Some(limit),
@@ -414,31 +452,7 @@ impl Tool for FlowMemoryRememberTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "flow_id": {
-                    "type": "string",
-                    "description": "Informational only: inside a running flow the active flow's own id \
-                     (from the run's trusted origin) is authoritative and this value is ignored. This \
-                     tool ONLY works inside a workflow run — calling it from chat or any other context \
-                     without a trusted run origin is refused, regardless of what is passed here."
-                },
-                "key": {
-                    "type": "string",
-                    "description": "Unique key for this memory within the flow's own memory"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The information to remember"
-                },
-                "category": {
-                    "type": "string",
-                    "description": "What kind of statement this is: 'fact' (default), 'preference', 'procedure', 'correction', or anything else (stored as 'other')."
-                }
-            },
-            "required": ["flow_id", "key", "content"]
-        })
+        static_schema!(include_str!("parameters/flow_memory_remember.json"))
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -446,6 +460,18 @@ impl Tool for FlowMemoryRememberTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        tool_context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let origin =
+            crate::agent::tinyagents::host::run_context::turn_origin_for_tool(tool_context);
         let flow_id_arg = args.get("flow_id").and_then(|v| v.as_str());
         let Some(key) = args.get("key").and_then(|v| v.as_str()) else {
             return Ok(ToolResult::error("Missing 'key' parameter".to_string()));
@@ -458,13 +484,14 @@ impl Tool for FlowMemoryRememberTool {
         if let Err(error) = self
             .security
             .enforce_tool_operation(ToolOperation::Act, "flow_memory_remember")
+            .await
         {
             return Ok(ToolResult::error(error));
         }
 
         // SECURITY (T-M2): the flow comes from the trusted run origin only;
         // outside a workflow run the write is refused.
-        let Some(flow_id) = trusted_flow_id() else {
+        let Some(flow_id) = trusted_flow_id(origin.as_ref()) else {
             tracing::warn!(
                 target: "flows",
                 requested_flow_id_chars = flow_id_arg.map_or(0, str::len),
@@ -478,7 +505,7 @@ impl Tool for FlowMemoryRememberTool {
         if key.is_empty() {
             return Ok(ToolResult::error("key cannot be empty".to_string()));
         }
-        if crate::security::scrub::has_likely_secret(content) {
+        if tinyredact::has_likely_secret(content) {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),
@@ -490,14 +517,18 @@ impl Tool for FlowMemoryRememberTool {
             ));
         }
 
-        let config = match crate::config::rpc::load_config_with_timeout().await {
-            Ok(config) => config,
-            Err(error) => {
-                return Ok(ToolResult::error(format!(
-                    "Failed to store flow memory: {error}"
-                )))
-            }
-        };
+        let config =
+            match crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                .load_config()
+                .await
+            {
+                Ok(config) => config,
+                Err(error) => {
+                    return Ok(ToolResult::error(format!(
+                        "Failed to store flow memory: {error}"
+                    )))
+                }
+            };
         match remember_keyed(&config, &flow_id, key, content, kind).await {
             Ok(_) => Ok(ToolResult::success(format!("Stored flow memory: {key}"))),
             Err(error) => {
@@ -517,3 +548,7 @@ impl Tool for FlowMemoryRememberTool {
 #[cfg(test)]
 #[path = "memory_tools_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "memory_tools_schema_tests.rs"]
+mod schema_tests;

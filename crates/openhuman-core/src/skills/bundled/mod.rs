@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-pub use tinyskills::{BundledFile, BundledSkill, InstallReport};
+use tinyskills::{BundledFile, BundledSkill, InstallReport};
+
+#[cfg(feature = "flows")]
+pub(crate) mod flow_authoring;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
@@ -18,8 +21,6 @@ pub const BUNDLED: &[BundledSkill] = &[
             contents: include_str!("../../desktop/control/WORKFLOW.md"),
         }],
     },
-    #[cfg(feature = "flows")]
-    crate::flows::skills::FLOW_AUTHORING,
 ];
 
 /// Product-owned root for materialized builtin skills.
@@ -49,6 +50,10 @@ pub fn install(workspace_dir: &Path) -> InstallReport {
 
 /// Boot entry point used by runtime composition.
 pub fn install_bundled_skills(workspace_dir: &Path) {
+    if !crate::skills::skills_component_enabled() {
+        tracing::debug!("[skills][bundled] install skipped ([components] skills off)");
+        return;
+    }
     let _ = install(workspace_dir);
 }
 

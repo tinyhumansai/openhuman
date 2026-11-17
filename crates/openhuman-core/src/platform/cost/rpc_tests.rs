@@ -29,6 +29,7 @@ fn make_model_stats(model: &str, cost: f64) -> ModelStats {
         cost_usd: cost,
         total_tokens: 1500,
         request_count: 1,
+        unpriced_request_count: 0,
     }
 }
 
@@ -282,4 +283,65 @@ fn usage_log_total_of_no_records_is_not_negative_zero() {
     let dto = usage_log_to_dto(Vec::new(), "USD".to_string(), 30, 100);
     assert!(dto.total_cost_usd.is_sign_positive());
     assert!(!serde_json::to_string(&dto).unwrap().contains("-0.0"));
+}
+
+#[test]
+fn report_rpc_groups_attributed_usage_and_reports_cache_hits() {
+    let _lock = tracker_test_lock();
+    if try_global().is_some() {
+        return;
+    }
+    *FALLBACK_TRACKER.lock() = None;
+    let (_tmp, cfg) = tempdir_config();
+    let tracker = resolve_tracker(&cfg).unwrap();
+    for (thread, agent, input, cached, cost) in [
+        ("t1", "orchestrator", 1000, 0, 0.5),
+        ("t1", "orchestrator", 1000, 900, 0.1),
+        ("t2", "planner", 400, 0, 0.2),
+    ] {
+        let mut usage = TokenUsage::new("anthropic/claude-sonnet-4", input, 50, 0.0, 0.0);
+        usage.cached_input_tokens = cached;
+        usage.cost_usd = cost;
+        usage.timestamp = Utc::now();
+        usage.scope = crate::platform::cost::types::UsageScope {
+            thread_id: Some(thread.into()),
+            agent_id: Some(agent.into()),
+            ..Default::default()
+        };
+        tracker.record_usage_unconditional(usage).unwrap();
+    }
+
+    let outcome = usage_report(
+        &cfg,
+        30,
+        &[crate::platform::cost::report::GroupKey::Agent],
+        &crate::platform::cost::report::ReportFilter::default(),
+    )
+    .expect("report resolves");
+    let value = outcome.value;
+    assert_eq!(value["totals"]["calls"], 3);
+    let rows = value["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["key"]["agent"], "orchestrator");
+    let ratio = rows[0]["cache_hit_ratio"].as_f64().unwrap();
+    assert!((ratio - 0.45).abs() < 1e-9, "{ratio}");
+
+    let cache = cache_report(
+        &cfg,
+        30,
+        &crate::platform::cost::report::ReportFilter {
+            thread_id: Some("t1".into()),
+            ..Default::default()
+        },
+        1,
+    )
+    .expect("cache report resolves");
+    let value = cache.value;
+    assert_eq!(
+        value["calls"].as_array().unwrap().len(),
+        1,
+        "limit keeps the newest"
+    );
+    assert_eq!(value["input_tokens"], 2000, "totals cover every call");
+    assert_eq!(value["cold_calls"], 0);
 }

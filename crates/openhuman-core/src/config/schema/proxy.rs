@@ -7,6 +7,9 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
+    "inference.attachment",
+    "inference.model_limits",
+    "providers.list_models",
     "provider.anthropic",
     "provider.compatible",
     "provider.copilot",
@@ -32,6 +35,7 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.pushover",
     "memory.embeddings",
     "tunnel.custom",
+    "telemetry.otlp",
 ];
 
 const SUPPORTED_PROXY_SERVICE_SELECTORS: &[&str] =

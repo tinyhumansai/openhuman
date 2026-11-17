@@ -27,6 +27,7 @@ import { Alert, AlertDescription, Button, Card, ConfirmDialog } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
 import MemoryBrainIngestDialog from './MemoryBrainIngestDialog';
 import MemoryBrainSearch from './MemoryBrainSearch';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import { fill } from './memoryFormat';
 import { brainSourceLabel } from './memoryLifecycleLabels';
 import MemorySyncedSources from './MemorySyncedSources';
@@ -128,11 +129,7 @@ export default function MemoryBrainTab() {
 
   return (
     <div className="space-y-4 animate-fade-up" data-testid="memory-brain-tab">
-      {error !== null && (
-        <Alert variant="destructive" data-testid="memory-brain-error">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error !== null && <MemoryErrorAlert message={error} data-testid="memory-brain-error" />}
       {notice !== null && (
         <Alert variant="success" data-testid="memory-brain-notice">
           <AlertDescription>{notice}</AlertDescription>

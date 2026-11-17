@@ -38,8 +38,10 @@ import {
   skillsApi,
   type WorkflowSummary,
 } from '../../services/api/skillsApi';
+import type { ScanBlocked } from '../../services/api/skillRegistryApi';
 import { ModalShell, Spinner, TextField } from '../ui';
 import Button from '../ui/Button';
+import ScanBlockedDialog from './ScanBlockedDialog';
 
 const log = debug('skills:install-dialog');
 
@@ -155,6 +157,9 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InstallWorkflowFromUrlResult | null>(null);
+  const [scanBlocked, setScanBlocked] = useState<ScanBlocked | null>(null);
+  const [scanOverrideError, setScanOverrideError] = useState<string | null>(null);
+  const [scanDeclined, setScanDeclined] = useState(false);
 
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
@@ -177,20 +182,31 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
     };
   }, []);
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!formValid) return;
-
+  const submitInstall = useCallback(
+    async (acknowledgedDigest?: string) => {
       const payload = {
         url: url.trim(),
         ...(timeoutSecs.trim() ? { timeoutSecs: Number(timeoutSecs) } : {}),
+        ...(acknowledgedDigest ? { acknowledgedDigest } : {}),
       };
-      log('submit url=%s timeout=%s', payload.url, payload.timeoutSecs ?? 'default');
+      log(
+        'submit url=%s timeout=%s acknowledged=%s',
+        payload.url,
+        payload.timeoutSecs ?? 'default',
+        Boolean(acknowledgedDigest)
+      );
       setSubmitting(true);
       setError(null);
+      setScanOverrideError(null);
+      setScanDeclined(false);
       try {
-        const installed = await skillsApi.installWorkflowFromUrl(payload);
+        const outcome = await skillsApi.installWorkflowFromUrl(payload);
+        if (outcome.status === 'scan_blocked') {
+          log('submit-scan-blocked findings=%d', outcome.scan.findings.length);
+          setScanBlocked(outcome.scan);
+          return;
+        }
+        const { status: _status, ...installed } = outcome;
         log(
           'submit-ok new=%d stdout=%d stderr=%d',
           installed.newWorkflows.length,
@@ -200,17 +216,28 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
         for (const skillId of installed.newWorkflows) {
           trackEvent('skill_install', { skill_id: skillId });
         }
+        setScanBlocked(null);
         setResult(installed);
         onInstalled(installed);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log('submit-err %s', message);
-        setError(message);
+        if (acknowledgedDigest) setScanOverrideError(message);
+        else setError(message);
       } finally {
         setSubmitting(false);
       }
     },
-    [formValid, onInstalled, timeoutSecs, url]
+    [onInstalled, timeoutSecs, url]
+  );
+
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!formValid) return;
+      await submitInstall();
+    },
+    [formValid, submitInstall]
   );
 
   return (
@@ -379,6 +406,16 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
               </div>
             ) : null}
 
+            {scanDeclined && !result ? (
+              <div
+                role="status"
+                data-testid="install-scan-declined"
+                className="rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-900">
+                <p className="font-semibold">{t('skills.scan.declinedTitle')}</p>
+                <p className="mt-1">{t('skills.scan.declinedHint')}</p>
+              </div>
+            ) : null}
+
             {/* Error panel */}
             {error ? (
               <div
@@ -404,6 +441,21 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
               </div>
             ) : null}
       </form>
+      {scanBlocked ? (
+        <ScanBlockedDialog
+          skillName={scanBlocked.slug || url.trim()}
+          scan={scanBlocked}
+          installing={submitting}
+          error={scanOverrideError}
+          onBlock={() => {
+            log('scan-blocked: user kept it uninstalled');
+            setScanBlocked(null);
+            setScanOverrideError(null);
+            setScanDeclined(true);
+          }}
+          onInstallAnyway={() => void submitInstall(scanBlocked.digest)}
+        />
+      ) : null}
     </ModalShell>
   );
 }

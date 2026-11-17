@@ -24,29 +24,34 @@
 //!   widen it to a sibling tenant;
 //! - [`Memory::forget`] forgets only ids the root's subtree holds — an id from
 //!   another tenant is left alone as if it named nothing;
-//! - [`Memory::learn`] writes at the root, whatever the caller's metadata says.
+//! - [`Memory::learn`] writes at the root, whatever the caller's metadata says,
+//!   and [`Memory::store`] writes at the root or one agent's node below it;
+//! - [`Memory::search`] ranks only items the root's subtree holds, narrowed by
+//!   kind and tag.
 //!
 //! The engine is the one every agent uses: the configured `[memory]` engine,
 //! or one the host installed with [`install_host_engine`]. With neither, memory
 //! is off and every call but [`Memory::status`] answers
-//! [`MemoryError::Off`].
+//! [`Error::Off`].
 
 use openhuman_core::config::Config;
 use openhuman_core::memory::engine::{self, Binding};
 use openhuman_core::memory::{brain, explore, lifecycle, ops, types};
-use tinymemory_api::{ItemKind, MemoryMeta, MetaFilter, Namespace, Reach};
+use tinymemory_api::{
+    ItemKind, MemoryMeta, MetaFilter, Namespace, Reach, StoreItem, StoreReceipt, WriteOptions,
+};
 use tinymemory_tools::MemoryLayout;
 
 pub use openhuman_core::memory::brain::{
-    BrainForgetView, BrainIngestParams, BrainIngestView, BrainSearchView, BrainSourceCount,
-    BrainSourcesView,
+    BrainForgetView, BrainIngestParams, BrainIngestView, BrainSearchView,
 };
 pub use openhuman_core::memory::engine::{clear_host_engine, install_host_engine};
 pub use openhuman_core::memory::lifecycle::views::{AgentCount, AgentsView};
 pub use openhuman_core::memory::types::{
     FetchView, ForgetView, ItemsListView, LearnParams, LearnView, RecallView,
 };
-pub use openhuman_core::memory::{MemoryError, MemoryResult};
+use tinymemory_api::{Error, Result};
+pub use tinymemory_tools::{BrainSourceCount, BrainSourcesView};
 
 /// The TinyMemory engine contract, for a host that implements or installs an
 /// engine ([`install_host_engine`]) or reads the items this facade returns.
@@ -89,6 +94,22 @@ pub struct ItemsQuery {
     pub cursor: Option<String>,
 }
 
+/// Which items [`Memory::search`] ranks.
+#[derive(Debug, Clone, Default)]
+pub struct SearchQuery {
+    /// What to rank the items against.
+    pub query: String,
+    /// One memory agent's node plus the root's items it inherits, as
+    /// [`Memory::recall`] reads it; `None` searches the whole root.
+    pub agent_id: Option<String>,
+    /// Item kinds to include; empty means every kind.
+    pub kinds: Vec<ItemKind>,
+    /// Match an item carrying any one of these tags; empty means no constraint.
+    pub tags_any: Vec<String>,
+    /// Most hits returned.
+    pub limit: Option<usize>,
+}
+
 /// One tenant's memory: every call confined to one layout root. See the
 /// module docs.
 #[derive(Clone)]
@@ -107,20 +128,21 @@ impl std::fmt::Debug for Memory {
 
 impl Memory {
     /// Binds `base` to the layout root `root` (`team:acme`).
-    pub(crate) fn bind(mut base: Config, root: &str) -> MemoryResult<Self> {
+    pub(crate) fn bind(mut base: Config, root: &str) -> Result<Self> {
         let root = root.trim();
-        openhuman_core::memory::scope::validate_root(root).map_err(MemoryError::invalid)?;
+        tinymemory_tools::layout::identity::validate_root(root).map_err(Error::InvalidRequest)?;
         let namespace: Namespace = root
             .parse()
-            .map_err(|error: tinymemory_api::Error| MemoryError::invalid(error.to_string()))?;
+            .map_err(|error: tinymemory_api::Error| Error::InvalidRequest(error.to_string()))?;
         if namespace.is_root() {
-            return Err(MemoryError::invalid(
-                "a tenant's memory needs a root below the store root",
+            return Err(Error::InvalidRequest(
+                "a tenant's memory needs a root below the store root".into(),
             ));
         }
         let layout = MemoryLayout::new(namespace)?;
-        // The host binding outranks any identity in scope, so a call made from
-        // inside an agent's turn still lands on this root.
+        // The host binding outranks every identity, and the facade acts as the
+        // root one, so a call made from inside an agent's turn still lands on
+        // this root.
         base.memory.root = Some(root.to_string());
         base.memory.agent_id = None;
         log::debug!("[embed][memory] bound root={root}");
@@ -136,13 +158,13 @@ impl Memory {
     }
 
     /// The node `agent_id`'s conversations live at.
-    pub fn agent_node(&self, agent_id: &str) -> MemoryResult<String> {
+    pub fn agent_node(&self, agent_id: &str) -> Result<String> {
         Ok(self.layout.conversations(agent_id)?.to_string())
     }
 
     /// Whether memory is on, and with what.
-    pub fn status(&self) -> MemoryStatus {
-        match engine::resolve(&self.config) {
+    pub async fn status(&self) -> MemoryStatus {
+        match engine::resolve(&self.config).await {
             Binding::On(bound) => MemoryStatus {
                 root: self.root(),
                 on: true,
@@ -165,17 +187,21 @@ impl Memory {
     }
 
     /// Whether an engine is bound.
-    pub fn is_on(&self) -> bool {
-        engine::is_on(&self.config)
+    pub async fn is_on(&self) -> bool {
+        engine::is_on(&self.config).await
     }
 
     /// The agents with logged turns under the root, most first.
-    pub async fn agents(&self) -> MemoryResult<AgentsView> {
-        lifecycle::views::agents_list(&self.config).await
+    pub async fn agents(&self) -> Result<AgentsView> {
+        lifecycle::views::agents_list(
+            &self.config,
+            &tinymemory_tools::layout::identity::Identity::root(),
+        )
+        .await
     }
 
     /// A page of items, newest first.
-    pub async fn list(&self, query: ItemsQuery) -> MemoryResult<ItemsListView> {
+    pub async fn list(&self, query: ItemsQuery) -> Result<ItemsListView> {
         let reach = self.reach_of(query.agent_id.as_deref())?;
         ops::items_list(
             &self.config,
@@ -189,13 +215,14 @@ impl Memory {
                 limit: query.limit,
                 cursor: query.cursor,
                 path: Vec::new(),
+                preview: false,
             },
         )
         .await
     }
 
     /// The items among `ids` the root holds.
-    pub async fn get(&self, ids: Vec<String>) -> MemoryResult<Vec<api::Hit>> {
+    pub async fn get(&self, ids: Vec<String>) -> Result<Vec<api::Hit>> {
         let view = explore::items_get(
             &self.config,
             explore::ItemsGetParams {
@@ -214,10 +241,11 @@ impl Memory {
         question: impl Into<String>,
         agent_id: Option<&str>,
         limit: Option<usize>,
-    ) -> MemoryResult<RecallView> {
+    ) -> Result<RecallView> {
         ops::recall(
             &self.config,
             types::RecallParams {
+                refers_to: None,
                 question: question.into(),
                 filter: Some(self.reading(agent_id)?),
                 limit,
@@ -232,10 +260,11 @@ impl Memory {
         query: impl Into<String>,
         kinds: Vec<ItemKind>,
         limit: Option<usize>,
-    ) -> MemoryResult<FetchView> {
+    ) -> Result<FetchView> {
         ops::fetch(
             &self.config,
             types::FetchParams {
+                refers_to: None,
                 query: query.into(),
                 mode: None,
                 filter: Some(MetaFilter {
@@ -250,9 +279,55 @@ impl Memory {
         .await
     }
 
+    /// Ranked items matching `query.query` under the root, narrowed by kind
+    /// and tag: [`Memory::fetch`] for a host that files what it captures
+    /// under tags of its own and reads only some of them back.
+    pub async fn search(&self, query: SearchQuery) -> Result<FetchView> {
+        let mut filter = self.reading(query.agent_id.as_deref())?;
+        filter.kinds = query.kinds;
+        filter.tags_any = query.tags_any;
+        ops::fetch(
+            &self.config,
+            types::FetchParams {
+                refers_to: None,
+                query: query.query,
+                mode: None,
+                filter: Some(filter),
+                limit: query.limit,
+                cursor: None,
+            },
+        )
+        .await
+    }
+
+    /// Stores an item of any kind the host captured itself (a document, a
+    /// conversation, a learning) at the root, shared by every agent bound
+    /// there, or at `agent_id`'s node. The node is authoritative: a
+    /// namespace in the item's meta is overwritten. Everything else in the
+    /// meta (tags, source, `observed_at`, `observed_actor`) is kept, so an
+    /// identical item stored again is a replay
+    /// ([`StoreItem::fingerprint`](api::StoreItem::fingerprint)).
+    ///
+    /// [`WriteOptions::accepted`] returns once the engine has durably
+    /// accepted the item, before it is readable: a capture on a live path,
+    /// or a bulk import that reads nothing back until it ends.
+    pub async fn store(
+        &self,
+        mut item: StoreItem,
+        agent_id: Option<&str>,
+        options: WriteOptions,
+    ) -> Result<StoreReceipt> {
+        let node = match agent_id.map(str::trim).filter(|agent| !agent.is_empty()) {
+            Some(agent) => self.layout.conversations(agent)?,
+            None => self.layout.learnings().clone(),
+        };
+        item.meta_mut().namespace = node;
+        ops::store_item_with(&self.config, item, options).await
+    }
+
     /// Stores a shared learning at the root. The root is authoritative: a
     /// namespace in `params.meta` is overwritten.
-    pub async fn learn(&self, params: LearnParams) -> MemoryResult<LearnView> {
+    pub async fn learn(&self, params: LearnParams) -> Result<LearnView> {
         let host = MemoryMeta {
             namespace: self.layout.learnings().clone(),
             ..MemoryMeta::default()
@@ -262,7 +337,7 @@ impl Memory {
 
     /// Forgets the items among `ids` the root holds; any other id is left
     /// alone.
-    pub async fn forget(&self, ids: Vec<String>) -> MemoryResult<ForgetView> {
+    pub async fn forget(&self, ids: Vec<String>) -> Result<ForgetView> {
         ops::forget(
             &self.config,
             types::ForgetParams {
@@ -275,7 +350,7 @@ impl Memory {
 
     /// Forgets everything stored at and below one agent's node: its logged
     /// turns and the beliefs built from them. Returns how many were removed.
-    pub async fn forget_agent(&self, agent_id: &str) -> MemoryResult<usize> {
+    pub async fn forget_agent(&self, agent_id: &str) -> Result<usize> {
         let mut forgotten = 0;
         loop {
             let page = self
@@ -305,8 +380,12 @@ impl Memory {
     }
 
     /// The brain's sources under the root and their sizes.
-    pub async fn brain_sources(&self) -> MemoryResult<BrainSourcesView> {
-        brain::sources(&self.config).await
+    pub async fn brain_sources(&self) -> Result<BrainSourcesView> {
+        brain::sources(
+            &self.config,
+            &tinymemory_tools::layout::identity::Identity::root(),
+        )
+        .await
     }
 
     /// Brain documents matching `query`, optionally of one source.
@@ -315,9 +394,10 @@ impl Memory {
         query: impl Into<String>,
         source: Option<String>,
         limit: Option<usize>,
-    ) -> MemoryResult<BrainSearchView> {
+    ) -> Result<BrainSearchView> {
         brain::search(
             &self.config,
+            &tinymemory_tools::layout::identity::Identity::root(),
             brain::BrainSearchParams {
                 query: query.into(),
                 source,
@@ -328,14 +408,20 @@ impl Memory {
     }
 
     /// Files a document (a file on disk, or text) in the root's brain.
-    pub async fn brain_ingest(&self, params: BrainIngestParams) -> MemoryResult<BrainIngestView> {
-        brain::ingest(&self.config, params).await
+    pub async fn brain_ingest(&self, params: BrainIngestParams) -> Result<BrainIngestView> {
+        brain::ingest(
+            &self.config,
+            &tinymemory_tools::layout::identity::Identity::root(),
+            params,
+        )
+        .await
     }
 
     /// Forgets every brain document of one source under the root.
-    pub async fn brain_forget(&self, source: impl Into<String>) -> MemoryResult<BrainForgetView> {
+    pub async fn brain_forget(&self, source: impl Into<String>) -> Result<BrainForgetView> {
         brain::forget(
             &self.config,
+            &tinymemory_tools::layout::identity::Identity::root(),
             brain::BrainForgetParams {
                 source: source.into(),
             },
@@ -349,7 +435,7 @@ impl Memory {
 
     /// The reach a listing reads: the root's subtree, or one agent's node
     /// and everything below it.
-    fn reach_of(&self, agent_id: Option<&str>) -> MemoryResult<Reach> {
+    fn reach_of(&self, agent_id: Option<&str>) -> Result<Reach> {
         match agent_id.map(str::trim).filter(|agent| !agent.is_empty()) {
             Some(agent) => Ok(Reach {
                 at: self.layout.conversations(agent)?,
@@ -362,7 +448,7 @@ impl Memory {
 
     /// What a recall reads: the whole root, or one agent's node with the
     /// root's shared learnings it inherits — never a sibling agent's turns.
-    fn reading(&self, agent_id: Option<&str>) -> MemoryResult<MetaFilter> {
+    fn reading(&self, agent_id: Option<&str>) -> Result<MetaFilter> {
         match agent_id.map(str::trim).filter(|agent| !agent.is_empty()) {
             Some(agent) => Ok(MetaFilter {
                 reach: Some(Reach {

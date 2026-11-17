@@ -1,80 +1,10 @@
 use super::*;
 
-/// Stable snake_case label for a [`TriggerKind`], matching its serde wire
-/// discriminator — used in loud author-facing warnings (not derived via serde
-/// so the exact human string is unmistakable at the call site).
-fn trigger_kind_label(kind: &TriggerKind) -> &'static str {
-    match kind {
-        TriggerKind::Manual => "manual",
-        TriggerKind::Schedule => "schedule",
-        TriggerKind::Webhook => "webhook",
-        TriggerKind::AppEvent => "app_event",
-        TriggerKind::Form => "form",
-        TriggerKind::ExecuteByWorkflow => "execute_by_workflow",
-        TriggerKind::ChatMessage => "chat_message",
-        TriggerKind::Evaluation => "evaluation",
-        TriggerKind::System => "system",
-    }
-}
-
-/// Whether a flow's trigger kind currently produces *automatic* runs in this
-/// host. Only three kinds fire today:
-/// - `manual` — runnable on demand via `flows_run` (no automatic dispatch, but
-///   that's the whole contract of a manual trigger — never a surprise).
-/// - `schedule` — a `cron` job drives `FlowScheduleTick` (see
-///   [`bind_schedule_trigger`]).
-/// - `app_event` — matched against `ComposioTriggerReceived` at dispatch time
-///   (see `flows::bus::FlowTriggerSubscriber`).
-///
-/// Everything else (`webhook`, `chat_message`, `form`, `execute_by_workflow`,
-/// `evaluation`, `system`) is *accepted and saved* but has no wired dispatch
-/// path yet — enabling such a flow silently produces a flow that never runs
-/// itself. [`graph_trigger_warnings`] turns that silence into a loud warning.
-fn trigger_kind_fires(kind: &TriggerKind) -> bool {
-    matches!(
-        kind,
-        TriggerKind::Manual | TriggerKind::Schedule | TriggerKind::AppEvent
-    )
-}
-
-/// Produces host-side, **non-fatal** validation warnings for a graph — today
-/// exactly one: "this trigger kind does not fire automatically yet". Returns
-/// an empty vec when the trigger fires (`manual`/`schedule`/`app_event`), when
-/// the graph has no single resolvable trigger node, or when the trigger has no
-/// `trigger_kind` discriminator (a legacy/manual-only graph authored before
-/// B2 simply never self-fires — not a warnable surprise, matching
-/// `bus::extract_trigger_kind`'s "no automatic binding" treatment).
-///
-/// This lives host-side (NOT in `tinyflows::validate`, which is host-agnostic
-/// and only does structural checks) because "which trigger kinds this host has
-/// wired" is an OpenHuman fact, not a property of the portable graph.
-pub(crate) fn graph_trigger_warnings(graph: &WorkflowGraph) -> Vec<String> {
-    let Some(trigger) = graph.trigger() else {
-        return Vec::new();
-    };
-    let Some(kind_value) = trigger.config.get("trigger_kind") else {
-        return Vec::new();
-    };
-    let kind: TriggerKind = match serde_json::from_value(kind_value.clone()) {
-        Ok(k) => k,
-        Err(_) => return Vec::new(),
-    };
-    if trigger_kind_fires(&kind) {
-        return Vec::new();
-    }
-    let label = trigger_kind_label(&kind);
-    vec![format!(
-        "Trigger kind '{label}' does not fire automatically yet — this flow will be saved and \
-         can be enabled, but nothing will run it on its own until that trigger is wired up. Run \
-         it manually with flows_run, or switch to a `schedule` or `app_event` trigger."
-    )]
-}
-
 /// Enables or disables a flow. Enable/disable now (B2) binds/tears down the
 /// flow's automatic trigger:
 /// - `schedule` — registers/removes the backing `cron` job
 ///   (`cron::add_flow_schedule_job` / `cron::remove_job`) so
-///   `flows::bus::FlowTriggerSubscriber` gets a `FlowScheduleTick` on the
+///   `flows::bus::FlowTriggerSubscriber` gets a schedule trigger from the
 ///   configured cadence.
 /// - `app_event` — no enable-time side effect needed: the subscriber matches
 ///   every `ComposioTriggerReceived` against `store::list_enabled_flows` at
@@ -107,14 +37,38 @@ pub async fn flows_set_enabled(
     // line — so an enable of a flow that will never fire itself (webhook,
     // chat_message, form, …) is impossible to miss at the call site.
     if enabled {
-        for warning in graph_trigger_warnings(&flow.graph) {
-            tracing::warn!(
+        match serde_json::to_value(&flow.graph) {
+            Ok(graph) => match super::validation::validate_over_bus(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                config,
+                graph,
+            )
+            .await
+            {
+                Ok(analysis) => {
+                    for warning in analysis.warnings {
+                        tracing::warn!(
+                            target: "flows",
+                            flow_id = %id,
+                            warning = %warning,
+                            "[flows] flows_set_enabled: enabling a flow whose trigger kind does not fire yet"
+                        );
+                        logs.push(format!("warning: {warning}"));
+                    }
+                }
+                Err(error) => tracing::warn!(
+                    target: "flows",
+                    flow_id = %id,
+                    %error,
+                    "[flows] flows_set_enabled: TinyFlows warning analysis failed"
+                ),
+            },
+            Err(error) => tracing::warn!(
                 target: "flows",
                 flow_id = %id,
-                warning = %warning,
-                "[flows] flows_set_enabled: enabling a flow whose trigger kind does not fire yet"
-            );
-            logs.push(format!("warning: {warning}"));
+                %error,
+                "[flows] flows_set_enabled: graph serialization failed during warning analysis"
+            ),
         }
     }
 
@@ -128,13 +82,24 @@ pub async fn flows_set_enabled(
 /// won't fire automatically until the underlying issue (invalid schedule,
 /// cron store error, …) is fixed.
 pub(super) fn bind_trigger(config: &Config, flow: &Flow) {
-    match bus::extract_trigger_kind(flow) {
-        Some(TriggerKind::Schedule) => bind_schedule_trigger(config, flow),
-        Some(TriggerKind::Webhook) => log_webhook_trigger_deferred(flow, true),
+    let details = match bus::describe_trigger(config, flow) {
+        Ok(details) => details,
+        Err(error) => {
+            tracing::warn!(target: "flows", flow_id = %flow.id, %error, "[flows] failed to describe trigger while binding");
+            return;
+        }
+    };
+    match details.kind.as_deref() {
+        Some("schedule") => match details.schedule {
+            Some(schedule) => bind_schedule_trigger(config, flow, schedule),
+            None => {
+                tracing::warn!(target: "flows", flow_id = %flow.id, "[flows] schedule trigger description omitted its schedule")
+            }
+        },
+        Some("webhook") => log_webhook_trigger_deferred(flow, true),
         _ => {
-            // `app_event` needs no enable-time binding (matched at dispatch
-            // time against `list_enabled_flows`); `manual`/`form`/others have
-            // no automatic-dispatch concept at all.
+            // `app_event` is matched at dispatch time; other kinds have no
+            // enable-time automatic-dispatch binding.
         }
     }
 }
@@ -142,9 +107,16 @@ pub(super) fn bind_trigger(config: &Config, flow: &Flow) {
 /// Tears down the automatic-dispatch side effect for `flow`'s trigger kind,
 /// mirroring [`bind_trigger`]. Best-effort, same rationale.
 pub(super) fn unbind_trigger(config: &Config, flow: &Flow) {
-    match bus::extract_trigger_kind(flow) {
-        Some(TriggerKind::Schedule) => unbind_schedule_trigger(config, &flow.id),
-        Some(TriggerKind::Webhook) => log_webhook_trigger_deferred(flow, false),
+    let details = match bus::describe_trigger(config, flow) {
+        Ok(details) => details,
+        Err(error) => {
+            tracing::warn!(target: "flows", flow_id = %flow.id, %error, "[flows] failed to describe trigger while unbinding");
+            return;
+        }
+    };
+    match details.kind.as_deref() {
+        Some("schedule") => unbind_schedule_trigger(config, &flow.id),
+        Some("webhook") => log_webhook_trigger_deferred(flow, false),
         _ => {}
     }
 }
@@ -154,26 +126,14 @@ pub(super) fn unbind_trigger(config: &Config, flow: &Flow) {
 /// `cron::find_flow_schedule_job` rather than creating a duplicate, so this
 /// is safe to call both from `flows_set_enabled` and from boot
 /// reconciliation ([`reconcile_schedule_triggers_on_boot`]).
-pub(super) fn bind_schedule_trigger(config: &Config, flow: &Flow) {
-    let Some(trigger_config) = bus::extract_trigger_config(flow) else {
-        tracing::warn!(target: "flows", flow_id = %flow.id, "[flows] schedule trigger: flow has no single trigger node — cannot bind cron job");
-        return;
-    };
-    let Some(schedule_raw) = trigger_config.get("schedule").cloned() else {
-        tracing::warn!(target: "flows", flow_id = %flow.id, "[flows] schedule trigger config is missing `schedule` — cannot bind cron job");
-        return;
-    };
-    let schedule: crate::cron::Schedule = match serde_json::from_value(schedule_raw) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(target: "flows", flow_id = %flow.id, error = %e, "[flows] invalid schedule trigger config — cannot bind cron job");
-            return;
-        }
-    };
-
+pub(super) fn bind_schedule_trigger(
+    config: &Config,
+    flow: &Flow,
+    schedule: tinyflows_bus::schedule::types::Schedule,
+) {
     match crate::cron::find_flow_schedule_job(config, &flow.id) {
         Ok(Some(existing)) => {
-            let patch = crate::cron::CronJobPatch {
+            let patch = tinyflows_bus::schedule::types::CronJobPatch {
                 enabled: Some(true),
                 schedule: Some(schedule),
                 ..Default::default()
@@ -244,6 +204,30 @@ fn log_webhook_trigger_deferred(flow: &Flow, enabled: bool) {
 /// was lost some other way) gets its schedule re-registered on the next
 /// boot without the user having to toggle it off and on.
 pub async fn reconcile_schedule_triggers_on_boot(config: &Config) -> Result<(), String> {
+    // `local`, then every agent that keeps its flows in its own storage scope
+    // (`crate::storage::agents`); each scope's flows get their cron jobs in
+    // that scope, where the scheduler visits them.
+    let mut errors = Vec::new();
+    for (agent, result) in crate::storage::agents::for_each_scope(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        "flows schedule reconcile",
+        |_| reconcile_schedule_triggers_in_scope(config),
+    )
+    .await
+    {
+        if let Err(error) = result {
+            errors.push(format!("{}: {error}", agent.as_deref().unwrap_or("local")));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// [`reconcile_schedule_triggers_on_boot`] for the current storage scope.
+async fn reconcile_schedule_triggers_in_scope(config: &Config) -> Result<(), String> {
     let (flows, skipped) = store::list_enabled_flows(config).map_err(|e| e.to_string())?;
     if skipped > 0 {
         // R-M4: a corrupt/unmigratable row must not abort boot reconciliation
@@ -253,9 +237,19 @@ pub async fn reconcile_schedule_triggers_on_boot(config: &Config) -> Result<(), 
     }
     let mut reconciled = 0usize;
     for flow in &flows {
-        if matches!(bus::extract_trigger_kind(flow), Some(TriggerKind::Schedule)) {
-            bind_schedule_trigger(config, flow);
-            reconciled += 1;
+        match bus::describe_trigger(config, flow) {
+            Ok(details) if details.kind.as_deref() == Some("schedule") => {
+                if let Some(schedule) = details.schedule {
+                    bind_schedule_trigger(config, flow, schedule);
+                    reconciled += 1;
+                } else {
+                    tracing::warn!(target: "flows", flow_id = %flow.id, "[flows] schedule trigger description omitted its schedule during boot reconcile");
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(target: "flows", flow_id = %flow.id, %error, "[flows] failed to describe trigger during boot reconcile")
+            }
         }
     }
     tracing::debug!(target: "flows", scanned = flows.len(), reconciled, skipped, "[flows] boot reconciliation of schedule-trigger cron jobs complete");

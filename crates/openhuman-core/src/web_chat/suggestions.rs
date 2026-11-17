@@ -34,11 +34,11 @@ use serde::Deserialize;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::ModelRequest;
 
-use crate::config::rpc as config_rpc;
 use crate::inference::provider;
+use crate::web_chat::event_context;
 use crate::web_chat::{ChatSuggestion, WebChannelEvent};
 
-use super::publish_web_channel_event;
+use super::publish_web_channel_event_in;
 
 /// Upper bound on the whole suggestions round-trip. A cheap `summarization`
 /// role call should complete in well under this; if it doesn't, the turn has
@@ -78,6 +78,7 @@ struct RawSuggestion {
 /// to be called immediately after the turn's terminal `chat_done` has been
 /// published — see module docs for why this never delays that event.
 pub(crate) fn spawn_follow_up_suggestions(
+    ctx: crate::core::runtime::DispatchCtx,
     client_id: String,
     thread_id: String,
     request_id: String,
@@ -87,6 +88,7 @@ pub(crate) fn spawn_follow_up_suggestions(
     tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
         async move {
             generate_and_emit(
+                &ctx,
                 &client_id,
                 &thread_id,
                 &request_id,
@@ -99,6 +101,7 @@ pub(crate) fn spawn_follow_up_suggestions(
 }
 
 async fn generate_and_emit(
+    ctx: &crate::core::runtime::DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: &str,
@@ -115,7 +118,7 @@ async fn generate_and_emit(
         return;
     }
 
-    let config = match config_rpc::load_config_with_timeout().await {
+    let config = match ctx.load_config().await {
         Ok(c) => c,
         Err(err) => {
             log::debug!(
@@ -134,17 +137,23 @@ async fn generate_and_emit(
         return;
     }
 
-    let (chat_model, resolved_model) =
-        match provider::create_chat_model_with_model_id("summarization", &config, 0.2) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                log::debug!(
-                    "{SUGGESTIONS_LOG_PREFIX} skip thread_id={thread_id} \
+    let (chat_model, resolved_model) = match provider::create_chat_model_with_model_id_in(
+        ctx,
+        "summarization",
+        &config,
+        0.2,
+    )
+    .await
+    {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log::debug!(
+                "{SUGGESTIONS_LOG_PREFIX} skip thread_id={thread_id} \
                      request_id={request_id}: provider init failed: {error}"
-                );
-                return;
-            }
-        };
+            );
+            return;
+        }
+    };
 
     let request = build_suggestions_request(user_message, assistant_message);
     let call = chat_model.invoke(&(), request);
@@ -187,14 +196,17 @@ async fn generate_and_emit(
          request_id={request_id} count={}",
         suggestions.len()
     );
-    publish_web_channel_event(WebChannelEvent {
-        event: "chat_suggestions".to_string(),
-        client_id: client_id.to_string(),
-        thread_id: thread_id.to_string(),
-        turn_request_id: Some(request_id.to_string()),
-        suggestions: Some(suggestions),
-        ..Default::default()
-    });
+    publish_web_channel_event_in(
+        ctx,
+        WebChannelEvent::ChatSuggestions {
+            context: {
+                let mut context = event_context(client_id, thread_id, "");
+                context.turn_request_id = Some(request_id.to_string());
+                context
+            },
+            suggestions,
+        },
+    );
 }
 
 fn build_suggestions_request(user_message: &str, assistant_message: &str) -> ModelRequest {
@@ -202,7 +214,8 @@ fn build_suggestions_request(user_message: &str, assistant_message: &str) -> Mod
         format!("User's last message:\n{user_message}\n\nAssistant's reply:\n{assistant_message}");
     // A 2-3 item JSON list needs no thinking: with reasoning on, the managed
     // default spent 700-1,200 reasoning tokens and 7-14 s on this call.
-    crate::inference::provider::openhuman_backend_model::without_reasoning(
+    crate::inference::registry::provider_request_without_reasoning(
+        crate::inference::provider::factory::PROVIDER_OPENHUMAN,
         ModelRequest::new(vec![
             Message::system(SUGGESTIONS_SYSTEM_PROMPT),
             Message::user(user_prompt),

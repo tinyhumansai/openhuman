@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 
 use super::super::client::{direct_list_connections, resolve_composio_route, ComposioRoute};
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use crate::config::Config;
 use crate::core::Outcome;
+use tinyconnectors_bus::names::methods;
 
 use super::super::connected_integrations::{
     fetch_connected_integrations_status, invalidate_connected_integrations_cache,
@@ -16,17 +17,104 @@ use super::super::types::{
     ComposioAuthorizeRequest, ComposioAuthorizeResponse, ComposioConnectionsResponse,
     ComposioDeleteConnectionRequest, ComposioDeleteResponse,
 };
+
+/// Matches cached identity records to normalized provider/account keys shared
+/// by the settings response and the flow connection picker.
+pub(crate) fn identity_lookup<'a>(
+    identities: &'a [crate::integrations::composio::contract::ConnectedIdentity],
+    normalized_keys: &HashMap<String, String>,
+) -> HashMap<(String, String), &'a crate::integrations::composio::contract::ConnectedIdentity> {
+    let normalize = |value: &str| {
+        normalized_keys
+            .get(value)
+            .cloned()
+            .unwrap_or_else(|| value.to_string())
+    };
+    identities
+        .iter()
+        .map(|identity| {
+            (
+                (normalize(&identity.source), normalize(&identity.identifier)),
+                identity,
+            )
+        })
+        .collect()
+}
 use super::error_utils::{
     backend_mode_without_session, direct_mode_without_key, report_composio_op_error, OpResult,
     COMPOSIO_NO_SESSION,
 };
-use crate::integrations::composio::contract::normalize_connection_identifier;
+use crate::integrations::composio::contract::normalize_connection_identifiers;
+
+/// Secret-free Composio picker row consumed by the flow RPC adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FlowConnectionEntry {
+    pub connection_ref: String,
+    pub display: String,
+    pub toolkit: String,
+    pub platform_user_id: Option<String>,
+}
+
+/// Builds Composio picker rows and attaches cached member identities.
+pub(crate) fn flow_connection_entries(
+    connections: &[crate::integrations::composio::ComposioConnection],
+    identities: &[crate::integrations::composio::contract::ConnectedIdentity],
+    keys: &HashMap<String, String>,
+) -> Vec<FlowConnectionEntry> {
+    let identity_lookup = identity_lookup(identities, keys);
+    connections
+        .iter()
+        .filter(|connection| connection.is_active())
+        .map(|connection| {
+            let toolkit = connection.normalized_toolkit();
+            let normalize = |raw: &str| keys.get(raw).cloned().unwrap_or_else(|| raw.to_string());
+            let platform_user_id = identity_lookup
+                .get(&(normalize(&toolkit), normalize(&connection.id)))
+                .and_then(|identity| identity.user_id.clone());
+            let title = title_case_toolkit(&toolkit);
+            let identity = connection
+                .account_email
+                .as_deref()
+                .or(connection.workspace.as_deref())
+                .or(connection.username.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            FlowConnectionEntry {
+                connection_ref: format!("composio:{toolkit}:{}", connection.id),
+                display: identity.map_or(title.clone(), |value| format!("{title} · {value}")),
+                toolkit,
+                platform_user_id,
+            }
+        })
+        .collect()
+}
+
+/// Title-cases a toolkit slug for display.
+pub(crate) fn title_case_toolkit(toolkit: &str) -> String {
+    let trimmed = toolkit.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed
+        .split(['_', '-', ' '])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 pub async fn composio_list_connections(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
 ) -> OpResult<Outcome<ComposioConnectionsResponse>> {
     tracing::debug!("[composio] rpc list_connections");
-    if direct_mode_without_key(config)? {
+    if direct_mode_without_key(config).await? {
         tracing::debug!(
             "[composio] list_connections: direct mode selected, no api key configured yet \
              — returning empty connection list (valid setup state, not an error)"
@@ -38,12 +126,11 @@ pub async fn composio_list_connections(
             vec!["composio: direct mode — no api key configured yet, 0 connection(s)".to_string()],
         ));
     }
-    if backend_mode_without_session(config) {
+    if backend_mode_without_session(config).await {
         // No session means no proxy route, so the connector module cannot
         // answer — but the connections may well exist server-side. That makes
         // this "unavailable", not "none": callers that tell the two apart
-        // (`memory::sources::reconcile` hides nothing on `Err`,
-        // `flows::validate_connection_refs` fails open on `Err`) must keep
+        // (`flows::validate_connection_refs` fails open on `Err`) must keep
         // doing so, which an empty `Ok` would silently defeat. It is also not
         // a fault, so it is not reported here: nothing reaches Sentry for a
         // user who has simply not signed in yet (#6176). The wording is the one
@@ -71,6 +158,7 @@ pub async fn composio_list_connections(
     // by desktop development and its v3 response mapper lives here.
     let resp = if config.composio.mode.trim() == crate::config::schema::COMPOSIO_MODE_DIRECT {
         let ComposioRoute::Direct(direct) = resolve_composio_route(config)
+            .await
             .map_err(|error| format!("[composio-direct] list_connections: {error:#}"))?
         else {
             unreachable!("direct Composio mode must construct a direct client")
@@ -97,11 +185,11 @@ pub async fn composio_list_connections(
         // connection-created subscriber's readiness window. Re-warm here so
         // the next chat turn does not perform the three discovery requests.
         let config = config.clone();
-        tokio::spawn(async move {
+        ctx.spawn(async move {
             let _ = fetch_connected_integrations_status(&config).await;
         });
     }
-    let resp = enrich_connections_with_identity(config, resp).await;
+    let resp = enrich_connections_with_identity(ctx, config, resp).await;
     Ok(Outcome::new(
         resp,
         vec![format!(
@@ -111,6 +199,7 @@ pub async fn composio_list_connections(
 }
 
 pub async fn composio_authorize(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     toolkit: &str,
     extra_params: Option<serde_json::Value>,
@@ -139,6 +228,7 @@ pub async fn composio_authorize(
             toolkit: toolkit.to_string(),
             connection_id: resp.connection_id.clone(),
             connect_url: resp.connect_url.clone(),
+            tenant: ctx.event_tenant(),
         },
     );
 
@@ -148,27 +238,31 @@ pub async fn composio_authorize(
     ))
 }
 
+/// The `composio.delete_connection` reply.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ComposioDeleteResult {
+    /// Whether the backend confirmed the deletion.
+    pub deleted: bool,
+}
+
 pub async fn composio_delete_connection(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     connection_id: &str,
-    clear_memory: bool,
-) -> OpResult<Outcome<ComposioDeleteResponse>> {
+) -> OpResult<Outcome<ComposioDeleteResult>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
-    // The toolkit names the identity facets to drop;
-    // forgetting memory needs only the connection id (its records carry a
-    // `connection:<id>` tag), so an unresolvable toolkit skips the former only.
+    // The toolkit names the identity facets to drop; an unresolvable toolkit
+    // skips that cleanup only.
     let toolkit = resolve_toolkit_for_connection(config, connection_id)
         .await
         .ok();
-    // Only the Composio-side removal crosses the bus. Everything around it —
-    // the synced memory and the identity facets — is this host's own
-    // bookkeeping about a connection it no longer has.
-    let mut resp = connectors::call::<_, ComposioDeleteResponse>(
+    // Only the Composio-side removal crosses the bus. The identity facets
+    // are this host's own bookkeeping about a connection it no longer has.
+    let resp = connectors::call::<_, ComposioDeleteResponse>(
         config,
         methods::DELETE_CONNECTION,
         ComposioDeleteConnectionRequest {
             connection_id: connection_id.to_string(),
-            clear_memory,
         },
     )
     .await
@@ -176,27 +270,8 @@ pub async fn composio_delete_connection(
         report_composio_op_error("delete_connection", &anyhow::anyhow!("{error}"));
         format!("[composio] delete_connection failed: {error}")
     })?;
-    let mut memory_clear_error = None;
-    if clear_memory {
-        match crate::memory::sources::composio::forget_connection(config, connection_id).await {
-            Ok(forgotten) => {
-                tracing::debug!(
-                    connection_id = %connection_id,
-                    forgotten,
-                    "[composio] forgot memory synced through the deleted connection"
-                );
-                resp.memory_chunks_deleted = forgotten;
-            }
-            Err(error) => {
-                memory_clear_error = Some(format!(
-                    "[composio] connection deleted, but failed to clear its memory: {}",
-                    String::from(error)
-                ));
-            }
-        }
-    }
     if let Some(toolkit) = toolkit.as_deref() {
-        let deleted = delete_connected_identity_facets(config, toolkit, connection_id)
+        let deleted = delete_connected_identity_facets(ctx, config, toolkit, connection_id)
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(
@@ -236,11 +311,10 @@ pub async fn composio_delete_connection(
             );
         }
     }
-    if let Some(error) = memory_clear_error {
-        return Err(error);
-    }
     Ok(Outcome::new(
-        resp,
+        ComposioDeleteResult {
+            deleted: resp.deleted,
+        },
         vec![format!("composio: connection {connection_id} deleted")],
     ))
 }
@@ -305,10 +379,11 @@ pub(super) async fn resolve_toolkit_for_connection(
 ///
 /// This is best-effort — no live API calls are made (one SQLite read per poll).
 pub(crate) async fn enrich_connections_with_identity(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     mut resp: ComposioConnectionsResponse,
 ) -> ComposioConnectionsResponse {
-    let identities = load_connected_identities(config)
+    let identities = load_connected_identities(ctx, config)
         .await
         .unwrap_or_else(|error| {
             tracing::debug!(
@@ -325,18 +400,28 @@ pub(crate) async fn enrich_connections_with_identity(
         return resp;
     }
 
-    let lookup: HashMap<(String, String), _> = identities
+    // One module call normalises every identity key and every connection key.
+    let mut raw: Vec<String> = identities
         .iter()
-        .map(|id| {
-            (
-                (
-                    normalize_connection_identifier(&id.source),
-                    normalize_connection_identifier(&id.identifier),
-                ),
-                id,
-            )
-        })
+        .flat_map(|id| [id.source.clone(), id.identifier.clone()])
         .collect();
+    for conn in &resp.connections {
+        raw.push(conn.toolkit.clone());
+        raw.push(conn.id.clone());
+    }
+    let normalized = match normalize_connection_identifiers(config, &raw).await {
+        Ok(normalized) if normalized.len() == raw.len() => normalized,
+        other => {
+            tracing::debug!(
+                error = ?other.err(),
+                "[composio] enrich_connections_with_identity: key normalisation unavailable"
+            );
+            return resp;
+        }
+    };
+    let connection_keys = normalized[identities.len() * 2..].to_vec();
+    let normalized_keys: HashMap<_, _> = raw.into_iter().zip(normalized).collect();
+    let lookup = identity_lookup(&identities, &normalized_keys);
 
     tracing::debug!(
         total = resp.connections.len(),
@@ -344,13 +429,11 @@ pub(crate) async fn enrich_connections_with_identity(
         "[composio] enrich_connections_with_identity: enriching connection labels"
     );
 
-    for conn in &mut resp.connections {
+    for (conn, keys) in resp.connections.iter_mut().zip(connection_keys.chunks(2)) {
         if conn.account_email.is_some() || conn.workspace.is_some() || conn.username.is_some() {
             continue;
         }
-        let toolkit_key = normalize_connection_identifier(&conn.toolkit);
-        let conn_id_key = normalize_connection_identifier(&conn.id);
-        if let Some(identity) = lookup.get(&(toolkit_key, conn_id_key)) {
+        if let Some(identity) = lookup.get(&(keys[0].clone(), keys[1].clone())) {
             conn.account_email = identity.email.clone();
             conn.workspace = identity.display_name.clone();
             conn.username = identity.handle.clone();

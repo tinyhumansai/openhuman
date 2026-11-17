@@ -14,7 +14,6 @@
 //!   - `composio.create_trigger`      → `openhuman.composio_create_trigger`
 //!   - `composio.get_user_profile`    → `openhuman.composio_get_user_profile`
 //!   - `composio.refresh_all_identities` → `openhuman.composio_refresh_all_identities`
-//!   - `composio.sync`                → `openhuman.composio_sync`
 
 mod definitions;
 mod handlers_connections;
@@ -29,6 +28,7 @@ mod util;
 #[path = "schemas_tests.rs"]
 mod tests;
 
+pub(crate) use registry::all_controller_entries;
 pub use registry::{all_controller_schemas, all_registered_controllers};
 
 pub use definitions::schemas;
@@ -39,8 +39,6 @@ pub use definitions::schemas;
 // when this was one un-split file. See each item's `pub(super)` in its
 // owning submodule.
 #[cfg(test)]
-use crate::core::Outcome;
-#[cfg(test)]
 use serde_json::{Map, Value};
 #[cfg(test)]
-use util::{read_optional, read_required, read_required_non_empty, to_json};
+use util::{read_optional, read_required, read_required_non_empty};

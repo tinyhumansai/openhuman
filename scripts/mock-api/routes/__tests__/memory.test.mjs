@@ -112,11 +112,23 @@ test("memoryForceStatus=402 fails every call with USER_INSUFFICIENT_CREDITS", as
   assert.equal(r.json.errorCode, "USER_INSUFFICIENT_CREDITS");
 });
 
+test("memoryForceCode overrides the forced status's errorCode", async () => {
+  setMockBehavior("memoryForceStatus", "403");
+  setMockBehavior("memoryForceCode", "MEMORY_PLAN_REQUIRED");
+  const r = await call("GET", "/memory/scopes");
+  assert.equal(r.status, 403);
+  assert.equal(r.json.success, false);
+  assert.equal(r.json.errorCode, "MEMORY_PLAN_REQUIRED");
+  assert.match(r.json.error, /not included in this account's plan/);
+});
+
 test("forget refuses an empty selector without confirm_all", async () => {
   const r = await call("POST", "/memory/forget", { scope: "s", selector: {} });
   assert.equal(r.status, 422);
   await write("s", "k1", "x");
-  const del = await call("POST", "/memory/forget", { scope: "s", selector: {}, confirm_all: true });
+  const del = await call("POST", "/memory/forget", {
+    scope: "s", selector: {}, confirm_all: true, cascade: "redact_events",
+  });
   assert.equal(del.json.data.deleted.events, 1);
 });
 
@@ -143,7 +155,9 @@ test("forget rejects unsupported selectors and scopes ID deletion", async () => 
   assert.equal(unsupported.status, 400);
   assert.equal(unsupported.json.errorCode, "UNSUPPORTED_SELECTOR");
   const del = await call("POST", "/memory/forget", {
-    scope: "scope-a", selector: { memory_ids: [first.json.data.event_id, "evt_2"] },
+    scope: "scope-a",
+    selector: { memory_ids: [first.json.data.event_id, "evt_2"] },
+    cascade: "redact_events",
   });
   assert.equal(del.json.data.deleted.events, 1);
   const otherScope = await call("POST", "/memory/recall", { scope: "scope-b" });
@@ -239,4 +253,48 @@ test("scopes honours the prefix filter", async () => {
   await write("other:scope", "k2", "y");
   const r = await call("GET", "/memory/scopes?prefix=app%3Atinymemory");
   assert.deepEqual(r.json.data.items.map((i) => i.path), ["app:tinymemory/app:learnings"]);
+});
+
+test("forget without a cascade keeps the events, as CortexDB's derived_only default does", async () => {
+  const first = await write("s", "k1", "keep");
+  const kept = await call("POST", "/memory/forget", {
+    scope: "s", selector: { memory_ids: [first.json.data.event_id] },
+  });
+  assert.equal(kept.json.data.deleted.events, 0);
+  const bad = await call("POST", "/memory/forget", {
+    scope: "s", selector: { memory_ids: ["x"] }, cascade: "everything",
+  });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.errorCode, "INVALID_CASCADE");
+  const gone = await call("POST", "/memory/forget", {
+    scope: "s", selector: { memory_ids: [first.json.data.event_id] }, cascade: "redact_events",
+  });
+  assert.equal(gone.json.data.deleted.events, 1);
+});
+
+test("v1 erasures erase a scope and everything below it, unwrapped", async () => {
+  await write("app:brain/source:gmail", "k1", "mail");
+  await write("app:brain/source:gmail/app:documents", "k2", "doc");
+  await write("app:brain/source:notion", "k3", "page");
+  const refused = await call("POST", "/memory/v1/erasures", {
+    scope: "app:brain/source:gmail", confirm_all: true,
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.json.error_code, "UNKNOWN_FIELD");
+  const root = await call("POST", "/memory/v1/erasures", { scope: "" });
+  assert.equal(root.status, 422);
+  const erased = await call("POST", "/memory/v1/erasures", {
+    scope: "app:brain/source:gmail", audit_note: "disconnect",
+  });
+  assert.equal(erased.status, 200);
+  assert.equal(erased.json.erased, true);
+  assert.equal(erased.json.scopes, 2);
+  const job = await call("GET", `/memory/v1/erasures/${erased.json.erasure_ids[0]}`);
+  assert.equal(job.json.status, "completed");
+  const missing = await call("GET", "/memory/v1/erasures/nope");
+  assert.equal(missing.status, 404);
+  const scopes = await call("GET", "/memory/scopes?limit=100");
+  assert.deepEqual(scopes.json.data.items.map((i) => i.path), ["app:brain/source:notion"]);
+  const empty = await call("POST", "/memory/v1/erasures", { scope: "app:brain/source:gmail" });
+  assert.equal(empty.json.scopes, 0, "nothing stored is still a success");
 });

@@ -1,10 +1,12 @@
 //! OpenAI-compatible HTTP endpoint at `/v1/chat/completions` and `/v1/models`.
 //!
-//! ## Mounting
-//!
-//! The router is mounted by `crates/openhuman-rpc/src/server/http/mod.rs`:
+//! The wire types and handlers live upstream in
+//! `tinyinference_llm::providers::openai::server_http` (feature `server-http`).
+//! OpenHuman keeps the host side: [`backend::HostChatBackend`] resolves models
+//! against `Config`, and the router is mounted by
+//! `crates/openhuman-rpc/src/server/http/mod.rs`:
 //! ```ignore
-//! .nest("/v1", crate::inference::http::router())
+//! .nest("/v1", crate::core_host::inference::http::router())
 //! ```
 //! It inherits the core bearer-token auth middleware, but `/v1/*` also accepts
 //! a stable user-managed external API key so local harnesses can treat
@@ -18,14 +20,18 @@
 /// secret encrypted at rest and scoped to the active user workspace.
 pub const EXTERNAL_OPENAI_COMPAT_PROVIDER: &str = "external-openai-compat";
 
-// The `/v1/*` axum router lives here and is exclusive to the `http-server`
-// feature (#5048). CARVE-OUT: `EXTERNAL_OPENAI_COMPAT_PROVIDER` (above) and
-// `types` stay UNGATED — `core::auth` consumes the provider id (and its inert
-// request/response types are dep-free) in ALL builds, so only the axum
-// `server`/`router` surface is gated.
+// The axum surface is exclusive to the `http-server` feature (#5048).
+// `EXTERNAL_OPENAI_COMPAT_PROVIDER` stays ungated: `core::auth` reads it in all builds.
 #[cfg(feature = "http-server")]
-pub mod server;
-pub mod types;
+mod backend;
 
+/// Build the `/v1` axum sub-router over the host [`backend::HostChatBackend`].
 #[cfg(feature = "http-server")]
-pub use server::router;
+pub fn router<S>() -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    tinyinference_llm::providers::openai::server_http::router(std::sync::Arc::new(
+        backend::HostChatBackend,
+    ))
+}

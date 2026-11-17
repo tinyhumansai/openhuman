@@ -20,10 +20,11 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use crate::config::CostConfig;
-use crate::inference::provider::types::BilledUsage;
+use crate::core::runtime::DispatchCtx;
+use tinyinference_llm::usage::BilledUsage;
 
 use super::tracker::CostTracker;
-use super::types::{CostSource, TokenUsage};
+use super::types::{CostSource, TokenUsage, UsageScope};
 
 static GLOBAL_TRACKER: RwLock<Option<Arc<CostTracker>>> = RwLock::new(None);
 
@@ -92,6 +93,12 @@ pub fn init_global(config: CostConfig, workspace_dir: &Path) {
 /// figures start over with the new tracker. A failed construction keeps the
 /// previous tracker rather than leaving the process with none.
 pub fn rebind_global(config: CostConfig, workspace_dir: &Path) {
+    // In SaaS every profile owns its tracker (see `seed_tenant_tracker`); the
+    // process-wide slot is never read, so rebinding it would only mislead.
+    if crate::core::runtime::is_saas() {
+        log::debug!("[cost] rebind_global ignored in SaaS mode");
+        return;
+    }
     if let Some(current) = try_global() {
         if current.workspace_dir() == workspace_dir {
             log::debug!(
@@ -126,8 +133,54 @@ pub fn rebind_global(config: CostConfig, workspace_dir: &Path) {
 /// Fetch the global tracker if it has been initialised. Returns `None`
 /// before bootstrap or after an init failure — callers must treat the
 /// absence as a soft no-op.
+///
+/// In SaaS this is the calling tenant's own tracker
+/// ([`seed_tenant_tracker`]), never the process-wide one: one user's spend
+/// must not land in, or be read from, another's ledger. A SaaS task with no
+/// scope, or the operator, gets `None`.
 pub fn try_global() -> Option<Arc<CostTracker>> {
+    let saas = crate::core::runtime::is_saas();
+    if saas {
+        return tracker_in(crate::core::runtime::tenant::context_in(saas).as_deref());
+    }
     GLOBAL_TRACKER.read().clone()
+}
+
+/// A SaaS tenant's cost tracker, held in its context's state slots.
+#[derive(Default)]
+pub(crate) struct TenantTracker(RwLock<Option<Arc<CostTracker>>>);
+
+/// Give `ctx` (a SaaS profile's context) a cost tracker over the profile's
+/// own workspace. Called when the profile opens; a failure leaves it without
+/// one (its usage goes unrecorded) rather than borrowing another ledger.
+pub fn seed_tenant_tracker(
+    ctx: &crate::core::runtime::CoreContext,
+    config: &crate::config::Config,
+) {
+    match CostTracker::new(config.cost.clone(), &config.workspace_dir) {
+        Ok(tracker) => {
+            *ctx.agent_state().slot::<TenantTracker>().0.write() = Some(Arc::new(tracker));
+            log::debug!(
+                "[cost] tenant tracker seeded workspace={}",
+                config.workspace_dir.display()
+            );
+        }
+        Err(err) => {
+            // Never keep a tracker over a previous workspace.
+            *ctx.agent_state().slot::<TenantTracker>().0.write() = None;
+            log::warn!(
+                "[cost] could not seed the tenant tracker at {}: {err}",
+                config.workspace_dir.display()
+            );
+        }
+    }
+}
+
+/// The tracker `ctx` was seeded with; `None` without a context.
+pub(crate) fn tracker_in(
+    ctx: Option<&crate::core::runtime::CoreContext>,
+) -> Option<Arc<CostTracker>> {
+    ctx.and_then(|ctx| ctx.agent_state().slot::<TenantTracker>().0.read().clone())
 }
 
 /// Convenience hook used by the agent turn loop: translates a provider
@@ -143,10 +196,25 @@ pub fn try_global() -> Option<Arc<CostTracker>> {
 /// `model` is the model identifier the request was routed to (e.g.
 /// `"anthropic/claude-sonnet-4-20250514"`) and is used as the bucket key
 /// in per-model aggregates.
-pub fn record_provider_usage(model: &str, usage: &BilledUsage) {
-    let Some(token_usage) = build_token_usage(model, usage) else {
+pub fn record_provider_usage(ctx: &DispatchCtx, model: &str, usage: &BilledUsage) {
+    record_provider_usage_scoped(model, usage, UsageScope::in_ctx(ctx, None, None));
+}
+
+/// [`record_provider_usage`] with the call's attribution. The event bridge
+/// passes its provider and, for a delegated child, the sub-agent; everything
+/// else comes from the recording task (see [`UsageScope::in_ctx`]).
+pub fn record_provider_usage_scoped(model: &str, usage: &BilledUsage, scope: UsageScope) {
+    let Some(mut token_usage) = build_token_usage(model, usage) else {
         return;
     };
+    log::trace!(
+        "[cost] attributing usage model={model} thread={:?} agent={:?} origin={:?} provider={:?}",
+        scope.thread_id,
+        scope.agent_id,
+        scope.origin,
+        scope.provider
+    );
+    token_usage.scope = scope;
     let Some(tracker) = try_global() else {
         return;
     };
@@ -168,7 +236,13 @@ pub(super) fn build_token_usage(model: &str, usage: &BilledUsage) -> Option<Toke
         return None;
     }
     let total_tokens = usage.input_tokens.saturating_add(usage.output_tokens);
-    let provider_charged = usage.charged_amount_usd.is_finite() && usage.charged_amount_usd > 0.0;
+    let cost_source = if usage.cost_is_estimate {
+        CostSource::Estimated
+    } else if usage.charge_reported {
+        CostSource::ProviderCharged
+    } else {
+        CostSource::Unknown
+    };
     Some(TokenUsage {
         model: model.to_string(),
         input_tokens: usage.input_tokens,
@@ -182,11 +256,7 @@ pub(super) fn build_token_usage(model: &str, usage: &BilledUsage) -> Option<Toke
         } else {
             0.0
         },
-        cost_source: if provider_charged {
-            CostSource::ProviderCharged
-        } else {
-            CostSource::Estimated
-        },
+        cost_source,
         // Lineage groundwork (06-cost step 3): the provider-usage build site
         // does not yet carry a run_id/root_run_id from the observation stream.
         // Leave `None` until the run-tree rollup (06.3, gated) threads run
@@ -194,6 +264,7 @@ pub(super) fn build_token_usage(model: &str, usage: &BilledUsage) -> Option<Toke
         // `tinyagents/observability.rs`.
         run_id: None,
         root_run_id: None,
+        scope: UsageScope::default(),
         timestamp: chrono::Utc::now(),
     })
 }
@@ -205,7 +276,7 @@ pub(super) fn build_token_usage(model: &str, usage: &BilledUsage) -> Option<Toke
 /// `"<provider>/<model>"` model key so it matches the embedding `CostRecord`
 /// shape used elsewhere (e.g. `voyage/voyage-3`).
 ///
-/// Pricing resolution: [`catalog::estimate_cost_usd`] prices `input_tokens` at
+/// Pricing resolution: [`tinyagents_registry::pricing::estimate_cost_usd`] prices `input_tokens` at
 /// the catalogued per-token input rate. Embedding models are frequently **not**
 /// in the pricing catalog; in that case `estimate_cost_usd` returns `0.0` and
 /// we record the usage with **zero** cost (and log it) rather than fabricating a
@@ -221,6 +292,7 @@ pub(super) fn build_token_usage(model: &str, usage: &BilledUsage) -> Option<Toke
 /// - `dimensions` — embedding vector dimensionality (logging context only).
 /// - `vector_count` — number of vectors produced (logging context only).
 pub fn record_embedding_usage(
+    ctx: &DispatchCtx,
     provider: &str,
     model: &str,
     input_tokens: u64,
@@ -234,7 +306,7 @@ pub fn record_embedding_usage(
         );
         return;
     };
-    let cost_usd = super::catalog::estimate_cost_usd(model, input_tokens, 0, 0);
+    let cost_usd = tinyagents_registry::pricing::estimate_cost_usd(model, input_tokens, 0, 0);
     if cost_usd == 0.0 {
         log::debug!(
             "[cost][embed] no catalog embedding rate for model={model}; recording usage with \
@@ -256,6 +328,10 @@ pub fn record_embedding_usage(
         cost_source: CostSource::Estimated,
         run_id: None,
         root_run_id: None,
+        scope: UsageScope {
+            origin: Some(super::report::EMBEDDING_ORIGIN.to_string()),
+            ..UsageScope::in_ctx(ctx, Some(provider), None)
+        },
         timestamp: chrono::Utc::now(),
     };
     log::debug!(

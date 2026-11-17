@@ -1,7 +1,8 @@
 //! Memory v2 against a real CortexDB server, through the real core binary.
 //!
-//! Skipped unless `OPENHUMAN_LIVE_CORTEXDB_URL` names a CortexDB server; run it
-//! with `scripts/test-memory-cortexdb-live.sh`, which boots the pinned server
+//! Ignored unless explicitly run with `--ignored` and
+//! `OPENHUMAN_LIVE_CORTEXDB_URL` names a CortexDB server; run it with
+//! `scripts/test-memory-cortexdb-live.sh`, which boots the pinned server
 //! from `vendor/tinymemory/integration/cortexdb/` and tears it down after. The
 //! key defaults to that harness's (`OPENHUMAN_LIVE_CORTEXDB_KEY`).
 //!
@@ -302,10 +303,10 @@ fn text_of(item: &Value) -> &str {
 }
 
 #[test]
+#[ignore = "needs OPENHUMAN_LIVE_CORTEXDB_URL"]
 fn memory_v2_runs_end_to_end_on_a_live_cortexdb() {
     let Ok(cortex_url) = std::env::var("OPENHUMAN_LIVE_CORTEXDB_URL") else {
-        eprintln!("OPENHUMAN_LIVE_CORTEXDB_URL unset; skipping");
-        return;
+        panic!("OPENHUMAN_LIVE_CORTEXDB_URL must be set when this ignored test is run");
     };
     let cortex_key =
         std::env::var("OPENHUMAN_LIVE_CORTEXDB_KEY").unwrap_or_else(|_| DEFAULT_CORTEX_KEY.into());

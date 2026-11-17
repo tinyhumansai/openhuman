@@ -8,9 +8,9 @@
 //   - `counts attributes, not prose` — an unanchored `#\[ignore` match also hits
 //     doc comments that merely DISCUSS ignoring (nine such lines in the real
 //     tree), so deleting a comment would have earned ratchet credit.
-//   - `rejects cfg_attr(..., ignore)` — a form the counter cannot see would
-//     shrink the number while the test stays skipped, i.e. it leaks in the one
-//     direction that never reddens.
+//   - `counts cfg_attr(..., ignore)` — a conditional ignore is one attribute,
+//     counted like a plain one, so scoping an ignore to a platform cannot
+//     shrink the number while the test stays skipped.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -100,14 +100,12 @@ test("counts attributes, not prose that mentions them", () => {
   assert.equal(status, 0, out);
 });
 
-test("rejects cfg_attr(..., ignore), which the counter cannot see", () => {
-  const { status, out } = run(
-    { "crates/demo/src/lib.rs": "#[test]\n#[cfg_attr(unix, ignore)]\nfn skipped() {}\n" },
-    { demo: 0 },
-  );
+test("counts cfg_attr(..., ignore) like a plain ignore", () => {
+  const files = { "crates/demo/src/lib.rs": "#[test]\n#[cfg_attr(unix, ignore)]\nfn skipped() {}\n" };
+  assert.equal(run(files, { demo: 1 }).status, 0);
+  const { status, out } = run(files, { demo: 0 });
   assert.equal(status, 1);
-  assert.match(out, /cfg_attr\(\.\.\., ignore\)\]' is not countable/);
-  assert.match(out, /crates\/demo\/src\/lib\.rs:2/);
+  assert.match(out, /demo: 1 '#\[ignore\]' attributes, baseline 0/);
 });
 
 test("the root tests/ tree is its own bucket, not folded into a crate", () => {

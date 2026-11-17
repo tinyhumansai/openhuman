@@ -1,8 +1,24 @@
 use super::*;
 
 #[test]
-fn other_agents_get_role_contract_suffix() {
-    let out = append_subagent_role_contract("body".to_string(), "researcher");
-    assert!(out.contains("Sub-agent Result Contract"));
-    assert!(out.contains("Recommended next step"));
+fn prompt_framing_matches_the_child_spawn_surface() {
+    let nested = ["spawn_subagent".to_owned()].into_iter().collect();
+    let nested_prompt = compose_subagent_system_prompt(
+        "Worker instructions".into(),
+        "worker",
+        &nested,
+        "complete the task",
+        1,
+    );
+    assert!(nested_prompt.contains("You may delegate parts of the work"));
+    assert!(!nested_prompt.contains("You are a leaf worker"));
+
+    let leaf_prompt = compose_subagent_system_prompt(
+        "Worker instructions".into(),
+        "worker",
+        &HashSet::new(),
+        "complete the task",
+        1,
+    );
+    assert!(leaf_prompt.contains("You are a leaf worker"));
 }

@@ -2,7 +2,7 @@
 //!
 //! Resolves the OpenHuman data directory the same way the core does
 //! (`~/.openhuman` or `OPENHUMAN_WORKSPACE` override) and hands it to
-//! [`openhuman_core::core::logging::init_for_embedded`], which installs a
+//! [`openhuman_rpc::embed::process::init_for_embedded`], which installs a
 //! daily-rotated file appender so packaged GUI builds — where stderr is
 //! invisible — still produce a log users can share for support.
 //!
@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use openhuman_core::core::logging::{self, log_directory};
+use openhuman_rpc::embed::process::{self as logging, log_directory};
 
 /// Initialize logging for the Tauri shell + embedded core. Idempotent and
 /// safe to call from any startup position; the underlying `Once` guard means
@@ -41,7 +41,7 @@ pub(crate) fn resolve_data_dir() -> PathBuf {
             return PathBuf::from(workspace);
         }
     }
-    openhuman_core::config::default_root_openhuman_dir().unwrap_or_else(|err| {
+    openhuman_rpc::embed::config::default_root_openhuman_dir().unwrap_or_else(|err| {
         eprintln!(
             "[file_logging] default_root_openhuman_dir failed ({err}); falling back to temp dir"
         );

@@ -1,23 +1,37 @@
 //! [`EventListener`] implementation for [`OpenhumanEventBridge`] — projects
 //! each `tinyagents` [`AgentEvent`] onto an [`AgentProgress`] update (or a
-//! grep-friendly trace line for events with no UI surface), plus the
-//! prompt-cache layout diagnostic helper drained after a run.
+//! grep-friendly trace lines for events with no UI surface.
 
 use std::sync::atomic::Ordering;
 
-use tinyagents_harness::cache::CacheLayoutEvent;
 use tinyagents_harness::events::{AgentEvent, EventListener, EventRecord};
 
-use crate::agent::progress::AgentProgress;
+use crate::progress::AgentProgress;
 use tinytools::humanize_tool_name;
 
 use super::event_bridge::OpenhumanEventBridge;
 
+#[path = "event_projection/tool_calls.rs"]
+mod tool_calls;
+
 impl EventListener for OpenhumanEventBridge {
     fn on_event(&self, record: &EventRecord) {
+        if self.project_supplemental(record) {
+            return;
+        }
         match &record.event {
+            // The turn is live. The web channel turns this into `inference_start`
+            // (and starts its liveness beats and the run-ledger entry), which is
+            // how a client learns a turn began that it did not send itself — one
+            // started right after a Stop, or from another window. Only the
+            // top-level run of a parent bridge announces it, and only once.
+            AgentEvent::RunStarted { .. } => {
+                if self.scope.is_none() && !self.turn_announced.swap(true, Ordering::SeqCst) {
+                    self.send(AgentProgress::TurnStarted);
+                }
+            }
             AgentEvent::ModelStarted { .. } => {
-                let iteration = self.cursor.fetch_add(1, Ordering::SeqCst) + 1;
+                let iteration = tinyagents_harness::events::advance_iteration(&self.cursor);
                 match &self.scope {
                     None => self.send(AgentProgress::IterationStarted {
                         iteration,
@@ -129,7 +143,9 @@ impl EventListener for OpenhumanEventBridge {
             // `UsageRecorded` carries the authoritative per-call usage and fires
             // exactly once per model call; prefer it over `ModelCompleted`'s
             // optional usage to avoid double counting.
-            AgentEvent::UsageRecorded { usage } => self.record_usage(usage),
+            AgentEvent::UsageRecorded { usage } => {
+                self.record_usage(usage);
+            }
             // Per-call generation telemetry. `ModelCompleted` fires exactly once
             // per model call, after `UsageRecorded`, and is the only event
             // carrying the captured request messages (incl. the system prompt)
@@ -138,68 +154,7 @@ impl EventListener for OpenhumanEventBridge {
             // child call carries its owning `subagent_task_id` so the trace
             // exporter nests the generation under the subagent span (this is
             // what makes the Context Scout's model calls visible in Langfuse).
-            AgentEvent::ModelCompleted {
-                usage,
-                input,
-                output,
-                ..
-            } => {
-                let iteration = self.iteration();
-                let usage = usage.unwrap_or_default();
-                // Prefer the figures `record_usage` resolved for this call
-                // (charged>estimate cost + carried cache/reasoning breakdown —
-                // `UsageRecorded` fires before `ModelCompleted`), so the
-                // generation telemetry matches the wallet accounting exactly;
-                // fall back to a bare tier-aware estimate when absent.
-                let resolved = self
-                    .resolved_calls
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .remove(&iteration);
-                let call_cost = resolved
-                    .as_ref()
-                    .map(|r| r.cost_usd)
-                    .unwrap_or_else(|| Self::estimate_call_cost(&self.model, &usage));
-                let cache_creation_tokens = resolved
-                    .as_ref()
-                    .map(|r| r.cache_creation_tokens)
-                    .unwrap_or(usage.cache_creation_tokens);
-                let reasoning_tokens = resolved
-                    .as_ref()
-                    .map(|r| r.reasoning_tokens)
-                    .unwrap_or(usage.reasoning_tokens);
-                log::debug!(
-                    "[tinyagents][usage] model_call_completed model={} provider={} iteration={} \
-                     child={} in={} out={} cache_read={} cache_write={} reasoning={} \
-                     cost_usd={:.6} input_captured={} output_captured={}",
-                    self.model,
-                    self.provider_id,
-                    iteration,
-                    self.scope.is_some(),
-                    usage.input_tokens,
-                    usage.output_tokens,
-                    usage.cache_read_tokens,
-                    cache_creation_tokens,
-                    reasoning_tokens,
-                    call_cost,
-                    input.is_some(),
-                    output.is_some(),
-                );
-                self.send(AgentProgress::ModelCallCompleted {
-                    model: self.model.clone(),
-                    provider_id: self.provider_id.clone(),
-                    subagent_task_id: self.scope.as_ref().map(|s| s.task_id.clone()),
-                    input: input.clone(),
-                    output: output.clone(),
-                    iteration,
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                    cached_input_tokens: usage.cache_read_tokens,
-                    cache_creation_tokens,
-                    reasoning_tokens,
-                    cost_usd: call_cost,
-                });
-            }
+            AgentEvent::ModelCompleted { .. } => self.project_model_completed(&record.event),
             AgentEvent::CostRecorded { cost } => {
                 tracing::debug!(
                     cost = ?cost,
@@ -286,7 +241,9 @@ impl EventListener for OpenhumanEventBridge {
                     "[tinyagents] context compressed before model call"
                 );
             }
-            AgentEvent::Compacted { .. } => super::compaction_log::log_compacted(&record.event),
+            AgentEvent::Compacted { .. } => {
+                tinyagents_harness::events::log_compacted(&record.event)
+            }
             AgentEvent::UnknownToolCall {
                 call_id,
                 requested_name,
@@ -300,74 +257,22 @@ impl EventListener for OpenhumanEventBridge {
                     arguments = %arguments,
                     "[tinyagents] recovered unknown tool call without executing a tool"
                 );
-                // #4118: surface the *attempted* unavailable tool on the timeline
-                // as a failed call so the UI shows what the agent tried (and
-                // recovered from) rather than silently dropping it — the crate
-                // recovers the call without ever emitting Started/Completed for it,
-                // so nothing else in this bridge projects it. Two rows (start +
-                // failed-complete) keyed by the same call_id, mirroring a real
-                // tool call. Classified `NotFound` (permanent) from the typed
-                // event itself (#6277): the identical call can never succeed, so
-                // "try again / run diagnostics" copy would be wrong. The model
-                // still got the corrective (close matches + `tool_search`).
-                let iteration = self.iteration();
-                let failure = Some(crate::tools::status::describe(
-                    crate::tools::status::ToolFailureClass::NotFound,
-                ));
-                let label = format!("{} (unavailable)", humanize_tool_name(requested_name));
-                match &self.scope {
-                    None => {
-                        self.send(AgentProgress::ToolCallStarted {
-                            call_id: call_id.as_str().to_string(),
-                            tool_name: requested_name.clone(),
-                            arguments: arguments.clone(),
-                            iteration,
-                            display_label: Some(label.clone()),
-                            display_detail: Some("tool not available".to_string()),
-                        });
-                        self.send(AgentProgress::ToolCallCompleted {
-                            call_id: call_id.as_str().to_string(),
-                            tool_name: requested_name.clone(),
-                            success: false,
-                            output_chars: 0,
-                            output: String::new(),
-                            arguments: Some(arguments.clone()),
-                            elapsed_ms: 0,
-                            iteration,
-                            failure,
-                            display_label: Some(label),
-                            display_detail: Some("tool not available".to_string()),
-                            structured: None,
-                        });
-                    }
-                    Some(s) => {
-                        self.send(AgentProgress::SubagentToolCallStarted {
-                            agent_id: s.agent_id.clone(),
-                            task_id: s.task_id.clone(),
-                            call_id: call_id.as_str().to_string(),
-                            tool_name: requested_name.clone(),
-                            arguments: arguments.clone(),
-                            iteration,
-                            display_label: Some(label.clone()),
-                            display_detail: Some("tool not available".to_string()),
-                        });
-                        self.send(AgentProgress::SubagentToolCallCompleted {
-                            agent_id: s.agent_id.clone(),
-                            task_id: s.task_id.clone(),
-                            call_id: call_id.as_str().to_string(),
-                            tool_name: requested_name.clone(),
-                            success: false,
-                            output_chars: 0,
-                            output: String::new(),
-                            arguments: Some(arguments.clone()),
-                            elapsed_ms: 0,
-                            iteration,
-                            failure,
-                            display_label: Some(label),
-                            display_detail: Some("tool not available".to_string()),
-                            structured: None,
-                        });
-                    }
+                // #4118 surfaced the attempted unavailable tool on the timeline
+                // by synthesising a Started/Completed pair here. Since TOOL-11
+                // the crate answers the call through `recover_tool_call`, which
+                // emits an ordinary `ToolStarted`/`ToolCompleted` pair under the
+                // same call id carrying the corrective error text — so a pair
+                // projected here as well doubled every unknown-tool error in
+                // Langfuse (one span with null output, one with the text).
+                // Remember the call instead; the crate's pair carries the
+                // "unavailable" label and the `NotFound` class (#6277). A
+                // `rewrite:` recovery runs the rewrite target under its own
+                // name, so it is not an unavailable call.
+                if !recovery.starts_with("rewrite:") {
+                    self.unknown_calls
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(call_id.as_str().to_string(), requested_name.clone());
                 }
             }
             AgentEvent::ToolsAdvertised {
@@ -487,173 +392,16 @@ impl EventListener for OpenhumanEventBridge {
                     }
                 }
             }
-            AgentEvent::ToolStarted {
-                call_id,
-                tool_name,
-                input,
-                ..
-            } => {
-                // Unknown/invisible tool calls no longer produce a sentinel-named
-                // Started event: the migration replaced `UNKNOWN_TOOL_SENTINEL` +
-                // `UnknownToolRewriteMiddleware` with the crate
-                // `UnknownToolPolicy::ReturnToolError` path (01.2), which recovers
-                // the call and emits `AgentEvent::UnknownToolCall` (handled above)
-                // instead of a rewritten ToolStarted. So this arm fires only for
-                // real, model-visible tools and needs no sentinel guard.
-                let iteration = self.iteration();
-                // Stamp the start instant so the completion event carries a real
-                // elapsed_ms (the crate's ToolCompleted has no timing payload).
-                self.tool_started_at
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .insert(call_id.as_str().to_string(), std::time::Instant::now());
-                // The harness start event now carries the captured call
-                // input when payload capture is on (tinyagents#211); fall
-                // back to `Value::Null` when it's off, same as before. A
-                // tool whose label doesn't depend on its arguments (the
-                // common case: a policy label, or a name-derived default)
-                // already reads correctly with real input; one whose detail
-                // DOES depend on args (e.g. a search query) is recomputed
-                // with the real arguments on `ToolCallCompleted` below and
-                // forwarded on the wire as
-                // `tool_display_label`/`tool_display_detail` there too.
-                let arguments = input.clone().unwrap_or(serde_json::Value::Null);
-                let (display_label, display_detail) = self.resolve_display(tool_name, &arguments);
-                match &self.scope {
-                    None => self.send(AgentProgress::ToolCallStarted {
-                        call_id: call_id.as_str().to_string(),
-                        tool_name: tool_name.clone(),
-                        arguments,
-                        iteration,
-                        display_label,
-                        display_detail,
-                    }),
-                    Some(s) => self.send(AgentProgress::SubagentToolCallStarted {
-                        agent_id: s.agent_id.clone(),
-                        task_id: s.task_id.clone(),
-                        call_id: call_id.as_str().to_string(),
-                        tool_name: tool_name.clone(),
-                        arguments,
-                        iteration,
-                        display_label,
-                        display_detail,
-                    }),
-                }
-            }
-            AgentEvent::ToolCompleted {
-                call_id,
-                tool_name,
-                input,
-                output,
-                // `started_at_ms`/`duration_ms`/`output_bytes`/`error` now ride
-                // the crate event (tinyagents 1.7 / tinyagents#18). The bridge
-                // still reads its richer side channels below to preserve current
-                // success/duration/size behavior; adopting crate fields directly
-                // is C4 slice S1.
-                ..
-            } => {
-                let iteration = self.iteration();
-                // The crate event carries no success/error, so read what the
-                // outcome-capture middleware classified for this call. Absent →
-                // the event was projected before the middleware ran; assume
-                // success (never worse than the previous hardcoded `true`).
-                let outcome = self
-                    .failure_map
-                    .lock()
-                    .ok()
-                    .and_then(|mut m| m.remove(call_id.as_str()));
-                let success = outcome.as_ref().map(|(ok, ..)| *ok).unwrap_or(true);
-                // Real execution duration + output size the capture middleware
-                // recorded off the `ToolResult` (#4467, item 4). Fall back to
-                // the bridge's own ToolStarted stamp for duration, and to the
-                // captured payload for size, when the middleware ran late.
-                let stamped_elapsed = self
-                    .tool_started_at
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .remove(call_id.as_str())
-                    .map(|t| t.elapsed().as_millis() as u64)
-                    .unwrap_or(0);
-                let elapsed_ms = outcome
-                    .as_ref()
-                    .map(|(_, _, e, ..)| *e)
-                    .filter(|e| *e > 0)
-                    .unwrap_or(stamped_elapsed);
-                // Tool result text, captured by the harness when
-                // `RunPolicy.capture.tool_io` is on (the loop emits it as a
-                // JSON string). Empty when capture is off.
-                let output_text = match output {
-                    Some(serde_json::Value::String(s)) => s.clone(),
-                    Some(v) => v.to_string(),
-                    None => String::new(),
-                };
-                let output_chars = outcome
-                    .as_ref()
-                    .map(|(_, _, _, c, _)| *c)
-                    .filter(|c| *c > 0)
-                    .unwrap_or_else(|| output_text.chars().count());
-                // Structured, tool-specific result payload the middleware
-                // copied from `ToolResult.metadata` (e.g. web search results).
-                let structured = outcome.as_ref().and_then(|(.., s)| s.clone());
-                // Carry the classified failure onto whichever completion event
-                // this projects — main-agent OR sub-agent (#4459). Previously
-                // the sub-agent branch dropped it on the floor.
-                let failure = outcome.and_then(|(_, f, ..)| f);
-                // Recompute the label/detail with the REAL call arguments
-                // (unlike `ToolCallStarted`, this event's `input` is the
-                // actual arguments the harness captured), so a tool whose
-                // detail depends on its args — a search query, a target
-                // email — surfaces it here even when the started event
-                // couldn't.
-                let args_for_display = input.clone().unwrap_or(serde_json::Value::Null);
-                let (display_label, display_detail) =
-                    self.resolve_display(tool_name, &args_for_display);
-                tracing::debug!(
-                    call_id = call_id.as_str(),
-                    tool_name = tool_name.as_str(),
-                    success,
-                    elapsed_ms,
-                    has_structured = structured.is_some(),
-                    "[tool-presentation] projecting ToolCallCompleted with resolved label/detail"
-                );
-                match &self.scope {
-                    None => self.send(AgentProgress::ToolCallCompleted {
-                        call_id: call_id.as_str().to_string(),
-                        tool_name: tool_name.clone(),
-                        success,
-                        output_chars,
-                        output: output_text,
-                        arguments: input.clone(),
-                        elapsed_ms,
-                        iteration,
-                        failure,
-                        display_label,
-                        display_detail,
-                        structured,
-                    }),
-                    Some(s) => self.send(AgentProgress::SubagentToolCallCompleted {
-                        agent_id: s.agent_id.clone(),
-                        task_id: s.task_id.clone(),
-                        call_id: call_id.as_str().to_string(),
-                        tool_name: tool_name.clone(),
-                        success,
-                        output_chars,
-                        output: output_text,
-                        arguments: input.clone(),
-                        elapsed_ms,
-                        iteration,
-                        failure,
-                        display_label,
-                        display_detail,
-                        structured,
-                    }),
-                }
-            }
+            AgentEvent::ToolStarted { .. } => self.project_tool_started(&record.event),
+            AgentEvent::ToolCompleted { .. } => self.project_tool_completed(&record.event),
             // Response-cache accounting (issue #4249, 03.2). A hit means the
             // harness served this model call from its local `ResponseCache`
             // without invoking the provider (deterministic internal runs only —
             // interactive chat never attaches a cache). Counters are additive; the
             // cost-footer DTO wiring is a follow-up (workstream 06).
+            AgentEvent::ToolProgressDetail {
+                call_id, message, ..
+            } => self.forward_tool_progress(call_id.as_str(), message),
             AgentEvent::CacheHit { call_id, key } => {
                 {
                     let mut s = self.state.lock().unwrap();
@@ -685,7 +433,7 @@ impl EventListener for OpenhumanEventBridge {
             // attempt (`RunPolicy.retry.max_attempts = 1`, pending `ReliableProvider`
             // removal) it will not fire on the live path yet, but the bridge is wired
             // for when it does. `FallbackSelected` is emitted by
-            // [`FallbackObserverMiddleware`](super::routes::FallbackObserverMiddleware)
+            // `tinyagents_harness::middleware::library::FallbackObserverMiddleware`
             // whenever the harness fails over to a sibling workload-tier route.
             AgentEvent::RetryScheduled { call_id, attempt } => {
                 tracing::info!(
@@ -719,26 +467,22 @@ impl EventListener for OpenhumanEventBridge {
     }
 }
 
-/// Surface the crate `PromptCacheGuardMiddleware`'s recorded
-/// [`CacheLayoutEvent`]s as structured `[cache]` warnings (issue #4249, 03.2).
-///
-/// The guard records a layout event whenever the cacheable prompt prefix changes
-/// between turns (volatile content — a timestamp, uuid, injected memory, etc. —
-/// silently busting the provider KV-cache prefix). This is the crate-native
-/// replacement for the deleted `CacheAlignMiddleware` free-text warn-log:
-/// instead of a token-pattern heuristic it reports the exact before/after
-/// cacheable segment ids. Drained by the turn loop after the run and logged
-/// here. The warn-only `CacheAlignMiddleware` shadow was deleted in C3; this
-/// guard is now the sole owner of KV-cache-prefix drift detection.
-pub(crate) fn surface_cache_layout_events(model: &str, events: &[CacheLayoutEvent]) {
-    for event in events {
-        tracing::warn!(
-            model,
-            changed_prefix = event.changed_prefix,
-            volatile_only = event.volatile_only,
-            segments_before = ?event.segment_ids_before,
-            segments_after = ?event.segment_ids_after,
-            "[cache] prompt-cache prefix changed across turns — KV-cache prefix may not hit; keep dynamic content out of the system prompt / stable tool set"
-        );
+#[path = "event_projection/model_projection.rs"]
+mod model_projection;
+
+impl OpenhumanEventBridge {
+    /// The "unavailable" label/detail pair for a call the crate answered as an
+    /// unknown tool, or `None` for an ordinary call.
+    fn unknown_tool_display(
+        &self,
+        call_id: &tinyagents_harness::ids::CallId,
+    ) -> Option<(Option<String>, Option<String>)> {
+        let calls = self.unknown_calls.lock().unwrap_or_else(|p| p.into_inner());
+        calls.get(call_id.as_str()).map(|requested| {
+            (
+                Some(format!("{} (unavailable)", humanize_tool_name(requested))),
+                Some("tool not available".to_string()),
+            )
+        })
     }
 }

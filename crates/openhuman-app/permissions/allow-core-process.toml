@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "allow-core-process"
-description = "Privileged desktop permissions for core process control, service management, dictation, window/UI, notifications, log access, and workspace integration"
+description = "Privileged desktop permissions for core process control, service management, window/UI, notifications, log access, and workspace integration"
 
 [permission.commands]
 
@@ -28,6 +28,9 @@ allow = [
     # without tripping mixed-content/CORS (#3865). Without this allow entry the
     # invoke is rejected with "Command not allowed by ACL".
     "relay_http_rpc",
+    # `relay_remote_socket` opens a secret loopback-only TCP relay for private
+    # LAN WebSocket endpoints when the secure webview blocks ws:// mixed content.
+    "relay_remote_socket",
     # `start_core_process` is invoked by BootCheckGate after the user picks
     # Local mode, before redux-persist hydrates the rest of the app (#1316).
     # Without this allow entry the invoke is rejected with "Command not
@@ -62,6 +65,48 @@ allow = [
     # every login. (#900)
     "get_active_user_id",
 
+
+    # =========================
+    # GATEWAYS
+    # =========================
+    # The gateway picker (`services/gatewayService.ts`, BootCheckGate and
+    # `coreModeSlice`) lists, saves, deletes and activates remote runtimes and
+    # reads the active one. These commands are registered only with the
+    # `gateways` feature; listing them here is harmless in builds without it.
+    "gateway_list",
+    "gateway_save",
+    "gateway_delete",
+    "gateway_activate",
+    "gateway_active",
+    "gateway_status",
+
+    # =========================
+    # CORE UPDATE
+    # =========================
+    # Probe and apply an update of the embedded core (`tauriCommands/core.ts`),
+    # separate from the shell bundle updater in `allow-app-update`.
+    "check_core_update",
+    "apply_core_update",
+
+    # =========================
+    # STARTUP RECOVERY
+    # =========================
+    # BootCheckGate's port-conflict recovery (`services/bootCheckService.ts`).
+    # `force_quit_port_owner` re-validates that the pid still owns the core
+    # port and refuses our own pid before it signals anything.
+    "recover_port_conflict",
+    "force_quit_port_owner",
+    "process_diagnostics_list_owned",
+
+    # =========================
+    # MCP AND CLAUDE CODE
+    # =========================
+    # MCP server settings panel: resolve the `openhuman-core` binary path and
+    # open a client's MCP config file; Claude Code provider login launcher.
+    "mcp_resolve_binary_path",
+    "mcp_open_client_config",
+    "claude_code_login_launch",
+
     # =========================
     # SESSION OWNER
     # =========================
@@ -76,56 +121,13 @@ allow = [
     "auth_current_user",
 
     # =========================
-    # SERVICE MANAGEMENT
-    # =========================
-    "service_install_direct",
-    "service_start_direct",
-    "service_stop_direct",
-    "service_status_direct",
-    "service_uninstall_direct",
-
-    # =========================
-    # DICTATION
-    # =========================
-    "register_dictation_hotkey",
-    "unregister_dictation_hotkey",
-
-    # =========================
-    # PUSH-TO-TALK (PTT)
-    # =========================
-    # Voice settings panel registers/unregisters the global PTT hotkey and shows
-    # the PTT overlay via these invokes. Without these allow entries the invoke
-    # is rejected with "Command <name> not allowed by ACL" and PTT (plus the
-    # always-on listening flow that depends on hotkey registration) never works.
-    "register_ptt_hotkey",
-    "unregister_ptt_hotkey",
-    "show_ptt_overlay",
-
-    # =========================
-    # DESKTOP COMPANION
-    # =========================
-    # The desktop companion moved from core RPC into the Tauri shell. Its
-    # settings panel and hotkey bridge invoke these commands directly, so each
-    # one must be present in the main-window capability.
-    "register_companion_hotkey",
-    "unregister_companion_hotkey",
-    "companion_activate",
-    "companion_start_session",
-    "companion_stop_session",
-    "companion_status",
-    "companion_config_get",
-    "companion_config_set",
-
-    # =========================
     # WINDOW / UI
     # =========================
-    "activate_main_window",
-    # Notch activity indicator (transparent NSPanel pill, macOS). The Voice
-    # settings panel + app boot call these via `syncNotchVisibility` to mirror
-    # always-on listening state. Without these allow entries the invoke is
-    # rejected with "Command not found" and the notch never shows/hides.
-    "notch_window_show",
-    "notch_window_hide",
+    # RootShellLayout keeps the native titlebar in sync with the sidebar.
+    "set_titlebar_for_sidebar",
+    # Floating mascot window (native NSPanel on macOS; errors elsewhere).
+    "mascot_window_show",
+    "mascot_window_hide",
 
     # =========================
     # NOTIFICATIONS

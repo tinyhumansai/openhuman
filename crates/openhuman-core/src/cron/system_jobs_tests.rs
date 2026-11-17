@@ -128,3 +128,38 @@ fn ensure_memory_jobs_seeds_both_jobs_and_retires_the_context_refresh() {
     assert_eq!(system_rows(&config, BACKGROUND_JOB)[0].id, background[0].id);
     assert_eq!(system_rows(&config, SOURCES_SYNC_JOB)[0].id, sync[0].id);
 }
+
+#[test]
+fn memory_jobs_seed_under_agent_only_without_authorizing_generic_flows() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.cron.agent_jobs_only = true;
+    config.cron.max_active_jobs = 2;
+
+    ensure_memory_jobs(&config).expect("trusted memory jobs should seed in an enforced scope");
+    let background = system_rows(&config, BACKGROUND_JOB);
+    let sync = system_rows(&config, SOURCES_SYNC_JOB);
+    assert_eq!(background.len(), 1);
+    assert_eq!(sync.len(), 1);
+    for job in background.iter().chain(sync.iter()) {
+        crate::cron::limits::check_run(&config, job).unwrap();
+    }
+    assert_eq!(crate::cron::list_jobs(&config).unwrap().len(), 2);
+
+    let extra_agent = crate::cron::client::store_blocking::<crate::cron::CronJob>(
+        &config,
+        tinyflows_bus::schedule::StoreOperation::AddAgent {
+            spec: tinyflows_bus::schedule::AgentJobSpec::new(
+                every(30),
+                "must not exceed the active-job cap",
+            ),
+        },
+    );
+    assert!(
+        extra_agent.is_err(),
+        "built-in jobs consume the configured capacity"
+    );
+
+    assert!(add_flow_schedule_job(&config, "system:memory_background", every(30)).is_err());
+    assert!(ensure_system_job(&config, "untrusted_flow", every(30)).is_err());
+}

@@ -11,39 +11,35 @@
 use tinyagents_harness::runtime::{HostedError, HostedErrorKind, TimeoutBound};
 use tinyagents_harness::TinyAgentsError;
 
-use crate::agent::error::TurnTimeoutBound;
+use tinyagents_harness::agent_error::TurnTimeoutBound;
 
 /// The host-side name of a harness [`TimeoutBound`].
 pub(super) fn turn_timeout_bound(bound: TimeoutBound) -> TurnTimeoutBound {
     match bound {
         TimeoutBound::PerModelCall => TurnTimeoutBound::PerModelCall,
-        // `TimeoutBound` is non-exhaustive; any other bound is a run-level one.
         _ => TurnTimeoutBound::RunRemaining,
     }
 }
 
 /// Convert a hosted failure into the run error the turn pipeline maps.
 ///
-/// Identical to `TinyAgentsError::from(error)` except that a timeout names the
-/// bound that fired. It stays a terminal `Timeout`, as before.
+/// Preserve OpenHuman's timeout tag while using the owner conversion for all
+/// other hosted error kinds.
 pub(crate) fn run_error_from_hosted(error: HostedError) -> TinyAgentsError {
-    let bound = match (error.kind, error.timeout_bound) {
-        (HostedErrorKind::Timeout, Some(bound)) => Some(turn_timeout_bound(bound)),
-        _ => None,
-    };
-    match bound {
-        Some(bound) => {
+    if matches!(error.kind, HostedErrorKind::Timeout) {
+        if let Some(timeout_bound) = error.timeout_bound {
+            let bound = turn_timeout_bound(timeout_bound);
             tracing::debug!(
                 timeout_bound = bound.tag(),
                 "[tinyagents] hosted turn timed out; carrying the typed bound"
             );
-            TinyAgentsError::Timeout(format!(
+            return TinyAgentsError::Timeout(format!(
                 "hosted agent invocation exceeded its {}",
                 bound.phrase()
-            ))
+            ));
         }
-        None => TinyAgentsError::from(error),
     }
+    TinyAgentsError::from(error)
 }
 
 #[cfg(test)]

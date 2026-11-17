@@ -3,74 +3,81 @@
 Defines the `Config` struct, the single source of truth for `config.toml`,
 and everything needed to load, save, and migrate it. AGENTS.md points
 contributors here: "Rust configuration is defined under
-`crates/openhuman-core/src/config/schema/` and loaded through its config
-operations" (the operations live in `../ops/`, re-exported as `config::rpc`).
+[`crates/openhuman-core/src/config/schema/`](./) and loaded through its config
+operations" (the operations live in [`../ops/`](../ops/), re-exported as `config::rpc`).
 
-`Config` itself is split into submodules: `types.rs` declares `types/config.rs`
-(the struct definition), `types/model_ids.rs` (model constants), and
-`types/defaults.rs` / `types/output_language.rs` / `types/resolvers.rs` (small
+`Config` itself is split into submodules: [`types.rs`](./types.rs) declares [`types/config.rs`](./types/config.rs)
+(the struct definition), [`types/model_ids.rs`](./types/model_ids.rs) (model constants), and
+[`types/defaults.rs`](./types/defaults.rs) / [`types/output_language.rs`](./types/output_language.rs) / [`types/resolvers.rs`](./types/resolvers.rs) (small
 helper types) purely to keep any one file under the repo's ~500-line
-guideline; treat them as one unit. `load_user_state.rs` sits at this level but
-is mounted as a submodule of `load/dirs.rs` via `#[path]`.
+guideline; treat them as one unit. [`load_user_state.rs`](./load_user_state.rs) sits at this level but
+is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 
 ## Layout: `[section]` to file to struct
 
 | `config.toml` section | File | Struct |
 | --- | --- | --- |
-| `[agent]`, `[orchestrator]`, `[teams.*]`, `[agents.*]` | `agent.rs` | `AgentConfig`, `OrchestratorModelConfig`, `TeamModelConfig`, `DelegateAgentConfig` |
-| `[autonomy]` | `autonomy.rs` | `AutonomyConfig` — feeds `security::SecurityPolicy` |
-| `[[capability_providers]]` | `capability_providers.rs` | `CapabilityProviderConfig` |
-| `[channels_config]`, `[sandbox]` | `channels.rs` | `ChannelsConfig` and per-provider configs re-exported from `tinychannels_bus`; `SandboxConfig`, `ResourceLimitsConfig`, `AuditConfig`, and `SecurityConfig` (only `DaemonConfig` embeds the last one) |
-| `[claude_agent_sdk]` | `claude_agent_sdk.rs` | `ClaudeAgentSdkConfig` |
-| `[[cloud_providers]]`, `primary_cloud`, `*_provider` slugs | `cloud_providers.rs` | `CloudProviderCreds`, `CloudProviderType`, `AuthStyle` |
-| `[context]` | `context.rs` | `ContextConfig` |
-| `[cost]` | `identity_cost.rs` | `CostConfig`, `ModelPricing` |
-| `[dashboard]` | `dashboard.rs` | `DashboardConfig`, `DiagramViewerConfig`, `EventStreamConfig`, `ModelHealthConfig` |
-| `[dictation]` | `dictation.rs` | `DictationConfig`, `DictationActivationMode` |
-| `[ephemeral_route]` | `ephemeral_route.rs` | `EphemeralRoute` |
-| `[cron]` | `cron.rs` | `CronConfig` |
-| `[hooks]` | `hooks.rs` | `HooksConfig` |
-| `[hosting]` | `hosting.rs` | `HostingConfig` |
+| `[agent]`, `[orchestrator]`, `[teams.*]` | [`agent.rs`](./agent.rs) | `AgentConfig`, `OrchestratorModelConfig`, `TeamModelConfig` |
+| `[autonomy]` | [`autonomy.rs`](./autonomy.rs) | `AutonomyConfig`: feeds `security::SecurityPolicy` |
+| `[[capability_providers]]` | [`capability_providers.rs`](./capability_providers.rs) | `CapabilityProviderConfig` |
+| `[channels_config]`, `[sandbox]` | [`channels.rs`](./channels.rs) | `ChannelsConfig` and per-provider configs re-exported from `tinychannels_bus`; `SandboxConfig` and `AuditConfig` |
+| `[claude_agent_sdk]` | [`claude_agent_sdk.rs`](./claude_agent_sdk.rs) | `ClaudeAgentSdkConfig` |
+| `[[cloud_providers]]`, `primary_cloud`, `*_provider` slugs | [`cloud_providers.rs`](./cloud_providers.rs) | `CloudProviderCreds`, `AuthStyle` |
+| `[context]` | TinyAgents `ContextConfig` re-exported by [`context.rs`](./context.rs); OpenHuman environment overlays remain in `load/env_overlay/context.rs` | `ContextConfig` |
+| `[cost]` | [`identity_cost.rs`](./identity_cost.rs) | `CostConfig`, `ModelPricing` |
+| `[dashboard]` | [`dashboard.rs`](./dashboard.rs) | `DashboardConfig`, `EventStreamConfig`, `ModelHealthConfig` |
+| `[channel_voice]` | [`channel_voice.rs`](./channel_voice.rs) | `ChannelVoiceConfig`, `ChannelVoiceOverride`, `VoiceReplyMode` |
+| `[ephemeral_route]` | [`ephemeral_route.rs`](./ephemeral_route.rs) | `EphemeralRoute` |
+| `[cron]` | [`cron.rs`](./cron.rs) | `CronConfig` (`shell_timeout_secs`: shell-job timeout, default 120) |
+| `[hooks]` | [`hooks.rs`](./hooks.rs) | `HooksConfig` |
+| `[hosting]` | [`hosting.rs`](./hosting.rs) | `HostingConfig` |
+| `[wallet_policy]` (+ `[[wallet_policy.assets]]`) | [`wallet_policy.rs`](./wallet_policy.rs) | `WalletPolicyConfig`, `WalletAssetCap`: allowlist and per-transaction / rolling-day / per-recipient-week caps for wallet executes without a per-transfer confirmation |
 | `[learning]` | `learning.rs` | `LearningConfig`, `ReflectionSource` |
-| `[local_ai]` | `local_ai.rs` | `LocalAiConfig`, `LocalAiUsage` |
-| `[modules]` | `modules.rs` | `ModulesConfig`, `ModuleOverride`: controls only whether compiled-in modules load. The loadable *set* is fixed by `crate::modules::registry` |
-| `[node]` | `node.rs` | `NodeConfig` (managed Node.js toolchain for skills) |
-| `[observability]` | `observability.rs` | `ObservabilityConfig`, `AgentTracingConfig` |
-| `[privacy]` | `privacy.rs` | `PrivacyConfig`, `PrivacyMode` |
-| `[proxy]` | `proxy.rs` | `ProxyConfig`, `ProxyScope`, plus `runtime_proxy_config()` / `set_runtime_proxy_config()` process-wide accessors |
-| `[[model_routes]]`, `[[embedding_routes]]` | `routes.rs` | `ModelRouteConfig`, `EmbeddingRouteConfig` |
-| `[runtime]` (+ `[runtime.docker]`), `[shell]`, `[reliability]`, `[scheduler]` | `runtime.rs` | `RuntimeConfig`, `DockerRuntimeConfig`, `ShellConfig`, `ReliabilityConfig`, `SchedulerConfig` |
-| `[runtime_pool]` | `runtime_pool.rs` | `RuntimePoolConfig`, `RuntimePoolLangConfig` |
-| `[runtime.local_jail]` | `runtime_local_jail.rs` | `LocalJailConfig` — filesystem grants for the local OS jail |
-| `[runtime_python]` | `runtime_python.rs` | `RuntimePythonConfig` |
-| `[scheduler_gate]` | `scheduler_gate.rs` | `SchedulerGateConfig`, `SchedulerGateMode` |
-| `[memory]` (engine, `engines.<id>`, `conversations`, `context`, `sources`, embedding settings) | `memory.rs` | `MemoryConfig`, `MemoryEngineSettings`, `MemoryConversationsConfig`, `MemoryContextConfig`, `MemorySourceConfig` (see `docs/specs/memory-v2.md`) |
-| `[task_sources]` | `task_sources.rs` | `TaskSourcesConfig` |
-| `[tokenjuice]` | `tokenjuice.rs` | `TokenjuiceConfig` |
+| `[inbound_debounce]` (+ `by_channel.<name>`) | [`inbound_debounce.rs`](./inbound_debounce.rs) | `InboundDebounceConfig`, `InboundDebounceOverride`: per-conversation batching of inbound channel messages before a turn |
+| `[local_ai]` | [`local_ai.rs`](./local_ai.rs) | `LocalAiConfig`, `LocalAiUsage` |
+| `[modules]` | [`modules.rs`](./modules.rs) | `ModulesConfig`, `ModuleOverride`: controls only whether compiled-in modules load. The loadable *set* is fixed by `crate::modules::registry` |
+| `[observability]` | [`observability.rs`](./observability.rs) | `ObservabilityConfig`, `AgentTracingConfig` |
+| `[privacy]` | [`privacy.rs`](./privacy.rs) | `PrivacyConfig`, `PrivacyMode` |
+| `[prompt_screen]` | [`prompt_screen.rs`](./prompt_screen.rs) | `PromptScreenConfig`, `PromptScreenMode` (TinySecurity prompt screen; `off` is an explicit opt-out, default enforces and fails closed; `[security] mode = "off"` also turns it off) |
+| `[security]` | [`security_mode.rs`](./security_mode.rs) | `SecurityModeConfig`, `SecurityMode` (whether TinySecurity-delegated checks run; `off` allows them and passes redaction through, default enforces and fails closed) |
+| `[proxy]` | [`proxy.rs`](./proxy.rs) | `ProxyConfig`, `ProxyScope`, plus `runtime_proxy_config()` / `set_runtime_proxy_config()` process-wide accessors |
+| `[[model_routes]]`, `[[embedding_routes]]` | [`routes.rs`](./routes.rs) | `ModelRouteConfig`, `EmbeddingRouteConfig` |
+| `[runtime]` (+ `[runtime.docker]`), `[shell]`, `[reliability]`, `[scheduler]` | [`runtime.rs`](./runtime.rs) | `RuntimeConfig`, `DockerRuntimeConfig`, `ShellConfig`, `ReliabilityConfig`, `SchedulerConfig` |
+| `[runtime.local_jail]` | [`runtime_local_jail.rs`](./runtime_local_jail.rs) | `LocalJailConfig`: filesystem grants for the local OS jail |
+| `[runtime.openshell]` | [`runtime_openshell.rs`](./runtime_openshell.rs) | `OpenShellRuntimeConfig`: image, CPU, memory (whole MiB), idle TTL and `max_live` for the OpenShell sandbox backend |
+| `[scheduler_gate]` | [`scheduler_gate.rs`](./scheduler_gate.rs) | `SchedulerGateConfig`, `SchedulerGateMode` |
+| `[memory]` (engine, `engines.<id>`, `conversations`, `context`, `sources`, embedding settings) | [`memory.rs`](./memory.rs) | `MemoryConfig`, `MemoryEngineSettings`, `MemoryConversationsConfig`, `MemoryContextConfig`, `MemorySourceConfig` (see [`docs/specs/memory-v2.md`](../../../../../docs/specs/memory-v2.md)) |
+| `[task_sources]` | [`task_sources.rs`](./task_sources.rs) | `TaskSourcesConfig` |
+| `[tokenjuice]` | [`tokenjuice.rs`](./tokenjuice.rs) | `TokenjuiceConfig` |
 | tool-related sections (see below) | `tools/` | (multiple structs) |
-| `[update]` | `update.rs` | `UpdateConfig`, `UpdateRestartStrategy` |
-| `[voice_server]` | `voice_server.rs` | `VoiceServerConfig`, `SttEngine`, `VoiceActivationMode` |
-| `[[voice_providers]]`, `stt_provider` / `tts_provider` | `voice_providers.rs` | `VoiceProviderCreds`, `BuiltinVoiceProvider`, `BUILTIN_VOICE_PROVIDERS` |
-| top-level `Config` and its scalar keys | `types.rs` (+ `types/config.rs`, `types/model_ids.rs`) | `Config`, `ModelRegistryEntry`, `MODEL_*` / `DEFAULT_MODEL` constants |
-| built-in defaults | `defaults.rs` | `impl Default for Config` and per-field `default_*` fns |
+| `[update]` | [`update.rs`](./update.rs) | `UpdateConfig`, `UpdateRestartStrategy` |
+| `[voice_server]` | [`voice_server.rs`](./voice_server.rs) | `VoiceServerConfig`, `SttEngine` |
+| `[[voice_providers]]`, `stt_provider` / `tts_provider` | [`voice_providers.rs`](./voice_providers.rs) | `VoiceProviderCreds`, `BuiltinVoiceProvider`, `BUILTIN_VOICE_PROVIDERS` |
+| top-level `Config` and its scalar keys | `types.rs` (+ `types/config.rs`, `types/model_ids.rs`) | `Config`, `ModelRegistryEntry`, provider-neutral workload roles |
+| built-in defaults | [`defaults.rs`](./defaults.rs) | `impl Default for Config` and per-field `default_*` fns |
 
-`tools/mod.rs` groups the tool-facing sections: `browser.rs` (`BrowserConfig`,
-`BrowserComputerUseConfig`), `http.rs` (`HttpRequestConfig`, `CurlConfig`),
+[`tools/mod.rs`](./tools/mod.rs) groups the tool-facing sections: `browser.rs` (`BrowserConfig` and the
+`unattended_actions` allow-list with its known names in `UNATTENDED_BROWSER_ACTIONS`), `http.rs` (`HttpRequestConfig`, `CurlConfig`),
 `integrations.rs` (`IntegrationsConfig`, `ComposioConfig`, `SecretsConfig`),
 `mcp.rs` (`McpServerConfig`, `McpClientConfig`, `GitbooksConfig`),
 `multimodal.rs` (`MultimodalConfig`, `MultimodalFileConfig`), `search.rs`
-(`SearchConfig`, `WebSearchConfig`, `SearxngConfig`, `SeltzConfig`).
+(`SearchConfig`, `SearxngConfig`, `SeltzConfig`).
 `SearchConfig` (schema version 2) holds `providers` (enabled + `managed` /
 `direct` route per provider), `roles` (ordered providers per capability role),
 `presentation`, limits, and direct keys; fresh installs default to managed Exa
 and managed Gemini. Files without `schema_version` carry the single-engine
-format and are migrated on load (`tools/search_migrate.rs`,
+format and are migrated on load ([`tools/search_migrate.rs`](./tools/search_migrate.rs),
 `load/migrate.rs::migrate_search_settings`); Parallel keeps its key as a
 direct-only provider, and a keyless managed-Parallel selection is dropped. Seltz and SearXNG keep their options in their own sections, but only
 the `providers` map decides whether they are on.
 
+The parser drops the retired top-level `[agents]` delegate table before typed
+decoding, so existing config files with stale `[agents.*]` entries continue to
+load. Agent definitions now come from the agent registry and live sub-agent
+tools.
+
 Most sections have a matching `*_tests.rs` (some further split into several
-`*_tests.rs` siblings, e.g. `types_model_pin_tests.rs`); this is the repo's
+`*_tests.rs` siblings, e.g. [`types_model_pin_tests.rs`](./types_model_pin_tests.rs)); this is the repo's
 file-size-splitting convention, not separate modules.
 
 ### Engine selection keys
@@ -78,8 +85,8 @@ file-size-splitting convention, not separate modules.
 This is where a config file names which engine handles a given concern. The
 keys that select an implementation, rather than tune one:
 
-- `search.engine` (`SearchConfig.engine`, `tools/search.rs`): one of the
-  string constants re-exported from `mod.rs` (`SEARCH_ENGINE_MANAGED`,
+- `search.engine` (`SearchConfig.engine`, [`tools/search.rs`](./tools/search.rs)): one of the
+  string constants re-exported from [`mod.rs`](./mod.rs) (`SEARCH_ENGINE_MANAGED`,
   `SEARCH_ENGINE_PARALLEL`, `SEARCH_ENGINE_BRAVE`, `SEARCH_ENGINE_QUERIT`,
   `SEARCH_ENGINE_EXA`, `SEARCH_ENGINE_TAVILY`, `SEARCH_ENGINE_DISABLED`), plus
   SearXNG through the separate toggle described above.
@@ -95,7 +102,7 @@ sandbox policy contract described under Workspace/identity helpers below.
 
 ## Loading
 
-`Config::load_or_init` (in `load/impl_load.rs`) is the entry point used by
+`Config::load_or_init` (in [`load/impl_load.rs`](./load/impl_load.rs)) is the entry point used by
 `config::ops::loader::load_config_with_timeout`. For an existing
 `config.toml` it runs, in this order:
 
@@ -103,23 +110,23 @@ sandbox policy contract described under Workspace/identity helpers below.
    `resolve_runtime_config_dirs_with`). With no config file and the default
    config dir, it returns a pre-login in-memory `Config` without writing
    anything.
-2. Read and parse `config.toml` (`parse_config_with_recovery`), recovering
+2. Read and parse `config.toml` (`parse_config_boxed`), recovering
    from non-UTF-8 or unparsable content by renaming the file to
    `.corrupted[.<ts>]`, trying the `.bak` copy, and finally falling back to
    defaults with `recovered_from_corruption = true`.
 3. Fill `config_path` / `workspace_dir` / `action_dir` (`resolve_action_dir`),
-   then apply the two pre-schema-version legacy rewrites in `load/migrate.rs`
+   then apply the two pre-schema-version legacy rewrites in [`load/migrate.rs`](./load/migrate.rs)
    (`migrate_legacy_inference_url`, `migrate_cloud_provider_slugs`).
 4. Apply environment-variable overrides through `Config::apply_env_overrides_from`
-   in `load/env_overlay.rs`, split into submodules under `load/env_overlay/`
-   (`dictation_context.rs`, `learning_memory.rs`, `observability.rs`,
+   in [`load/env_overlay.rs`](./load/env_overlay.rs), split into submodules under [`load/env_overlay/`](./load/env_overlay/)
+   (`context.rs`, `learning_memory.rs`, `observability.rs`,
    `proxy.rs`, `runtime.rs`, `search.rs`);
-   `load/env.rs` is only the `EnvLookup` seam that lets tests supply a fake
+   [`load/env.rs`](./load/env.rs) is only the `EnvLookup` seam that lets tests supply a fake
    environment.
-5. Run pending schema migrations (`../migrations/`, via
+5. Run pending schema migrations ([`../migrations/`](../migrations/), via
    `migrations::run_pending`), which bump `schema_version` and save as they go.
-6. Decrypt at-rest secrets (`load/secrets.rs`); a legacy `enc:` (XOR) value is
-   force-migrated to `enc2:` (ChaCha20-Poly1305 via `security::keyring`) and
+6. Decrypt at-rest secrets ([`load/secrets.rs`](./load/secrets.rs)); a legacy `enc:` (XOR) value is
+   force-migrated to `enc2:` (ChaCha20-Poly1305 via `security::secret_storage`) and
    the config is saved again immediately.
 
 A brand-new workspace is instead stamped at `CURRENT_SCHEMA_VERSION`, seeded
@@ -135,7 +142,7 @@ callers can tell "nothing written" (an `Err` before the rename) from "already
 committed" (after it) and roll back in-memory state accordingly; the
 migrations runner depends on this.
 
-`load/mod.rs` also exports `CONFIG_OWNER_MISMATCH_MARKER`: the loader appends
+[`load/mod.rs`](./load/mod.rs) also exports `CONFIG_OWNER_MISMATCH_MARKER`: the loader appends
 this marker to a config-read failure when the file's owner differs from the
 reading process, and `core::observability::expected_error_kind` keys on it to
 keep that failure paging instead of being demoted as ordinary user-environment
@@ -150,7 +157,7 @@ Re-exported through `config::mod` and `config::schema::mod`:
 - `resolve_action_dir`, `default_action_dir`, `action_dir_env_override`
   (`OPENHUMAN_ACTION_DIR`): the agent's sandboxed read/write root.
 - `active_workspace_dir` / `active_workspace_dir_cached`: resolve (and
-  synchronously cache, via `load/active_workspace.rs`) the workspace the
+  synchronously cache, via [`load/active_workspace.rs`](./load/active_workspace.rs)) the workspace the
   loader last resolved, for callers (like the developer Event Log's SSE
   stream) that cannot afford a disk read per lookup.
 - `PRE_LOGIN_USER_ID` (`"local"`), `pre_login_user_dir`,
@@ -161,7 +168,7 @@ Re-exported through `config::mod` and `config::schema::mod`:
 `config` only *describes* these roots. Per AGENTS.md, `action_dir` is the
 agent's permitted read/write root, and `workspace_dir` stores internal state
 and is never an acting-tool target. Enforcement of that boundary lives in
-`security::SecurityPolicy` (`security/policy/`), not here. `autonomy.rs`
+`security::SecurityPolicy` ([`security/policy/`](../../security/policy/)), not here. `autonomy.rs`
 (`AutonomyConfig`) is the config-side half of the same contract: it is read
 into `SecurityPolicy` at startup and on every settings change
 (`config::ops::agent::apply_autonomy_settings` calls
@@ -178,10 +185,10 @@ model/provider without the override ever reaching the persisted config.
 
 ## Tests
 
-Per-section `*_tests.rs` files, plus `load_tests.rs` (split into
-`load_active_user_and_dirs_tests.rs`, `load_env_overlay_tests.rs`,
-`load_corruption_recovery_tests.rs`, `load_migration_tests.rs`,
-`load_backup_tests.rs`) for the loader/env-override/migration surface.
+Per-section `*_tests.rs` files, plus [`load_tests.rs`](./load_tests.rs) (split into
+[`load_active_user_and_dirs_tests.rs`](./load_active_user_and_dirs_tests.rs), [`load_env_overlay_tests.rs`](./load_env_overlay_tests.rs),
+[`load_corruption_recovery_tests.rs`](./load_corruption_recovery_tests.rs), [`load_migration_tests.rs`](./load_migration_tests.rs),
+[`load_backup_tests.rs`](./load_backup_tests.rs)) for the loader/env-override/migration surface.
 
 ## Related docs
 
@@ -192,3 +199,9 @@ Per-section `*_tests.rs` files, plus `load_tests.rs` (split into
   schema-version upgrades run during load.
 - [../../security/README.md](../../security/README.md): enforces the
   `action_dir` / `workspace_dir` boundary this module only describes.
+- [Settings](../../../../../docs/gitbooks/en/features/settings.md)
+- [Deep architecture reference](../../../../../docs/gitbooks/en/developing/architecture.md)
+
+## Config sources
+
+`load/source/` defines the `ConfigSource` port: where the TOML text of a config lives. `FileConfigSource` is `config.toml` with the atomic replace and `.bak` of `load/atomic_commit.rs` (the file stays hand-editable). `DocumentConfigSource` is the `config/{scope}` document on a shared (multi-tenant) storage backend, used by `Config::save`, snapshot reloads (`load_from_config_path`) and `load_or_init`. A process boots before its backend is installed, so its first load normally reads the file. A document that does not parse is an error (no file-style recovery, which would touch the bootstrap file). Bootstrap tables (`[storage]`) are never written to a document and are always re-applied from the file on a document read. `SaasConfig` is not part of this.

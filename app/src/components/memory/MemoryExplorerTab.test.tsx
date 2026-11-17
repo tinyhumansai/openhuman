@@ -72,7 +72,7 @@ describe('MemoryExplorerTab', () => {
     expect(await screen.findByTestId('memory-explorer-item-d1')).toHaveTextContent(
       'Aurora launch plan'
     );
-    expect(hoisted.list).toHaveBeenCalledWith({ path: [], limit: 20 });
+    expect(hoisted.list).toHaveBeenCalledWith({ path: [], limit: 20, preview: true });
     expect(screen.getByTestId('memory-explorer-root')).toBeDisabled();
   });
 
@@ -84,7 +84,7 @@ describe('MemoryExplorerTab', () => {
     await waitFor(() =>
       expect(hoisted.explore).toHaveBeenLastCalledWith({ facet: 'source', path, limit: 50 })
     );
-    expect(hoisted.list).toHaveBeenLastCalledWith({ path, limit: 20 });
+    expect(hoisted.list).toHaveBeenLastCalledWith({ path, limit: 20, preview: true });
     expect(screen.getByTestId('memory-explorer-step-0')).toHaveTextContent('Document');
     const select = screen.getByTestId('memory-explorer-facet') as HTMLSelectElement;
     expect(select.value).toBe('source');
@@ -127,7 +127,12 @@ describe('MemoryExplorerTab', () => {
     renderWithProviders(<MemoryExplorerTab />);
     fireEvent.click(await screen.findByTestId('memory-explorer-more'));
     expect(await screen.findByTestId('memory-explorer-item-d2')).toBeInTheDocument();
-    expect(hoisted.list).toHaveBeenLastCalledWith({ path: [], limit: 20, cursor: 'c2' });
+    expect(hoisted.list).toHaveBeenLastCalledWith({
+      path: [],
+      limit: 20,
+      cursor: 'c2',
+      preview: true,
+    });
   });
 
   it('shows an explore failure with a retry', async () => {

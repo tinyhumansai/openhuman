@@ -1,19 +1,25 @@
-//! `cron` — the whole scheduler surface as one action-dispatched tool.
+//! `cron` — the whole scheduler surface as one action-dispatched tool, kept
+//! for callers that already name it.
 //!
-//! Replaces six advertised schemas (`cron_add`, `cron_list`, `cron_update`,
-//! `cron_remove`, `cron_run`, `cron_runs`) with one. Four of the six took a
-//! `job_id` and nothing else, so most of what they cost was their own name and
-//! description repeated six times.
+//! The model is shown the six per-operation tools instead (`cron_add`,
+//! `cron_list`, `cron_update`, `cron_remove`, `cron_run`, `cron_runs`), the
+//! members of the `scheduling` pack: each carries only its own fields, so a
+//! call to list or remove a job no longer ships the add schema with it, and
+//! the pack decides whether they are on the wire or behind `use_skill`. This
+//! tool is [`ToolExposure::Deferred`]: never listed up front, found by
+//! `tool_search`, and run when called by name, so a saved skill or an
+//! embedder's script that calls `cron` keeps working at no cost per call. An
+//! embedder's named scope that lists `cron` is widened to the six (see
+//! `widen_named_scope`), so it is shown them too.
 //!
 //! # It delegates; it does not reimplement
 //!
 //! Each action forwards to the tool that already served it. That is deliberate
 //! and not merely convenient: `cron_add` carries schedule parsing, timezone
 //! resolution and a `SecurityPolicy` check, and a second copy of any of that
-//! would be a place for the two to disagree about what is allowed. The old
-//! tools stay registered as [`ToolExposure::Hidden`] so a replayed transcript
-//! or a saved skill that names `cron_add` still works — they are simply off
-//! the wire.
+//! would be a place for the two to disagree about what is allowed. The
+//! per-operation tools are the advertised surface; this one only routes to
+//! them.
 //!
 //! # Permissions
 //!
@@ -39,10 +45,7 @@ use tinytools::collapse::{
     any_external_effect, args_without_action, merge_action_schemas, resolve, strictest_permission,
     unknown_action_message, CollapsedAction,
 };
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
-
-#[cfg(test)]
-use tinytools::ToolExposure;
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
 
 /// The advertised name. A constant so the registration site, the legacy-alias
 /// carve-out and the tests cannot disagree.
@@ -106,8 +109,8 @@ impl CronTool {
 
 #[async_trait]
 impl Tool for CronTool {
-    fn exposure(&self) -> tinytools::ToolExposure {
-        tinytools::ToolExposure::Deferred
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
     }
 
     fn name(&self) -> &str {
@@ -120,10 +123,14 @@ impl Tool for CronTool {
          `remove`, `run` (force-run now), `runs` (recent run history). \
          Schedules use the device-local timezone unless `tz` is set; the \
          scheduler polls on an interval and does not catch up missed runs. \
-         For agent jobs, when the current turn carries a `[Channel context]` \
-         block, set `delivery` to `{\"mode\": \"announce\", \"channel\": <channel>, \
-         \"to\": <reply target>}` so the reminder returns to that chat rather \
-         than the desktop."
+         For agent jobs, a job created inside a conversation sends each run's \
+         reply back to that conversation automatically; do not set `delivery` \
+         or copy a reply target for that. Only set `delivery` to override it \
+         (`proactive` for an in-app notification, `none` for silent). A job \
+         created with no conversation defaults to `proactive`. Reminders and \
+         recurring messages always deliver; a conditional check must put its \
+         condition and \"otherwise reply NO_REPLY\" in its `prompt`, and only \
+         such a job can skip a run."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -174,6 +181,15 @@ impl Tool for CronTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, options, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
         let actions = self.actions();
         let requested = args.get("action").and_then(Value::as_str);
         let Some(entry) = requested.and_then(|action| resolve(&actions, action)) else {
@@ -182,11 +198,12 @@ impl Tool for CronTool {
             )));
         };
         tracing::debug!(action = %entry.action, "[tool][cron] dispatch");
-        // `execute_with_options` rather than `execute`, so an action whose
-        // member honours `prefer_markdown` keeps doing so through the collapse.
+        // The selected member owns its context-aware dispatch and option
+        // handling. Forward the original call context unchanged, including
+        // for members that bind a core or conversation origin.
         entry
             .tool
-            .execute_with_options(args_without_action(&args), options)
+            .execute_with_context(args_without_action(&args), options, context)
             .await
     }
 }

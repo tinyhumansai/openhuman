@@ -1,54 +1,38 @@
-//! Business logic for the skill registry: fetch, index, search, and install.
+//! Business logic for the skill registry: thin adapters over the tinyskills
+//! [`SkillRegistry`] for browse, search, facets, detail and install.
 //!
-//! The catalog is sourced from the HermesHub aggregated JSON API which
-//! includes skills from HermesHub (built-in + optional), ClawHub, skills.sh,
-//! LobeHub, and browse.sh — all accessible from a single endpoint.
+//! The registry owns fetching, caching, stale-while-revalidate, single-flight
+//! refresh, ranking and `SKILL.md` resolution. This module maps OpenHuman's
+//! queries onto it, shapes the results for RPC and tools, and applies the
+//! host's install and reporting policy.
 
-use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::Path;
 
-use tokio::sync::Mutex;
+use tinyskills::{
+    EntryKey, ReadPolicy, RegistryError, RegistryErrorKind, SkillDetail, SkillQuery, SkillRegistry,
+    SkillSummary,
+};
 
-use tinyskills::SkillsShRef;
+use super::registry::skill_registry;
+use crate::skills::ops_install::{
+    fetch_scanned, gate_install, ScanAcknowledgement, SkillInstallOutcome,
+};
+use {
+    super::types::CatalogDetail, super::types::CatalogPage, super::types::CatalogQuery,
+    super::types::RegistryCatalogEntry, super::types::DEFAULT_PAGE_SIZE,
+    super::types::MAX_PAGE_SIZE, tinyskills::CatalogEntry, tinyskills::RegistryFacets,
+};
 
-use super::download;
-use super::store;
-use super::store::CachedCatalog;
-use super::types::CatalogEntry;
-
-const CATALOG_URL: &str = "https://hermes-agent.nousresearch.com/docs/api/skills.json";
-const CATALOG_URL_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_CATALOG_URL";
 const REFRESH_ON_BOOT_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_REFRESH_ON_BOOT";
-const FETCH_TIMEOUT_SECS: u64 = 180;
+/// Prefix of every registry error a caller sees, followed by the
+/// upper-cased [`RegistryErrorKind`] and `: `.
+pub const REGISTRY_ERROR_PREFIX: &str = "SKILL_REGISTRY_";
 
-/// Single-flight gate for catalog fetches. On mount the skills explorer issues
-/// several catalog reads that each funnel into [`browse_catalog`] — `sources`
-/// and `browse` from two separate effects, plus `search` as the user types —
-/// and React StrictMode double-invokes those effects in dev, so a handful of
-/// reads land within the same instant. Without this lock each would issue its
-/// own ~80s download of the same ~90k-entry catalog. Concurrent cache-miss
-/// callers serialize here, and all but the first re-read the just-written cache
-/// instead of hitting the network.
-static FETCH_LOCK: Mutex<()> = Mutex::const_new(());
-
-/// True while a background (stale-while-revalidate) refresh is scheduled or
-/// running, so a burst of stale-cache reads spawns at most one refresh task.
-static REFRESHING: AtomicBool = AtomicBool::new(false);
-
-/// Clears [`REFRESHING`] when the background refresh task ends (incl. panic).
-struct RefreshGuard;
-impl Drop for RefreshGuard {
-    fn drop(&mut self) {
-        REFRESHING.store(false, Ordering::Release);
-    }
-}
-
-/// Start a one-shot background refresh of the remote skills catalog.
+/// Start a one-shot background warm-up of the skill registry.
 ///
-/// This is intended for core startup: it warms the explorer/search cache without
+/// Loads the stored catalog (or fetches one when none is stored) without
 /// making core readiness depend on registry availability. Set
-/// `OPENHUMAN_SKILL_REGISTRY_REFRESH_ON_BOOT=0` to disable it in constrained
-/// environments.
+/// `OPENHUMAN_SKILL_REGISTRY_REFRESH_ON_BOOT=0` to disable it.
 pub fn start_boot_catalog_refresh() {
     static STARTED: std::sync::Once = std::sync::Once::new();
 
@@ -61,23 +45,22 @@ pub fn start_boot_catalog_refresh() {
             return;
         }
 
-        tracing::info!("[skill_registry] scheduling boot catalog refresh");
+        tracing::info!("[skill_registry] scheduling boot catalog warm-up");
         tokio::spawn(async {
             let started = std::time::Instant::now();
-            match browse_catalog(true).await {
-                Ok(entries) => {
-                    tracing::info!(
-                        count = entries.len(),
+            let statuses = skill_registry().warm().await;
+            for status in statuses {
+                match &status.last_error {
+                    None => tracing::info!(
+                        registry = %status.id,
+                        entries = status.entry_count,
+                        freshness = ?status.freshness,
                         elapsed_ms = started.elapsed().as_millis(),
-                        "[skill_registry] boot catalog refresh complete"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        elapsed_ms = started.elapsed().as_millis(),
-                        "[skill_registry] boot catalog refresh failed"
-                    );
+                        "[skill_registry] boot warm-up complete"
+                    ),
+                    Some(error) => {
+                        observe_summary("warm", error);
+                    }
                 }
             }
         });
@@ -93,354 +76,334 @@ fn refresh_on_boot_enabled(raw: Option<&str>) -> bool {
         || value.eq_ignore_ascii_case("off"))
 }
 
-/// Whether a past-TTL (stale) cache may be served without a network round-trip.
-#[derive(Clone, Copy, PartialEq)]
-enum StaleMode {
-    /// Serve stale immediately + revalidate in the background — for the
-    /// unfiltered browse, where a slightly-old catalog is fine and speed wins.
-    Allow,
-    /// Treat stale as a miss and fetch fresh under the single-flight lock — for
-    /// search / filter reads, which must reflect the current catalog.
-    Reject,
+/// The caller-facing text of a registry error:
+/// `SKILL_REGISTRY_<KIND>: <message>`.
+pub fn registry_error_message(error: &RegistryError) -> String {
+    let mut message = format!(
+        "{REGISTRY_ERROR_PREFIX}{}: {error}",
+        error.kind().as_str().to_ascii_uppercase()
+    );
+    if let RegistryError::NoDirectDownload {
+        source_url: Some(url),
+        ..
+    } = error
+    {
+        message.push_str(&format!(". View it at {url}"));
+    }
+    message
 }
 
-/// Fetch the full catalog for the **unfiltered browse** view, accepting a stale
-/// cache (stale-while-revalidate):
-/// - **Fresh cache** → returned immediately.
-/// - **Stale cache** (past TTL) → returned immediately *and* a single background
-///   refresh is kicked off, so the explorer renders from the last-known catalog
-///   instead of blocking on the ~80s download.
-/// - **No cache** → fetch under the single-flight lock; concurrent callers
-///   coalesce onto that one request.
-///
-/// `force_refresh == true` (boot warm-up / explicit refresh) always re-fetches.
-/// Search / filter reads use [`browse_catalog_fresh`], which never serves stale.
-pub async fn browse_catalog(force_refresh: bool) -> Result<Vec<CatalogEntry>, String> {
-    browse_catalog_with(force_refresh, StaleMode::Allow, fetch_catalog_uncached).await
+/// Whether a catalog-read failure is a defect worth reporting, as opposed to
+/// an upstream outage, throttling, or a caller asking for something absent.
+/// Install fetches report through `report_install_fetch_failure`.
+fn is_reportable(kind: RegistryErrorKind, catalog_read: bool) -> bool {
+    catalog_read
+        && matches!(
+            kind,
+            RegistryErrorKind::TransportContract | RegistryErrorKind::Malformed
+        )
 }
 
-/// Fetch the full catalog for **search / filter** reads. Never serves a stale
-/// cache: a fresh cache is used as-is, but a stale-or-absent cache falls through
-/// to a (single-flight) fresh fetch so results aren't computed over an outdated
-/// catalog. Thanks to single-flight, a search issued while a background
-/// revalidation is already running simply awaits that in-flight fetch rather
-/// than starting a new one.
-pub async fn browse_catalog_fresh() -> Result<Vec<CatalogEntry>, String> {
-    browse_catalog_with(false, StaleMode::Reject, fetch_catalog_uncached).await
+fn observe(operation: &'static str, error: &RegistryError, catalog_read: bool) {
+    let kind = error.kind();
+    if is_reportable(kind, catalog_read) {
+        crate::core::observability::report_error(
+            error,
+            "skills",
+            "registry",
+            &[("failure", kind.as_str()), ("registry_op", operation)],
+        );
+    } else if error.is_unavailable() || kind == RegistryErrorKind::TooLarge {
+        tracing::warn!(
+            operation,
+            kind = kind.as_str(),
+            error = %error,
+            "[skill_registry] upstream unavailable"
+        );
+    } else {
+        tracing::debug!(
+            operation,
+            kind = kind.as_str(),
+            error = %error,
+            "[skill_registry] request refused"
+        );
+    }
 }
 
-/// Core of [`browse_catalog`] / [`browse_catalog_fresh`], parameterised over the
-/// fetcher so the cache / single-flight orchestration can be unit-tested without
-/// real network I/O.
-async fn browse_catalog_with<F, Fut>(
-    force_refresh: bool,
-    stale_mode: StaleMode,
-    fetch: F,
-) -> Result<Vec<CatalogEntry>, String>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<Vec<CatalogEntry>, String>>,
-{
-    if !force_refresh {
-        match store::load_cached_catalog_state() {
-            Some(CachedCatalog::Fresh(entries)) => {
-                tracing::debug!(
-                    count = entries.len(),
-                    "[skill_registry] serving fresh cache"
+fn observe_summary(operation: &'static str, error: &tinyskills::RegistryErrorSummary) {
+    if is_reportable(error.kind, true) {
+        crate::core::observability::report_error(
+            error.message.as_str(),
+            "skills",
+            "registry",
+            &[("failure", error.kind.as_str()), ("registry_op", operation)],
+        );
+    } else {
+        tracing::warn!(
+            operation,
+            kind = error.kind.as_str(),
+            error = %error.message,
+            "[skill_registry] source has no fresh catalog"
+        );
+    }
+}
+
+fn entry_from_summary(summary: SkillSummary) -> RegistryCatalogEntry {
+    RegistryCatalogEntry {
+        entry: CatalogEntry {
+            id: summary.id,
+            name: summary.name,
+            description: summary.description,
+            source: summary.upstream,
+            category: summary.category,
+            author: summary.author,
+            version: summary.version,
+            tags: summary.tags,
+            platforms: summary.platforms,
+            download_url: String::new(),
+            source_url: summary.source_url,
+            docs_path: None,
+            commands: Vec::new(),
+            env_vars: Vec::new(),
+            license: None,
+        },
+        registry: summary.registry,
+        installable: summary.installable,
+        category_label: summary.category_label,
+    }
+}
+
+fn entry_from_detail(detail: SkillDetail) -> RegistryCatalogEntry {
+    let mut shaped = entry_from_summary(detail.summary);
+    shaped.entry.download_url = detail.download_url;
+    shaped.entry.docs_path = detail.docs_path;
+    shaped.entry.commands = detail.commands;
+    shaped.entry.env_vars = detail.env_vars;
+    shaped.entry.license = detail.license;
+    shaped
+}
+
+fn skill_query(query: &CatalogQuery) -> SkillQuery {
+    let mut skill = SkillQuery::text(query.text.trim());
+    skill.upstreams = query.upstreams.clone();
+    skill.categories = query.categories.clone();
+    skill.read = ReadPolicy::AllowStale;
+    if query.is_paged() {
+        skill.page = query.page.unwrap_or(1).max(1);
+        skill.page_size = query
+            .page_size
+            .unwrap_or(DEFAULT_PAGE_SIZE)
+            .clamp(1, MAX_PAGE_SIZE);
+    } else {
+        skill.page = 1;
+        skill.page_size = usize::MAX;
+    }
+    skill
+}
+
+/// One page of matches from the process registry.
+pub async fn catalog_page(query: &CatalogQuery) -> Result<CatalogPage, RegistryError> {
+    catalog_page_in(&skill_registry(), query).await
+}
+
+pub(crate) async fn catalog_page_in(
+    registry: &SkillRegistry,
+    query: &CatalogQuery,
+) -> Result<CatalogPage, RegistryError> {
+    tracing::debug!(
+        text = %query.text,
+        upstreams = query.upstreams.len(),
+        categories = query.categories.len(),
+        page = ?query.page,
+        page_size = ?query.page_size,
+        force_refresh = query.force_refresh,
+        "[skill_registry] catalog_page"
+    );
+    if query.force_refresh {
+        let statuses = registry.refresh(None, true).await?;
+        for status in &statuses {
+            if let Some(error) = &status.last_error {
+                tracing::warn!(
+                    registry = %status.id,
+                    kind = error.kind.as_str(),
+                    error = %error.message,
+                    "[skill_registry] forced refresh failed; serving what is held"
                 );
-                return Ok(entries);
             }
-            // Browse: serve stale now, revalidate in background.
-            Some(CachedCatalog::Stale(entries)) if stale_mode == StaleMode::Allow => {
-                tracing::info!(
-                    count = entries.len(),
-                    "[skill_registry] serving stale cache; revalidating in background"
-                );
-                spawn_background_refresh();
-                return Ok(entries);
-            }
-            // Search / filter: stale is not good enough — fall through to fetch.
-            Some(CachedCatalog::Stale(_)) => {
-                tracing::debug!("[skill_registry] stale cache rejected for fresh read; fetching");
-            }
-            None => {}
         }
     }
+    let page = registry
+        .search(&skill_query(query))
+        .await
+        .inspect_err(|error| observe("search", error, true))?;
 
-    // Single-flight: only one fetch runs at a time. Callers that queued behind
-    // the lock re-check the cache below and reuse the just-fetched result.
-    let _guard = FETCH_LOCK.lock().await;
-    if !force_refresh {
-        if let Some(CachedCatalog::Fresh(entries)) = store::load_cached_catalog_state() {
-            tracing::debug!(
-                count = entries.len(),
-                "[skill_registry] cache populated by concurrent fetch; reusing"
-            );
-            return Ok(entries);
+    let mut entries = Vec::with_capacity(page.items.len());
+    for summary in page.items {
+        if !query.is_paged() {
+            entries.push(entry_from_summary(summary));
+            continue;
         }
-    }
-
-    fetch().await
-}
-
-/// Spawn at most one background catalog refresh (stale-while-revalidate). Extra
-/// calls while a refresh is in flight no-op via [`REFRESHING`]. The refresh runs
-/// under [`FETCH_LOCK`] so it never races a foreground fetch.
-fn spawn_background_refresh() {
-    if REFRESHING.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    tokio::spawn(async {
-        let _reset = RefreshGuard;
-        let _guard = FETCH_LOCK.lock().await;
-        match fetch_catalog_uncached().await {
-            Ok(entries) => tracing::info!(
-                count = entries.len(),
-                "[skill_registry] background catalog refresh complete"
-            ),
+        let key = EntryKey::in_registry(summary.registry.clone(), summary.id.clone());
+        match registry.detail(&key).await {
+            Ok(detail) => entries.push(entry_from_detail(detail)),
             Err(error) => {
-                tracing::warn!(error = %error, "[skill_registry] background catalog refresh failed")
+                tracing::debug!(
+                    id = %summary.id,
+                    error = %error,
+                    "[skill_registry] detail unavailable for a hit; returning its summary"
+                );
+                entries.push(entry_from_summary(summary));
             }
         }
-    });
-}
-
-/// Download, parse, index, and cache the catalog — the network path, unguarded.
-/// Callers must go through [`browse_catalog_with`] / [`spawn_background_refresh`]
-/// so this runs under the single-flight lock.
-async fn fetch_catalog_uncached() -> Result<Vec<CatalogEntry>, String> {
-    let catalog_url = catalog_url();
-    tracing::info!(
-        catalog_url = %redact_url_for_log(&catalog_url),
-        "[skill_registry] fetching catalog"
-    );
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("failed to build http client: {e}"))?;
-
-    let response = client
-        .get(&catalog_url)
-        .header("User-Agent", "openhuman-core")
-        .send()
-        .await
-        .map_err(|e| format!("catalog fetch failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "catalog returned status {}",
-            response.status().as_u16()
-        ));
     }
 
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {e}"))?;
-
-    let raw_items: Vec<serde_json::Value> = parse_catalog_json(&body)?;
-
-    tracing::info!(
-        total_raw = raw_items.len(),
-        "[skill_registry] parsing catalog"
-    );
-
-    let entries: Vec<CatalogEntry> = {
-        let base = download::download_base_override();
-        raw_items
-            .iter()
-            .filter_map(|item| tinyskills::parse_hermes_entry(item, base.as_deref()))
-            .collect()
-    };
-
-    tracing::info!(count = entries.len(), "[skill_registry] catalog indexed");
-
-    store::save_catalog_cache(&entries);
-    Ok(entries)
-}
-
-fn catalog_url() -> String {
-    std::env::var(CATALOG_URL_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| CATALOG_URL.to_string())
-}
-
-fn redact_url_for_log(raw: &str) -> String {
-    match url::Url::parse(raw) {
-        Ok(parsed) => {
-            let scheme = parsed.scheme();
-            let host = parsed.host_str().unwrap_or("");
-            let path = parsed.path();
-            format!("{scheme}://{host}{path}")
-        }
-        Err(_) => "<unparseable>".to_string(),
-    }
-}
-
-pub(crate) fn parse_catalog_json(body: &str) -> Result<Vec<serde_json::Value>, String> {
-    tinyskills::parse_catalog_json(body).map_err(|e| e.to_string())
-}
-
-/// Search the catalog by query string.
-pub async fn search_catalog(
-    query: &str,
-    source_filter: Option<&str>,
-    category_filter: Option<&str>,
-) -> Result<Vec<CatalogEntry>, String> {
-    tracing::debug!(
-        query = %query,
-        source_filter = ?source_filter,
-        category_filter = ?category_filter,
-        "[skill_registry] search_catalog"
-    );
-    // Search/filter must reflect the current catalog — never serve stale.
-    let catalog = browse_catalog_fresh().await?;
-    // Entries install cannot fetch go last, so find-and-install reaches a
-    // working hit first (see `tinyskills::filter_catalog`).
-    let filtered = tinyskills::filter_catalog(catalog, query, source_filter, category_filter);
-
-    tracing::debug!(
-        result_count = filtered.len(),
-        "[skill_registry] search complete"
-    );
-    Ok(filtered)
-}
-
-/// Return the distinct set of upstream sources present in the catalog.
-pub async fn list_sources() -> Result<Vec<String>, String> {
-    let catalog = browse_catalog(false).await?;
-    let mut sources: Vec<String> = catalog
+    let refreshing = page.sources.iter().any(|source| source.refreshing);
+    let last_error = page
+        .sources
         .iter()
-        .map(|e| e.source.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    sources.sort();
-    Ok(sources)
-}
-
-/// Return the distinct set of categories present in the catalog.
-pub async fn list_categories() -> Result<Vec<String>, String> {
-    let catalog = browse_catalog(false).await?;
-    let mut categories: Vec<String> = catalog
-        .iter()
-        .map(|e| e.category.clone())
-        .filter(|c| !c.is_empty())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    categories.sort();
-    Ok(categories)
-}
-
-/// Install a skill from the catalog by its entry id.
-pub async fn install_from_catalog(
-    workspace_dir: &std::path::Path,
-    entry: &CatalogEntry,
-) -> Result<crate::skills::ops_install::InstallWorkflowFromUrlOutcome, String> {
-    tracing::info!(
-        entry_id = %entry.id,
-        source = %entry.source,
-        download_url = %entry.download_url,
-        "[skill_registry] installing from catalog"
+        .find_map(|source| source.last_error.clone());
+    tracing::debug!(
+        total = page.total,
+        returned = entries.len(),
+        page = page.page,
+        freshness = ?page.freshness,
+        refreshing,
+        has_error = last_error.is_some(),
+        "[skill_registry] catalog_page result"
     );
-
-    if !entry.has_direct_download() {
-        let where_to_find = entry
-            .source_url
-            .as_deref()
-            .map(|u| format!(" View it at {u}."))
-            .unwrap_or_default();
-        return Err(format!(
-            "'{}' is hosted on {} and has no direct SKILL.md download, so it can't be installed automatically yet.{}",
-            entry.name, entry.source, where_to_find
-        ));
-    }
-
-    // A skills.sh entry's `download_url` is the most common location, not a
-    // verified one: find where this repo keeps the skill before fetching.
-    let url = match entry.source_url.as_deref().and_then(SkillsShRef::parse) {
-        Some(skill) if skill.candidate_urls().first() == Some(&entry.download_url) => {
-            download::resolve_skills_sh(&skill).await?
-        }
-        _ => entry.download_url.clone(),
-    };
-
-    let params = crate::skills::ops_install::InstallWorkflowFromUrlParams {
-        url,
-        timeout_secs: Some(CATALOG_INSTALL_TIMEOUT_SECS),
-    };
-
-    crate::skills::ops_install::install_workflow_from_url(workspace_dir, params)
-        .await
-        .map_err(|error| {
-            // ClawHub answers a slug that several authors publish under with
-            // 409, and the catalog does not record which author's skill this is.
-            if entry.source.eq_ignore_ascii_case("clawhub") && error.ends_with("returned status 409")
-            {
-                format!(
-                    "'{}' is published on ClawHub by more than one author and the catalog does not say which one, so it can't be installed automatically.",
-                    entry.name
-                )
-            } else {
-                error
-            }
-        })
-}
-
-/// Wall-clock budget for a catalog-driven SKILL.md fetch.
-///
-/// Deliberately the same 15s as the skills.sh probe timeout in `download.rs` — the two bound
-/// requests to the same hosts in the same flow, so tuning one without the other
-/// is almost always a mistake. This path used the 60s
-/// `DEFAULT_INSTALL_TIMEOUT_SECS` instead, which is the documented default for
-/// the public `skills.install_from_url` tool and is left alone; a user clicking
-/// Install in the registry is waiting on a UI, not scripting a long fetch, and
-/// a minute of a disabled button with no reason was the whole of #6409's
-/// reported symptom.
-const CATALOG_INSTALL_TIMEOUT_SECS: u64 = 15;
-
-/// Resolve an install request to exactly one catalog entry.
-///
-/// `entry_id` is matched against [`CatalogEntry::id`]. Ids used to be display
-/// names, which many entries share, so a name is still accepted when exactly
-/// one entry carries it; otherwise the error names real ids to use instead.
-pub fn find_catalog_entry<'a>(
-    catalog: &'a [CatalogEntry],
-    entry_id: &str,
-) -> Result<&'a CatalogEntry, String> {
-    tinyskills::find_catalog_entry(catalog, entry_id).map_err(|error| match error {
-        tinyskills::CatalogError::NotFound { id, closest } => {
-            tracing::debug!(
-                entry_id = %id,
-                suggestions = closest.len(),
-                "[skill_registry] install id not in catalog"
-            );
-            if closest.is_empty() {
-                format!(
-                    "no catalog entry has id '{id}'. Use an id returned by skill_registry_search."
-                )
-            } else {
-                format!(
-                    "no catalog entry has id '{id}'. Closest ids: {}.",
-                    closest.join(", ")
-                )
-            }
-        }
-        other => other.to_string(),
+    Ok(CatalogPage {
+        entries,
+        total: page.total,
+        page: page.page,
+        page_size: page.page_size,
+        total_pages: page.total_pages,
+        freshness: page.freshness,
+        fetched_at: page.fetched_at,
+        refreshing,
+        last_error,
     })
 }
 
-/// Index one raw Hermes catalog item, honouring the download-base test
-/// override (`OPENHUMAN_SKILL_REGISTRY_DOWNLOAD_BASE_URL`).
-pub(crate) fn parse_hermes_entry(item: &serde_json::Value) -> Option<CatalogEntry> {
-    let base = download::download_base_override();
-    tinyskills::parse_hermes_entry(item, base.as_deref())
+/// Upstream and category facets across every source.
+pub async fn catalog_facets() -> Result<RegistryFacets, RegistryError> {
+    catalog_facets_in(&skill_registry()).await
+}
+
+pub(crate) async fn catalog_facets_in(
+    registry: &SkillRegistry,
+) -> Result<RegistryFacets, RegistryError> {
+    registry
+        .facets(None)
+        .await
+        .inspect_err(|error| observe("facets", error, true))
+}
+
+/// Everything known about one entry, by id or unique name.
+pub async fn catalog_detail(entry_id: &str) -> Result<CatalogDetail, RegistryError> {
+    catalog_detail_in(&skill_registry(), entry_id).await
+}
+
+pub(crate) async fn catalog_detail_in(
+    registry: &SkillRegistry,
+    entry_id: &str,
+) -> Result<CatalogDetail, RegistryError> {
+    let detail = registry
+        .detail(&EntryKey::new(entry_id))
+        .await
+        .inspect_err(|error| observe("detail", error, true))?;
+    let overview = detail.overview.clone();
+    let install_identifier = detail.install_identifier.clone();
+    Ok(CatalogDetail {
+        entry: entry_from_detail(detail),
+        overview,
+        install_identifier,
+    })
+}
+
+/// Why a catalog install failed.
+#[derive(Debug)]
+pub enum CatalogInstallError {
+    /// The registry could not locate or fetch the entry's `SKILL.md`.
+    Registry(RegistryError),
+    /// The document was fetched but could not be installed.
+    Install(String),
+}
+
+impl CatalogInstallError {
+    pub fn kind(&self) -> Option<RegistryErrorKind> {
+        match self {
+            Self::Registry(error) => Some(error.kind()),
+            Self::Install(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for CatalogInstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Registry(error) => f.write_str(&registry_error_message(error)),
+            Self::Install(message) => f.write_str(message),
+        }
+    }
+}
+
+/// Install a catalog entry, by id or unique name, into the user skills root.
+///
+/// The document goes through the supply-chain scan gate: a blocking scan or
+/// a failed fetch is retried once, and a document that still blocks comes
+/// back as [`SkillInstallOutcome::ScanBlocked`] unless `acknowledgement` names
+/// that document's digest.
+pub async fn install_from_catalog(
+    workspace_dir: &Path,
+    entry_id: &str,
+    acknowledgement: ScanAcknowledgement,
+) -> Result<SkillInstallOutcome, CatalogInstallError> {
+    install_from_catalog_in(
+        &skill_registry(),
+        workspace_dir,
+        dirs::home_dir().as_deref(),
+        entry_id,
+        acknowledgement,
+    )
+    .await
+}
+
+pub(crate) async fn install_from_catalog_in(
+    registry: &SkillRegistry,
+    workspace_dir: &Path,
+    home: Option<&Path>,
+    entry_id: &str,
+    acknowledgement: ScanAcknowledgement,
+) -> Result<SkillInstallOutcome, CatalogInstallError> {
+    tracing::info!(
+        entry_id = %entry_id,
+        acknowledged = acknowledgement.is_given(),
+        "[skill_registry] installing from catalog"
+    );
+    let key = EntryKey::new(entry_id);
+    let document = fetch_scanned(entry_id, &acknowledgement, || registry.fetch_document(&key))
+        .await
+        .map_err(|error| {
+            observe("install", &error, false);
+            crate::skills::ops_install::report_install_fetch_failure(&error, None);
+            CatalogInstallError::Registry(error)
+        })?;
+    gate_install(entry_id, &acknowledgement, document, |document| {
+        crate::skills::ops_install::install_validated_document(
+            workspace_dir,
+            home,
+            &document.fetched_from,
+            &document.fetched_from,
+            document.document,
+        )
+    })
+    .map_err(CatalogInstallError::Install)
 }
 
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_install_tests.rs"]
+mod install_tests;

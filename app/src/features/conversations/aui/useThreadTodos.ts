@@ -4,8 +4,10 @@
  * on thread open by {@link useLoadThreadTodos}).
  */
 import { useEffect, useRef } from 'react';
+import { useStore } from 'react-redux';
 
 import { threadApi } from '../../../services/api/threadApi';
+import type { RootState } from '../../../store';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { setThreadTodos, type ThreadTodoItemView } from '../../../store/threadTodosSlice';
 
@@ -23,18 +25,21 @@ export function useThreadTodos(threadId: string | null): ThreadTodoItemView[] | 
  * error) leaves the slice untouched — the live event stream is still the
  * primary source once a turn runs.
  */
-export function useLoadThreadTodos(threadId: string | null): void {
+export function useLoadThreadTodos(threadId: string | null, revision = ''): void {
+  const store = useStore<RootState>();
   const dispatch = useAppDispatch();
   const requestedFor = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!threadId || requestedFor.current === threadId) return;
-    requestedFor.current = threadId;
+    const key = `${threadId}:${revision}`;
+    if (!threadId || requestedFor.current === key) return;
+    requestedFor.current = key;
+    const before = store.getState().threadTodos.byThread[threadId];
     let cancelled = false;
     void (async () => {
       try {
         const todos = await threadApi.getTodos(threadId);
-        if (cancelled) return;
+        if (cancelled || store.getState().threadTodos.byThread[threadId] !== before) return;
         dispatch(setThreadTodos({ threadId, todos }));
       } catch {
         // Older core without the RPC, or a transient failure — the live
@@ -44,5 +49,5 @@ export function useLoadThreadTodos(threadId: string | null): void {
     return () => {
       cancelled = true;
     };
-  }, [threadId, dispatch]);
+  }, [threadId, revision, dispatch, store]);
 }

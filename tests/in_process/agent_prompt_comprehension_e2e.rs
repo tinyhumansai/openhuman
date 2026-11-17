@@ -16,7 +16,7 @@
 //! `env_lock()` across `.await` on purpose, as there.
 #![allow(clippy::await_holding_lock)]
 
-use crate::env_guard::env_lock_with_file_keyring_async as env_lock_async;
+use crate::env_guard::env_lock_async;
 use crate::env_guard::EnvVarGuard;
 use crate::rpc_auth::{ensure_rpc_auth, rpc_token};
 use crate::scripted_stack::{
@@ -34,7 +34,7 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
-use openhuman_core::agent::harness::AgentDefinitionRegistry;
+use openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry;
 use openhuman_rpc::server::build_core_http_router;
 
 // ─── Env serialization ──────────────────────────────────────────────────────
@@ -439,19 +439,30 @@ async fn wait_for_terminal(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>)
 }
 
 struct Stack {
+    /// The connectors module serves the integration catalogue from the host's
+    /// installed storage backend.
+    _storage: crate::storage_case::Case,
     rpc_base: String,
     _guards: Vec<EnvVarGuard>,
     _tmp: tempfile::TempDir,
+    previous_storage: Option<std::sync::Arc<dyn openhuman_core::storage::StorageBackend>>,
     joins: Vec<tokio::task::JoinHandle<Result<(), std::io::Error>>>,
 }
 
 impl Drop for Stack {
     fn drop(&mut self) {
         self.joins.iter().for_each(|j| j.abort());
+        openhuman_core::storage::clear();
+        if let Some(previous) = self.previous_storage.take() {
+            openhuman_core::storage::install(previous);
+        }
     }
 }
 
 async fn boot_stack(extra_config: &str) -> Stack {
+    // The managed chat provider is installed by the TinyHumans layer; without
+    // it every turn ends in `chat_error.inference` and no request reaches the
+    // scripted upstream.
     AGENT_DEF_REGISTRY_INIT.get_or_init(|| {
         AgentDefinitionRegistry::init_global_builtins()
             .expect("AgentDefinitionRegistry::init_global_builtins must not fail");
@@ -461,10 +472,15 @@ async fn boot_stack(extra_config: &str) -> Stack {
         openhuman_core::agent::bus::register_agent_handlers();
     });
 
+    let storage = crate::storage_case::Case::open();
+    storage.install();
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().to_path_buf();
     let openhuman_home = home.join(".openhuman");
-    let guards = vec![
+    let previous_storage = openhuman_core::storage::install(std::sync::Arc::new(
+        tinystoragedrivers_testkit::MemoryBackend::new(),
+    ));
+    let mut guards = vec![
         EnvVarGuard::set_to_path("HOME", &home),
         EnvVarGuard::unset("OPENHUMAN_WORKSPACE"),
         EnvVarGuard::unset("BACKEND_URL"),
@@ -473,6 +489,12 @@ async fn boot_stack(extra_config: &str) -> Stack {
 
     let (mock_addr, mock_join) = serve_on_ephemeral(scripted_upstream_router()).await;
     let mock_origin = format!("http://{mock_addr}");
+    // `api_url` is the inference override. Backend routing deliberately
+    // rejects arbitrary loopback endpoints as hosted APIs, so point the
+    // backend-specific resolver at this same local fixture explicitly.
+    guards.push(EnvVarGuard::set("BACKEND_URL", &mock_origin));
+    guards.push(EnvVarGuard::set("VITE_BACKEND_URL", &mock_origin));
+    crate::tinyhumans_boot::boot();
     write_min_config(&openhuman_home, &mock_origin, extra_config);
     write_min_config(
         &openhuman_home.join("users").join("e2e-user"),
@@ -494,9 +516,11 @@ async fn boot_stack(extra_config: &str) -> Stack {
     assert_no_jsonrpc_error(&store, "auth_store_session");
 
     Stack {
+        _storage: storage,
         rpc_base,
         _guards: guards,
         _tmp: tmp,
+        previous_storage,
         joins: vec![mock_join, rpc_join],
     }
 }
@@ -639,8 +663,10 @@ async fn run_case_inner(case: Case) {
 
     match case.entry {
         Entry::Summarizer => {
-            use openhuman_core::inference::host_runtime::ops::{agent_chat_for, AgentChatTarget};
-            let mut config = openhuman_core::config::Config::load_or_init().await.unwrap();
+            use openhuman_core::agent_runs::agent_chat::{agent_chat_for, AgentChatTarget};
+            let mut config = openhuman_core::config::Config::load_or_init()
+                .await
+                .unwrap();
             agent_chat_for(
                 &mut config,
                 AgentChatTarget::AgentId("summarizer"),
@@ -650,6 +676,7 @@ async fn run_case_inner(case: Case) {
                 None,
                 None,
                 None,
+                openhuman_core::agent_runs::agent_chat::AgentChatEnv::default(),
             )
             .await
             .expect("summarizer turn must finish");
@@ -790,11 +817,15 @@ async fn run_case_inner(case: Case) {
         );
     }
     if matches!(case.entry, Entry::WebChatNoAutomaticSummary) {
-        assert!(requests.len() >= 2, "the tool result must reach a subsequent model request");
-        assert!(requests.iter().all(|request| !system_text(request)
-            .contains("You compress a single oversized tool result")));
+        assert!(
+            requests.len() >= 2,
+            "the tool result must reach a subsequent model request"
+        );
+        assert!(requests
+            .iter()
+            .all(|request| !system_text(request)
+                .contains("You compress a single oversized tool result")));
     }
-
 }
 
 // ─── Cases ──────────────────────────────────────────────────────────────────
@@ -823,7 +854,6 @@ fn news_digest_graph() -> Value {
 /// failure — so a loop in the runtime (a re-issued call, a retry that repeats
 /// the search) cannot pass as progress.
 #[test]
-#[ignore = "TODO(#6376): hosted TinyAgents omits workflow specialist tools"]
 fn workflow_builder_reaches_propose_workflow() {
     run_case(Case {
         agent: "workflow_builder",
@@ -857,7 +887,6 @@ fn workflow_builder_reaches_propose_workflow() {
 /// Composio or cron tools its specialists own. The action itself is
 /// `Deferred`: off the advertised belt, found through `tool_search`.
 #[test]
-#[ignore = "TODO(#6376): hosted TinyAgents omits the deferred integration catalogue"]
 fn orchestrator_searches_for_and_calls_the_integration_action() {
     run_case(Case {
         agent: "orchestrator",
@@ -881,7 +910,10 @@ fn orchestrator_searches_for_and_calls_the_integration_action() {
         ],
         advertises_nothing: false,
         max_consecutive_calls_of: None,
-        extra_config: "",
+        // Keep discovery local and deterministic; the default Jev ranker is
+        // installed by the host and this fixture does not mock its ranking
+        // service.
+        extra_config: "[agent.tool_search]\nranker = \"bm25\"\n",
     });
 }
 
@@ -1056,6 +1088,136 @@ fn orchestrator_prompt_names_only_discoverable_delegates() {
             undiscoverable.is_empty(),
             "the orchestrator prompt names delegates the model cannot find: {undiscoverable:?}; \
              advertised {belt:?}"
+        );
+    });
+}
+
+/// Waits for the `chat_done` of `request_id` and panics on its `chat_error`.
+/// Terminal events of other requests (a superseded turn's "cancelled", say)
+/// are skipped, so a multi-turn test never mistakes another turn's terminal
+/// for the one it just sent.
+async fn wait_for_request_done(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
+    request_id: &str,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => panic!("SSE channel closed waiting for {request_id}"),
+            Err(_) => panic!("timed out waiting for chat_done of {request_id}"),
+        };
+        if event.get("request_id").and_then(Value::as_str) != Some(request_id) {
+            continue;
+        }
+        match event.get("event").and_then(Value::as_str) {
+            Some("chat_done") => return,
+            Some("chat_error") => panic!("request {request_id} failed: {event}"),
+            _ => {}
+        }
+    }
+}
+
+/// The last user message of an OpenAI-shaped chat request, as text.
+fn last_user_text(request: &Value) -> String {
+    request
+        .pointer("/body/messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .rev()
+        .find(|m| m["role"] == "user")
+        .map(|m| match &m["content"] {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        })
+        .unwrap_or_default()
+}
+
+/// The web chat's interface locale reaches the model on every turn of one
+/// thread, over the real JSON-RPC chat path against a scripted upstream:
+/// Spanish gets the Spanish instruction; switching to English sends an English
+/// one that supersedes it; Hindi re-arms Hindi; a turn that sends no locale
+/// (as host-authored turns do) carries none.
+#[test]
+fn the_interface_locale_reaches_the_model_on_every_turn() {
+    run_on_agent_stack("interface_locale_directive", || async {
+        let _lock = env_lock_async().await;
+        reset_script(vec![
+            text_completion("Hola."),
+            text_completion("Hello."),
+            text_completion("Namaste."),
+            text_completion("Ok."),
+        ]);
+        // No follow-up suggestions: their post-turn model call would take the
+        // next scripted reply and add a request this test does not expect.
+        let stack = boot_stack("[web_chat]\nsuggestions_enabled = false\n").await;
+        let client_id = "locale-directive";
+        let (mut events, ready) =
+            spawn_sse_collector(format!("{}/events?client_id={client_id}", stack.rpc_base));
+        wait_for_sse_ready(ready).await;
+        let turns = [
+            ("hola", Some("es")),
+            ("and now?", Some("en")),
+            ("namaste ji", Some("hi")),
+            ("no locale here", None),
+        ];
+        for (id, (message, locale)) in turns.into_iter().enumerate() {
+            let mut params = json!({
+                "client_id": client_id,
+                "thread_id": "thread-locale",
+                "message": message,
+                "model_override": "e2e-mock-model",
+            });
+            if let Some(locale) = locale {
+                params["locale"] = json!(locale);
+            }
+            let resp = post_json_rpc(
+                &stack.rpc_base,
+                20 + id as i64,
+                "openhuman.channel_web_chat",
+                params,
+            )
+            .await;
+            assert_no_jsonrpc_error(&resp, "channel_web_chat");
+            let request_id = resp
+                .pointer("/result/request_id")
+                .or_else(|| resp.pointer("/result/result/request_id"))
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("channel_web_chat returned no request_id: {resp}"))
+                .to_string();
+            wait_for_request_done(&mut events, &request_id).await;
+        }
+
+        let requests = captured().clone();
+        assert_eq!(
+            requests.len(),
+            4,
+            "one model request per turn: {requests:#?}"
+        );
+        let turn = |words: &str| {
+            requests
+                .iter()
+                .map(last_user_text)
+                .find(|text| text.ends_with(words))
+                .unwrap_or_else(|| {
+                    let seen: Vec<String> = requests.iter().map(last_user_text).collect();
+                    panic!("no request whose user message is {words:?}: {seen:#?}")
+                })
+        };
+        let spanish = turn("hola");
+        assert!(spanish.contains("Respond in Spanish"), "{spanish}");
+        let english = turn("and now?");
+        assert!(english.contains("Respond in English"), "{english}");
+        assert!(!english.contains("Respond in Spanish"), "{english}");
+        let hindi = turn("namaste ji");
+        assert!(hindi.contains("Respond in Hindi"), "{hindi}");
+        let none = turn("no locale here");
+        assert!(!none.contains("User language:"), "{none}");
+        assert!(
+            none.contains("Current Date & Time:"),
+            "fixture: the clock line is there: {none}"
         );
     });
 }

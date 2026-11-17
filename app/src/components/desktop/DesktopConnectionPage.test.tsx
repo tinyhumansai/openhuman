@@ -82,6 +82,22 @@ describe('Desktop connection', () => {
     expect(screen.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
   });
 
+  it('says desktop control is not available on Windows yet', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValue({
+      ...enabled,
+      supported: false,
+      enabled: false,
+      platform: 'windows',
+    });
+    renderWithProviders(<DesktopConnectionPage />);
+    expect(
+      await screen.findByText(
+        "Desktop control isn't available on Windows yet. Browser Control works on Windows today."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
+  });
+
   it('does not offer a remote or browser client control over its core host', async () => {
     vi.mocked(isLocalDesktopHost).mockResolvedValue(false);
     renderWithProviders(<DesktopConnectionPage />);

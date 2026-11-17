@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn edit_workflow_rejects_a_result_that_is_structurally_invalid() {
-    use crate::flows::DraftOrigin;
+    use tinyflows_bus::catalog::DraftOrigin;
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let draft = ops::flows_draft_create(
@@ -14,7 +14,7 @@ async fn edit_workflow_rejects_a_result_that_is_structurally_invalid() {
     )
     .unwrap()
     .value;
-    let tool = EditWorkflowTool::new(config.clone());
+    let tool = edit_workflow_tool(config.clone());
     // Removing the only trigger leaves the graph structurally invalid.
     let result = tool
         .execute(json!({
@@ -38,7 +38,7 @@ async fn edit_workflow_rejects_a_result_that_is_structurally_invalid() {
 
 #[tokio::test]
 async fn edit_workflow_rejects_an_engine_incompatible_result() {
-    use crate::flows::DraftOrigin;
+    use tinyflows_bus::catalog::DraftOrigin;
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let safe_graph = json!({
@@ -71,7 +71,7 @@ async fn edit_workflow_rejects_an_engine_incompatible_result() {
     )
     .unwrap()
     .value;
-    let tool = EditWorkflowTool::new(config.clone());
+    let tool = edit_workflow_tool(config.clone());
     let result = tool
         .execute(json!({
             "draft_id": draft.id,
@@ -99,7 +99,7 @@ async fn edit_workflow_rejects_an_engine_incompatible_result() {
 
 #[tokio::test]
 async fn edit_workflow_does_not_persist_an_incompatible_saved_child_reference() {
-    use crate::flows::DraftOrigin;
+    use tinyflows_bus::catalog::DraftOrigin;
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let legacy_child = json!({
@@ -124,16 +124,17 @@ async fn edit_workflow_does_not_persist_an_incompatible_saved_child_reference() 
             { "from_node": "c", "to_node": "m" }
         ]
     });
-    let child_graph = ops::migrate_and_deserialize_graph(legacy_child).unwrap();
+    let child_graph = tinyflows::migrate::deserialize_graph(legacy_child).unwrap();
     tinyflows::validate::validate(&child_graph).unwrap();
     let child = crate::flows::store::create_flow(
         &config,
         "Legacy unsafe child".to_string(),
-        child_graph,
+        serde_json::to_value(child_graph).unwrap(),
         false,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
     let safe_graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Trigger" },
@@ -156,7 +157,7 @@ async fn edit_workflow_does_not_persist_an_incompatible_saved_child_reference() 
     .unwrap()
     .value;
 
-    let result = EditWorkflowTool::new(config.clone())
+    let result = edit_workflow_tool(config.clone())
         .execute(json!({
             "draft_id": draft.id,
             "ops": [{
@@ -185,7 +186,7 @@ async fn edit_workflow_does_not_persist_an_incompatible_saved_child_reference() 
 
 #[tokio::test]
 async fn edit_workflow_preserves_non_engine_gate_edits_in_the_draft() {
-    use crate::flows::DraftOrigin;
+    use tinyflows_bus::catalog::DraftOrigin;
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let draft = ops::flows_draft_create(
@@ -197,7 +198,7 @@ async fn edit_workflow_preserves_non_engine_gate_edits_in_the_draft() {
     )
     .unwrap()
     .value;
-    let tool = EditWorkflowTool::new(config.clone());
+    let tool = edit_workflow_tool(config.clone());
     let result = tool
         .execute(json!({
             "draft_id": draft.id,
@@ -232,7 +233,7 @@ async fn edit_workflow_edits_a_saved_flow_by_id() {
         .unwrap()
         .value;
 
-    let tool = EditWorkflowTool::new(config.clone());
+    let tool = edit_workflow_tool(config.clone());
     let result = tool
         .execute(json!({
             "flow_id": flow.id,
@@ -255,7 +256,7 @@ async fn edit_workflow_edits_a_saved_flow_by_id() {
 #[tokio::test]
 async fn validate_workflow_reports_ok_for_a_valid_graph() {
     let tmp = TempDir::new().unwrap();
-    let tool = ValidateWorkflowTool::new(test_config(&tmp));
+    let tool = validate_workflow_tool(test_config(&tmp));
     let result = tool
         .execute(json!({ "graph": valid_graph() }))
         .await
@@ -271,7 +272,7 @@ async fn validate_workflow_reports_ok_for_a_valid_graph() {
 #[tokio::test]
 async fn validate_workflow_surfaces_all_structural_errors() {
     let tmp = TempDir::new().unwrap();
-    let tool = ValidateWorkflowTool::new(test_config(&tmp));
+    let tool = validate_workflow_tool(test_config(&tmp));
     // No trigger + a dangling edge.
     let graph = json!({
         "nodes": [ { "id": "a", "kind": "agent", "name": "A", "config": { "prompt": "hi" } } ],
@@ -295,44 +296,15 @@ async fn validate_workflow_surfaces_all_structural_errors() {
 #[tokio::test]
 async fn validate_workflow_requires_a_base() {
     let tmp = TempDir::new().unwrap();
-    let tool = ValidateWorkflowTool::new(test_config(&tmp));
+    let tool = validate_workflow_tool(test_config(&tmp));
     let result = tool.execute(json!({})).await.unwrap();
     assert!(result.is_error);
     assert!(result.output().contains("flow_id"));
 }
 
-// T-m4: a gate-check failure (e.g. a migrate/deserialize error surfaced after
-// structural validation passed) must fail CLOSED — `ok` must never be true
-// when the hard gates did not actually run. Regression test for the bug
-// where `Err(_) => Vec::new()` let an empty `gate_errors` masquerade as
-// "gates passed".
-#[test]
-fn validate_workflow_report_fails_closed_when_gate_check_errors() {
-    assert!(!validate_workflow_report_is_ok(true, &[], true));
-}
-
-#[test]
-fn validate_workflow_report_ok_when_structurally_valid_and_gates_pass() {
-    assert!(validate_workflow_report_is_ok(true, &[], false));
-}
-
-#[test]
-fn validate_workflow_report_not_ok_when_structurally_invalid() {
-    assert!(!validate_workflow_report_is_ok(false, &[], false));
-}
-
-#[test]
-fn validate_workflow_report_not_ok_when_gate_errors_present() {
-    assert!(!validate_workflow_report_is_ok(
-        true,
-        &["unresolvable binding".to_string()],
-        false
-    ));
-}
-
 #[tokio::test]
 async fn edit_workflow_edits_a_draft_and_writes_back() {
-    use crate::flows::DraftOrigin;
+    use tinyflows_bus::catalog::DraftOrigin;
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -347,7 +319,7 @@ async fn edit_workflow_edits_a_draft_and_writes_back() {
     .unwrap()
     .value;
 
-    let tool = EditWorkflowTool::new(config.clone());
+    let tool = edit_workflow_tool(config.clone());
     let result = tool
         .execute(json!({
             "draft_id": draft.id,
@@ -365,18 +337,18 @@ async fn edit_workflow_edits_a_draft_and_writes_back() {
     assert_eq!(reloaded.graph["nodes"].as_array().unwrap().len(), 3);
 }
 
-// T-m6: when the draft write-back itself fails (here: a genuine permission
-// denial on the drafts dir, not a mock), the response must surface the
-// failure instead of claiming "Edits live on draft {id}" — the exact
-// wording that used to ship regardless of whether the write actually landed.
-#[cfg(unix)]
+// T-m6: when the draft write-back itself fails (here: a genuine constraint of
+// the database that refuses updates to draft documents, not a mock), the
+// response must surface the failure instead of claiming "Edits live on draft
+// {id}" — the exact wording that used to ship regardless of whether the write
+// actually landed.
 #[tokio::test]
 async fn edit_workflow_surfaces_draft_write_back_failure() {
-    use crate::flows::DraftOrigin;
-    use std::os::unix::fs::PermissionsExt;
+    use tinyflows_bus::catalog::DraftOrigin;
 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
 
     let draft = ops::flows_draft_create(
         &config,
@@ -388,22 +360,27 @@ async fn edit_workflow_surfaces_draft_write_back_failure() {
     .unwrap()
     .value;
 
-    // Force the final `flows_draft_update` write to genuinely fail: strip
-    // write permission from the drafts dir after the draft file already
-    // exists in it (create_dir_all is a no-op; the write of the new tmp
-    // file inside it is what fails).
-    let drafts_dir = config.workspace_dir.join("flows").join("drafts");
-    std::fs::set_permissions(&drafts_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-    let probe = drafts_dir.join(".write_probe");
-    let write_is_blocked = std::fs::write(&probe, b"x").is_err();
-    let _ = std::fs::remove_file(&probe);
-    if !write_is_blocked {
-        // Running as root — permissions are ignored, assertion is moot.
-        std::fs::set_permissions(&drafts_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        return;
-    }
+    // Updating a draft document aborts; creating, reading and listing do not,
+    // so the draft loads and only the write-back fails.
+    let conn =
+        crate::storage::rusqlite::Connection::open(config.workspace_dir.join("storage/storage.db"))
+            .unwrap();
+    // Layout 2 keeps every scope's documents in the `docs` table.
+    let docs_table: String = conn
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'docs'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap();
+    conn.execute_batch(&format!(
+        "CREATE TRIGGER refuse_draft_updates BEFORE UPDATE ON {docs_table}
+         WHEN NEW.coll = 'flows.drafts'
+         BEGIN SELECT RAISE(ABORT, 'drafts are read-only'); END;"
+    ))
+    .unwrap();
 
-    let tool = EditWorkflowTool::new(config.clone());
+    let tool = edit_workflow_tool(config.clone());
     let result = tool
         .execute(json!({
             "draft_id": draft.id,
@@ -411,9 +388,6 @@ async fn edit_workflow_surfaces_draft_write_back_failure() {
         }))
         .await
         .unwrap();
-
-    // Restore so the tempdir can be cleaned up.
-    std::fs::set_permissions(&drafts_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     assert!(result.is_error, "{}", result.output());
     assert!(
@@ -439,7 +413,7 @@ async fn edit_workflow_surfaces_draft_write_back_failure() {
 async fn create_workflow_creates_a_disabled_flow() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let tool = CreateWorkflowTool::new(config.clone());
+    let tool = create_workflow_tool(config.clone());
     // valid_graph has a manual trigger — flows_create would normally make it
     // enabled; create_workflow must force it DISABLED.
     let result = tool
@@ -456,42 +430,10 @@ async fn create_workflow_creates_a_disabled_flow() {
     assert!(!flow.enabled, "agent-created flows are born disabled");
 }
 
-// T-m3: when the force-disable write itself fails, the response must
-// report the flow's REAL state (still enabled) rather than unconditionally
-// claiming "enabled": false. Exercised directly on the pure decision
-// function `create_workflow_report` — reaching the true failure via a
-// genuine concurrent store error would need a test-only seam inside
-// `execute()` that production code shouldn't carry.
-#[test]
-fn create_workflow_report_is_honest_when_force_disable_fails() {
-    let (enabled, note) = create_workflow_report(true, false);
-    assert!(enabled, "must report the flow as still enabled");
-    assert!(
-        note.contains("ENABLED"),
-        "note must surface the real state, not the intended DISABLED one: {note}"
-    );
-}
-
-#[test]
-fn create_workflow_report_reports_disabled_on_success() {
-    let (enabled, note) = create_workflow_report(true, true);
-    assert!(!enabled);
-    assert!(note.contains("DISABLED"));
-}
-
-#[test]
-fn create_workflow_report_never_attempted_disable_stays_disabled() {
-    // born_enabled = false: flows_create already created it disabled
-    // (e.g. an automatic-trigger graph), so no force-disable is attempted.
-    let (enabled, note) = create_workflow_report(false, true);
-    assert!(!enabled);
-    assert!(note.contains("DISABLED"));
-}
-
 #[tokio::test]
 async fn create_workflow_rejects_an_invalid_graph() {
     let tmp = TempDir::new().unwrap();
-    let tool = CreateWorkflowTool::new(test_config(&tmp));
+    let tool = create_workflow_tool(test_config(&tmp));
     let bad = json!({
         "nodes": [ { "id": "a", "kind": "output_parser", "name": "A" } ],
         "edges": []
@@ -512,7 +454,7 @@ async fn duplicate_flow_creates_a_disabled_copy() {
         .await
         .unwrap()
         .value;
-    let tool = DuplicateFlowTool::new(config.clone());
+    let tool = duplicate_flow_tool(config.clone());
     let result = tool.execute(json!({ "flow_id": flow.id })).await.unwrap();
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
@@ -529,7 +471,7 @@ async fn list_flow_runs_is_empty_for_a_fresh_flow() {
         .await
         .unwrap()
         .value;
-    let tool = ListFlowRunsTool::new(config.clone());
+    let tool = list_flow_runs_tool(config.clone());
     let result = tool.execute(json!({ "flow_id": flow.id })).await.unwrap();
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
@@ -541,23 +483,23 @@ fn phase4_write_tools_have_the_right_permissions() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     assert_eq!(
-        CreateWorkflowTool::new(config.clone()).permission_level(),
+        create_workflow_tool(config.clone()).permission_level(),
         PermissionLevel::Write
     );
-    assert!(CreateWorkflowTool::new(config.clone()).external_effect());
+    assert!(create_workflow_tool(config.clone()).external_effect());
     assert_eq!(
-        CancelFlowRunTool::new(config.clone()).permission_level(),
+        cancel_flow_run_tool(config.clone()).permission_level(),
         PermissionLevel::Write
     );
     // T-M3 fix: cancel_flow_run now parks for approval like every other
     // write-class flow-run control tool.
-    assert!(CancelFlowRunTool::new(config.clone()).external_effect());
+    assert!(cancel_flow_run_tool(config.clone()).external_effect());
     assert_eq!(
-        ResumeFlowRunTool::new(config.clone()).permission_level(),
+        resume_flow_run_tool(config.clone()).permission_level(),
         PermissionLevel::Execute
     );
     assert_eq!(
-        ListFlowRunsTool::new(config.clone()).permission_level(),
+        list_flow_runs_tool(config.clone()).permission_level(),
         PermissionLevel::None
     );
 }
@@ -590,11 +532,12 @@ async fn cancel_flow_run_refuses_a_run_the_caller_does_not_own() {
     .value;
 
     let run = ops::flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &owner_flow.id,
         json!({}),
         serde_json::Map::new(),
-        crate::flows::FlowRunTrigger::Rpc,
+        tinyflows_bus::runs::FlowRunTrigger::Rpc,
     )
     .await
     .unwrap();
@@ -608,7 +551,7 @@ async fn cancel_flow_run_refuses_a_run_the_caller_does_not_own() {
         "pending_approval"
     );
 
-    let tool = CancelFlowRunTool::new(config.clone());
+    let tool = cancel_flow_run_tool(config.clone());
     let result = tool
         .execute(json!({ "flow_id": other_flow.id, "run_id": run_id.clone() }))
         .await

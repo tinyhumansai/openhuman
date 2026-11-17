@@ -26,6 +26,52 @@ use openhuman_core::core::StructuredRpcError;
 /// Error returned by every typed facade call.
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
+    /// The host cancelled the call and its provider future has stopped.
+    #[error("{method}: cancelled")]
+    Cancelled {
+        /// Cancelled operation.
+        method: &'static str,
+    },
+    /// The entire logical call exceeded its deadline, including repairs.
+    #[error("{method}: deadline exceeded")]
+    DeadlineExceeded {
+        /// Expired operation.
+        method: &'static str,
+    },
+    /// Requested JSON failed strict validation after bounded repair.
+    #[error("{method}: {failure}")]
+    StructuredOutput {
+        /// Operation that refused the answer.
+        method: &'static str,
+        /// Safe accounting and classification metadata.
+        failure: crate::structured::StructuredOutputFailure,
+    },
+
+    /// Model call refused before dispatch by a shared run or turn budget.
+    #[error("{method}: {source}")]
+    BudgetExceeded {
+        /// Method that attempted the call.
+        method: &'static str,
+        /// Refusal including spend so far and outstanding reservations.
+        source: crate::budget::BudgetExceeded,
+    },
+    /// Physical model dispatch refused by the host before provider invocation.
+    #[error("{method}: {source}")]
+    DispatchAdmission {
+        /// Method that attempted the call.
+        method: &'static str,
+        /// Typed host policy refusal.
+        #[source]
+        source: crate::budget::DispatchRefusal,
+        /// Usage from completed calls in this logical completion, if any.
+        usage: Option<crate::complete::CompletionUsage>,
+    },
+    /// The host cancelled this turn through its cancellation handle.
+    #[error("{method}: turn cancelled")]
+    TurnCancelled {
+        /// RPC method the turn was dispatching.
+        method: &'static str,
+    },
     /// The domain returned a structured error envelope.
     #[error("{method}: {message}")]
     Domain {
@@ -88,7 +134,7 @@ pub enum CoreError {
 
     /// The route would transmit a bearer credential over a non-TLS channel.
     ///
-    /// A [`super::agent::Route`] that names an `http://` (or other non-HTTPS)
+    /// A [`crate::Route`] that names an `http://` (or other non-HTTPS)
     /// endpoint while carrying an `api_key` is refused before any request is
     /// sent, so the credential can never ride cleartext on the wire.
     #[error("{method}: refusing to send a bearer credential over a non-HTTPS route ({endpoint})")]
@@ -105,6 +151,16 @@ pub enum CoreError {
     InvalidRoute {
         /// RPC method the invalid route was attached to.
         method: &'static str,
+    },
+
+    /// The agent was removed from its runtime: a turn sent afterwards is
+    /// refused, and one in flight when it was removed ends with this.
+    #[error("{method}: agent {agent_id:?} was removed")]
+    AgentRemoved {
+        /// RPC method the turn was dispatching.
+        method: &'static str,
+        /// The removed agent.
+        agent_id: String,
     },
 }
 
@@ -150,13 +206,20 @@ impl CoreError {
     /// The RPC method this error came from.
     pub fn method(&self) -> &'static str {
         match self {
-            CoreError::Domain { method, .. }
+            CoreError::Cancelled { method }
+            | CoreError::DeadlineExceeded { method }
+            | CoreError::StructuredOutput { method, .. }
+            | CoreError::BudgetExceeded { method, .. }
+            | CoreError::Domain { method, .. }
             | CoreError::Unavailable { method }
             | CoreError::Rpc { method, .. }
             | CoreError::Encode { method, .. }
             | CoreError::Decode { method, .. }
             | CoreError::InsecureRoute { method, .. }
-            | CoreError::InvalidRoute { method } => method,
+            | CoreError::InvalidRoute { method }
+            | CoreError::AgentRemoved { method, .. }
+            | CoreError::DispatchAdmission { method, .. }
+            | CoreError::TurnCancelled { method } => method,
         }
     }
 
@@ -171,10 +234,12 @@ impl CoreError {
     pub fn is_expected_user_state(&self) -> bool {
         matches!(
             self,
-            CoreError::Domain {
-                expected_user_state: true,
-                ..
-            }
+            CoreError::BudgetExceeded { .. }
+                | CoreError::DispatchAdmission { .. }
+                | CoreError::Domain {
+                    expected_user_state: true,
+                    ..
+                }
         )
     }
 

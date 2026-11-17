@@ -16,7 +16,7 @@
 //! # What a Flow entry is not
 //!
 //! It is a **listing**, not a bundle. Every other scope is a directory the
-//! skill scanner walked; this is a row in `flows.db`. There is no `SKILL.md`,
+//! skill scanner walked; this is a TinyFlows Catalog record. There is no `SKILL.md`,
 //! so `location` is `None` and `resources` is empty, and the tools that read
 //! those (`describe_workflow`, `read_workflow_resource`) must say so by name
 //! rather than failing on a missing file. That is the whole reason
@@ -28,11 +28,12 @@
 //!
 //! Saved flows carry the name and graph metadata supplied by the shared catalog
 //! crate, but no separate catalogue description. The summary below therefore
-//! describes only the graph's shape, without inventing a purpose from node
-//! internals.
+//! describes only the graph's shape, using TinyFlows Portability for its
+//! trigger kind and avoiding guesses from node internals.
 
 use crate::config::Config;
-use crate::skills::{Workflow, WorkflowScope};
+use crate::flows::bus;
+use {tinyskills::Skill as Workflow, tinyskills::SkillScope as WorkflowScope};
 
 /// How many flows the catalogue will surface.
 ///
@@ -47,7 +48,7 @@ pub const MAX_CATALOGUE_FLOWS: usize = 20;
 /// Every saved flow, as catalogue entries.
 ///
 /// Returns an empty vec on any store error rather than propagating: this feeds
-/// a prompt section and a search index, and a transient `flows.db` problem
+/// a prompt section and a search index, and a transient Catalog storage issue
 /// should degrade the catalogue, never fail the turn. The error is logged.
 pub fn flow_entries(config: &Config) -> Vec<Workflow> {
     let (flows, skipped) = match super::store::list_flows(config) {
@@ -74,7 +75,7 @@ pub fn flow_entries(config: &Config) -> Vec<Workflow> {
         // answer "you have no such automation" to someone looking at it in the
         // UI. The entry says it is paused; the model can offer to enable it.
         .take(MAX_CATALOGUE_FLOWS)
-        .map(entry_for)
+        .map(|flow| entry_for_with_config(config, flow))
         .collect();
     if total > MAX_CATALOGUE_FLOWS {
         tracing::debug!(
@@ -87,14 +88,19 @@ pub fn flow_entries(config: &Config) -> Vec<Workflow> {
     entries
 }
 
-fn entry_for(flow: super::types::Flow) -> Workflow {
+fn entry_for_with_config(config: &Config, flow: tinyflows_bus::catalog::Workflow) -> Workflow {
+    let description = describe(config, &flow);
+    entry_with_description(flow, description)
+}
+
+fn entry_with_description(flow: tinyflows_bus::catalog::Workflow, description: String) -> Workflow {
     Workflow {
         name: flow.name.clone(),
         // The flow id, because that is what `run_workflow` / `get_flow` take.
         // A slug of the name would be a second identifier that resolves
         // nowhere.
         dir_name: flow.id.clone(),
-        description: describe(&flow),
+        description,
         scope: WorkflowScope::Flow,
         // No bundle on disk: no manifest to read, no resources to page
         // through. Left explicitly empty so a consumer that reads them gets an
@@ -105,8 +111,15 @@ fn entry_for(flow: super::types::Flow) -> Workflow {
 }
 
 /// A structural summary of the flow graph.
-fn describe(flow: &super::types::Flow) -> String {
-    describe_shape(flow)
+fn describe(config: &Config, flow: &tinyflows_bus::catalog::Workflow) -> String {
+    let trigger = match bus::describe_trigger(config, flow) {
+        Ok(details) => details.kind.unwrap_or_else(|| "manual".to_string()),
+        Err(error) => {
+            tracing::warn!(target: "flows", flow_id = %flow.id, %error, "[flows][catalogue] could not describe flow trigger");
+            "unknown".to_string()
+        }
+    };
+    describe_shape(flow, trigger)
 }
 
 /// A one-line summary of what the graph *is*, for a flow with no description.
@@ -114,22 +127,12 @@ fn describe(flow: &super::types::Flow) -> String {
 /// Deliberately structural — trigger, size, paused-ness — because that is all
 /// the record carries. See the module docs: inventing a purpose from node
 /// internals would read as authoritative and frequently be wrong.
-fn describe_shape(flow: &super::types::Flow) -> String {
-    // Read out of the trigger node's free-form config, which is where the
-    // engine keeps it — the same way `tinyflows`' own `trigger_kind` does.
-    // A graph with zero or several triggers has no single answer, and
-    // validation reports that separately, so this stays quiet.
-    let trigger = flow
-        .graph
-        .trigger()
-        .and_then(|node| node.config.get("trigger_kind"))
-        .and_then(|value| value.as_str())
-        .unwrap_or("manual")
-        .to_string();
+fn describe_shape(flow: &tinyflows_bus::catalog::Workflow, trigger: String) -> String {
     let steps = flow
         .graph
-        .nodes
-        .len()
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len)
         // The trigger is not a step the user thinks about.
         .saturating_sub(1);
     let mut out = format!(
@@ -140,6 +143,19 @@ fn describe_shape(flow: &super::types::Flow) -> String {
         out.push_str(" Currently disabled.");
     }
     out
+}
+
+#[cfg(test)]
+fn entry_for(flow: tinyflows_bus::catalog::Workflow) -> Workflow {
+    let tmp = tempfile::TempDir::new().expect("isolated workspace");
+    let config = Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+    std::fs::create_dir_all(&config.workspace_dir).expect("create isolated workspace");
+    entry_for_with_config(&config, flow)
 }
 
 #[cfg(test)]

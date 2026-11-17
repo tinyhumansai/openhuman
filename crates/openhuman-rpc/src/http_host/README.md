@@ -1,80 +1,147 @@
 # http_host
 
-Static directory hosting over ad-hoc, in-process HTTP listeners. Lives in `openhuman-rpc` (feature `server`) rather than the core, because it is HTTP transport. Lets trusted callers (RPC/CLI) start, inspect, list, and stop lightweight file servers that expose a chosen directory on a chosen TCP port. Each server runs as an in-process `axum` task sharing the core's lifetime, and defaults to HTTP Basic authentication using the active user's identity plus a randomly generated password. There is no on-disk persistence. The registry of running servers lives in process memory and is torn down on shutdown.
+Static directory hosting over ad-hoc, in-process HTTP listeners. Trusted
+callers (JSON-RPC or the CLI) can start a small file server that exposes one
+directory on a chosen port, inspect or list the running servers, and stop
+them. Each server is an `axum` task inside the core process, protected by
+HTTP Basic auth by default. It lives in `openhuman-rpc` (feature `server`)
+rather than the core because it is HTTP transport; its controllers join the
+core's registry as an extension.
 
-## Responsibilities
+## How it works
 
-- Start an `axum` static file server bound to a requested `bind_host:port`, serving a canonicalized directory tree.
-- Default-on HTTP Basic auth: derive a username from the active session (falling back to env), generate a random password per server.
-- Serve files (streamed) and directory listings (auto `index.html`, otherwise a generated HTML listing), with MIME type inference by extension.
-- Enforce path-traversal safety: reject `..`, absolute, URL-encoded escape, and out-of-root resolved paths.
-- Track running servers in an in-process registry keyed by a UUID `server_id`; prevent duplicate `bind_host:port` registrations and prune finished tasks.
-- Gracefully stop individual servers (cancel + join) and register a one-time core shutdown hook that stops all servers on core exit.
-- Expose start/stop/get/list as JSON-RPC / CLI controllers under the `http_host` namespace.
+### Registration
 
-## Key files
+The core does not know about this module. `register_controllers()` hands
+the four controllers to the core's registry with
+`register_controller_extension`, under `DomainGroup::Platform` (it has no
+domain family of its own, so the runtime's `DomainSet` gates it with the
+platform surface). The server calls the panicking wrapper
+`ensure_registered()` from `build_core_http_router`, and `crate::host` adds the same controllers
+(`http_host::extension()`) to its builders, so every host that runs the RPC server (the desktop
+app and the `openhuman-core` binary) exposes `http_host.*`. Registration is
+idempotent. A host that embeds the core without this crate's server, such as
+the TUI or an `openhuman-embed` library host, has no `http_host` surface.
 
-| File | Role |
+### Starting a server
+
+```text
+ openhuman.http_host_start { directory, port, bind_host?, ... }
+   |
+   schemas::handle_start -> rpc::start -> ops::start_hosted_dir_server
+   |
+   |- register the core shutdown hook (once per process)
+   |- canonicalize_hosted_directory     must exist and be a directory
+   |- sanitize_bind_host, sanitize_optional_label(server_name)
+   |- auth: off if disable_auth, else
+   |     username = caller's, else the active user's, else $USER/$USERNAME,
+   |                sanitized, else "openhuman"
+   |     password = 18 random bytes, URL-safe base64, no padding
+   |- TcpListener::bind(bind_host:port)     port 0 = OS picks
+   |- tokio::spawn(axum::serve(listener, build_router(state))
+   |               .with_graceful_shutdown(cancel token))
+   |- registry: prune finished tasks, refuse a second server on the same
+   |            bind_host:port, insert under a new UUID server_id
+   v
+ { server: HostedDirServerInfo { server_id, base_url, local_url, auth, ... } }
+```
+
+The reported port is the one the listener actually bound, so a request for
+port `0` comes back with the real number. `base_url` uses the bind host
+(IPv6 hosts are bracketed); `local_url` always uses `127.0.0.1`.
+
+### Serving a request
+
+`handlers::build_router` answers `GET` and `HEAD` on `/` and `/{*path}`.
+Each request first passes `auth::ensure_authorized` (a `401` with a
+`WWW-Authenticate` challenge on failure), then
+`path_utils::resolve_request_path`, which rejects `..`, absolute paths and
+URL-encoded escapes and checks that the canonicalized target stays under the
+hosted root (`400` on failure). A file is streamed with a content type
+inferred from its extension. A directory serves its `index.html` if there is
+one, and otherwise a generated HTML listing with escaped names.
+
+### Stopping
+
+`http_host.stop` removes the server from the registry, cancels its token and
+joins the task. The shutdown hook registered on first start calls
+`stop_all_hosted_dir_servers` when the core exits. Nothing is persisted, so
+servers never survive a restart.
+
+## Layout
+
+| File | What it does |
 | --- | --- |
-| `crates/openhuman-rpc/src/http_host/mod.rs` | Module docstring + declarations; re-exports controller schema/registry pair; defines `LOG_PREFIX = "[http_host]"`. |
-| `crates/openhuman-rpc/src/http_host/types.rs` | Serde types: `StartHostedDirParams`, `HostedDirLookupParams`, `HostedDirServerInfo`, `HostedDirAuth`, and the `*Result` response shapes. |
-| `crates/openhuman-rpc/src/http_host/ops.rs` | In-process server manager: `HostedDirRegistry` (Mutex<HashMap>) + `OnceLock` singleton, `start/list/get/stop/stop_all` ops, shutdown-hook registration, finished-task pruning, collision checks. |
-| `crates/openhuman-rpc/src/http_host/handlers.rs` | `axum` router + request handlers (`HostedDirState`, `build_router`, root/path/file/directory serving, streamed file responses, generated directory listing HTML). |
-| `crates/openhuman-rpc/src/http_host/auth.rs` | Basic-auth verification (`ensure_authorized`), default username resolution from session/env, username sanitization, random password generation. |
-| `crates/openhuman-rpc/src/http_host/path_utils.rs` | Path safety + URL/HTML helpers: directory canonicalization, request-path traversal resolution, bind-host/label sanitization, href builders, `escape_html`, `content_type_for_path`, `redact_path_for_log`. |
-| `crates/openhuman-rpc/src/http_host/rpc.rs` | RPC adapters wrapping ops into `Outcome<T>` (`start`/`stop`/`get`/`list`). |
-| `crates/openhuman-rpc/src/http_host/schemas.rs` | `ControllerSchema`s + `handle_*` controller handlers; `all_controller_schemas` / `all_registered_controllers`. |
-| `crates/openhuman-rpc/src/http_host/http_host_tests.rs` | Module-level tests (start/list/stop round-trip with Basic auth, path traversal rejection, username sanitization/resolution); mounted from `mod.rs` via `#[path = "http_host_tests.rs"] mod tests`. |
-| `crates/openhuman-rpc/src/http_host/schemas_tests.rs` | Controller-schema tests (schema/handler inventory parity, required inputs, unknown-function fallback); mounted from `schemas.rs` the same way. |
+| [`mod.rs`](mod.rs) | Module wiring, `register_controllers`, `ensure_registered`, the `http_host` namespace description, `LOG_PREFIX = "[http_host]"`. |
+| [`types.rs`](types.rs) | Serde types: `StartHostedDirParams`, `HostedDirLookupParams`, `HostedDirServerInfo`, `HostedDirAuth`, and the `*Result` response shapes. |
+| [`ops.rs`](ops.rs) | The in-process server manager: the `HostedDirRegistry` singleton (a `Mutex<HashMap>` behind a `OnceLock`), `start`/`list`/`get`/`stop`/`stop_all`, finished-task pruning, collision checks, the shutdown hook. |
+| [`handlers.rs`](handlers.rs) | The per-server `axum` router: auth check, path resolution, streamed files, directory listings. |
+| [`auth.rs`](auth.rs) | Basic-auth verification, default username resolution from the session or environment, username sanitizing, password generation. |
+| [`path_utils.rs`](path_utils.rs) | Directory canonicalization, request-path traversal checks, bind-host and label sanitizing, link builders, `escape_html`, `content_type_for_path`, `redact_path_for_log`. |
+| [`rpc.rs`](rpc.rs) | Thin adapters from ops to `Outcome<T>`. |
+| [`schemas.rs`](schemas.rs) | `ControllerSchema`s and `handle_*` handlers; `all_controller_schemas` and `all_registered_controllers`. |
 
 ## Public surface
 
-- `all_http_host_controller_schemas()` / `all_http_host_registered_controllers()`: re-exported from `schemas`.
-- `register_controllers()`: registers those controllers with the core registry as a `ControllerExtension` (`DomainGroup::Platform`). Idempotent.
-- `pub mod ops`: `start_hosted_dir_server`, `list_hosted_dir_servers`, `get_hosted_dir_server`, `stop_hosted_dir_server`, `stop_all_hosted_dir_servers`.
-- `pub mod rpc`: async `start`/`stop`/`get`/`list` returning `Outcome<...>`.
+- `register_controllers()`: registers the controller extension.
+- `all_http_host_controller_schemas()` and
+  `all_http_host_registered_controllers()`: re-exported from `schemas`.
+- `ops`: `start_hosted_dir_server`, `list_hosted_dir_servers`,
+  `get_hosted_dir_server`, `stop_hosted_dir_server`,
+  `stop_all_hosted_dir_servers`.
+- `rpc`: async `start`, `stop`, `get`, `list` returning `Outcome<..>`.
 
-(`auth`, `handlers`, `path_utils`, `types` are private to the module.)
+`auth`, `handlers`, `path_utils` and `types` are private to the module.
 
-## RPC / controllers
+## RPC surface
 
-Namespace `http_host` (invoked as `openhuman.http_host_<function>`):
+Namespace `http_host`, invoked as `openhuman.http_host_<function>`:
 
-| Method | Inputs | Outputs |
+| Method | Inputs | Output |
 | --- | --- | --- |
-| `http_host.start` | `directory` (req), `port` (req; `0` = OS-chosen), `bind_host` (default `127.0.0.1`), `server_name`, `disable_auth` (default false), `username` | `server` (JSON: `HostedDirServerInfo` incl. URLs + generated auth credentials) |
-| `http_host.stop` | `server_id` (req) | `stopped` (bool), `server` (final snapshot) |
-| `http_host.get` | `server_id` (req) | `server` (incl. current auth credentials) |
-| `http_host.list` | none | `servers` (array of `HostedDirServerInfo`) |
+| `http_host.start` | `directory` (required), `port` (required; `0` lets the OS choose), `bind_host` (default `127.0.0.1`), `server_name`, `disable_auth` (default false), `username` | `server`: `HostedDirServerInfo`, including URLs and the generated credentials |
+| `http_host.stop` | `server_id` (required) | `stopped` (bool) and `server`, the final snapshot |
+| `http_host.get` | `server_id` (required) | `server`, including current credentials |
+| `http_host.list` | none | `servers`: every running `HostedDirServerInfo` |
 
-## Persistence
+## Boundaries
 
-None on disk. Running servers are held in a process-global `HostedDirRegistry` (`OnceLock<HostedDirRegistry>` wrapping `Mutex<HashMap<server_id, HostedDirRuntime>>`). State is volatile and cleared on shutdown.
+- The controller contract (`ControllerSchema`, `Outcome`,
+  `register_controller_extension`) is the core's (`openhuman::core`).
+- The default username comes from the core's config
+  (`config::load_config_with_timeout`) and session state
+  (`credentials::session_state::build_session_state`); this
+  module never talks to the backend.
+- Shutdown sequencing is the core's `core::shutdown::register`.
+- The core's error classification (`core/observability.rs`) maps a
+  directory-not-found from this module to a filesystem user-path class; that
+  mapping lives in the core.
 
-## Dependencies
+## Gotchas
 
-- `openhuman_core::config`: `load_config_with_timeout` to resolve the active config when deriving the default Basic-auth username (`auth.rs`).
-- `openhuman_core::security::credentials::session_support`: `build_session_state` to read the active user identity for the default auth username (`auth.rs`).
-- `openhuman_core::core::shutdown`: `register` a one-time hook so all hosted servers stop when the core shuts down (`ops.rs`).
-- `openhuman_core::core::all`: `ControllerFuture`, `RegisteredController` (`schemas.rs`) and `register_controller_extension` (`mod.rs`).
-- `openhuman_core::core::{ControllerSchema, FieldSchema, TypeSchema}`: controller schema types (`schemas.rs`).
-- `openhuman_core::core::Outcome`: controller result type (`rpc.rs`).
-- External crates: `axum` (HTTP server/router), `tokio` (`TcpListener`, tasks), `tokio_util` (`CancellationToken`, `ReaderStream`), `uuid`, `base64`, `rand`, `urlencoding`, `serde`/`serde_json`.
+- Responses carry credentials. `HostedDirServerInfo.auth` includes the
+  generated password in `start`, `get` and `list` output, so treat it as
+  sensitive and keep it out of logs.
+- Directory paths are logged through `redact_path_for_log`, which keeps only
+  the leaf name behind a `<redacted>/` prefix.
+- The duplicate `bind_host:port` check runs after the listener is bound and
+  its task spawned. In practice the bind fails first for a port already in
+  use, so the check only guards the registry.
+- `disable_auth: true` serves the directory to anyone who can reach the
+  port. With a non-loopback `bind_host` that means the network.
 
-## Used by
+## Tests
 
-- `crates/openhuman-rpc/src/server/cli.rs` (`install_cli_server`) and `crates/openhuman-rpc/src/server/http/mod.rs` (`build_core_http_router`) call `register_controllers()`, so every host that runs the RPC server (desktop app, CLI, TUI) exposes `http_host.*`. A host that embeds the core without `openhuman-rpc` has no `http_host` surface.
-- `crates/openhuman-rpc/src/lib.rs`: declares `pub mod http_host;`, gated by the `server` feature.
-- `crates/openhuman-core/src/core/observability.rs` names `http_host::path_utils` in error-classification docs/tests (`http_host` directory-not-found maps to a filesystem user-path-invalid class).
-- `tests/raw_coverage/sandbox_runtime_platform_e2e.rs`: JSON-RPC round-trips over `build_core_http_router`.
+[`http_host_tests.rs`](http_host_tests.rs) (mounted from [`mod.rs`](mod.rs)) covers a start, list and stop
+round trip with Basic auth, path traversal rejection, and username
+sanitizing and resolution. [`schemas_tests.rs`](schemas_tests.rs) checks schema and handler
+parity, required inputs and the unknown-function fallback.
 
-## Notes / gotchas
+```bash
+cargo test -p openhuman-rpc http_host
+```
 
-- **Credentials in responses**: `HostedDirServerInfo.auth` carries the generated password in `start`/`get`/`list` responses. Treat RPC output as sensitive.
-- **Auth defaults**: when auth is enabled and no username resolves from session/env, the username falls back to `"openhuman"`. Passwords are 18 random bytes, URL-safe base64 (no padding).
-- **Path safety**: `resolve_request_path` rejects URL-encoded traversal and verifies the canonicalized target stays under the hosted root; `canonicalize_hosted_directory` resolves and verifies the root is a real directory before binding.
-- **Port `0`**: binding with port `0` lets the OS pick a free port; the actual assigned port (from `local_addr`) is what gets stored and reported.
-- **No duplicate binds**: `start` rejects another server already registered on the same `bind_host:port`.
-- **Logging redaction**: directory paths are logged via `redact_path_for_log` (only the leaf name, prefixed `<redacted>/`), full host paths are not emitted.
-- **Lifetime**: servers do not persist across core restarts; the shutdown hook (`register_shutdown_hook_once`) is installed lazily on the first `start`.
-- **IPv6**: `bind_host` containing `:` (and not already bracketed) is wrapped in `[...]` for both the bind target and the URL rendering.
+## Further reading
+
+- [`docs/gitbooks/en/developing/architecture.md`](../../../../docs/gitbooks/en/developing/architecture.md): architecture overview.
+- [`crates/openhuman-rpc/README.md`](../../README.md): the openhuman-rpc crate README.

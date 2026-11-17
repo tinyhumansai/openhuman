@@ -47,14 +47,14 @@ export function TerminalBlock({
       data-slot="terminal-block"
       className={cn(
         ink ? 'bg-foreground dark:bg-popover' : paper,
-        'w-full max-w-md overflow-hidden rounded-2xl font-mono text-xs',
+        'w-full overflow-hidden rounded-2xl font-mono text-xs',
         className
       )}
       {...props}>
       <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-1.5">
         <span
           className={cn(
-            'min-w-0 break-all',
+            'min-w-0 break-words',
             ink ? 'text-background/90 dark:text-foreground/90' : 'text-foreground/90'
           )}>
           {command}
@@ -69,7 +69,7 @@ export function TerminalBlock({
             <span
               className={cn(
                 mono,
-                ink ? 'text-background/40 dark:text-foreground/40' : 'text-foreground/40'
+                ink ? 'text-background/40 dark:text-muted-foreground' : 'text-muted-foreground'
               )}>
               {exitLabel}
             </span>
@@ -77,8 +77,8 @@ export function TerminalBlock({
         ) : (
           <Loader2Icon
             className={cn(
-              'size-3 shrink-0 animate-spin motion-reduce:animate-none',
-              ink ? 'text-background/35 dark:text-foreground/35' : 'text-foreground/35'
+              'size-3 animate-spin motion-reduce:animate-none',
+              ink ? 'text-background/35 dark:text-muted-foreground' : 'text-muted-foreground'
             )}
           />
         )}
@@ -87,7 +87,7 @@ export function TerminalBlock({
         className={cn(
           'flex max-h-72 flex-col gap-1 overflow-auto px-4 pt-1 pb-3.5 whitespace-pre-wrap break-all',
           !done && 'min-h-[8.5rem]',
-          ink ? 'text-background/55 dark:text-foreground/50' : 'text-foreground/50'
+          ink ? 'text-background/55 dark:text-muted-foreground' : 'text-muted-foreground'
         )}>
         {take(lines, visibleCount).map((line, i) => {
           const isLast = i === lines.length - 1;

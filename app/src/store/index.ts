@@ -32,7 +32,6 @@ import localeReducer from './localeSlice';
 import mascotReducer, { migrateLegacySpeakReplies } from './mascotSlice';
 import notificationReducer from './notificationSlice';
 import personaReducer from './personaSlice';
-import { pttReducer } from './pttSlice';
 import queueReducer from './queueSlice';
 import runModeReducer from './runModeSlice';
 import socketReducer from './socketSlice';
@@ -160,7 +159,8 @@ const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer
 
 // Two-pane layout geometry (sidebar visibility + dragged widths), keyed by
 // panel id. Persisted per user so the chat sidebar layout survives reloads.
-const layoutPersistConfig = { key: 'layout', storage, whitelist: ['panels'] };
+// `welcomeSeen` records which pages' Welcome landing the user has seen.
+const layoutPersistConfig = { key: 'layout', storage, whitelist: ['panels', 'welcomeSeen'] };
 const persistedLayoutReducer = persistReducer(layoutPersistConfig, layoutReducer);
 
 // Persist the mascot appearance fields, the custom GIF override, the selected
@@ -197,17 +197,6 @@ const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer
 // is round-tripped over RPC, so it is intentionally not in this slice.
 const personaPersistConfig = { key: 'persona', storage, whitelist: ['displayName', 'description'] };
 const persistedPersonaReducer = persistReducer(personaPersistConfig, personaReducer);
-
-// PTT (Push-to-Talk): persist the hotkey binding and session preferences.
-// `isHeld` is a runtime-only flag — deliberately excluded from the whitelist so
-// a crash or force-quit can never leave the app stuck in the "held" state.
-// The boot hook (T11) also explicitly resets it to false on mount.
-const pttPersistConfig = {
-  key: 'ptt',
-  storage,
-  whitelist: ['shortcut', 'speakReplies', 'showOverlay'],
-};
-const persistedPttReducer = persistReducer(pttPersistConfig, pttReducer);
 
 // chatRuntime is mostly ephemeral (streaming buffers, tool timelines,
 // inference status) — those MUST NOT survive a restart or the UI tries
@@ -270,7 +259,6 @@ export const store = configureStore({
     mascot: persistedMascotReducer,
     persona: persistedPersonaReducer,
     theme: persistedThemeReducer,
-    ptt: persistedPttReducer,
     announcement: persistedAnnouncementReducer,
     githubStar: persistedGithubStarReducer,
     walletPreferences: persistedWalletPreferencesReducer,

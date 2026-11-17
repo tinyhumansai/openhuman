@@ -15,8 +15,8 @@
  *   reads best, Codex style) and localizes it.
  * - Step bodies render through the registry's own `MarkdownText` (via
  *   assistant-ui's `TextMessagePartProvider`) instead of a plain `<p>`.
- * - A streaming list stays pinned to its newest step inside a bounded
- *   scroll region (the runtime element's `ReasoningText` behaviour).
+ * - Automatic following belongs to the enclosing assistant-ui viewport; this
+ *   panel never writes scroll offsets.
  */
 import { cn } from '@/components/assistant-ui/lib/utils';
 import { MarkdownText } from '@/components/assistant-ui/markdown-text';
@@ -27,7 +27,7 @@ import {
 } from '@/components/assistant-ui/ui/collapsible';
 import { TextMessagePartProvider } from '@assistant-ui/react';
 import { ChevronDownIcon } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import { take } from '../utils/range';
 import type { ReasoningStep } from './reasoningSteps';
@@ -57,55 +57,6 @@ export interface ReasoningPanelProps {
   'data-testid'?: string;
 }
 
-/**
- * Keeps a bounded scroll region pinned to its newest content while `active`;
- * following pauses while the reader is scrolled up. Ported from the runtime
- * reasoning element's `ReasoningText`.
- */
-function usePinnedScroll(active: boolean) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLOListElement>(null);
-
-  useEffect(() => {
-    if (!active) return;
-    const scrollEl = scrollRef.current;
-    const contentEl = contentRef.current;
-    if (!scrollEl || !contentEl) return;
-
-    let pinned = true;
-    let lastScrollTop = scrollEl.scrollTop;
-    let lastScrollHeight = scrollEl.scrollHeight;
-    const isAtBottom = () =>
-      Math.abs(scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) <= 1 ||
-      scrollEl.scrollHeight <= scrollEl.clientHeight;
-    const pin = () => {
-      if (pinned) scrollEl.scrollTop = scrollEl.scrollHeight;
-    };
-    // A pin's own scroll event can land after new content grew the height and
-    // read as "not at bottom"; only an upward move at unchanged height is the
-    // reader's intent.
-    const onScroll = () => {
-      if (isAtBottom()) pinned = true;
-      else if (scrollEl.scrollTop < lastScrollTop && scrollEl.scrollHeight === lastScrollHeight) {
-        pinned = false;
-      }
-      lastScrollTop = scrollEl.scrollTop;
-      lastScrollHeight = scrollEl.scrollHeight;
-    };
-
-    pin();
-    scrollEl.addEventListener('scroll', onScroll);
-    const observer = new ResizeObserver(pin);
-    observer.observe(contentEl);
-    return () => {
-      scrollEl.removeEventListener('scroll', onScroll);
-      observer.disconnect();
-    };
-  }, [active]);
-
-  return { scrollRef, contentRef };
-}
-
 function PanelLabel({
   streaming,
   liveLabel,
@@ -124,7 +75,7 @@ function PanelLabel({
         {elapsed !== undefined && (
           <span
             data-slot="reasoning-panel-elapsed"
-            className={cn(mono, 'text-foreground/30 tabular-nums')}>
+            className={cn(mono, 'text-muted-foreground tabular-nums')}>
             {elapsed}
           </span>
         )}
@@ -143,13 +94,9 @@ function StepList({
   streaming: boolean;
   bounded: boolean;
 }) {
-  const { scrollRef, contentRef } = usePinnedScroll(streaming && bounded);
   return (
-    <div
-      ref={scrollRef}
-      data-slot="reasoning-panel-scroll"
-      className={cn(bounded && 'max-h-80 overflow-y-auto')}>
-      <ol ref={contentRef} className="flex flex-col gap-4 pt-3 pb-1">
+    <div data-slot="reasoning-panel-scroll" className={cn(bounded && 'max-h-80 overflow-y-auto')}>
+      <ol className="flex flex-col gap-4 pt-3 pb-1">
         {steps.map((step, i) => {
           const active = streaming && i === steps.length - 1;
           return (
@@ -175,7 +122,7 @@ function StepList({
                 {step.body ? (
                   <div
                     data-slot="reasoning-step-body"
-                    className="text-foreground/50 mt-0.5 text-[13px] leading-relaxed break-words">
+                    className="text-muted-foreground mt-0.5 text-[13px] leading-relaxed break-words">
                     <TextMessagePartProvider text={step.body} isRunning={active}>
                       <MarkdownText />
                     </TextMessagePartProvider>
@@ -245,7 +192,7 @@ export function ReasoningPanel({
         data-testid={testId}
         aria-busy={streaming || undefined}
         className={cn('w-full', className)}>
-        <div className="text-foreground/55 flex items-center gap-1.5 py-1 text-[13.5px]">
+        <div className="text-muted-foreground flex items-center gap-1.5 py-1 text-[13.5px]">
           {label}
         </div>
         {shown.length > 0 && <StepList steps={shown} streaming={streaming} bounded={streaming} />}
@@ -260,13 +207,13 @@ export function ReasoningPanel({
       data-testid={testId}
       open={isOpen}
       onOpenChange={handleOpenChange}
-      className={cn('w-full', className)}>
+      className={cn('w-full ', className)}>
       <CollapsibleTrigger
         disabled={shown.length === 0}
-        className="group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-1.5 py-1 text-[13.5px] transition-[color,scale] outline-none active:scale-[0.98] disabled:pointer-events-none">
+        className="group/trigger text-muted-foreground hover:text-foreground/90 flex items-center gap-1.5 py-1 text-[13.5px] transition-[color,scale] outline-none active:scale-[0.98]">
         {label}
         {shown.length > 0 && (
-          <ChevronDownIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[state=open]/trigger:rotate-180 motion-reduce:transition-none" />
+          <ChevronDownIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/trigger:rotate-180 group-data-panel-open/trigger:rotate-180 motion-reduce:transition-none" />
         )}
       </CollapsibleTrigger>
       <CollapsibleContent

@@ -87,6 +87,11 @@ pub enum HostKind {
     Cli,
     Docker,
     Library,
+    /// A many-user server behind a trusted gateway ([`Mode::Saas`]). Treated
+    /// as the most restrictive host wherever behaviour differs by host.
+    ///
+    /// [`Mode::Saas`]: crate::core::runtime::Mode::Saas
+    Saas,
 }
 
 impl HostKind {
@@ -125,6 +130,7 @@ impl HostKind {
             HostKind::Cli => "cli",
             HostKind::Docker => "docker",
             HostKind::Library => "library",
+            HostKind::Saas => "saas",
         }
     }
 }
@@ -152,7 +158,9 @@ pub fn approval_gate_boot_decision(
     env_override_requested: bool,
 ) -> ApprovalGateBootDecision {
     match host {
-        HostKind::TauriShell => ApprovalGateBootDecision {
+        // A SaaS core, like the desktop shell, never lets the environment
+        // switch the gate off.
+        HostKind::TauriShell | HostKind::Saas => ApprovalGateBootDecision {
             install_gate: true,
             override_ignored: env_override_requested,
             gate_disabled_by_override: false,

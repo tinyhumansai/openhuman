@@ -1,7 +1,7 @@
 use super::*;
 
-#[test]
-fn resolver_lookup_rejects_an_incompatible_saved_child() {
+#[tokio::test]
+async fn resolver_lookup_rejects_an_incompatible_saved_child() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let child = store::create_flow(
@@ -11,10 +11,16 @@ fn resolver_lookup_rejects_an_incompatible_saved_child() {
         false,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
 
-    let error = load_engine_compatible_flow_graph(&config, &child.id)
-        .expect_err("resolver lookup must reject an unsafe legacy child");
+    let error = load_engine_compatible_flow_graph(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &child.id,
+    )
+    .await
+    .expect_err("resolver lookup must reject an unsafe legacy child");
     assert!(
         error.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN),
         "{error}"
@@ -22,8 +28,8 @@ fn resolver_lookup_rejects_an_incompatible_saved_child() {
     assert!(error.contains(&child.id), "{error}");
 }
 
-#[test]
-fn resolver_lookup_rejects_an_incompatible_saved_grandchild() {
+#[tokio::test]
+async fn resolver_lookup_rejects_an_incompatible_saved_grandchild() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let grandchild = store::create_flow(
@@ -33,7 +39,8 @@ fn resolver_lookup_rejects_an_incompatible_saved_grandchild() {
         false,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
     let child = store::create_flow(
         &config,
         "saved child".to_string(),
@@ -41,10 +48,16 @@ fn resolver_lookup_rejects_an_incompatible_saved_grandchild() {
         false,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
 
-    let error = load_engine_compatible_flow_graph(&config, &child.id)
-        .expect_err("resolver lookup must reject an unsafe saved grandchild");
+    let error = load_engine_compatible_flow_graph(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &child.id,
+    )
+    .await
+    .expect_err("resolver lookup must reject an unsafe saved grandchild");
     assert!(
         error.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN),
         "{error}"
@@ -54,9 +67,14 @@ fn resolver_lookup_rejects_an_incompatible_saved_grandchild() {
     assert!(error.contains("saved-child"), "{error}");
 }
 
-#[test]
-fn flows_validate_returns_stable_nested_conditional_fan_in_error() {
-    let outcome = flows_validate(nested_conditional_fan_in_graph());
+#[tokio::test]
+async fn flows_validate_returns_stable_nested_conditional_fan_in_error() {
+    let outcome = flows_validate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        nested_conditional_fan_in_graph(),
+    )
+    .await;
     assert!(!outcome.value.valid);
     assert_eq!(outcome.value.error_details.len(), 1);
     assert_eq!(
@@ -74,9 +92,12 @@ async fn flows_run_rejects_legacy_nested_conditional_fan_in_before_execution() {
     // Bypass the current author-time gate to simulate a definition persisted
     // by an older OpenHuman build. Reads remain supported; execution does not.
     let graph = structurally_valid_graph(nested_conditional_fan_in_graph());
-    let flow = store::create_flow(&config, "legacy".to_string(), graph, false, true).unwrap();
+    let flow = store::create_flow(&config, "legacy".to_string(), graph, false, true)
+        .unwrap()
+        .workflow;
 
     let err = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &flow.id,
         json!({ "outer": true, "inner": true }),
@@ -106,7 +127,8 @@ async fn flows_run_rejects_an_incompatible_saved_child_before_execution() {
         false,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
     let parent = store::create_flow(
         &config,
         "parent".to_string(),
@@ -114,9 +136,11 @@ async fn flows_run_rejects_an_incompatible_saved_child_before_execution() {
         false,
         true,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
 
     let error = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &parent.id,
         json!({}),
@@ -140,7 +164,9 @@ async fn flows_update_allows_metadata_only_edits_of_legacy_incompatible_graph() 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let graph = structurally_valid_graph(nested_conditional_fan_in_graph());
-    let flow = store::create_flow(&config, "legacy".to_string(), graph, false, false).unwrap();
+    let flow = store::create_flow(&config, "legacy".to_string(), graph, false, false)
+        .unwrap()
+        .workflow;
 
     let updated = flows_update(
         &config,
@@ -169,7 +195,8 @@ async fn flows_create_rejects_an_incompatible_saved_child_before_persisting() {
         false,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
 
     let error = flows_create(
         &config,
@@ -201,7 +228,8 @@ async fn flows_update_rejects_an_incompatible_saved_child_before_persisting() {
         false,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
     let original_graph = structurally_valid_graph(trigger_only_graph());
     let parent = store::create_flow(
         &config,
@@ -210,7 +238,8 @@ async fn flows_update_rejects_an_incompatible_saved_child_before_persisting() {
         false,
         true,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
 
     let error = flows_update(
         &config,

@@ -1,176 +1,121 @@
 # bin
 
 Auxiliary binaries declared as `[[bin]]` targets in
-`crates/openhuman-cli/Cargo.toml` next to the primary `openhuman-core`
-binary (`src/main.rs`). None of these ship in the desktop product.
+[`crates/openhuman-cli/Cargo.toml`](../../Cargo.toml), next to the primary `openhuman-core`
+binary ([`src/main.rs`](../main.rs), described in the [crate README](../../README.md)). One
+is a test fixture and the other an experimental multi-tenant supervisor.
+Neither ships in the desktop product, and neither names an OpenHuman crate:
+the CLI's normal dependencies stop at `openhuman-rpc`.
 
-## Primary binary (not in this directory)
+The benchmark and profiling binaries that used to live here
+(`tool-search-bench`, `tool-dialect-bench`, `rss-bench`, `library-profile`)
+reached deep into core internals (`agent::harness`, `platform::proc_metrics`,
+`flows`, provider factories) that the curated facade does not expose. They
+moved, with their `scripts/profile/` drivers, to the `profile/` crate of
+[openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks) (#6944), which builds them against a vendored
+checkout of this workspace; the `rss-bench` / `rss-bench-dhat` gates went
+with them.
 
-`src/main.rs` is the `openhuman-core` entry point. It restores default
-`SIGPIPE` handling on unix, loads `.env` before Sentry init so a dotenv-only
-DSN is visible at startup (the CLI dispatcher later re-runs
-`load_dotenv_for_cli`, which honors `OPENHUMAN_DOTENV_PATH`), initializes
-Sentry under the `crash-reporting` feature with a `before_send` that drops
-known-noise event classes (`core::observability::is_*` predicates) and scrubs
-secrets via `openhuman_core::core::log_redaction::scrub_secrets`, then hands
-the arguments to `openhuman_core::run_core_from_args`.
+## How it works
 
-## Binaries in this directory
+Each binary is a separate `[[bin]]` entry (`autobins = false`), and
+`openhuman-fleet` carries `required-features` so a plain build skips it
+instead of failing to link:
 
 | Binary | Source | Required features | Purpose |
 | --- | --- | --- | --- |
-| `test-mcp-stub` | `test_mcp_stub.rs` | none (built by every `cargo test`) | Tiny stdio MCP server for tests |
-| `openhuman-fleet` | `fleet.rs` | `http-server`, `bin-tools` | Process-per-user supervisor + reverse proxy |
-| `rss-bench` | `rss_bench.rs` | `rss-bench` | Steady-state RSS benchmark for an embedded agent roster |
-| `tool-dialect-bench` | `tool_dialect_bench.rs` | none | Manual A/B of the text tool-call dialects against a local Ollama model |
-| `tool-search-bench` | `tool_search_bench.rs` | none (`jev`, in `default`, for the Jev rankers) | `tool_search` ranker comparison (bm25 / overlap / embedding / jev) over the real orchestrator registry plus the recorded Composio catalogues, against `tests/fixtures/tool_search/intents.jsonl` |
-| `library-profile` | `library_profile/main.rs` (+ `harness.rs`, `mock.rs`, `scenarios/`) | `rss-bench` (add `rss-bench-dhat` for heap profiles) | Hermetic library-embedding profiling scenarios |
+| `test-mcp-stub` | [`test_mcp_stub.rs`](test_mcp_stub.rs) | none | Minimal stdio MCP server that tests spawn. |
+| `openhuman-fleet` | [`fleet.rs`](fleet.rs) | `http-server`, `bin-tools` | Process-per-user supervisor and reverse proxy. |
 
-`http-server` is in `default`; `bin-tools`, `rss-bench` and `rss-bench-dhat`
-are not, so a plain `cargo build` produces only `openhuman-core` and
-`test-mcp-stub`. Cargo skips the gated targets rather than failing to link.
+`http-server` is in `default`; `bin-tools` is not. A plain
+`cargo build -p openhuman-cli` therefore produces `openhuman-core` and
+`test-mcp-stub`.
 
-### `test-mcp-stub`
+### test-mcp-stub
 
-Speaks just enough MCP to satisfy `initialize`, `tools/list` and `tools/call`
-for one `echo` tool over newline-delimited JSON-RPC on stdin/stdout, exiting
-when stdin closes. `initialize` reports `PROTOCOL_VERSION` (`2025-11-25`).
-Dependency-free beyond `serde_json`. Tests spawn it through
-`env!("CARGO_BIN_EXE_test-mcp-stub")`: `tests/mcp_registry_e2e.rs`,
-`tests/mcp_registry_multi_server.rs`,
-`tests/json_rpc_e2e.rs` and
-`tests/raw_coverage/tool_registry_approval_raw_coverage_e2e.rs`.
+Speaks just enough MCP to answer `initialize`, `tools/list` and `tools/call`
+for one `echo` tool, over newline-delimited JSON-RPC on stdin and stdout, and
+exits when stdin closes. `initialize` reports `PROTOCOL_VERSION`
+(`2025-11-25`). It depends on nothing beyond `serde_json`. Tests spawn it
+through `env!("CARGO_BIN_EXE_test-mcp-stub")`, which makes Cargo build it for
+every test run: [`tests/mcp_registry_e2e.rs`](../../../../tests/mcp_registry_e2e.rs),
+[`tests/mcp_registry_multi_server.rs`](../../../../tests/mcp_registry_multi_server.rs), [`tests/agent_harness_e2e.rs`](../../../../tests/agent_harness_e2e.rs),
+[`tests/json_rpc_e2e.rs`](../../../../tests/json_rpc_e2e.rs), [`tests/in_process/domain_modules_e2e.rs`](../../../../tests/in_process/domain_modules_e2e.rs) and
+[`tests/raw_coverage/tool_registry_approval_e2e.rs`](../../../../tests/raw_coverage/tool_registry_approval_e2e.rs).
 
-### `openhuman-fleet`
+### openhuman-fleet
 
-Hosts one `openhuman-core` process per user/workspace and fronts them behind
-a single endpoint, so a team server can manage many members' assistants
-while every existing client (`CloudHttpTransport`) keeps working unchanged.
+Hosts one `openhuman-core` process per user or workspace behind a single
+endpoint, so a team server can run many members' assistants while every
+existing client (`CloudHttpTransport`) keeps working unchanged. The design is
+process-per-user, not in-process multi-tenancy:
 
-Design is **process-per-user, not in-process multi-tenancy**:
-
-- Each tenant runs as its own OS process (`openhuman-core run
-  --headless-api`) with its own workspace volume
-  (`OPENHUMAN_WORKSPACE`) and its own core bearer
-  (`OPENHUMAN_CORE_TOKEN`). Tenants are not yet isolated under distinct OS
-  users or containers, so this MVP is **not a production multi-tenant
-  security boundary** for arbitrary agent tools.
-- The supervisor mints a distinct edge token (`EdgeToken`) per tenant for
-  clients and is the only holder of the tenants' core bearers
-  (`CoreBearer`); the two newtypes are kept deliberately distinct so they
-  cannot be confused with each other. Minted edge tokens are written to the
-  file named by `--edge-token-output`.
-- The reverse proxy forwards `POST /{user_id}/rpc` verbatim to that tenant's
-  core at `http://127.0.0.1:<port>/rpc`, so the JSON-RPC wire contract is
-  unchanged end to end.
-
-MVP scope uses explicit sequential port assignment (`--base-core-port`, tenant
-N on `base + N`) with an authenticated JSON-RPC readiness probe before
-registering a tenant; a production supervisor would read each core's bound
-port from a ready file / `EmbeddedReadySignal` and reconcile membership
-against `tinyhumansai/backend`. It requires `http-server` because it embeds
-the axum control-plane server, and `bin-tools` for `clap` and `env_logger`:
-
-```
-cargo build -p openhuman --features bin-tools --bin openhuman-fleet
+```text
+ client --POST /{user_id}/rpc + edge token--> openhuman-fleet (--listen)
+                                                 |  checks EdgeToken
+                                                 |  swaps in CoreBearer
+                                                 v
+                    openhuman-core run --headless-api --port base+N
+                    OPENHUMAN_WORKSPACE=<workspaces_root>/<user>
+                    OPENHUMAN_CORE_TOKEN=<core bearer>
 ```
 
-### `rss-bench`
+- Each tenant is its own OS process with its own workspace volume and its own
+  core bearer. Tenants do not yet run under distinct OS users or containers,
+  so this MVP is not a production multi-tenant security boundary for
+  arbitrary agent tools.
+- The supervisor mints a distinct edge token per tenant for clients and is
+  the only holder of the tenants' core bearers. `EdgeToken` and `CoreBearer`
+  are separate newtypes so they cannot be confused. Minted edge tokens are
+  written to the file named by `--edge-token-output`.
+- The proxy forwards `POST /{user_id}/rpc` verbatim to
+  `http://127.0.0.1:<port>/rpc`, so the JSON-RPC wire contract is unchanged
+  end to end.
 
-Steady-state RSS benchmark for an embedded `openhuman_core` agent roster
-(#5046). Mirrors the OpenCompany embedding contract: a bare `Agent` built
-directly via `Agent::builder` (no `CoreBuilder`, no RPC, no background
-services) with an injected mock model, a hand-rolled no-op `Memory`
-(`NoopMemory`; `create_memory` with `backend: "none"` still builds a full
-`UnifiedMemory`, which would inflate the reading) and a per-agent temp
-workspace. Builds a 1-agent and an 8-agent roster, runs one deterministic
-warm-up turn per agent, settles, then samples
-`/proc/self/{status,smaps_rollup}`.
+Flags: `--listen` (default `127.0.0.1:8899`), `--workspaces-root` (default
+`./fleet-workspaces`), `--core-bin` (default `openhuman-core`),
+`--base-core-port` (default 7900; tenant N listens on base + N), `--users`
+(comma-separated ids to provision at boot) and `--edge-token-output`
+(required). Ports are assigned sequentially, and each tenant must pass an
+authenticated JSON-RPC readiness probe before it is registered. A production
+supervisor would read each core's bound port from a ready file
+(`EmbeddedReadySignal`) and reconcile membership against
+`tinyhumansai/backend`.
 
-Two modes: `--child --roster N` builds one roster in a fresh process and
-prints a single `ProcSample` JSON line (the isolated measured workload); the
-default (parent) mode re-execs itself `--repeat` times per roster size for
-independent cold samples, aggregates them, writes the raw JSON report
-(`--out`), and prints a human summary. The pure sampling/aggregation logic
-lives in `openhuman_core::platform::proc_metrics`; this binary is the
-fixture and process driver. Build:
-
-```
-cargo build --release --features rss-bench --bin rss-bench
-```
-
-### `tool-dialect-bench`
-
-Manual, network-touching A/B of `agent.tool_dispatcher` values (`xml`,
-`pformat`, `python`, `typescript`) against a local Ollama model. For every
-dialect × task it composes the system prompt the way `ToolsSection` and the
-dialect's protocol block do, sends one user turn with no schemas on the wire,
-parses the answer with `tinytools_agent::parse_text` and the harness's
-registry, and records provider-reported prompt/output tokens, system-prompt
-bytes, call recovery, tool-name and argument accuracy, latency and the
-`CallSource`. Prints a markdown summary table; `--json` appends every row.
-Never run by CI.
-
-```
-ollama pull qwen3:8b
-cargo run -p openhuman-cli --bin tool-dialect-bench -- \
-    --model qwen3:8b --dialects xml,pformat,python,typescript --trials 3
+```bash
+cargo build -p openhuman-cli --features bin-tools --bin openhuman-fleet
 ```
 
-`OLLAMA_HOST` / `OPENHUMAN_LOCAL_INFERENCE_URL` pick the server, as for the
-product. `--tasks 0,5` narrows to fixture tasks, `--max-output-tokens N`
-raises the per-call cap for thinking models, `-v` prints each prompt and
-answer.
+## Boundaries
 
-### `library-profile`
+- The `openhuman-core` entry point is [`src/main.rs`](../main.rs), one directory up, not
+  here.
+- Benchmarks and profiling drivers live in [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks);
+  the pure RSS sampling code they use stays in the core
+  (`platform::proc_metrics`).
 
-Hermetic, Rust-only library profiling workloads that measure production code
-paths in fresh processes with network inference replaced by a deterministic
-provider (`library_profile/mock.rs`).
+## Gotchas
 
-Scenarios (`library-profile <scenario>`, one module each under
-`library_profile/scenarios/`):
+- The manifest sets `autobins = false`, so a `.rs` file in this directory is
+  a binary only when it has a `[[bin]]` entry. That is what lets
+  [`fleet_tests.rs`](fleet_tests.rs) sit here beside its binary
+  without Cargo trying to build it as an executable. A new binary needs both
+  the file and the manifest entry.
 
-- `agent-turn`: a single cold agent turn (minimal library unit).
-- `long-agent`: N warmed sequential turns with a per-turn checkpoint series.
-- `workflow`: a real flows trigger -> transform -> agent graph, end to end.
-- `fleet`: N live agents: marginal RSS, idle CPU, fd/thread growth, turn latency.
-- `skill-run`: a skill step executing on a real `node` child: process-tree RSS.
-- `subagent-storm`: K parallel `agent_memory` subagents in one instance: marginal RSS per subagent.
+## Tests
 
-`memory-ingest` and `cold-phases` were removed with the in-process memory
-engine (openhuman#6161); re-adding them means measuring the memory module
-over the bus, a different scenario (see `scenarios/mod.rs`).
+[`fleet_tests.rs`](fleet_tests.rs) (port assignment, user scoping, provisioning, bearer parsing)
+sits beside its binary and builds with its required features.
+`test-mcp-stub` is exercised by the MCP suites listed above.
 
-stdout is always a single pretty-printed JSON object (the pinned schema in
-`harness::ProfileResult`); every diagnostic goes to stderr with the stable
-`[library-profile]` prefix. `OPENHUMAN_PROFILE_WORKER_THREADS` pins the tokio
-worker count (set `2` to simulate the 2 vCPU box). With the `rss-bench-dhat`
-feature, dhat's global allocator and profiler are active: RSS/time numbers
-are perturbed, the result carries `"dhat": true`, and a
-`dhat-<scenario>.json` heap profile is written under
-`target/profile/rust-library/` (override via `OPENHUMAN_PROFILE_DHAT_OUT`).
-
-The driver scripts under `scripts/profile/` build it with
-`cargo build --release --features rss-bench --bin library-profile`
-(`library-heap.sh` uses `--features rss-bench-dhat`). The slim recipe from
-`docs/library-benchmarking.md` (`library-bench.sh --slim`) builds both
-benchmark binaries without the contributor default features:
-
-```
-cargo build --release -p openhuman --no-default-features --features rss-bench \
-  --bin library-profile --bin rss-bench
+```bash
+cargo test -p openhuman-cli --features bin-tools --bin openhuman-fleet
 ```
 
 ## See also
 
-- [`docs/library-benchmarking.md`](../../../../docs/library-benchmarking.md):
-  the benchmark environment, driver scripts under `scripts/profile/`, and
-  results, covering `rss-bench` and `library-profile`.
-- [`scripts/profile/README.md`](../../../../scripts/profile/README.md): the
-  driver scripts themselves.
-- [`gitbooks/developing/performance.md`](../../../../gitbooks/developing/performance.md):
-  the numbers these benchmarks feed (marginal memory per agent, cold-start
-  time, binary size).
-- [`gitbooks/developing/jev.md`](../../../../gitbooks/developing/jev.md): what
-  `tool-search-bench` is comparing when it ranks bm25 against jev.
+- [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks): the benchmark and profiling binaries
+  (`profile/`), their driver scripts and the method behind the published
+  numbers.
+- [`docs/gitbooks/en/developing/performance.md`](../../../../docs/gitbooks/en/developing/performance.md):
+  the numbers those benchmarks feed.

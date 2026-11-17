@@ -2,7 +2,7 @@
  * Cloud provider editor modal — the advanced "add custom provider" / "edit
  * provider" flow (name, OpenAI-compatible URL, API key).
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
 import Button from '../../../ui/Button';
@@ -41,8 +41,12 @@ export const CloudProviderEditor = ({
   const [label, setLabel] = useState<string>(initial?.label ?? '');
   const [endpoint, setEndpoint] = useState(initial?.endpoint ?? '');
   const [apiKey, setApiKey] = useState('');
+  const [caCertPem, setCaCertPem] = useState(initial?.caCertPem ?? '');
+  const [readingCert, setReadingCert] = useState(false);
+  const [certError, setCertError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const certReadSequence = useRef(0);
   // Set once the live `/models` verification has rejected, which unlocks the
   // "add without verifying" path. Only a probe failure earns it — a bad slug or
   // a failed key write must still block (#5213).
@@ -83,6 +87,7 @@ export const CloudProviderEditor = ({
           slug,
           label: label.trim() || slug,
           endpoint: endpoint.trim(),
+          caCertPem,
           authStyle: initial?.authStyle ?? 'bearer',
           maskedKey: maskKeyLabel(hasExistingKey || apiKey.length > 0),
         },
@@ -139,7 +144,13 @@ export const CloudProviderEditor = ({
               variant="secondary"
               size="xs"
               analyticsId="ai-provider-add-without-verifying"
-              disabled={saving || !endpoint.trim() || Boolean(slugError)}
+              disabled={
+                saving ||
+                readingCert ||
+                Boolean(certError) ||
+                !endpoint.trim() ||
+                Boolean(slugError)
+              }
               onClick={() => void submitProvider({ skipProbe: true })}>
               {t('settings.ai.probeFailedAddAnyway')}
             </Button>
@@ -147,7 +158,9 @@ export const CloudProviderEditor = ({
           <Button
             variant="primary"
             size="xs"
-            disabled={saving || !endpoint.trim() || Boolean(slugError)}
+            disabled={
+              saving || readingCert || Boolean(certError) || !endpoint.trim() || Boolean(slugError)
+            }
             onClick={() => void submitProvider()}>
             {saving
               ? t('settings.ai.saving')
@@ -208,6 +221,59 @@ export const CloudProviderEditor = ({
             {t('settings.ai.azureV1EndpointHint')}
           </div>
         )}
+      </div>
+      <div>
+        <Label htmlFor="cloud-provider-ca-cert" className="text-xs text-content-secondary">
+          {t('settings.ai.caCertificateLabel')}
+        </Label>
+        <TextField
+          id="cloud-provider-ca-cert"
+          type="file"
+          accept=".pem,.crt,.cer,application/x-pem-file"
+          className="mt-1"
+          onChange={event => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            // Allow choosing the same file again after a read error or clear.
+            event.currentTarget.value = '';
+            const sequence = ++certReadSequence.current;
+            if (file.size > 256 * 1024) {
+              setReadingCert(false);
+              setCertError(t('settings.ai.caCertificateTooLarge'));
+              return;
+            }
+            setCertError(null);
+            setReadingCert(true);
+            void file
+              .text()
+              .then(pem => {
+                if (sequence === certReadSequence.current) setCaCertPem(pem);
+              })
+              .catch(() => {
+                if (sequence === certReadSequence.current) {
+                  setCertError(t('settings.ai.caCertificateReadError'));
+                }
+              })
+              .finally(() => {
+                if (sequence === certReadSequence.current) setReadingCert(false);
+              });
+          }}
+        />
+        {certError ? <div className="mt-1 text-xs text-coral-600">{certError}</div> : null}
+        {caCertPem ? (
+          <Button
+            variant="tertiary"
+            size="xs"
+            analyticsId="ai-provider-remove-ca-certificate"
+            onClick={() => {
+              certReadSequence.current += 1;
+              setReadingCert(false);
+              setCaCertPem('');
+              setCertError(null);
+            }}>
+            {t('settings.ai.clearCaCertificate')}
+          </Button>
+        ) : null}
       </div>
       <div>
         <div className="flex items-center justify-between gap-2">

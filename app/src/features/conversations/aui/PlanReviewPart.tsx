@@ -95,7 +95,7 @@ export function PlanReviewCardCore({
   }, [decide, feedback, revisingBusy, t]);
 
   return (
-    <div className="flex w-full max-w-sm flex-col gap-3" data-testid="plan-review-card">
+    <div className="flex w-full flex-col gap-3" data-testid="plan-review-card">
       <AgentPlan
         steps={review.steps}
         activeIndex={activeIndex}

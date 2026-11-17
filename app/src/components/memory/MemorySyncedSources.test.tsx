@@ -88,6 +88,15 @@ describe('MemorySyncedSources', () => {
     await waitFor(() => expect(screen.queryByTestId('memory-add-source')).not.toBeInTheDocument());
   });
 
+  it('offers every source kind except Composio', async () => {
+    renderWithProviders(<MemorySyncedSources />);
+    fireEvent.click(await screen.findByTestId('memory-sources-add'));
+    const kinds = Array.from(
+      (screen.getByTestId('memory-add-source-kind') as HTMLSelectElement).options
+    ).map(option => option.value);
+    expect(kinds).toEqual(['folder', 'file', 'link', 'github', 'rss']);
+  });
+
   it('adds a GitHub source and keeps the dialog open on failure', async () => {
     hoisted.add.mockRejectedValue(new Error('INVALID_REQUEST: repo not found'));
     renderWithProviders(<MemorySyncedSources />);
@@ -105,6 +114,20 @@ describe('MemorySyncedSources', () => {
       'repo not found'
     );
     expect(hoisted.add).toHaveBeenCalledWith({ kind: 'github', target: 'acme/missing' });
+  });
+
+  it('prompts a top-up in the add dialog when the account is out of credits', async () => {
+    hoisted.add.mockRejectedValue(new Error('INSUFFICIENT_CREDITS: HTTP 402'));
+    renderWithProviders(<MemorySyncedSources />);
+    fireEvent.click(await screen.findByTestId('memory-sources-add'));
+    fireEvent.change(screen.getByTestId('memory-add-source-target'), {
+      target: { value: '/Users/me/notes' },
+    });
+    fireEvent.click(screen.getByTestId('memory-add-source-submit'));
+    const prompt = await screen.findByTestId('memory-add-source-error');
+    expect(prompt).toHaveAttribute('data-kind', 'out-of-credits');
+    expect(prompt).not.toHaveTextContent('HTTP 402');
+    expect(screen.getByTestId('memory-top-up')).toBeInTheDocument();
   });
 
   it('syncs one source and marks it syncing', async () => {

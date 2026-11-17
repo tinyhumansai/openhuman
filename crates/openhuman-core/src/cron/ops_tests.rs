@@ -1,8 +1,8 @@
 use super::*;
-use crate::cron::ActiveHours;
 use tempfile::TempDir;
+use tinyflows_bus::schedule::types::DeliveryConfig;
 
-fn test_config(tmp: &TempDir) -> Config {
+pub(super) fn test_config(tmp: &TempDir) -> Config {
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -27,235 +27,15 @@ fn make_job(config: &Config, expr: &str, tz: Option<&str>, cmd: &str) -> CronJob
     .unwrap()
 }
 
-fn run_update(
-    config: &Config,
-    id: &str,
-    expression: Option<&str>,
-    tz: Option<&str>,
-    command: Option<&str>,
-    name: Option<&str>,
-) -> Result<()> {
-    update_cron_job(
-        config,
-        id,
-        expression.map(Into::into),
-        tz.map(Into::into),
-        command.map(Into::into),
-        name.map(Into::into),
-    )
-    .map(|_| ())
-}
-
-#[test]
-fn update_changes_command_via_handler() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let job = make_job(&config, "*/5 * * * *", None, "echo original");
-
-    run_update(&config, &job.id, None, None, Some("echo updated"), None).unwrap();
-
-    let updated = get_job(&config, &job.id).unwrap();
-    assert_eq!(updated.command, "echo updated");
-    assert_eq!(updated.id, job.id);
-}
-
-#[test]
-fn update_changes_expression_via_handler() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let job = make_job(&config, "*/5 * * * *", None, "echo test");
-
-    run_update(&config, &job.id, Some("0 9 * * *"), None, None, None).unwrap();
-
-    let updated = get_job(&config, &job.id).unwrap();
-    assert_eq!(updated.expression, "0 9 * * *");
-}
-
-#[test]
-fn update_changes_name_via_handler() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let job = make_job(&config, "*/5 * * * *", None, "echo test");
-
-    run_update(&config, &job.id, None, None, None, Some("new-name")).unwrap();
-
-    let updated = get_job(&config, &job.id).unwrap();
-    assert_eq!(updated.name.as_deref(), Some("new-name"));
-}
-
-#[test]
-fn update_tz_alone_sets_timezone() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let job = make_job(&config, "*/5 * * * *", None, "echo test");
-
-    run_update(
-        &config,
-        &job.id,
-        None,
-        Some("America/Los_Angeles"),
-        None,
-        None,
-    )
-    .unwrap();
-
-    let updated = get_job(&config, &job.id).unwrap();
-    assert_eq!(
-        updated.schedule,
-        Schedule::Cron {
-            expr: "*/5 * * * *".into(),
-            tz: Some("America/Los_Angeles".into()),
-            active_hours: None,
-        }
-    );
-}
-
-#[test]
-fn update_expr_alone_preserves_timezone() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let job = make_job(&config, "*/5 * * * *", Some("UTC"), "echo test");
-
-    run_update(&config, &job.id, Some("0 10 * * *"), None, None, None).unwrap();
-
-    let updated = get_job(&config, &job.id).unwrap();
-    assert_eq!(
-        updated.schedule,
-        Schedule::Cron {
-            expr: "0 10 * * *".into(),
-            tz: Some("UTC".into()),
-            active_hours: None,
-        }
-    );
-}
-
-#[test]
-fn update_expr_and_tz_preserve_active_hours() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let active_hours = ActiveHours {
-        start: "09:00".into(),
-        end: "17:00".into(),
-    };
-    let job = add_shell_job(
-        &config,
-        None,
-        Schedule::Cron {
-            expr: "*/5 * * * *".into(),
-            tz: Some("UTC".into()),
-            active_hours: Some(active_hours.clone()),
-        },
-        "echo test",
-    )
-    .unwrap();
-
-    run_update(
-        &config,
-        &job.id,
-        Some("0 10 * * *"),
-        Some("America/Los_Angeles"),
-        None,
-        None,
-    )
-    .unwrap();
-
-    let updated = get_job(&config, &job.id).unwrap();
-    assert_eq!(
-        updated.schedule,
-        Schedule::Cron {
-            expr: "0 10 * * *".into(),
-            tz: Some("America/Los_Angeles".into()),
-            active_hours: Some(active_hours),
-        }
-    );
-}
-
-#[test]
-fn update_fails_when_no_fields_provided() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let job = make_job(&config, "*/5 * * * *", None, "echo test");
-
-    let err = run_update(&config, &job.id, None, None, None, None).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("At least one of --expression, --tz, --command, or --name"));
-}
-
-#[test]
-fn update_rejects_expression_for_non_cron_schedule() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let at = chrono::Utc::now() + chrono::Duration::minutes(5);
-    let job = add_shell_job(&config, None, Schedule::At { at }, "echo test").unwrap();
-
-    let err = run_update(&config, &job.id, Some("0 9 * * *"), None, None, None).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Cannot update expression/tz on a non-cron schedule"));
-}
-
-// ── parse_delay ─────────────────────────────────────────────────
-
-#[test]
-fn parse_delay_accepts_seconds_minutes_hours_days() {
-    assert_eq!(
-        parse_human_delay("5s").unwrap(),
-        chrono::Duration::seconds(5)
-    );
-    assert_eq!(
-        parse_human_delay("10m").unwrap(),
-        chrono::Duration::minutes(10)
-    );
-    assert_eq!(parse_human_delay("2h").unwrap(), chrono::Duration::hours(2));
-    assert_eq!(parse_human_delay("3d").unwrap(), chrono::Duration::days(3));
-}
-
-#[test]
-fn parse_delay_defaults_to_minutes_when_no_unit() {
-    assert_eq!(
-        parse_human_delay("15").unwrap(),
-        chrono::Duration::minutes(15)
-    );
-}
-
-#[test]
-fn parse_delay_trims_whitespace() {
-    assert_eq!(
-        parse_human_delay("  7m  ").unwrap(),
-        chrono::Duration::minutes(7)
-    );
-}
-
-#[test]
-fn parse_delay_rejects_empty_input() {
-    let err = parse_human_delay("").unwrap_err();
-    assert!(err.to_string().contains("delay must not be empty"));
-    let err = parse_human_delay("   ").unwrap_err();
-    assert!(err.to_string().contains("delay must not be empty"));
-}
-
-#[test]
-fn parse_delay_rejects_unsupported_unit() {
-    let err = parse_human_delay("5x").unwrap_err();
-    assert!(err.to_string().contains("unsupported delay unit"));
-    // Multi-char unit not matched in the parse branch either.
-    let err = parse_human_delay("5wk").unwrap_err();
-    assert!(err.to_string().contains("unsupported delay unit"));
-}
-
-#[test]
-fn parse_delay_rejects_non_numeric_prefix() {
-    // No ascii-digit prefix at all → empty num, parse() fails.
-    assert!(parse_human_delay("abc").is_err());
-}
-
 // ── add_once ────────────────────────────────────────────────────
 
 #[test]
 fn add_once_creates_future_at_schedule() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
+    // The first call in a process starts the module runtime and attaches the
+    // module (seconds); take the baseline after it so only the call is timed.
+    crate::cron::list_jobs(&config).unwrap();
     let before = chrono::Utc::now();
     let job = add_once(&config, "5m", "echo hello").unwrap();
     match job.schedule {
@@ -283,7 +63,11 @@ fn add_once_propagates_parse_delay_errors() {
 fn add_once_at_stores_exact_timestamp() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let when = chrono::Utc::now() + chrono::Duration::hours(1);
+    // The store keeps instants as epoch milliseconds.
+    let when = chrono::DateTime::from_timestamp_millis(
+        (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp_millis(),
+    )
+    .unwrap();
     let job = add_once_at(&config, when, "echo hi").unwrap();
     match job.schedule {
         Schedule::At { at } => assert_eq!(at, when),
@@ -425,7 +209,9 @@ async fn cron_runs_returns_empty_history_for_new_job() {
 async fn cron_run_rejects_empty_job_id() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let err = cron_run(&config, "").await.unwrap_err();
+    let err = cron_run(&crate::core::runtime::DispatchCtx::ambient(), &config, "")
+        .await
+        .unwrap_err();
     assert!(err.contains("Missing 'job_id'"));
 }
 
@@ -433,7 +219,13 @@ async fn cron_run_rejects_empty_job_id() {
 async fn cron_run_rejects_whitespace_job_id() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let err = cron_run(&config, "   ").await.unwrap_err();
+    let err = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "   ",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("Missing 'job_id'"));
 }
 
@@ -441,7 +233,13 @@ async fn cron_run_rejects_whitespace_job_id() {
 async fn cron_run_errors_when_cron_disabled() {
     let tmp = TempDir::new().unwrap();
     let config = disabled_cron_config(&tmp);
-    let err = cron_run(&config, "some-id").await.unwrap_err();
+    let err = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "some-id",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("cron is disabled"));
 }
 
@@ -451,7 +249,13 @@ async fn cron_run_returns_queued_immediately_for_valid_job() {
     let config = test_config(&tmp);
     let job = make_job(&config, "*/5 * * * *", None, "echo hello");
 
-    let out = cron_run(&config, &job.id).await.unwrap();
+    let out = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(out.value["job_id"], json!(job.id));
     assert_eq!(out.value["status"], json!("queued"));
     assert!(out.logs.iter().any(|l| l.contains("enqueued")));
@@ -472,7 +276,13 @@ async fn cron_run_response_conforms_to_its_declared_schema() {
     let config = test_config(&tmp);
     let job = make_job(&config, "*/5 * * * *", None, "echo hello");
 
-    let out = cron_run(&config, &job.id).await.unwrap();
+    let out = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap();
     let result = out.value.as_object().expect("result payload is an object");
 
     let schema = cron_schemas("run");
@@ -528,20 +338,135 @@ async fn cron_run_response_conforms_to_its_declared_schema() {
     }
 }
 
+// ── run_job_now / single-flight ─────────────────────────────────
+
+pub(super) fn single_flight_system_job(config: &Config, name: &str) -> CronJob {
+    let job = crate::cron::system_jobs::ensure_system_job(
+        config,
+        name,
+        Schedule::Every {
+            every_ms: 3_600_000,
+        },
+    )
+    .unwrap();
+    crate::cron::update_job(
+        config,
+        &job.id,
+        CronJobPatch {
+            policy: Some(tinyflows_bus::schedule::JobPolicy {
+                retries: Some(0),
+                single_flight: true,
+            }),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+    crate::cron::get_job(config, &job.id).unwrap()
+}
+
 #[tokio::test]
-async fn cron_run_rejects_duplicate_concurrent_execution() {
+async fn run_job_now_runs_and_records_the_handler_result() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let job = make_job(&config, "*/5 * * * *", None, "echo hello");
+    let _handler = crate::cron::system_job_handlers::register(
+        "ops-run-now",
+        std::sync::Arc::new(|_ctx| Box::pin(async { Err("nope".to_string()) })),
+    );
+    let job = single_flight_system_job(&config, "ops-run-now");
+    let (success, output) = run_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap();
+    assert!(!success);
+    assert!(output.contains("nope"), "{output}");
+    let runs = cron::list_runs(&config, &job.id, 10).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "error");
+    assert_eq!(
+        cron::get_job(&config, &job.id)
+            .unwrap()
+            .last_status
+            .as_deref(),
+        Some("error")
+    );
+}
 
-    // Seed ACTIVE_RUNS directly to simulate an in-flight execution without
-    // spawning a real long-running subprocess (deterministic, no timing dependency).
-    ACTIVE_RUNS.lock().unwrap().insert(job.id.clone());
-    let err = cron_run(&config, &job.id).await.unwrap_err();
-    ACTIVE_RUNS.lock().unwrap().remove(&job.id);
+#[tokio::test]
+async fn run_job_now_reports_an_unknown_job() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    assert!(run_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "no-such-job"
+    )
+    .await
+    .is_err());
+}
 
+#[cfg(feature = "channels")]
+#[tokio::test]
+async fn run_job_now_records_required_delivery_failure_as_error() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.channels_config.telegram = Some(crate::config::TelegramConfig {
+        bot_token: "test-token".into(),
+        chat_id: None,
+        allowed_users: vec!["target".into()],
+        stream_mode: Default::default(),
+        draft_update_interval_ms: 1000,
+        silent_streaming: true,
+        mention_only: false,
+    });
+    delivery_tests::install_failing_telegram_bridge();
+    let _handler = crate::cron::system_job_handlers::register(
+        "ops-run-now-delivery-failure",
+        std::sync::Arc::new(|_ctx| Box::pin(async { Ok(()) })),
+    );
+    let job = single_flight_system_job(&config, "ops-run-now-delivery-failure");
+    cron::update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            delivery: Some(DeliveryConfig {
+                mode: "announce".into(),
+                channel: Some("telegram".into()),
+                to: Some("target".into()),
+                best_effort: false,
+            }),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    let (success, output) = run_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap();
+
+    assert!(!success, "required delivery failure must fail Run Now");
     assert!(
-        err.contains("already running"),
-        "expected 'already running', got: {err}"
+        output.contains("completed"),
+        "execution itself succeeded: {output}"
+    );
+    let runs = cron::list_runs(&config, &job.id, 10).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "error");
+    assert_eq!(
+        runs[0].delivery_status,
+        Some(tinyflows_bus::schedule::types::DeliveryStatus::Failed)
+    );
+    assert_eq!(
+        cron::get_job(&config, &job.id)
+            .unwrap()
+            .last_status
+            .as_deref(),
+        Some("error")
     );
 }

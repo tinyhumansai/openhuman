@@ -291,7 +291,11 @@ export default function DesktopConnectionPage({
 
       {status && !status.supported && (
         <Alert variant="info" density="compact">
-          <AlertDescription>{t('desktop.unsupported')}</AlertDescription>
+          <AlertDescription>
+            {t(
+              status.platform === 'windows' ? 'desktop.unsupportedWindows' : 'desktop.unsupported'
+            )}
+          </AlertDescription>
         </Alert>
       )}
 

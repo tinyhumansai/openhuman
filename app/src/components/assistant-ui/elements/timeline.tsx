@@ -41,7 +41,7 @@ export function Timeline({
   return (
     <div
       data-slot="timeline"
-      className={cn(paper, 'flex w-full max-w-sm flex-col rounded-2xl p-4', className)}
+      className={cn(paper, 'flex w-full flex-col rounded-2xl p-4', className)}
       {...props}>
       {take(events, visibleCount).map((event, i, shown) => (
         <div
@@ -51,7 +51,7 @@ export function Timeline({
             className={cn(
               mono,
               'pt-[3px] text-end tabular-nums',
-              event.when === 'future' ? 'text-foreground/25' : 'text-foreground/40'
+              event.when === 'future' ? 'text-muted-foreground' : 'text-muted-foreground'
             )}>
             {event.time}
           </span>
@@ -60,9 +60,10 @@ export function Timeline({
             <span
               className={cn(
                 'mt-1 size-2 shrink-0 rounded-full',
-                event.when === 'now' && 'bg-blue-500 ring-4 ring-blue-500/15 dark:bg-blue-400',
-                event.when === 'past' && 'bg-foreground/30',
-                event.when === 'future' && 'border-foreground/20 border bg-transparent'
+                event.when === 'now' &&
+                  'bg-blue-500 ring-4 ring-blue-500/15 dark:bg-blue-400 forced-colors:bg-[Highlight]',
+                event.when === 'past' && 'bg-muted-foreground forced-colors:bg-[CanvasText]',
+                event.when === 'future' && 'border-muted-foreground border bg-transparent'
               )}
             />
             {i < shown.length - 1 && (
@@ -79,13 +80,13 @@ export function Timeline({
             <span
               className={cn(
                 'text-[13px] break-words',
-                event.when === 'future' ? 'text-foreground/40' : 'text-foreground/90',
+                event.when === 'future' ? 'text-muted-foreground' : 'text-foreground/90',
                 event.when === 'now' && 'font-medium'
               )}>
               {event.title}
             </span>
             {event.detail && (
-              <span className="text-foreground/45 text-xs leading-relaxed break-words">
+              <span className="text-muted-foreground text-xs leading-relaxed break-words">
                 {event.detail}
               </span>
             )}

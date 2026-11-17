@@ -118,14 +118,12 @@ test.describe('assistant-ui context usage on the chat path', () => {
     const popover = page.getByTestId('composer-token-breakdown');
     await expect(popover).toBeVisible({ timeout: 20_000 });
 
-    // `contextBreakdownSegments` always emits these four rows, in this order,
-    // whatever the core's section list looks like — that mapping is the whole
-    // job of the adapter. Asserting the labels pins that the breakdown element
-    // received segments rather than an empty array, which is what the loading
-    // and error bodies would leave behind.
+    // `contextBreakdownSegments` always emits these three rows, in this order.
+    // Output is not a separate prompt partition: provider output may include
+    // replies trimmed from the final request, so the breakdown counts only
+    // system prompt, tool schemas, and the remaining conversation.
     await expect(popover).toContainText('System prompt');
     await expect(popover).toContainText('Tool schemas');
-    await expect(popover).toContainText('Output');
     await expect(popover).toContainText('Your input');
   });
 });

@@ -142,6 +142,7 @@ fn pending_approval_debug_and_serialize_do_not_carry_session_id() {
         expires_at: None,
         source_context: None,
         tool_call_id: None,
+        agent_id: None,
     };
     let dbg = format!("{p:?}");
     assert!(
@@ -163,6 +164,8 @@ fn pending_approval_debug_and_serialize_do_not_carry_session_id() {
         expires_at: None,
         decided_at: Utc::now(),
         decision: ApprovalDecision::ApproveOnce,
+        decided_by: None,
+        judge: None,
     };
     let audit_dbg = format!("{audit:?}");
     assert!(

@@ -1,0 +1,681 @@
+//! Profile-owned host tools and a shared memory engine stay within each tenant.
+//! One runtime and one test: SaaS operating mode is process-wide.
+
+#[path = "profile_host_capabilities/call_tools.rs"]
+mod call_tools;
+mod common;
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use call_tools::CallTools;
+use common::{chat_requests, runtime_without_master_key, tool_names, PointedInference};
+use openhuman_embed::memory::api::conformance::ReferenceEngine;
+use openhuman_embed::memory::api::{LearningKind, MemoryEngine, MemoryMeta, StoreItem};
+use openhuman_embed::profiles::ProfileCredentialKind;
+use openhuman_embed::seams::{
+    OpenHumanRunContext, ToolHookContext, ToolHookDecision, ToolHookEvent,
+};
+use openhuman_embed::{
+    HostTurnTools, PermissionLevel, ProfileRuntime, RelayMessage, SaasConfig, Tool, ToolResult,
+    ToolScopeSpec,
+};
+use serde_json::{json, Value};
+use wiremock::{Mock, ResponseTemplate};
+
+struct TenantTool {
+    name: &'static str,
+    calls: Arc<Mutex<Vec<String>>>,
+    relay_origins: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+#[async_trait::async_trait]
+impl Tool for TenantTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "Report the current profile"
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({"type":"object","properties":{}})
+    }
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let thread = context
+            .and_then(tinytools::ToolRunContext::thread_id)
+            .expect("every hosted tool has its durable conversation key");
+        match openhuman_embed::current_turn_origin().unwrap() {
+            openhuman_embed::AgentTurnOrigin::WebChat { thread_id, .. } => {
+                assert_eq!(thread, thread_id);
+            }
+            // A channel turn's durable conversation key is the tenant-scoped
+            // session key the channel module derived for the exact sender and
+            // conversation.
+            openhuman_embed::AgentTurnOrigin::ExternalChannel { .. } => {
+                for segment in [
+                    "|namespace=p4:main|",
+                    "|channel=p8:telegram|",
+                    "|conversation=p4:chat|",
+                    "|participant=p6:sender",
+                ] {
+                    assert!(
+                        thread.contains(segment),
+                        "{segment} missing from {thread:?}"
+                    );
+                }
+            }
+            other => panic!("unexpected origin {other:?}"),
+        }
+        self.execute(args).await
+    }
+    async fn execute(&self, _: Value) -> anyhow::Result<ToolResult> {
+        let tenant = openhuman_embed::current_tenant()?;
+        let profile = tenant.profile.expect("profile tool always has a tenant");
+        match openhuman_embed::current_turn_origin().expect("a host turn has its original route") {
+            openhuman_embed::AgentTurnOrigin::WebChat { thread_id, .. } => {
+                assert!(matches!(thread_id.as_str(), "t1" | "callback-denied"))
+            }
+            openhuman_embed::AgentTurnOrigin::ExternalChannel {
+                channel,
+                sender,
+                reply_target,
+                message_id,
+                ..
+            } => {
+                assert_eq!(channel, "telegram");
+                assert_eq!(sender.as_deref(), Some("sender"));
+                assert_eq!(reply_target, "chat");
+                self.relay_origins
+                    .lock()
+                    .unwrap()
+                    .push((profile.clone(), message_id));
+            }
+            origin => panic!("unexpected turn origin: {origin:?}"),
+        }
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("{}:{profile}", self.name));
+        Ok(ToolResult::success(profile))
+    }
+}
+
+#[test]
+fn chat_and_relay_use_only_selected_tools_inside_their_profile() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("warn")
+        .with_test_writer()
+        .try_init();
+    runtime_without_master_key().block_on(async {
+        tokio::spawn(scenario()).await.unwrap();
+    });
+}
+
+async fn scenario() {
+    let inference = wiremock::MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path_regex(r"chat/completions$"))
+        .respond_with(CallTools)
+        .with_priority(1)
+        .mount(&inference)
+        .await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success":true,"data":[]})))
+        .with_priority(10)
+        .mount(&inference)
+        .await;
+    PointedInference::install(&inference.uri());
+    let root = tempfile::tempdir().unwrap();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let factory_calls = calls.clone();
+    let relay_origins = Arc::new(Mutex::new(Vec::new()));
+    let factory_relay_origins = relay_origins.clone();
+    let sessions = Arc::new(Mutex::new(Vec::new()));
+    let factory_sessions = sessions.clone();
+    let engine = Arc::new(ReferenceEngine::new());
+    let runtime = ProfileRuntime::builder(SaasConfig::new(root.path()))
+        // Keep automatic renewals beyond this bounded scenario so the final
+        // synthetic expiry check cannot race a heartbeat.
+        .configure(|config| config.lease_ttl_secs = 3600)
+        .tools(move |turn| {
+            let session_id = turn.session_id().map(str::to_owned);
+            let factory_sessions = factory_sessions.clone();
+            let factory_calls = factory_calls.clone();
+            let factory_relay_origins = factory_relay_origins.clone();
+            Box::pin(async move {
+                let profile = openhuman_embed::current_tenant().unwrap().profile.unwrap();
+                factory_sessions.lock().unwrap().push((profile, session_id));
+                HostTurnTools::advertised(
+                    [
+                        "tenant_probe",
+                        "hidden",
+                        "shell",
+                        "spawn_subagent",
+                        "curl",
+                        "install_workflow_from_url",
+                        "http_request",
+                        "run_workflow",
+                        "delegate_to",
+                    ]
+                    .into_iter()
+                    .map(|name| {
+                        Box::new(TenantTool {
+                            name,
+                            calls: factory_calls.clone(),
+                            relay_origins: factory_relay_origins.clone(),
+                        }) as Box<dyn Tool>
+                    })
+                    .collect(),
+                )
+            })
+        })
+        .tool_scope(ToolScopeSpec::Named(vec![
+            "tenant_probe".into(),
+            "memory".into(),
+            "shell".into(),
+            "spawn_subagent".into(),
+            "curl".into(),
+            "install_workflow_from_url".into(),
+            "http_request".into(),
+            "run_workflow".into(),
+            "delegate_to".into(),
+        ]))
+        .can_use_tool(|context| {
+            Box::pin(async move {
+                if context.arguments.get("deny").and_then(Value::as_bool) == Some(true) {
+                    ToolHookDecision::deny("operator refused this call")
+                } else {
+                    ToolHookDecision::default()
+                }
+            })
+        })
+        .channel_permissions([
+            ("cli", PermissionLevel::Execute),
+            ("web_channel", PermissionLevel::Execute),
+            ("telegram", PermissionLevel::Execute),
+        ])
+        .memory_engine(engine.clone())
+        .build()
+        .await
+        .unwrap();
+    let mut handles = Vec::new();
+    for user in ["alice", "bob"] {
+        let provisioned = runtime.provision(user).await.unwrap();
+        runtime
+            .set_credential(
+                &provisioned.profile_id,
+                ProfileCredentialKind::ApiKey,
+                "fixture-key",
+            )
+            .await
+            .unwrap();
+        let handle = runtime.open(user).await.unwrap();
+        assert!(handle.context().embedder_config().unwrap().autonomy.enabled);
+        assert_eq!(
+            handle
+                .context()
+                .embedder_config()
+                .unwrap()
+                .memory
+                .root
+                .as_deref(),
+            Some(format!("user:{user}").as_str())
+        );
+        let profile = handle
+            .scope(async {
+                openhuman_core::profiles::host::current(
+                    &openhuman_core::core::runtime::DispatchCtx::ambient(),
+                )
+                .unwrap()
+            })
+            .await;
+        profile.lease_fence().renewed(0);
+        assert!(
+            !handle
+                .scope(async {
+                    openhuman_core::memory::engine::is_on(
+                        handle.context().embedder_config().unwrap(),
+                    )
+                    .await
+                })
+                .await,
+            "expired profile memory must fail closed"
+        );
+        profile.lease_fence().renewed(u64::MAX);
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            handle.chat(
+                "t1",
+                &format!("remember {user}-native-learning and call tenant_probe"),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        handles.push(handle);
+    }
+    for handle in &handles {
+        let mut events = handle.events();
+        let accepted = handle
+            .relay_inbound(RelayMessage::new(
+                "telegram",
+                "chat",
+                "sender",
+                "message",
+                format!("{}: call tenant_probe", handle.id()),
+            ))
+            .await
+            .unwrap();
+        assert!(accepted.accepted);
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if event.event_name() == "channel_outbound" {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        *calls.lock().unwrap(),
+        [
+            "tenant_probe:alice",
+            "tenant_probe:bob",
+            "tenant_probe:alice",
+            "tenant_probe:bob"
+        ]
+    );
+    let recorded = sessions.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 4, "{recorded:?}");
+    assert_eq!(recorded[0], ("alice".into(), Some("t1".into())));
+    assert_eq!(recorded[1], ("bob".into(), Some("t1".into())));
+    // A relayed channel turn runs under the tenant-scoped session key the
+    // channel module derived for the sender and conversation.
+    for (index, profile) in [(2, "alice"), (3, "bob")] {
+        let (recorded_profile, key) = &recorded[index];
+        assert_eq!(recorded_profile, profile);
+        let key = key.as_deref().expect("a relayed turn has a session key");
+        assert!(
+            key.contains("|channel=p8:telegram|") && key.contains("|participant=p6:sender"),
+            "{key:?}"
+        );
+    }
+    let executions_before_denied_turn = calls.lock().unwrap().len();
+    // Unregistered unsafe names fail closed at the profile's capability hook
+    // as tool errors the model reads (the turn itself completes): each one is
+    // refused by name, and none of them runs.
+    let requests_before_denied_turn = chat_requests(&inference).await.len();
+    handles[0]
+        .chat("denied", "unsafe fixture request")
+        .await
+        .expect("a refused tool call is a tool error, not a failed turn");
+    let tool_results: Vec<String> = chat_requests(&inference).await[requests_before_denied_turn..]
+        .iter()
+        .flat_map(|request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            body["messages"].as_array().cloned().unwrap_or_default()
+        })
+        .filter(|message| message["role"] == "tool")
+        .map(|message| message["content"].to_string())
+        .collect();
+    for name in ["shell", "spawn_subagent", "http_request", "run_workflow"] {
+        let refused = tool_results.iter().any(|content| {
+            content.contains(&format!("denied {name}:"))
+                && content.contains("outside the hosted profile capability boundary")
+        });
+        if !refused {
+            // The linked module's panic hook drops assertion payloads.
+            eprintln!(
+                "profile_host_capabilities: {name} not refused; tool results {tool_results:?}"
+            );
+        }
+        assert!(
+            refused,
+            "unregistered unsafe model call {name} must be refused"
+        );
+    }
+    assert_eq!(calls.lock().unwrap().len(), executions_before_denied_turn);
+    // The operator callback refuses even a registered safe name, again as a
+    // tool error the model reads; the tool does not run.
+    let requests_before_callback_denial = chat_requests(&inference).await.len();
+    handles[0]
+        .chat("callback-denied", "deny callback request")
+        .await
+        .expect("a refused tool call is a tool error, not a failed turn");
+    let callback_refused = chat_requests(&inference).await[requests_before_callback_denial..]
+        .iter()
+        .any(|request| {
+            let body = String::from_utf8_lossy(&request.body);
+            body.contains("denied tenant_probe") && body.contains("operator refused this call")
+        });
+    if !callback_refused {
+        eprintln!(
+            "profile_host_capabilities: the operator callback's refusal did not reach the model"
+        );
+    }
+    assert!(
+        callback_refused,
+        "the operator callback must refuse even a registered safe name"
+    );
+    assert_eq!(calls.lock().unwrap().len(), executions_before_denied_turn);
+    // Persistent hooks fail closed if reused under a different profile or
+    // after the owning lease is fenced, before the host callback is consulted.
+    let alice_run = OpenHumanRunContext::new().with_core(Some(handles[0].context().clone()));
+    let bob_run = OpenHumanRunContext::new().with_core(Some(handles[1].context().clone()));
+    let hook_context = |tool_name: &str| ToolHookContext {
+        event: ToolHookEvent::PreToolUse,
+        call_id: "fixture".to_owned(),
+        tool_name: tool_name.to_owned(),
+        arguments: json!({}),
+        success: None,
+        duration_ms: None,
+        output: None,
+        error: None,
+        session_id: Some("t1".to_owned()),
+        agent_id: None,
+        cwd: None,
+    };
+    let alice_hook = handles[0]
+        .context()
+        .host_overrides()
+        .unwrap()
+        .tool_hooks()
+        .into_iter()
+        .find(|hook| hook.name() == "profile.can_use_tool")
+        .unwrap();
+    assert!(handles[0]
+        .scope(alice_hook.before_tool_decision(&alice_run, &hook_context("tenant_probe")))
+        .await
+        .permission
+        .is_none());
+    assert!(handles[1]
+        .scope(alice_hook.before_tool_decision(&bob_run, &hook_context("tenant_probe")))
+        .await
+        .is_deny());
+    for name in [
+        "hidden",
+        "shell",
+        "spawn_subagent",
+        "curl",
+        "http_request",
+        "run_workflow",
+        "delegate_to",
+        "install_workflow_from_url",
+    ] {
+        assert!(
+            handles[0]
+                .scope(alice_hook.before_tool_decision(&alice_run, &hook_context(name)))
+                .await
+                .is_deny(),
+            "{name} must be refused even with a proceeding host callback"
+        );
+    }
+    let no_callback = Arc::new(
+        openhuman_core::profiles::capabilities::ProfileCapabilities::new(
+            None,
+            Some(["tenant_probe".to_string()].into_iter().collect()),
+            None,
+            Default::default(),
+            Vec::new(),
+            None,
+        ),
+    );
+    let alice_profile = handles[0]
+        .scope(async {
+            openhuman_core::profiles::current(
+                    &openhuman_core::core::runtime::DispatchCtx::ambient(),
+                )
+                .unwrap()
+        })
+        .await;
+    let closed_hook = no_callback.hook(handles[0].id(), alice_profile.lease_fence().clone());
+    assert!(handles[0]
+        .scope(closed_hook.before_tool_decision(&alice_run, &hook_context("tenant_probe")))
+        .await
+        .is_deny());
+    // Closing really releases the old lease; reopening must install the same
+    // immutable belt and engine on a fresh profile context, without pinning it.
+    drop(alice_profile);
+    let old_alice = handles.remove(0);
+    let alice_id = old_alice.id().clone();
+    drop(old_alice);
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match runtime.release(&alice_id).await {
+                Ok(released) => {
+                    assert!(released);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+    })
+    .await
+    .expect("completed turns leave the profile releasable");
+    let reopened = runtime.open("alice").await.unwrap();
+    assert!(reopened
+        .threads()
+        .await
+        .unwrap()
+        .iter()
+        .any(|thread| thread.id == "t1"));
+    reopened
+        .chat("t1", "alice: call tenant_probe after reopening")
+        .await
+        .unwrap();
+    let mut events = reopened.events();
+    assert!(
+        reopened
+            .relay_inbound(RelayMessage::new(
+                "telegram",
+                "chat",
+                "sender",
+                "reopened-message",
+                "alice: call tenant_probe after reopening"
+            ))
+            .await
+            .unwrap()
+            .accepted
+    );
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while events.recv().await.unwrap().event_name() != "channel_outbound" {}
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        &calls.lock().unwrap()[4..],
+        ["tenant_probe:alice", "tenant_probe:alice"]
+    );
+    assert_eq!(
+        *relay_origins.lock().unwrap(),
+        [
+            ("alice".into(), "message".into()),
+            ("bob".into(), "message".into()),
+            ("alice".into(), "reopened-message".into())
+        ]
+    );
+    {
+        let reopened_sessions = sessions.lock().unwrap();
+        let tail = &reopened_sessions[reopened_sessions.len() - 2..];
+        assert_eq!(tail[0], ("alice".into(), Some("t1".into())));
+        let (profile, key) = &tail[1];
+        assert_eq!(profile, "alice");
+        assert!(
+            key.as_deref()
+                .is_some_and(|key| key.contains("|channel=p8:telegram|")
+                    && key.contains("|participant=p6:sender")),
+            "{key:?}"
+        );
+    }
+    handles.insert(0, reopened);
+    let alice_profile = handles[0]
+        .scope(async {
+            openhuman_core::profiles::current(
+                    &openhuman_core::core::runtime::DispatchCtx::ambient(),
+                )
+                .unwrap()
+        })
+        .await;
+    let alice_hook = handles[0]
+        .context()
+        .host_overrides()
+        .unwrap()
+        .tool_hooks()
+        .into_iter()
+        .find(|hook| hook.name() == "profile.can_use_tool")
+        .unwrap();
+    let reopened_run = OpenHumanRunContext::new().with_core(Some(handles[0].context().clone()));
+    assert!(handles[0]
+        .scope(alice_hook.before_tool_decision(&reopened_run, &hook_context("tenant_probe")))
+        .await
+        .permission
+        .is_none());
+    let requests = chat_requests(&inference).await;
+    assert!(requests
+        .iter()
+        .any(|request| !tool_names(request).is_empty()));
+    for request in requests {
+        let mut names = tool_names(&request);
+        names.sort();
+        if !names.is_empty() {
+            assert_eq!(
+                names,
+                ["memory", "tenant_probe"],
+                "the model sees the selected belt exactly"
+            );
+        }
+    }
+    assert!(
+        inference
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| !request.url.path().contains("memory/experience")),
+        "deferred profile memory must keep its bound host engine"
+    );
+    // Shared backend contents are independent of the actor: actual contract
+    // requests, including a malicious global-root filter, must stay confined.
+    for user in ["alice", "bob"] {
+        engine
+            .store(StoreItem::learning(
+                format!("{user}-secret"),
+                LearningKind::Fact,
+                0.9,
+                MemoryMeta {
+                    namespace: format!("user:{user}").parse().unwrap(),
+                    ..Default::default()
+                },
+            ))
+            .await
+            .unwrap();
+    }
+    for handle in &handles {
+        assert!(
+            handle
+                .call::<_, Value>(
+                    "openhuman.memory_items_list",
+                    json!({"filter":{"reach":{"at":"","descendants":true,"inherit":true}}})
+                )
+                .await
+                .is_err(),
+            "a global reach must be refused"
+        );
+        let mut last_response = Value::Null;
+        let response: Value = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let response: Value = handle
+                    .call("openhuman.memory_items_list", json!({"limit":100}))
+                    .await
+                    .unwrap();
+                last_response = response.clone();
+                if response
+                    .to_string()
+                    .contains(&format!("{}-native-learning", handle.id()))
+                    && response
+                        .to_string()
+                        .contains(&format!("done: chat:{}", handle.id()))
+                    && response
+                        .to_string()
+                        .contains(&format!("done: relay:{}", handle.id()))
+                    && (handle.id().as_str() != "alice"
+                        || (response.to_string().contains("done: reopened-chat:alice")
+                            && response.to_string().contains("done: reopened-relay:alice")))
+                {
+                    break response;
+                }
+                // Native writes acknowledge their durable local queue. Await the
+                // queued worker's store before checking the real engine contents.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|error| {
+            panic!("memory persistence timed out: {error}; last response: {last_response}")
+        });
+        let text = response.to_string();
+        assert!(
+            text.contains(&format!("{}-secret", handle.id())),
+            "{response}"
+        );
+        assert!(
+            text.contains(&format!("done: chat:{}", handle.id())),
+            "the deferred chat commit reaches the profile engine: {response}"
+        );
+        if handle.id().as_str() == "alice" {
+            assert!(
+                text.contains("done: reopened-chat:alice"),
+                "reopened chat commit: {response}"
+            );
+            assert!(
+                text.contains("done: reopened-relay:alice"),
+                "reopened relay commit: {response}"
+            );
+        }
+        assert!(
+            text.contains(&format!("{}-native-learning", handle.id())),
+            "native memory mutation was persisted: {response}"
+        );
+        let other = if handle.id().as_str() == "alice" {
+            "bob"
+        } else {
+            "alice"
+        };
+        assert!(!text.contains(&format!("{other}-secret")), "{response}");
+    }
+    let forced_config = alice_profile.config.clone();
+    let mut escaped_config = forced_config.clone();
+    escaped_config.memory.root = Some("user:bob".into());
+    assert!(
+        !handles[0]
+            .scope(async { openhuman_core::memory::engine::is_on(&escaped_config).await })
+            .await
+    );
+    alice_profile.lease_fence().renewed(0);
+    assert!(
+        !handles[0]
+            .scope(async { openhuman_core::memory::engine::is_on(&forced_config).await })
+            .await,
+        "an expired profile must not resolve the shared engine"
+    );
+    alice_profile.lease_fence().renewed(u64::MAX);
+    alice_profile.lease_fence().fence();
+    assert!(
+        !handles[0]
+            .scope(async { openhuman_core::memory::engine::is_on(&forced_config).await })
+            .await,
+        "a latched profile must not resolve the shared engine"
+    );
+    assert!(handles[0]
+        .scope(alice_hook.before_tool_decision(&reopened_run, &hook_context("tenant_probe")))
+        .await
+        .is_deny());
+    runtime.shutdown().await;
+}

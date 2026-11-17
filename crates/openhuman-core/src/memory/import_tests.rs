@@ -1,595 +1,618 @@
 use super::*;
-use crate::memory::error::{INVALID_REQUEST, MEMORY_OFF};
-use crate::memory::test_fixtures::{bind_reference, config_in, stored};
-use std::sync::Arc;
+use crate::memory::test_fixtures::{bind_reference, config_in};
 
-use rusqlite::{params, Connection};
-use tinymemory_api::MetaFilter;
+#[test]
+fn the_state_round_trips_through_the_store() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = StateKvCheckpointStore::new(tmp.path());
+    assert_eq!(
+        store.load(),
+        ImportFile::default(),
+        "no file reads as fresh"
+    );
+    let mut file = ImportFile::default();
+    file.state.phase = ImportPhase::Done;
+    file.state.imported = 7;
+    file.listed_unconfirmed = true;
+    store.save(&file).unwrap();
+    assert_eq!(store.load(), file);
+    assert!(listed_unconfirmed(tmp.path()));
+}
 
-/// An early v1 `memory.db` (no optional columns), enough for the importer.
-const LEGACY_DDL: &str = "
+#[test]
+fn a_damaged_state_file_reads_as_a_fresh_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("memory/import_state.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"{ not json").unwrap();
+    assert_eq!(read_file(tmp.path()), ImportFile::default());
+}
+
+#[test]
+fn a_running_state_with_no_live_run_reports_interrupted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let mut file = ImportFile::default();
+    file.state.phase = ImportPhase::Running;
+    StateKvCheckpointStore::new(&config.workspace_dir)
+        .save(&file)
+        .unwrap();
+    let state = status(&config);
+    assert_eq!(state.phase, ImportPhase::Error);
+    assert!(state.error.unwrap().contains("interrupted"));
+    assert!(
+        !in_progress(&config),
+        "a stale persisted Running phase is not a live import task"
+    );
+}
+
+#[test]
+fn a_credits_pause_blocks_organizing_until_resumed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let mut file = ImportFile::default();
+    file.state.phase = ImportPhase::Error;
+    file.paused_for_credits = true;
+    StateKvCheckpointStore::new(&config.workspace_dir)
+        .save(&file)
+        .unwrap();
+    assert!(in_progress(&config));
+}
+
+#[tokio::test]
+async fn starting_without_consent_is_refused_before_anything_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let error = start(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("consent"), "{error}");
+    assert!(!is_running(&config.workspace_dir));
+    assert_eq!(status(&config).phase, ImportPhase::Idle);
+}
+
+#[tokio::test]
+async fn retrying_with_nothing_failed_is_refused_and_releases_the_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    // Either no engine is bound here or there is nothing to retry; either
+    // way the call fails and the workspace must not stay claimed.
+    assert!(
+        retry_failed(&crate::core::runtime::DispatchCtx::ambient(), &config)
+            .await
+            .is_err()
+    );
+    assert!(!is_running(&config.workspace_dir));
+}
+
+#[tokio::test]
+async fn nothing_resumes_when_no_import_was_started() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let resumed = resume_interrupted_with(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Arc::new(|| false),
+        Arc::new(|_: &Config| true),
+    )
+    .await;
+    assert!(!resumed);
+}
+
+#[tokio::test]
+async fn a_paused_scheduler_leaves_an_interrupted_import_for_later() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let mut file = ImportFile::default();
+    file.state.phase = ImportPhase::Running;
+    StateKvCheckpointStore::new(&config.workspace_dir)
+        .save(&file)
+        .unwrap();
+    let resumed = resume_interrupted_with(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Arc::new(|| true),
+        Arc::new(|_: &Config| true),
+    )
+    .await;
+    assert!(!resumed);
+    assert_eq!(
+        read_file(&config.workspace_dir).state.phase,
+        ImportPhase::Running
+    );
+}
+
+// Saves layout-migration state, which needs a backend that can claim imports
+// (see `memory/layout_migration/ops.rs`).
+#[cfg(feature = "storage-sqlite")]
+#[tokio::test]
+async fn a_live_import_blocks_migration_and_does_not_make_a_stale_migration_look_live() {
+    use crate::memory::layout_migration::{self, state, test_host::FakeHost, Phase, Trigger};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let host = Arc::new(FakeHost::with(2, &config).await);
+    let workspace = config.workspace_dir.clone();
+    let _reservation = crate::memory::run_slots::reserve(
+        &crate::memory::run_slots::IMPORT,
+        &workspace,
+        &[
+            &crate::memory::run_slots::BACKFILL,
+            &crate::memory::run_slots::MIGRATION,
+        ],
+    )
+    .expect("the test owns a live import slot");
+
+    let mut stale = state::load(&workspace).unwrap();
+    stale.phase = Phase::Copying;
+    state::save(&workspace, &stale).unwrap();
+
+    let migration_status = layout_migration::status(&config).unwrap();
+    assert!(!migration_status.running);
+    assert!(migration_status.interrupted);
+    assert!(
+        !layout_migration::start(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            config.clone(),
+            host,
+            Trigger::Auto,
+            Arc::new(|| false),
+        ),
+        "an active import prevents migration from reserving the workspace"
+    );
+    assert!(!layout_migration::ops::is_running(&config));
+}
+
+#[tokio::test]
+async fn a_credit_paused_import_waits_for_billing_and_records_a_resume_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let mut file = ImportFile::default();
+    file.state.phase = ImportPhase::Error;
+    file.paused_for_credits = true;
+    StateKvCheckpointStore::new(&config.workspace_dir)
+        .save(&file)
+        .unwrap();
+
+    assert!(
+        !resume_interrupted_with(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            Arc::new(|| false),
+            Arc::new(|_: &Config| false),
+        )
+        .await
+    );
+    assert_eq!(read_file(&config.workspace_dir), file);
+
+    assert!(
+        !resume_interrupted_with(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            Arc::new(|| false),
+            Arc::new(|_: &Config| true),
+        )
+        .await,
+        "a permitted resume still reports failure when no engine can be bound"
+    );
+    let stopped = read_file(&config.workspace_dir);
+    assert_eq!(stopped.state.phase, ImportPhase::Error);
+    assert!(stopped
+        .state
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("could not resume"));
+    assert!(!stopped.paused_for_credits);
+    assert!(!is_running(&config.workspace_dir));
+}
+
+#[test]
+fn a_store_with_no_legacy_files_counts_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(tinymemory_integrations::import::count_legacy(tmp.path()).is_none());
+}
+
+#[tokio::test]
+async fn resume_with_live_import_slot_does_not_claim_a_new_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    bind_reference(&config);
+    let mut file = ImportFile::default();
+    file.state.phase = ImportPhase::Running;
+    let store = StateKvCheckpointStore::new(&config.workspace_dir);
+    store.save(&file).unwrap();
+    let guard = crate::memory::run_slots::reserve(
+        &crate::memory::run_slots::IMPORT,
+        &config.workspace_dir,
+        &[
+            &crate::memory::run_slots::BACKFILL,
+            &crate::memory::run_slots::MIGRATION,
+        ],
+    )
+    .expect("the live import owns the slot");
+
+    let resumed = resume_interrupted_with(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Arc::new(|| false),
+        Arc::new(|_: &Config| true),
+    )
+    .await;
+
+    assert_eq!(store.load(), file, "a live run leaves its checkpoint alone");
+    assert!(!resumed, "no new run was scheduled");
+    drop(guard);
+}
+
+#[tokio::test]
+async fn starting_import_or_retry_while_a_peer_driver_runs_gives_mode_specific_guidance() {
+    #[derive(Clone, Copy)]
+    enum Peer {
+        Migration,
+        Backfill,
+    }
+
+    for peer in [Peer::Migration, Peer::Backfill] {
+        for retry in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let config = config_in(&tmp);
+            bind_reference(&config);
+            let workspace = config.workspace_dir.clone();
+            let _peer_guard = match peer {
+                Peer::Migration => crate::memory::run_slots::reserve(
+                    &crate::memory::run_slots::MIGRATION,
+                    &workspace,
+                    &[
+                        &crate::memory::run_slots::IMPORT,
+                        &crate::memory::run_slots::BACKFILL,
+                    ],
+                ),
+                Peer::Backfill => crate::memory::run_slots::reserve(
+                    &crate::memory::run_slots::BACKFILL,
+                    &workspace,
+                    &[
+                        &crate::memory::run_slots::IMPORT,
+                        &crate::memory::run_slots::MIGRATION,
+                    ],
+                ),
+            }
+            .expect("peer owns its driver-specific slot");
+
+            let error = if retry {
+                retry_failed(&crate::core::runtime::DispatchCtx::ambient(), &config)
+                    .await
+                    .unwrap_err()
+            } else {
+                start(&crate::core::runtime::DispatchCtx::ambient(), &config, true)
+                    .await
+                    .unwrap_err()
+            };
+            assert_eq!(error.code(), "INVALID_REQUEST");
+            let action = if retry { "retry" } else { "import" };
+            let reason = match peer {
+                Peer::Migration => {
+                    format!("memory is being organized; {action} once that finishes")
+                }
+                Peer::Backfill => {
+                    format!("a conversation backfill is running; {action} once it finishes")
+                }
+            };
+            assert!(error.to_string().contains(&reason), "{error}");
+            assert!(!is_running(&workspace));
+            assert_eq!(read_file(&workspace), ImportFile::default());
+        }
+    }
+}
+
+const HOST_LEGACY_MEMORY_DDL: &str = r#"
 CREATE TABLE memory_docs (
   document_id TEXT PRIMARY KEY, namespace TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL,
   content TEXT NOT NULL, source_type TEXT NOT NULL, priority TEXT NOT NULL, tags_json TEXT NOT NULL,
   metadata_json TEXT NOT NULL, category TEXT NOT NULL, session_id TEXT, created_at REAL NOT NULL,
-  updated_at REAL NOT NULL, markdown_rel_path TEXT NOT NULL, UNIQUE(namespace, key));
+  updated_at REAL NOT NULL, markdown_rel_path TEXT NOT NULL, taint TEXT NOT NULL DEFAULT 'internal',
+  logical_namespace TEXT, UNIQUE(namespace, key));
+CREATE TABLE kv_global (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at REAL NOT NULL);
+CREATE TABLE kv_namespace (namespace TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, updated_at REAL NOT NULL,
+  PRIMARY KEY(namespace, key));
 CREATE TABLE episodic_log (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, timestamp REAL NOT NULL,
-  role TEXT NOT NULL, content TEXT NOT NULL, lesson TEXT);
+  role TEXT NOT NULL, content TEXT NOT NULL, lesson TEXT, tool_calls_json TEXT, cost_microdollars INTEGER DEFAULT 0);
 CREATE TABLE user_profile (facet_id TEXT PRIMARY KEY, facet_type TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
   confidence REAL NOT NULL DEFAULT 0.5, evidence_count INTEGER NOT NULL DEFAULT 1, source_segment_ids TEXT,
-  first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL);
-";
+  first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL, state TEXT NOT NULL DEFAULT 'active',
+  stability REAL NOT NULL DEFAULT 0.0, user_state TEXT NOT NULL DEFAULT 'auto', evidence_refs_json TEXT,
+  class TEXT, cue_families_json TEXT, UNIQUE(facet_type, key));
+"#;
 
-fn memory_doc(conn: &Connection, id: &str, namespace: &str, title: &str, content: &str) {
+#[cfg(feature = "legacy-import")]
+fn legacy_document(config: &Config, id: &str, title: &str, body: &str) {
+    let db = config.workspace_dir.join("memory/memory.db");
+    std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let conn = crate::storage::rusqlite::Connection::open(db).unwrap();
+    conn.execute_batch(HOST_LEGACY_MEMORY_DDL).unwrap();
     conn.execute(
         "INSERT INTO memory_docs (document_id, namespace, key, title, content, source_type, priority,
-           tags_json, metadata_json, category, created_at, updated_at, markdown_rel_path)
-         VALUES (?1, ?2, ?1, ?3, ?4, 'chat', 'normal', '[]', '{}', 'core', 1700000000.0, 1700000000.0, '')",
-        params![id, namespace, title, content],
+           tags_json, metadata_json, category, session_id, created_at, updated_at, markdown_rel_path,
+           taint, logical_namespace)
+         VALUES (?1, 'document_notes', ?1, ?2, ?3, 'chat', 'normal', '[]', '{}', 'core', NULL,
+                 1700000000.0, 1700000000.0, '', 'internal', NULL)",
+        crate::storage::rusqlite::params![id, title, body],
     )
     .unwrap();
 }
 
-/// A v1 workspace: two documents, one learning, one conversation, one facet.
-fn legacy_workspace(workspace_dir: &Path) {
-    std::fs::create_dir_all(workspace_dir.join("memory")).unwrap();
-    let conn = Connection::open(workspace_dir.join("memory").join("memory.db")).unwrap();
-    conn.execute_batch(LEGACY_DDL).unwrap();
-    memory_doc(&conn, "d1", "notes", "Plan", "Ship memory v2 on Friday");
-    memory_doc(&conn, "d2", "notes", "Ideas", "Try oolong tea");
-    memory_doc(&conn, "d3", "learning:style", "Style", "Keep answers terse");
-    for (n, (role, text)) in [("user", "hi there"), ("assistant", "hello")]
-        .iter()
-        .enumerate()
-    {
-        conn.execute(
-            "INSERT INTO episodic_log (session_id, timestamp, role, content) VALUES ('s1', ?1, ?2, ?3)",
-            params![1_700_000_000.0 + n as f64, role, text],
-        )
-        .unwrap();
-    }
-    conn.execute(
-        "INSERT INTO user_profile (facet_id, facet_type, key, value, confidence, first_seen_at, last_seen_at)
-         VALUES ('f1', 'preference', 'tone', 'terse', 0.9, 1700000000.0, 1700000000.0)",
-        [],
-    )
-    .unwrap();
-}
-
-async fn wait_until_settled(config: &Config) -> ImportState {
-    for _ in 0..400 {
+async fn wait_for_host_import(config: &Config) -> ImportState {
+    for _ in 0..100_000 {
         let state = status(config);
-        if state.phase != ImportPhase::Running {
+        if state.phase == ImportPhase::Done && !is_running(&config.workspace_dir) {
             return state;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        tokio::task::yield_now().await;
     }
-    panic!("import never settled");
+    panic!("the Host import did not finish and release its slot");
 }
 
+async fn assert_reference_contains(
+    engine: &tinymemory_api::conformance::ReferenceEngine,
+    text: &str,
+) {
+    use tinymemory_api::{ItemKind, MetaFilter};
+
+    let items = crate::memory::test_fixtures::stored(
+        engine,
+        MetaFilter {
+            kinds: vec![ItemKind::Document],
+            ..MetaFilter::default()
+        },
+    )
+    .await;
+    assert!(
+        items.iter().any(|item| item.text.contains(text)),
+        "{items:?}"
+    );
+}
+
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
-async fn scan_reports_no_store_for_a_fresh_workspace() {
+async fn a_real_legacy_document_imports_through_the_host_adapter() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
-    let view = scan(&config).await.unwrap();
-    assert!(!view.found);
-    assert!(view.counts.is_none());
-    assert!(count_legacy(&config.workspace_dir).is_none());
-}
-
-#[tokio::test]
-async fn scan_counts_what_a_legacy_store_holds() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    let view = scan(&config).await.unwrap();
-    assert!(view.found);
-    let counts = view.counts.expect("counts");
-    assert_eq!(counts.documents, 2);
-    assert_eq!(counts.conversations, 1);
-    assert_eq!(counts.learnings, 2, "a learning doc and a profile facet");
-}
-
-#[test]
-fn status_of_an_untouched_workspace_is_idle() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    assert_eq!(status(&config), ImportState::default());
-}
-
-#[tokio::test]
-async fn start_is_refused_without_consent() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    bind_reference(&config);
-    let error = start(&config, false).await.unwrap_err();
-    assert_eq!(error.code(), INVALID_REQUEST);
-    assert!(error.to_string().contains("consent"));
-    assert_eq!(status(&config).phase, ImportPhase::Idle, "nothing started");
-}
-
-#[tokio::test]
-async fn start_needs_memory_on_and_a_legacy_store() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    assert_eq!(start(&config, true).await.unwrap_err().code(), MEMORY_OFF);
-
-    let tmp2 = tempfile::tempdir().unwrap();
-    let empty = config_in(&tmp2);
-    bind_reference(&empty);
-    for _ in 0..2 {
-        // The claim is released, so asking again gives the same answer rather
-        // than a stale "already running" status.
-        assert_eq!(
-            start(&empty, true).await.unwrap_err().code(),
-            INVALID_REQUEST
-        );
-    }
-}
-
-#[tokio::test]
-async fn a_full_import_stores_every_item_and_finishes_done() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
     let engine = bind_reference(&config);
+    legacy_document(
+        &config,
+        "host-import-doc",
+        "Host import",
+        "real legacy body",
+    );
 
-    let started = start(&config, true).await.unwrap();
+    let started = start(&crate::core::runtime::DispatchCtx::ambient(), &config, true)
+        .await
+        .unwrap();
     assert_eq!(started.phase, ImportPhase::Running);
-    assert_eq!(started.total, 5);
+    assert_eq!(started.total, 1);
 
-    let done = wait_until_settled(&config).await;
-    assert_eq!(done.phase, ImportPhase::Done, "{done:?}");
-    assert_eq!(done.imported, 5);
-    assert_eq!(done.total, 5);
-    assert!(done.error.is_none());
-    let items = stored(&engine, MetaFilter::default()).await;
-    assert_eq!(items.len(), 5);
-    assert!(items
-        .iter()
-        .all(|item| item.meta.source.kind == tinymemory_api::SourceKind::Import));
-    assert!(file_path(&config.workspace_dir).exists());
-}
-
-#[tokio::test]
-async fn an_interrupted_import_resumes_from_its_checkpoint() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    let engine = bind_reference(&config);
-
-    // A previous run stored d1 and stopped on an error.
-    write_file(
-        &config.workspace_dir,
-        &ImportFile {
-            state: ImportState {
-                phase: ImportPhase::Error,
-                imported: 1,
-                total: 5,
-                error: Some("unauthorized: sign in".into()),
-            },
-            checkpoint: Checkpoint {
-                documents: Some("d1".into()),
-                ..Checkpoint::default()
-            },
-        },
-    );
-    assert_eq!(status(&config).phase, ImportPhase::Error);
-
-    start(&config, true).await.unwrap();
-    let done = wait_until_settled(&config).await;
-    assert_eq!(done.phase, ImportPhase::Done, "{done:?}");
-    assert_eq!(done.imported, 5, "the earlier item counts toward the total");
-    let items = stored(&engine, MetaFilter::default()).await;
-    assert_eq!(items.len(), 4, "d1 is not sent again");
-    assert!(
-        !items
-            .iter()
-            .any(|item| item.text.contains("Ship memory v2")),
-        "the checkpointed document was skipped"
-    );
-}
-
-#[test]
-fn a_running_state_with_no_live_import_reads_as_interrupted() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    write_file(
-        &config.workspace_dir,
-        &ImportFile {
-            state: ImportState {
-                phase: ImportPhase::Running,
-                imported: 3,
-                total: 9,
-                error: None,
-            },
-            checkpoint: Checkpoint::default(),
-        },
-    );
-    let state = status(&config);
-    assert_eq!(state.phase, ImportPhase::Error);
-    assert_eq!(state.imported, 3);
-    assert!(state
-        .error
-        .as_deref()
-        .unwrap()
-        .contains("resumes on its own"));
-}
-
-#[tokio::test]
-async fn a_finished_import_starts_over_when_run_again() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    bind_reference(&config);
-    start(&config, true).await.unwrap();
-    assert_eq!(wait_until_settled(&config).await.phase, ImportPhase::Done);
-
-    let again = start(&config, true).await.unwrap();
-    assert_eq!(again.imported, 0, "Done does not resume; it restarts");
-    assert_eq!(wait_until_settled(&config).await.imported, 5);
-}
-
-#[tokio::test]
-async fn a_second_start_while_running_returns_the_current_status() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    bind_reference(&config);
-    RUNNING.lock().unwrap().insert(config.workspace_dir.clone());
-    let state = start(&config, true).await.unwrap();
-    assert_eq!(state.phase, ImportPhase::Idle, "no second run was launched");
-    RUNNING.lock().unwrap().remove(&config.workspace_dir);
-}
-
-#[test]
-fn a_corrupt_import_file_reads_as_idle() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(tmp.path().join("memory")).unwrap();
-    std::fs::write(file_path(tmp.path()), "garbage").unwrap();
-    assert_eq!(read_file(tmp.path()).state, ImportState::default());
-}
-
-/// A reference engine that refuses a write with whatever `refuse` returns for
-/// its item, and stores it otherwise.
-struct FailingEngine {
-    inner: Arc<tinymemory_api::conformance::ReferenceEngine>,
-    refuse: fn(&tinymemory_api::StoreItem) -> Option<tinymemory_api::Error>,
-}
-
-#[async_trait::async_trait]
-impl tinymemory_api::MemoryEngine for FailingEngine {
-    fn descriptor(&self) -> &tinymemory_api::EngineDescriptor {
-        self.inner.descriptor()
-    }
-    async fn health(&self) -> tinymemory_api::EngineHealth {
-        self.inner.health().await
-    }
-    async fn recall(
-        &self,
-        req: tinymemory_api::RecallRequest,
-    ) -> tinymemory_api::Result<tinymemory_api::RecallAnswer> {
-        self.inner.recall(req).await
-    }
-    async fn fetch(
-        &self,
-        req: tinymemory_api::FetchRequest,
-    ) -> tinymemory_api::Result<tinymemory_api::FetchPage> {
-        self.inner.fetch(req).await
-    }
-    async fn store(
-        &self,
-        item: tinymemory_api::StoreItem,
-    ) -> tinymemory_api::Result<tinymemory_api::StoreReceipt> {
-        if let Some(error) = (self.refuse)(&item) {
-            return Err(error);
-        }
-        self.inner.store(item).await
-    }
-    async fn forget(
-        &self,
-        target: tinymemory_api::ForgetTarget,
-    ) -> tinymemory_api::Result<tinymemory_api::ForgetReport> {
-        self.inner.forget(target).await
-    }
-    async fn list(
-        &self,
-        req: tinymemory_api::ListRequest,
-    ) -> tinymemory_api::Result<tinymemory_api::ListPage> {
-        self.inner.list(req).await
-    }
-}
-
-/// Binds a [`FailingEngine`] and returns the engine behind it.
-fn bind_failing(
-    config: &Config,
-    refuse: fn(&tinymemory_api::StoreItem) -> Option<tinymemory_api::Error>,
-) -> Arc<tinymemory_api::conformance::ReferenceEngine> {
-    let inner = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
-    crate::memory::engine::install_test_engine(
-        &config.workspace_dir,
-        Arc::new(FailingEngine {
-            inner: inner.clone(),
-            refuse,
-        }),
-    );
-    inner
-}
-
-fn out_of_credits(_: &tinymemory_api::StoreItem) -> Option<tinymemory_api::Error> {
-    Some(tinymemory_api::Error::Engine(
-        "[USER_INSUFFICIENT_CREDITS] insufficient credits (HTTP 402)".into(),
-    ))
-}
-
-#[tokio::test]
-async fn exhausted_credits_stop_the_import_instead_of_skipping_everything() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    let engine = bind_failing(&config, out_of_credits);
-
-    start(&config, true).await.unwrap();
-    let state = wait_until_settled(&config).await;
-    assert_eq!(state.phase, ImportPhase::Error, "{state:?}");
-    assert_eq!(state.imported, 0);
-    assert!(
-        state
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("not enough credits"),
-        "{state:?}"
-    );
-    assert!(stored(&engine, MetaFilter::default()).await.is_empty());
+    let done = wait_for_host_import(&config).await;
+    assert_eq!(done.imported, 1);
+    assert_eq!(done.failed, 0);
+    let file = StateKvCheckpointStore::new(&config.workspace_dir).load();
     assert_eq!(
-        read_file(&config.workspace_dir).checkpoint,
-        Checkpoint::default(),
-        "the checkpoint does not move past items that were never stored"
+        file.checkpoint.documents.as_deref(),
+        Some("host-import-doc")
     );
+    assert!(file.failed.is_empty());
+    assert_reference_contains(&engine, "real legacy body").await;
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
-async fn an_unreachable_engine_stops_the_import_and_a_retry_resumes_it() {
+async fn an_interrupted_import_resumes_through_the_host_adapter() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    bind_failing(&config, |_| {
-        Some(tinymemory_api::Error::Unavailable(
-            "connection refused".into(),
-        ))
-    });
-
-    start(&config, true).await.unwrap();
-    let state = wait_until_settled(&config).await;
-    assert_eq!(state.phase, ImportPhase::Error, "{state:?}");
-    assert_eq!(state.imported, 0);
-
-    // The engine is back: starting again imports everything, nothing skipped.
     let engine = bind_reference(&config);
-    start(&config, true).await.unwrap();
-    let done = wait_until_settled(&config).await;
-    assert_eq!(done.phase, ImportPhase::Done, "{done:?}");
-    assert_eq!(stored(&engine, MetaFilter::default()).await.len(), 5);
-}
+    legacy_document(
+        &config,
+        "host-resume-doc",
+        "Host resume",
+        "resumed legacy body",
+    );
+    let mut interrupted = ImportFile::default();
+    interrupted.state.phase = ImportPhase::Running;
+    interrupted.state.total = 1;
+    StateKvCheckpointStore::new(&config.workspace_dir)
+        .save(&interrupted)
+        .unwrap();
 
-#[tokio::test]
-async fn an_item_the_engine_refuses_is_skipped_and_the_rest_imported() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    // Refuses the "Ideas" document (d2) as malformed, stores the rest.
-    let engine = bind_failing(&config, |item| {
-        matches!(item, tinymemory_api::StoreItem::Document { title: Some(title), .. } if title == "Ideas")
-            .then(|| tinymemory_api::Error::InvalidRequest("item too large".into()))
-    });
-
-    start(&config, true).await.unwrap();
-    let done = wait_until_settled(&config).await;
-    assert_eq!(done.phase, ImportPhase::Done, "{done:?}");
-    assert_eq!(done.imported, 4);
-    let items = stored(&engine, MetaFilter::default()).await;
-    assert_eq!(items.len(), 4);
-    assert!(!items.iter().any(|item| item.text.contains("oolong")));
-}
-
-#[tokio::test]
-async fn an_import_the_app_quit_during_resumes_on_its_own() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    let engine = bind_reference(&config);
-    // The app quit while the import was running, after d1 was stored.
-    write_file(
-        &config.workspace_dir,
-        &ImportFile {
-            state: ImportState {
-                phase: ImportPhase::Running,
-                imported: 1,
-                total: 5,
-                error: None,
-            },
-            checkpoint: Checkpoint {
-                documents: Some("d1".into()),
-                ..Checkpoint::default()
-            },
-        },
+    assert!(
+        resume_interrupted_with(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            Arc::new(|| false),
+            Arc::new(|_: &Config| true),
+        )
+        .await
     );
 
-    assert!(resume_interrupted(&config).await);
-    let done = wait_until_settled(&config).await;
-    assert_eq!(done.phase, ImportPhase::Done, "{done:?}");
-    assert_eq!(done.imported, 5);
-    assert_eq!(stored(&engine, MetaFilter::default()).await.len(), 4);
+    let done = wait_for_host_import(&config).await;
+    assert_eq!(done.imported, 1);
+    assert_eq!(done.failed, 0);
+    let file = StateKvCheckpointStore::new(&config.workspace_dir).load();
+    assert_eq!(
+        file.checkpoint.documents.as_deref(),
+        Some("host-resume-doc")
+    );
+    assert_reference_contains(&engine, "resumed legacy body").await;
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
-async fn a_stopped_or_finished_import_is_not_resumed_on_its_own() {
+async fn retry_failed_reimports_a_real_legacy_row_through_the_host_adapter() {
+    use tinymemory_integrations::import::FailedItem;
+
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
     let engine = bind_reference(&config);
-    assert!(!resume_interrupted(&config).await, "never started");
+    legacy_document(
+        &config,
+        "host-retry-doc",
+        "Host retry",
+        "retried legacy body",
+    );
+    let mut retry_state = ImportFile::default();
+    retry_state.state.phase = ImportPhase::Done;
+    retry_state.state.total = 1;
+    retry_state.state.failed = 1;
+    retry_state.failed.push(FailedItem {
+        id: "memory_docs:host-retry-doc".to_string(),
+        reason: "the prior engine refused this row".to_string(),
+    });
+    StateKvCheckpointStore::new(&config.workspace_dir)
+        .save(&retry_state)
+        .unwrap();
 
-    for phase in [ImportPhase::Error, ImportPhase::Done] {
-        write_file(
-            &config.workspace_dir,
-            &ImportFile {
-                state: ImportState {
-                    phase,
-                    imported: 0,
-                    total: 5,
-                    error: None,
-                },
-                checkpoint: Checkpoint::default(),
-            },
+    let started = retry_failed(&crate::core::runtime::DispatchCtx::ambient(), &config)
+        .await
+        .unwrap();
+    assert_eq!(started.phase, ImportPhase::Running);
+    let done = wait_for_host_import(&config).await;
+    assert_eq!(done.failed, 0);
+    assert_eq!(done.imported, 1);
+    let file = StateKvCheckpointStore::new(&config.workspace_dir).load();
+    assert!(file.failed.is_empty());
+    assert!(!file.retrying);
+    assert_reference_contains(&engine, "retried legacy body").await;
+}
+
+#[cfg(feature = "legacy-import")]
+#[tokio::test]
+async fn an_interrupted_retry_resumes_its_real_legacy_row() {
+    use tinymemory_integrations::import::FailedItem;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = bind_reference(&config);
+    legacy_document(
+        &config,
+        "host-retry-resume-doc",
+        "Host retry resume",
+        "resumed retry body",
+    );
+    let mut interrupted = ImportFile::default();
+    interrupted.state.phase = ImportPhase::Running;
+    interrupted.state.total = 1;
+    interrupted.state.failed = 1;
+    interrupted.retrying = true;
+    interrupted.failed.push(FailedItem {
+        id: "memory_docs:host-retry-resume-doc".to_string(),
+        reason: "the prior retry was interrupted".to_string(),
+    });
+    StateKvCheckpointStore::new(&config.workspace_dir)
+        .save(&interrupted)
+        .unwrap();
+
+    assert!(
+        resume_interrupted_with(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            Arc::new(|| false),
+            Arc::new(|_: &Config| true),
+        )
+        .await
+    );
+
+    let done = wait_for_host_import(&config).await;
+    assert_eq!(done.failed, 0);
+    assert_eq!(done.imported, 1);
+    let file = StateKvCheckpointStore::new(&config.workspace_dir).load();
+    assert!(file.failed.is_empty());
+    assert!(!file.retrying);
+    assert_reference_contains(&engine, "resumed retry body").await;
+}
+
+#[cfg(feature = "legacy-import")]
+#[tokio::test]
+async fn peer_slot_contention_preserves_interrupted_import_for_later_resume() {
+    #[derive(Clone, Copy)]
+    enum Peer {
+        Migration,
+        Backfill,
+    }
+
+    for peer in [Peer::Migration, Peer::Backfill] {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_in(&tmp);
+        let engine = bind_reference(&config);
+        legacy_document(
+            &config,
+            "resume-after-peer-slot",
+            "Resume after peer slot",
+            "legacy body resumed after peer slot",
         );
-        assert!(!resume_interrupted(&config).await, "{phase:?}");
-    }
-    assert!(stored(&engine, MetaFilter::default()).await.is_empty());
-}
-
-/// A persisted `Running` import with no live run: what the app leaves behind
-/// when it quits mid-import after storing d1.
-fn quit_mid_import(config: &Config) {
-    write_file(
-        &config.workspace_dir,
-        &ImportFile {
-            state: ImportState {
-                phase: ImportPhase::Running,
-                imported: 1,
-                total: 5,
-                error: None,
-            },
-            checkpoint: Checkpoint {
-                documents: Some("d1".into()),
-                ..Checkpoint::default()
-            },
-        },
-    );
-}
-
-#[tokio::test]
-async fn the_background_job_resumes_an_interrupted_import() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    let engine = bind_reference(&config);
-    quit_mid_import(&config);
-
-    crate::memory::bus::run_system_job(&config, crate::memory::lifecycle::jobs::BACKGROUND_JOB)
-        .await;
-    let done = wait_until_settled(&config).await;
-    assert_eq!(done.phase, ImportPhase::Done, "{done:?}");
-    assert_eq!(stored(&engine, MetaFilter::default()).await.len(), 4);
-}
-
-#[tokio::test]
-async fn nothing_resumes_while_background_work_is_paused() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    let engine = bind_reference(&config);
-    quit_mid_import(&config);
-
-    assert!(!resume_interrupted_with(&config, always(true)).await);
-    assert!(stored(&engine, MetaFilter::default()).await.is_empty());
-    assert_eq!(
-        read_file(&config.workspace_dir).state.phase,
-        ImportPhase::Running,
-        "left resumable for a later, unpaused tick"
-    );
-
-    assert!(resume_interrupted_with(&config, always(false)).await);
-    assert_eq!(wait_until_settled(&config).await.phase, ImportPhase::Done);
-}
-
-/// A pause check that always answers `paused`.
-fn always(paused: bool) -> PauseCheck {
-    Arc::new(move || paused)
-}
-
-/// Waits until no import run is live for `config`'s workspace.
-async fn wait_until_no_live_run(config: &Config) {
-    for _ in 0..400 {
-        let live = RUNNING.lock().unwrap().contains(&config.workspace_dir);
-        if !live {
-            return;
+        let workspace = config.workspace_dir.clone();
+        let peer_guard = match peer {
+            Peer::Migration => crate::memory::run_slots::reserve(
+                &crate::memory::run_slots::MIGRATION,
+                &workspace,
+                &[
+                    &crate::memory::run_slots::IMPORT,
+                    &crate::memory::run_slots::BACKFILL,
+                ],
+            ),
+            Peer::Backfill => crate::memory::run_slots::reserve(
+                &crate::memory::run_slots::BACKFILL,
+                &workspace,
+                &[
+                    &crate::memory::run_slots::IMPORT,
+                    &crate::memory::run_slots::MIGRATION,
+                ],
+            ),
         }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        .expect("peer owns its real driver slot");
+        let mut interrupted = ImportFile::default();
+        interrupted.state.phase = ImportPhase::Running;
+        interrupted.state.total = 1;
+        let store = StateKvCheckpointStore::new(&workspace);
+        store.save(&interrupted).unwrap();
+
+        assert!(
+            !resume_interrupted_with(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                &config,
+                Arc::new(|| false),
+                Arc::new(|_: &Config| true),
+            )
+            .await,
+            "peer contention must defer this resume"
+        );
+        assert_eq!(
+            store.load(),
+            interrupted,
+            "peer contention must leave the resumable checkpoint unchanged"
+        );
+
+        drop(peer_guard);
+        assert!(
+            resume_interrupted_with(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                &config,
+                Arc::new(|| false),
+                Arc::new(|_: &Config| true),
+            )
+            .await,
+            "the import resumes once the peer slot is released"
+        );
+        let done = wait_for_host_import(&config).await;
+        assert_eq!(done.imported, 1);
+        assert_eq!(done.failed, 0);
+        let final_file = store.load();
+        assert_eq!(final_file.state.phase, ImportPhase::Done);
+        assert_eq!(
+            final_file.checkpoint.documents.as_deref(),
+            Some("resume-after-peer-slot")
+        );
+        assert_reference_contains(&engine, "legacy body resumed after peer slot").await;
     }
-    panic!("the import run never ended");
-}
-
-#[tokio::test]
-async fn a_pause_that_lands_after_the_check_stops_the_run_at_the_next_batch() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    let engine = bind_reference(&config);
-    quit_mid_import(&config);
-
-    // Not paused when the resume checks, paused by the time the run asks.
-    let asked = Arc::new(AtomicUsize::new(0));
-    let counter = asked.clone();
-    let paused: PauseCheck = Arc::new(move || counter.fetch_add(1, Ordering::SeqCst) > 0);
-
-    assert!(resume_interrupted_with(&config, paused).await);
-    wait_until_no_live_run(&config).await;
-    assert!(asked.load(Ordering::SeqCst) >= 2, "the run asked again");
-    assert!(
-        stored(&engine, MetaFilter::default()).await.is_empty(),
-        "nothing uploaded once paused"
-    );
-    let file = read_file(&config.workspace_dir);
-    assert_eq!(file.state.phase, ImportPhase::Running, "left resumable");
-    assert_eq!(file.checkpoint.documents.as_deref(), Some("d1"));
-
-    // Unpaused, the next tick finishes it from the checkpoint.
-    assert!(resume_interrupted_with(&config, always(false)).await);
-    assert_eq!(wait_until_settled(&config).await.phase, ImportPhase::Done);
-    assert_eq!(stored(&engine, MetaFilter::default()).await.len(), 4);
-}
-
-#[tokio::test]
-async fn an_automatic_resume_that_cannot_start_is_stopped_not_retried() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    legacy_workspace(&config.workspace_dir);
-    // No engine bound: memory is off, so `start` fails before any run.
-    quit_mid_import(&config);
-
-    assert!(!resume_interrupted_with(&config, always(false)).await);
-    let state = read_file(&config.workspace_dir).state;
-    assert_eq!(state.phase, ImportPhase::Error);
-    assert_eq!(state.imported, 1, "progress is kept");
-    assert!(
-        state.error.as_deref().unwrap().contains("could not resume"),
-        "{state:?}"
-    );
-    // The next tick does not try again; the user resumes it.
-    assert!(!resume_interrupted_with(&config, always(false)).await);
-    assert_eq!(
-        read_file(&config.workspace_dir)
-            .checkpoint
-            .documents
-            .as_deref(),
-        Some("d1"),
-        "the checkpoint read back from disk survives the failure"
-    );
-
-    // And the user's Resume continues from that checkpoint, not the start.
-    let engine = bind_reference(&config);
-    start(&config, true).await.unwrap();
-    let done = wait_until_settled(&config).await;
-    assert_eq!(done.phase, ImportPhase::Done, "{done:?}");
-    assert_eq!(done.imported, 5);
-    assert_eq!(
-        stored(&engine, MetaFilter::default()).await.len(),
-        4,
-        "d1 is not re-sent"
-    );
 }

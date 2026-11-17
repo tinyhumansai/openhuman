@@ -40,17 +40,63 @@ pub struct TokenUsage {
     /// See [`Self::run_id`]. Additive, optional, defaults to `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_run_id: Option<String>,
+    /// Who and what this call was for: thread, agent, provider, origin. Lets
+    /// reports group spend and cache hits by more than the model. Additive and
+    /// skipped when empty, so records written before it still load and old
+    /// consumers see no change.
+    #[serde(default, skip_serializing_if = "UsageScope::is_empty")]
+    pub scope: UsageScope,
     /// Timestamp of the request
     pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Attribution of one recorded model call (see [`TokenUsage::scope`]).
+///
+/// Every field is optional: each is filled from what the recording site knows
+/// (`super::scope::UsageScope::in_ctx`), and a record from an older build
+/// has none of them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageScope {
+    /// The conversation thread the call served.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    /// What started the turn: `web_chat`, `channel:<name>`, `cron`,
+    /// `background`, `workflow`, `cli`, `direct_chat`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// The agent definition that made the call (`orchestrator`, `planner`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// The sub-agent task, when a delegated child made the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_task_id: Option<String>,
+    /// The embedded agent (in SaaS mode, the user) the call ran for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_agent: Option<String>,
+    /// The inference provider that served it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+impl UsageScope {
+    /// Whether nothing is attributed.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 /// Source of a cost value persisted in [`TokenUsage`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CostSource {
+    /// Priced from the vendor catalog's published list rates.
     #[default]
     Estimated,
+    /// The provider reported what it billed.
     ProviderCharged,
+    /// No charge was reported and the model has no catalogued price; the
+    /// record's `cost_usd` is `0.0` and must not be read as free.
+    Unknown,
 }
 
 impl TokenUsage {
@@ -92,6 +138,7 @@ impl TokenUsage {
             cost_source: CostSource::Estimated,
             run_id: None,
             root_run_id: None,
+            scope: UsageScope::default(),
             timestamp: chrono::Utc::now(),
         }
     }
@@ -152,6 +199,11 @@ pub struct ModelStats {
     pub total_tokens: u64,
     /// Number of requests for this model
     pub request_count: usize,
+    /// Requests whose cost is not known (no reported charge, no catalogued
+    /// price). They add nothing to `cost_usd`, so when this equals
+    /// `request_count` the model's cost is unknown, not zero.
+    #[serde(default)]
+    pub unpriced_request_count: usize,
 }
 
 impl Default for CostSummary {

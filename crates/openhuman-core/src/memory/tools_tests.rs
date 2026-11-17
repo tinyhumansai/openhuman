@@ -1,9 +1,12 @@
 use super::*;
-use crate::memory::scope::MemoryIdentity;
+
+fn ambient() -> DispatchCtx {
+    DispatchCtx::ambient()
+}
 use crate::memory::test_fixtures::{bind_reference, config_in, stored};
-use std::collections::HashSet;
+use crate::memory::types::LearnParams;
 use std::path::{Path, PathBuf};
-use tinymemory_api::{ItemKind, MetaFilter, Namespace};
+use tinymemory_api::{ItemKind, MetaFilter, SourceKind};
 
 struct Ctx {
     root: PathBuf,
@@ -25,7 +28,10 @@ fn facts() -> CallFacts {
         thread_id: Some("thread-tool-1".into()),
         agent_id: Some("orchestrator".into()),
         tool_call_id: Some("call-9".into()),
-        ..CallFacts::of(&Config::default(), &MemoryIdentity::agent("orchestrator"))
+        ..CallFacts::of(
+            &Config::default(),
+            &tinymemory_tools::layout::identity::Identity::agent("orchestrator"),
+        )
     }
 }
 
@@ -33,12 +39,33 @@ fn facts() -> CallFacts {
 fn facts_of(agent_id: &str) -> CallFacts {
     CallFacts {
         thread_id: Some(format!("thread-{agent_id}")),
-        ..CallFacts::of(&Config::default(), &MemoryIdentity::agent(agent_id))
+        ..CallFacts::of(
+            &Config::default(),
+            &tinymemory_tools::layout::identity::Identity::agent(agent_id),
+        )
     }
 }
 
 fn text(result: &ToolResult) -> String {
     result.text()
+}
+
+fn expected_learn_meta(facts: &CallFacts) -> tinymemory_api::MemoryMeta {
+    tinymemory_api::MemoryMeta {
+        namespace: facts.namespace.clone(),
+        workspace: facts.workspace.clone(),
+        thread_id: facts.thread_id.clone(),
+        agent_id: facts.agent_id.clone(),
+        tool_call: Some(tinymemory_api::ToolCallRef {
+            name: MEMORY_TOOL_NAME.to_string(),
+            id: facts.tool_call_id.clone(),
+        }),
+        source: tinymemory_api::SourceRef {
+            kind: SourceKind::Agent,
+            id: None,
+        },
+        ..tinymemory_api::MemoryMeta::default()
+    }
 }
 
 #[test]
@@ -81,14 +108,15 @@ fn schema_and_permissions_follow_the_action() {
 #[tokio::test]
 async fn every_action_reports_memory_off_as_a_tool_error() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
+    let mut config = config_in(&tmp);
+    config.components.memory = false;
     for args in [
         json!({"action": "recall", "question": "q"}),
         json!({"action": "fetch", "query": "q"}),
         json!({"action": "learn", "text": "t"}),
         json!({"action": "forget", "ids": ["a"]}),
     ] {
-        let result = run_action(&config, &args, &facts()).await;
+        let result = run_action(&ambient(), &config, &args, &facts()).await;
         assert!(result.is_error, "{args}");
         assert!(text(&result).contains("MEMORY_OFF"), "{}", text(&result));
     }
@@ -100,17 +128,23 @@ async fn bad_arguments_and_unknown_actions_are_model_visible_errors() {
     let config = config_in(&tmp);
     bind_reference(&config);
 
-    let unknown = run_action(&config, &json!({"action": "explode"}), &facts()).await;
+    let unknown = run_action(&ambient(), &config, &json!({"action": "explode"}), &facts()).await;
     assert!(unknown.is_error);
-    assert!(text(&unknown).contains("unknown action `explode`"));
+    assert!(text(&unknown).contains("unknown action"));
+    assert!(text(&unknown).contains("explode"));
 
-    let missing = run_action(&config, &json!({}), &facts()).await;
+    let missing = run_action(&ambient(), &config, &json!({}), &facts()).await;
     assert!(missing.is_error);
+    assert!(text(&missing).contains("action is required"));
 
     for action in ["recall", "fetch", "learn", "forget"] {
-        let result = run_action(&config, &json!({ "action": action }), &facts()).await;
+        let result = run_action(&ambient(), &config, &json!({ "action": action }), &facts()).await;
         assert!(result.is_error, "{action}");
-        assert!(text(&result).contains("invalid arguments"), "{action}");
+        assert!(
+            text(&result).contains("INVALID_REQUEST"),
+            "{action}: {}",
+            text(&result)
+        );
     }
 }
 
@@ -128,7 +162,7 @@ async fn learn_stamps_what_the_host_knows_and_ignores_model_meta() {
         // The model must not be able to forge host-owned fields.
         "meta": {"thread_id": "forged", "agent_id": "forged"},
     });
-    let result = run_action(&config, &args, &facts()).await;
+    let result = run_action(&ambient(), &config, &args, &facts()).await;
     assert!(!result.is_error, "{}", text(&result));
     let id = serde_json::from_str::<Value>(&text(&result)).unwrap()["id"]
         .as_str()
@@ -166,6 +200,7 @@ async fn recall_fetch_and_forget_round_trip_and_recall_records_citations() {
     };
 
     let learned = run_action(
+        &ambient(),
         &config,
         &json!({"action": "learn", "text": "The user likes oolong tea"}),
         &facts,
@@ -177,20 +212,23 @@ async fn recall_fetch_and_forget_round_trip_and_recall_records_citations() {
         .to_string();
 
     let recalled = run_action(
+        &ambient(),
         &config,
         &json!({"action": "recall", "question": "oolong tea"}),
         &facts,
     )
     .await;
     assert!(!recalled.is_error, "{}", text(&recalled));
-    let cites = take_turn_citations("thread-citations");
-    assert!(cites.iter().any(|c| c.id == id), "{cites:?}");
+    let cites = crate::web_chat::citations::take_turn_citations(&ambient(), "thread-citations");
+    assert_eq!(cites.len(), 1, "{cites:?}");
+    assert_eq!(cites[0].id, id, "citation ids stay available to the host");
     assert!(
-        take_turn_citations("thread-citations").is_empty(),
+        crate::web_chat::citations::take_turn_citations(&ambient(), "thread-citations").is_empty(),
         "draining empties the thread's citations"
     );
 
     let fetched = run_action(
+        &ambient(),
         &config,
         &json!({"action": "fetch", "query": "oolong", "mode": "keyword", "limit": 5}),
         &facts,
@@ -198,14 +236,17 @@ async fn recall_fetch_and_forget_round_trip_and_recall_records_citations() {
     .await;
     assert!(!fetched.is_error, "{}", text(&fetched));
     assert_eq!(
-        serde_json::from_str::<Value>(&text(&fetched)).unwrap()["hits"]
-            .as_array()
-            .unwrap()
-            .len(),
+        serde_json::from_str::<Value>(&text(&fetched)).unwrap()["items"],
         1
     );
 
-    let forgotten = run_action(&config, &json!({"action": "forget", "ids": [id]}), &facts).await;
+    let forgotten = run_action(
+        &ambient(),
+        &config,
+        &json!({"action": "forget", "ids": [id]}),
+        &facts,
+    )
+    .await;
     assert!(!forgotten.is_error, "{}", text(&forgotten));
     assert!(engine.is_empty());
 }
@@ -220,12 +261,14 @@ async fn recall_without_a_thread_records_no_citations() {
         ..facts()
     };
     run_action(
+        &ambient(),
         &config,
         &json!({"action": "learn", "text": "fact one"}),
         &no_thread,
     )
     .await;
     let result = run_action(
+        &ambient(),
         &config,
         &json!({"action": "recall", "question": "fact one"}),
         &no_thread,
@@ -246,45 +289,23 @@ async fn fetch_with_an_undeclared_mode_is_unsupported() {
             api_key: Some("cdb-test-key".into()),
         },
     )
+    .await
     .unwrap();
     let result = run_action(
+        &ambient(),
         &config,
         &json!({"action": "fetch", "query": "x", "mode": "keyword"}),
         &facts(),
     )
     .await;
     assert!(result.is_error);
-    assert!(text(&result).contains("UNSUPPORTED"), "{}", text(&result));
-}
-
-#[test]
-fn turn_citations_are_capped_and_deduplicated() {
-    let citation = |n: usize| tinymemory_api::Citation {
-        id: tinymemory_api::ItemId(format!("cite-{n}")),
-        kind: ItemKind::Learning,
-        snippet: "s".repeat(1000),
-        score: Some(0.5),
-        meta: MemoryMeta::default(),
-    };
-    let thread = "thread-cap";
-    let many: Vec<_> = (0..MAX_TURN_CITATIONS + 10).map(citation).collect();
-    record_turn_citations(thread, &many);
-    record_turn_citations(thread, &many[..2]);
-    record_turn_citations(thread, &[]);
-    let drained = take_turn_citations(thread);
-    assert_eq!(drained.len(), MAX_TURN_CITATIONS);
-    assert_eq!(
-        drained
-            .iter()
-            .map(|c| c.id.clone())
-            .collect::<HashSet<_>>()
-            .len(),
-        MAX_TURN_CITATIONS
-    );
     assert!(
-        drained[0].snippet.chars().count() <= crate::memory::types::TURN_CITATION_SNIPPET_CHARS
+        text(&result).contains("INVALID_REQUEST"),
+        "{}",
+        text(&result)
     );
-    assert_eq!(drained[0].key, "learning");
+    assert!(text(&result).contains("mode"), "{}", text(&result));
+    assert!(text(&result).contains("hybrid"), "{}", text(&result));
 }
 
 #[tokio::test]
@@ -292,7 +313,7 @@ async fn execute_gathers_facts_from_the_run_context() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
     let engine = bind_reference(&config);
-    let tool = MemoryTool::new(Arc::new(config));
+    let tool = MemoryTool::new(Arc::new(config.clone()));
     let ctx = Ctx {
         root: tmp.path().join("isolated"),
         thread: "thread-ctx",
@@ -306,6 +327,7 @@ async fn execute_gathers_facts_from_the_run_context() {
         .await
         .unwrap();
     assert!(!result.is_error, "{}", text(&result));
+    super::super::tool_writes::drain(&config).await;
     let items = stored(&engine, MetaFilter::default()).await;
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].meta.thread_id.as_deref(), Some("thread-ctx"));
@@ -320,6 +342,7 @@ async fn execute_gathers_facts_from_the_run_context() {
         .await
         .unwrap();
     assert!(!plain.is_error);
+    super::super::tool_writes::drain(&config).await;
 }
 
 #[test]
@@ -332,7 +355,7 @@ fn gather_falls_back_to_the_action_dir() {
     assert_eq!(gathered.workspace.as_deref(), Some("/the/action/dir"));
     assert!(gathered.thread_id.is_none());
     assert!(gathered.tool_call_id.is_none());
-    let meta = gathered.learn_meta();
+    let meta = expected_learn_meta(&gathered);
     assert!(
         meta.namespace.is_root(),
         "no agent in scope: the default root"
@@ -348,14 +371,18 @@ async fn learnings_are_shared_under_a_root_and_a_team_root_is_kept_apart() {
     let engine = bind_reference(&config);
     let member = || CallFacts {
         thread_id: Some("thread-team".into()),
-        ..CallFacts::of(&config, &MemoryIdentity::team_member("acme", "writer"))
+        ..CallFacts::of(
+            &config,
+            &tinymemory_tools::layout::identity::Identity::team_member("acme", "writer"),
+        )
     };
     let learn = |facts: CallFacts, text: &'static str| {
         let config = config.clone();
         async move {
             let result = run_action(
+                &ambient(),
                 &config,
-                &json!({"action": "learn", "text": text, "share": true}),
+                &json!({"action": "learn", "text": text}),
                 &facts,
             )
             .await;
@@ -388,8 +415,9 @@ async fn learnings_are_shared_under_a_root_and_a_team_root_is_kept_apart() {
         let config = config.clone();
         async move {
             run_action(
+                &ambient(),
                 &config,
-                &json!({"action": "fetch", "query": "the", "limit": 50, "filter": {"reach": null}}),
+                &json!({"action": "fetch", "query": "the", "limit": 50}),
                 &facts,
             )
             .await
@@ -411,146 +439,49 @@ async fn learnings_are_shared_under_a_root_and_a_team_root_is_kept_apart() {
         .find(|hit| hit.text.contains("deploy day"))
         .unwrap();
     let forgot = run_action(
+        &ambient(),
         &config,
         &json!({"action": "forget", "ids": [main_item.id.0.clone()]}),
         &member(),
     )
     .await;
-    assert!(
-        forgot.text().contains("\"forgotten\":0"),
-        "{}",
-        forgot.text()
+    assert!(!forgot.is_error, "{}", forgot.text());
+    let ack: Value = serde_json::from_str(&forgot.text()).unwrap();
+    assert_eq!(ack["queued"], 1);
+    assert_eq!(ack["status"], "queued; not yet removed from memory");
+    let after_forget = stored(&engine, MetaFilter::default()).await;
+    assert_eq!(
+        after_forget.len(),
+        3,
+        "all identity-scoped learnings remain"
     );
-    assert!(stored(&engine, MetaFilter::default())
-        .await
+    assert!(after_forget.iter().any(|hit| hit.id == main_item.id));
+    assert!(after_forget.iter().any(|hit| hit.text.contains("arxiv")));
+    assert!(after_forget
         .iter()
-        .all(|hit| hit.meta.namespace != Namespace::agent("nobody")));
+        .any(|hit| hit.text.contains("british english")));
 }
 
-/// The reference engine, recording how far each single store waited.
-struct WaitRecorder {
-    inner: tinymemory_api::conformance::ReferenceEngine,
-    waits: std::sync::Mutex<Vec<tinymemory_api::WaitFor>>,
-}
-
-#[async_trait]
-impl tinymemory_api::MemoryEngine for WaitRecorder {
-    fn descriptor(&self) -> &tinymemory_api::EngineDescriptor {
-        self.inner.descriptor()
-    }
-    async fn health(&self) -> tinymemory_api::EngineHealth {
-        self.inner.health().await
-    }
-    async fn recall(
-        &self,
-        req: tinymemory_api::RecallRequest,
-    ) -> tinymemory_api::Result<tinymemory_api::RecallAnswer> {
-        self.inner.recall(req).await
-    }
-    async fn fetch(
-        &self,
-        req: tinymemory_api::FetchRequest,
-    ) -> tinymemory_api::Result<tinymemory_api::FetchPage> {
-        self.inner.fetch(req).await
-    }
-    async fn store(
-        &self,
-        item: tinymemory_api::StoreItem,
-    ) -> tinymemory_api::Result<tinymemory_api::StoreReceipt> {
-        self.store_with(item, tinymemory_api::WriteOptions::visible())
-            .await
-    }
-    async fn store_with(
-        &self,
-        item: tinymemory_api::StoreItem,
-        options: tinymemory_api::WriteOptions,
-    ) -> tinymemory_api::Result<tinymemory_api::StoreReceipt> {
-        self.waits.lock().unwrap().push(options.wait);
-        self.inner.store(item).await
-    }
-    async fn forget(
-        &self,
-        target: tinymemory_api::ForgetTarget,
-    ) -> tinymemory_api::Result<tinymemory_api::ForgetReport> {
-        self.inner.forget(target).await
-    }
-    async fn list(
-        &self,
-        req: tinymemory_api::ListRequest,
-    ) -> tinymemory_api::Result<tinymemory_api::ListPage> {
-        self.inner.list(req).await
-    }
-    async fn consolidate(
-        &self,
-        req: tinymemory_api::ConsolidateRequest,
-    ) -> tinymemory_api::Result<tinymemory_api::ConsolidateReceipt> {
-        self.inner.consolidate(req).await
-    }
-}
-
-#[tokio::test]
-async fn learn_returns_on_accept_and_says_recall_may_lag() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bound_dispatch_can_write_memory_without_nesting_runtimes() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
-    let engine = Arc::new(WaitRecorder {
-        inner: tinymemory_api::conformance::ReferenceEngine::new(),
-        waits: std::sync::Mutex::new(Vec::new()),
-    });
-    crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
+    bind_reference(&config);
+    let dispatch = DispatchCtx::new(crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config.clone(),
+    ));
 
-    let learned = run_action(
+    let result = run_action(
+        &dispatch,
         &config,
-        &json!({"action": "learn", "text": "The user drinks oolong"}),
+        &json!({"action":"learn","text":"The user likes oolong tea"}),
         &facts(),
     )
     .await;
 
-    assert!(!learned.is_error, "{}", text(&learned));
-    // A turn must never wait on the engine indexing a learning.
-    assert_eq!(
-        *engine.waits.lock().unwrap(),
-        vec![tinymemory_api::WaitFor::Accepted]
-    );
-    let view = serde_json::from_str::<Value>(&text(&learned)).unwrap();
-    assert!(!view["id"].as_str().unwrap().is_empty(), "{view}");
-    assert_eq!(view["status"], LEARN_STATUS);
-
-    // The RPC path still reads its own write.
-    crate::memory::ops::learn(
-        &config,
-        LearnParams {
-            text: "The user drinks puerh".into(),
-            kind: None,
-            confidence: None,
-            meta: None,
-        },
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        engine.waits.lock().unwrap().last(),
-        Some(&tinymemory_api::WaitFor::Visible)
-    );
+    assert!(!result.is_error, "{}", text(&result));
 }
 
-#[tokio::test]
-async fn a_failed_learn_is_reported_to_the_model() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    crate::memory::test_fixtures::RefusingEngine::out_of_credits().bind(&config);
-
-    let learned = run_action(
-        &config,
-        &json!({"action": "learn", "text": "The user drinks oolong"}),
-        &facts(),
-    )
-    .await;
-
-    assert!(learned.is_error, "{}", text(&learned));
-    assert!(
-        text(&learned).contains("INSUFFICIENT_CREDITS"),
-        "{}",
-        text(&learned)
-    );
-}
+#[path = "tools_deferred_tests.rs"]
+mod deferred_tests;

@@ -9,6 +9,7 @@ import fr from '../fr';
 import hi from '../hi';
 import id from '../id';
 import itIT from '../it';
+import ja from '../ja';
 import ko from '../ko';
 import pl from '../pl';
 import pt from '../pt';
@@ -25,6 +26,7 @@ const LOCALES: Record<string, Record<string, string>> = {
   hi,
   id,
   it: itIT,
+  ja,
   ko,
   pl,
   pt,

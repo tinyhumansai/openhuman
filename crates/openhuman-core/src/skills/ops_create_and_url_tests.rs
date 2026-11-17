@@ -344,34 +344,36 @@ async fn install_workflow_from_url_is_idempotent_when_skill_already_exists() {
         params.clone(),
         Some(home.path()),
         true,
+        crate::skills::ops_install::ScanAcknowledgement::Absent,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .installed()
+    .expect("a clean document installs");
     assert_eq!(first.new_skills, vec!["apple-notes"]);
 
-    let second =
-        install_workflow_from_url_with_home(workspace.path(), params, Some(home.path()), true)
-            .await
-            .unwrap();
+    let second = install_workflow_from_url_with_home(
+        workspace.path(),
+        params,
+        Some(home.path()),
+        true,
+        crate::skills::ops_install::ScanAcknowledgement::Absent,
+    )
+    .await
+    .unwrap()
+    .installed()
+    .expect("a repeat install succeeds");
     assert!(second.new_skills.is_empty(), "{second:?}");
     assert!(second.stdout.contains("already installed"), "{second:?}");
 }
 
 #[test]
 fn install_fetch_status_reporting_suppresses_client_errors_only() {
-    assert!(!should_report_install_fetch_status(reqwest::StatusCode::OK));
-    assert!(!should_report_install_fetch_status(
-        reqwest::StatusCode::NOT_FOUND
-    ));
-    assert!(!should_report_install_fetch_status(
-        reqwest::StatusCode::GONE
-    ));
-    assert!(should_report_install_fetch_status(
-        reqwest::StatusCode::INTERNAL_SERVER_ERROR
-    ));
-    assert!(should_report_install_fetch_status(
-        reqwest::StatusCode::BAD_GATEWAY
-    ));
+    assert!(!should_report_install_fetch_status(200));
+    assert!(!should_report_install_fetch_status(404));
+    assert!(!should_report_install_fetch_status(410));
+    assert!(should_report_install_fetch_status(500));
+    assert!(should_report_install_fetch_status(502));
 }
 
 /// Happy path: install a SKILL.md under a synthetic user home, verify

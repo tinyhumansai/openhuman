@@ -193,6 +193,7 @@ export default function WorkflowRunsPage() {
   return (
     <div className="h-full p-4" data-testid="workflow-runs-page">
       <SettingsTabbedPage
+        fullWidth
         title={t('flows.allRuns.title')}
         description={t('flows.allRuns.description')}
         scrollable={false}>

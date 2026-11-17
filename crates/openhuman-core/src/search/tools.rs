@@ -4,14 +4,18 @@
 //! computed synchronously from config so a turn's tool list is stable and
 //! needs no module round-trip. Each call re-reads the live config and goes
 //! through `modules::search::execute_tool`, so a provider or login change is
-//! honoured on the next call without rebuilding the session.
+//! honoured on the next call without rebuilding the session — unless the
+//! agent's config carries host-pinned search keys, which make it the config
+//! the call runs under.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tinysearch_bus::errors::Category;
 use tinysearch_bus::{errors, ExecuteToolRequest, ToolSpec};
 use tinytools::{Tool, ToolCallOptions, ToolCategory, ToolExposure, ToolResult};
 
@@ -91,20 +95,20 @@ impl TinySearchTool {
     /// draws from, and every provider's resolved reachability. Two calls agree
     /// only while nothing a user could change — a key, a route, a provider
     /// selection, a login — has moved.
-    pub(crate) fn provider_signature(&self, config: &Config) -> u64 {
+    pub(crate) async fn provider_signature(&self, config: &Config) -> u64 {
         let mut hasher = DefaultHasher::new();
         if let Some(role) = tinysearch_bus::role_for_tool(&self.spec.name) {
             for provider in super::providers::role_order(config, role) {
                 provider.hash(&mut hasher);
             }
         }
-        for provider in super::providers::resolve(config) {
+        for provider in super::providers::resolve(config).await {
             provider.id.hash(&mut hasher);
             provider.enabled.hash(&mut hasher);
             provider.usable.hash(&mut hasher);
             provider.key_configured.hash(&mut hasher);
             provider.managed_available.hash(&mut hasher);
-            matches!(provider.route, crate::config::SearchRoute::Managed).hash(&mut hasher);
+            matches!(provider.route, crate::config::ProviderRoute::Backend).hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -113,10 +117,11 @@ impl TinySearchTool {
         &self.spec
     }
 
-    async fn live_config(&self) -> anyhow::Result<Config> {
+    async fn live_config(&self, ctx: &DispatchCtx) -> anyhow::Result<Config> {
         match &self.config {
             Some(config) => Ok(config.as_ref().clone()),
-            None => crate::config::rpc::load_config_with_timeout()
+            None => ctx
+                .load_config()
                 .await
                 .map_err(|error| anyhow::anyhow!(error)),
         }
@@ -127,41 +132,79 @@ impl TinySearchTool {
 /// classified failures with `tinysearch.<code>:`; the detail after the prefix
 /// may echo the query, so it is not logged.
 pub fn user_facing_error(error: &str) -> String {
-    match error_code(error) {
-        Some(code) if code == errors::INSUFFICIENT_BALANCE => {
+    let code = errors::code_of(error);
+    match errors::classify(error) {
+        Category::InsufficientBalance => {
             "Web search is unavailable: the TinyHumans balance is too low for managed search. \
              Top up the balance, or add your own provider key under Connections → Search."
                 .to_string()
         }
-        Some(code) if code == errors::RATE_LIMITED => {
+        Category::RateLimited => {
             "Web search is rate limited right now. Wait a moment and try again.".to_string()
         }
-        Some(code) if code == errors::UNAVAILABLE => SEARCH_EXHAUSTED_MESSAGE.to_string(),
-        Some(code) if code == errors::INVALID_ARGUMENTS => {
-            let marker = format!("{}{code}: ", errors::PREFIX);
-            let detail = error
-                .split_once(marker.as_str())
-                .map(|(_, detail)| detail)
-                .unwrap_or(error);
-            format!("The search request was rejected: {detail}")
+        Category::Exhausted => SEARCH_EXHAUSTED_MESSAGE.to_string(),
+        Category::Unauthorized if code == Some(errors::BACKEND_UNAUTHORIZED) => {
+            backend_unauthorized_message(false)
         }
-        _ => format!("Web search failed: {error}"),
+        Category::Unauthorized => {
+            // The detail names the provider and its HTTP status; the module
+            // never puts the key or the query in it.
+            format!(
+                "Web search is unavailable: {}. Update the key under Connections → Search, or \
+                 remove it to use managed search.",
+                code_detail(error, code.unwrap_or_default())
+            )
+        }
+        Category::InvalidArguments => {
+            format!(
+                "The search request was rejected: {}",
+                code_detail(error, code.unwrap_or_default())
+            )
+        }
+        Category::Unclassified => format!("Web search failed: {error}"),
     }
 }
 
-/// The classified error code in a module error message, if any.
-pub fn error_code(error: &str) -> Option<&'static str> {
-    errors::code_of(error)
+/// The module's message after its `tinysearch.<code>: ` prefix.
+fn code_detail<'a>(error: &'a str, code: &str) -> &'a str {
+    let marker = format!("{}{code}: ", errors::PREFIX);
+    error
+        .split_once(marker.as_str())
+        .map(|(_, detail)| detail)
+        .unwrap_or(error)
 }
 
-/// Whether this failure means no provider can answer for the rest of the
-/// session, rather than something a later call could get past.
+/// What the model is told when the managed backend rejects the credential.
+pub(crate) fn backend_unauthorized_message(api_key: bool) -> String {
+    if api_key {
+        "Web search is unavailable: the TinyHumans backend rejected the configured API key. \
+         Check the key, or add your own provider key under Connections → Search."
+            .to_string()
+    } else {
+        "Web search is unavailable: the OpenHuman sign-in has expired. Sign in again to \
+         continue searching."
+            .to_string()
+    }
+}
+
+/// Recover from the managed backend rejecting the TinyHumans credential.
 ///
-/// Only the "every provider is unavailable" verdict qualifies. A rate limit
-/// clears on its own, and a low balance or a rejected argument has its own
-/// message telling the caller what to change, so neither latches.
-pub(crate) fn exhausts_providers(error: &str) -> bool {
-    error_code(error) == Some(errors::UNAVAILABLE)
+/// A rejected session is dead for every backend call, not just search, so
+/// publish `SessionExpired`: the credentials subscriber clears the token and
+/// the UI asks the user to sign in, the same recovery a backend 401 on
+/// inference or integrations drives. Before this, a user on their own
+/// inference key never saw that prompt and search kept failing on the stale
+/// token. A rejected API key has no session to expire, so it never signs the
+/// user out (`API_KEY_REJECTED` semantics).
+fn on_backend_unauthorized(tool: &str, api_key: bool, credential_fingerprint: Option<String>) {
+    if api_key || crate::platform::llm_gate::is_signed_out() {
+        return;
+    }
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
+        source: format!("search.{tool}"),
+        reason: "managed search backend rejected the session (401)".to_string(),
+        credential_fingerprint,
+    });
 }
 
 #[async_trait]
@@ -204,10 +247,20 @@ impl Tool for TinySearchTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        let config = self.live_config().await?;
+        self.execute_with_context(args, options, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
+        let config = self.live_config(&ctx).await?;
         // Re-read per call, so a key added or a provider switched mid-session
         // clears an earlier refusal instead of outliving it.
-        let signature = self.provider_signature(&config);
+        let signature = self.provider_signature(&config).await;
         if self.is_exhausted_for(signature) {
             tracing::debug!(
                 tool = %self.spec.name,
@@ -216,8 +269,10 @@ impl Tool for TinySearchTool {
             return Ok(ToolResult::failed(SEARCH_EXHAUSTED_MESSAGE.to_string()));
         }
         let subject = super::render::subject(&args);
+        // `limit` is the module's alias for `max_results`.
         let max_results = args
             .get("max_results")
+            .or_else(|| args.get("limit"))
             .and_then(Value::as_u64)
             .map(|n| n as usize)
             .unwrap_or(config.search.max_results)
@@ -231,10 +286,20 @@ impl Tool for TinySearchTool {
             name: self.spec.name.clone(),
             arguments: args,
         };
-        if let Some(message) = local_only_search_block(&request.name) {
+        if let Some(message) = local_only_search_block(&request.name).await {
             return Ok(ToolResult::error(message));
         }
-        match crate::modules::search::execute_tool(&config, request).await {
+        let api_key = crate::credentials::api_key::has_api_key(&config).await;
+        let request_credential_fingerprint = if api_key {
+            None
+        } else {
+            crate::credentials::session_state::get_session_token(&config)
+                .await
+                .ok()
+                .flatten()
+                .map(|token| crate::credentials::backend_credential::credential_fingerprint(&token))
+        };
+        match crate::modules::search::execute_tool(&ctx, &config, request).await {
             Ok(response) => {
                 tracing::debug!(
                     tool = %self.spec.name,
@@ -243,24 +308,38 @@ impl Tool for TinySearchTool {
                     results = response.results.len(),
                     "[search][tool] completed"
                 );
-                Ok(super::render::render(
+                Ok(super::render::render_with(
                     &response,
                     &subject,
                     max_results,
                     options.prefer_markdown,
+                    &super::render::render_options(config.search.compact_results),
                 ))
             }
             Err(error) => {
-                if exhausts_providers(&error) {
+                if errors::exhausts_providers(&error) {
                     self.mark_exhausted_for(signature);
+                }
+                if errors::code_of(&error) == Some(errors::BACKEND_UNAUTHORIZED) {
+                    on_backend_unauthorized(
+                        &self.spec.name,
+                        api_key,
+                        request_credential_fingerprint,
+                    );
+                    tracing::warn!(
+                        tool = %self.spec.name,
+                        api_key,
+                        "[search][tool] managed backend rejected the TinyHumans credential"
+                    );
+                    return Ok(ToolResult::error(backend_unauthorized_message(api_key)));
                 }
                 tracing::warn!(
                     tool = %self.spec.name,
-                    code = error_code(&error).unwrap_or("unclassified"),
+                    code = errors::code_of(&error).unwrap_or("unclassified"),
                     exhausted = self.is_exhausted_for(signature),
                     "[search][tool] failed"
                 );
-                Ok(if exhausts_providers(&error) {
+                Ok(if errors::exhausts_providers(&error) {
                     ToolResult::failed(user_facing_error(&error))
                 } else {
                     ToolResult::error(user_facing_error(&error))
@@ -270,20 +349,29 @@ impl Tool for TinySearchTool {
     }
 }
 
-pub(crate) fn local_only_search_block(tool_name: &str) -> Option<String> {
-    crate::security::egress::local_only_tool_block(&crate::security::egress::EgressDescriptor::new(
+fn search_egress(tool_name: &str) -> crate::security::egress::EgressDescriptor {
+    crate::security::egress::EgressDescriptor::new(
         "tinysearch",
         tool_name,
         true,
         crate::security::egress::EgressReason::ToolCall,
         vec![crate::security::egress::DataKind::ToolArguments],
-    ))
+    )
+}
+
+pub(crate) async fn local_only_search_block(tool_name: &str) -> Option<String> {
+    crate::security::egress::local_only_tool_block(&search_egress(tool_name)).await
+}
+
+/// [`local_only_search_block`] for a synchronous caller.
+pub(crate) fn local_only_search_block_blocking(tool_name: &str) -> Option<String> {
+    crate::security::egress::local_only_tool_block_blocking(&search_egress(tool_name))
 }
 
 /// Build the agent's search tools from config. Empty when search is off or no
 /// provider is usable.
-pub fn build_search_tools(config: &Config) -> Vec<Box<dyn Tool>> {
-    let specs = crate::modules::search::configured_tool_specs(config);
+pub async fn build_search_tools(config: &Config) -> Vec<Box<dyn Tool>> {
+    let specs = crate::modules::search::configured_tool_specs(config).await;
     tracing::debug!(
         tools = ?specs.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
         "[search][tool] registered search tools"

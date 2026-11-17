@@ -1,0 +1,19 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: OpenHumans Docs
+  structure:
+    - type: space
+      key: space-1
+      title: 🇺🇸/🇬🇧 English
+      path: en
+      default: true
+      content:
+        directory: ./en
+        language: en
+    - type: space
+      key: space-2
+      title: 🇨🇳 中国人
+      path: zh
+      content:
+        directory: ./zh
+        language: zh

@@ -130,7 +130,7 @@ start_cancel_watchdog() {
         exit 0
       fi
     done
-  ) &
+  ) >/dev/null &
   WATCHDOG_PID=$!
   echo "[ci-cancel-aware] cancellation watchdog polling every ${interval}s (run ${GITHUB_RUN_ID})" >&2
 }
@@ -140,7 +140,18 @@ cleanup() {
   trap - EXIT INT TERM HUP
 
   if [ -n "$WATCHDOG_PID" ]; then
+    # Kill the watchdog's in-flight `sleep`/`curl` too. Killing only the
+    # subshell orphans them, and the orphan keeps the inherited stderr open:
+    # a caller capturing this script's output then waits up to a full poll
+    # interval for EOF after the command has already exited. Kill the
+    # subshell first so it cannot report its child's death on stderr.
+    local watchdog_children=""
+    watchdog_children="$(pgrep -P "$WATCHDOG_PID" 2>/dev/null || true)"
     kill "$WATCHDOG_PID" 2>/dev/null || true
+    if [ -n "$watchdog_children" ]; then
+      # shellcheck disable=SC2086 # one PID per word
+      kill -TERM $watchdog_children 2>/dev/null || true
+    fi
   fi
 
   if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then

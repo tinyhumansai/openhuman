@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::tinyagents::middleware::approval::ApprovalSecurityMiddleware;
 
 // ── ApprovalSecurityMiddleware ──────────────────────────────────────────
 
@@ -68,10 +69,22 @@ async fn desktop_external_effect_inner() {
     assert!(middleware.has_external_effect("desktop_goal", &json!({})));
     assert!(
         !middleware
-            .requires_approval("desktop_goal", &json!({}))
+            .requires_approval(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                "desktop_goal",
+                &json!({})
+            )
             .await
     );
-    assert!(middleware.requires_approval("send_email", &json!({})).await);
+    assert!(
+        middleware
+            .requires_approval(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                "send_email",
+                &json!({})
+            )
+            .await
+    );
     match previous {
         Some(value) => unsafe { std::env::set_var("OPENHUMAN_WORKSPACE", value) },
         None => unsafe { std::env::remove_var("OPENHUMAN_WORKSPACE") },

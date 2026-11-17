@@ -1,6 +1,5 @@
 use super::*;
-use crate::agent::harness::spawn_depth_context::current_spawn_depth;
-use crate::agent::subagent_host::run_subagent;
+use tinyagents_harness::context::{current_run_depth, with_run_depth, RunDepth};
 
 #[test]
 fn filter_named_scope_keeps_only_named() {
@@ -73,36 +72,17 @@ fn subagent_mode_as_str_roundtrip() {
     assert_eq!(SubagentMode::Typed.as_str(), "typed");
 }
 
-#[test]
-fn append_subagent_role_contract_adds_role_and_brevity_rules() {
-    let rendered = append_subagent_role_contract("base prompt".to_string(), "researcher");
-    assert!(rendered.contains("## Sub-agent Role Contract"));
-    assert!(rendered.contains("You are a sub-agent working for a parent OpenHuman agent"));
-    assert!(rendered.contains("Keep your final response concise and synthesis-ready"));
-    assert!(rendered.contains("## Sub-agent Result Contract"));
-    assert!(rendered.contains("Evidence used"));
-    assert!(rendered.contains("Do not include facts in Answer that are not supported"));
-    assert!(rendered.contains("truncated, partial, or too large"));
-}
-
-#[test]
-fn append_subagent_role_contract_is_idempotent() {
-    let once = append_subagent_role_contract("base prompt".to_string(), "researcher");
-    let twice = append_subagent_role_contract(once.clone(), "researcher");
-    assert_eq!(once, twice, "contract suffix should only appear once");
-}
-
 #[tokio::test]
 async fn typed_mode_injects_current_date_and_time_into_user_message() {
     let provider = ScriptedProvider::new(vec![text_response("ok")]);
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
     let def = make_def_named_tools(&[]);
 
-    let _ = with_parent_context(parent, async {
-        run_subagent(
+    let _ = (async {
+        run_host_from_test_options(
             &def,
             "the actual task prompt",
-            SubagentRunOptions::default(),
+            with_parent(parent.clone(), SubagentRunOptions::default()),
         )
         .await
     })
@@ -128,11 +108,11 @@ async fn typed_mode_system_prompt_includes_subagent_role_contract() {
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
     let def = make_def_named_tools(&[]);
 
-    let _ = with_parent_context(parent, async {
-        run_subagent(
+    let _ = (async {
+        run_host_from_test_options(
             &def,
             "the actual task prompt",
-            SubagentRunOptions::default(),
+            with_parent(parent.clone(), SubagentRunOptions::default()),
         )
         .await
     })
@@ -145,13 +125,82 @@ async fn typed_mode_system_prompt_includes_subagent_role_contract() {
         .iter()
         .find(|m| m.role == "system")
         .expect("system message should be present");
-    assert!(system_msg.content.contains("## Sub-agent Role Contract"));
     assert!(system_msg
         .content
-        .contains("You are a sub-agent working for a parent OpenHuman agent"));
+        .contains("You are a subagent (depth 1) working for a parent agent, not the end user."));
     assert!(system_msg
         .content
-        .contains("Keep your final response concise and synthesis-ready"));
+        .contains("Your assignment: the actual task prompt"));
+    for heading in [
+        "Answer",
+        "Evidence used",
+        "Actions taken",
+        "Open uncertainties",
+        "Failed tool calls",
+        "Recommended next step",
+    ] {
+        assert!(
+            system_msg.content.contains(heading),
+            "missing {heading} heading"
+        );
+    }
+    assert!(system_msg
+        .content
+        .contains("Do not state unsupported facts; disclose truncated or partial tool results."));
+}
+
+#[tokio::test]
+async fn typed_mode_uses_inherited_workspace_for_project_instructions() {
+    use crate::core::runtime::{CoreContext, DomainSet};
+    use tinytools::WorkspaceDescriptor;
+
+    let scratch = tempfile::tempdir().expect("isolated prompt roots");
+    let action_dir = scratch.path().join("configured-action-root");
+    let workspace_dir = scratch.path().join("workspace");
+    let inherited_root = scratch.path().join("inherited-project");
+    for directory in [&action_dir, &workspace_dir, &inherited_root] {
+        std::fs::create_dir_all(directory).expect("create prompt root");
+    }
+    std::fs::write(
+        action_dir.join("AGENTS.md"),
+        "CONFIG_ACTION_ROOT_INSTRUCTIONS",
+    )
+    .expect("write configured action instructions");
+    std::fs::write(
+        inherited_root.join("AGENTS.md"),
+        "INHERITED_WORKSPACE_INSTRUCTIONS",
+    )
+    .expect("write inherited workspace instructions");
+
+    let mut config = crate::config::Config::default();
+    config.action_dir = action_dir;
+    let core = CoreContext::for_test_with_config(DomainSet::full(), config);
+    let provider = ScriptedProvider::new(vec![text_response("ok")]);
+    let mut parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    parent.workspace_dir = workspace_dir;
+    parent.workspace_descriptor = Some(WorkspaceDescriptor::new(inherited_root));
+    parent.agent_config.agents_md_enabled = true;
+    let options = with_parent(
+        parent,
+        SubagentRunOptions {
+            run_context: crate::agent::tinyagents::host::OpenHumanRunContext::new()
+                .with_core(Some(core)),
+            ..SubagentRunOptions::default()
+        },
+    );
+
+    run_host_from_test_options(&make_def_named_tools(&[]), "the requested task", options)
+        .await
+        .expect("subagent run should complete");
+
+    let captured = provider.captured.lock();
+    let system = captured[0]
+        .messages
+        .iter()
+        .find(|message| message.role == "system")
+        .expect("system prompt should be sent");
+    assert!(system.content.contains("INHERITED_WORKSPACE_INSTRUCTIONS"));
+    assert!(!system.content.contains("CONFIG_ACTION_ROOT_INSTRUCTIONS"));
 }
 
 #[tokio::test]
@@ -160,24 +209,27 @@ async fn typed_mode_returns_text_through_runner() {
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
     let def = make_def_named_tools(&[]);
 
-    let outcome = with_parent_context(parent, async {
-        run_subagent(
+    let outcome = (async {
+        run_host_from_test_options(
             &def,
             "summarise X",
-            SubagentRunOptions {
-                workspace_descriptor: None,
-                skill_filter_override: None,
-                context: None,
-                model_override: None,
-                task_id: Some("t1".into()),
-                thread_id: None,
-                run_context: Default::default(),
-                worker_thread_id: None,
-                initial_history: None,
-                checkpoint_dir: None,
-                worktree_action_dir: None,
-                run_queue: None,
-            },
+            with_parent(
+                parent.clone(),
+                SubagentRunOptions {
+                    workspace_descriptor: None,
+                    skill_filter_override: None,
+                    context: None,
+                    model_override: None,
+                    task_id: Some("t1".into()),
+                    thread_id: None,
+                    run_context: Default::default(),
+                    worker_thread_id: None,
+                    initial_history: None,
+                    checkpoint_dir: None,
+                    run_queue: None,
+                    message_run_queue: None,
+                },
+            ),
         )
         .await
     })
@@ -201,7 +253,7 @@ async fn capped_no_progress_subagent_returns_incomplete_status() {
     //
     // The legacy repeat-identical-call circuit-breaker `Halted` distinction
     // folded into this cap handling during the tinyagents migration (#4249) —
-    // see `run_subagent`'s status mapping. With `max_iterations = 2` the two
+    // see the host status mapping. With `max_iterations = 2` the two
     // scripted tool calls exhaust the budget; the checkpoint summary call then
     // draws the deterministic "reached my tool-call limit" digest.
     let provider = ScriptedProvider::new(vec![
@@ -212,14 +264,19 @@ async fn capped_no_progress_subagent_returns_incomplete_status() {
     let mut def = make_def_named_tools(&["file_read"]);
     def.max_iterations = 2;
 
-    let outcome = with_parent_context(parent, async {
-        run_subagent(&def, "read the file", SubagentRunOptions::default()).await
+    let outcome = (async {
+        run_host_from_test_options(
+            &def,
+            "read the file",
+            with_parent(parent.clone(), SubagentRunOptions::default()),
+        )
+        .await
     })
     .await
     .expect("a cap halt is still Ok (not Err)");
 
     match outcome.status {
-        SubagentRunStatus::Incomplete { reason } => assert!(
+        SubagentRunStatus::Incomplete { reason, .. } => assert!(
             reason.contains("limit") || reason.contains("tool-call"),
             "incomplete reason should describe the cap stop: {reason}"
         ),
@@ -237,7 +294,7 @@ async fn run_queue_steer_lands_in_subagent_history() {
     // End-to-end proof that flipping the subagent loop's run-queue arg from
     // `None` to `Some(queue)` wires steering all the way through: a message
     // pushed to the queue before the run is drained by the steering forwarder
-    // in the child's turn (`run_turn_via_tinyagents_shared`) and appears as a
+    // in the child's turn (`TurnSpec::run`) and appears as a
     // `[User steering message]:` user turn in the exact request sent to the
     // provider. This is the mechanism behind the `steer_subagent` tool.
     let provider = ScriptedProvider::new(vec![text_response("acknowledged")]);
@@ -248,28 +305,27 @@ async fn run_queue_steer_lands_in_subagent_history() {
     run_queue
         .push(
             QueueLane::Steer,
-            crate::agent::queued_turn::QueuedTurn {
-                id: "queued-test".into(),
-                text: "switch focus to memory safety".into(),
-                client_id: "steer_subagent".into(),
-                thread_id: "t-steer".into(),
-                queued_at_ms: 0,
-                model_override: None,
-                temperature: None,
-                locale: None,
-            },
+            crate::agent::queued_turn::steer_message(
+                "queued-test",
+                "switch focus to memory safety",
+                "steer_subagent",
+                "t-steer",
+            ),
         )
         .await;
 
-    let outcome = with_parent_context(parent, async {
-        run_subagent(
+    let outcome = (async {
+        run_host_from_test_options(
             &def,
             "investigate the bug",
-            SubagentRunOptions {
-                task_id: Some("t-steer".into()),
-                run_queue: Some(run_queue),
-                ..Default::default()
-            },
+            with_parent(
+                parent.clone(),
+                SubagentRunOptions {
+                    task_id: Some("t-steer".into()),
+                    run_queue: Some(run_queue),
+                    ..Default::default()
+                },
+            ),
         )
         .await
     })
@@ -303,11 +359,11 @@ async fn typed_mode_no_memory_context_in_user_message() {
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
     let def = make_def_named_tools(&[]);
 
-    let _ = with_parent_context(parent, async {
-        run_subagent(
+    let _ = (async {
+        run_host_from_test_options(
             &def,
             "the actual task prompt",
-            SubagentRunOptions::default(),
+            with_parent(parent.clone(), SubagentRunOptions::default()),
         )
         .await
     })
@@ -337,13 +393,13 @@ async fn typed_mode_includes_memory_context_when_definition_allows_it() {
         "[Memory context]\n- prior fact: branch X failed\n".into(),
     ));
     let mut def = make_def_named_tools(&[]);
-    def.omit_memory_context = false;
+    def.extensions.omit_memory_context = false;
 
-    let _ = with_parent_context(parent, async {
-        run_subagent(
+    let _ = (async {
+        run_host_from_test_options(
             &def,
             "the actual task prompt",
-            SubagentRunOptions::default(),
+            with_parent(parent.clone(), SubagentRunOptions::default()),
         )
         .await
     })
@@ -379,24 +435,27 @@ async fn typed_mode_filters_tools_by_skill_filter() {
     let mut def = make_def_named_tools(&[]);
     def.tools = ToolScope::Wildcard;
 
-    let _ = with_parent_context(parent, async {
-        run_subagent(
+    let _ = (async {
+        run_host_from_test_options(
             &def,
             "lookup",
-            SubagentRunOptions {
-                workspace_descriptor: None,
-                skill_filter_override: Some("notion".into()),
-                context: None,
-                model_override: None,
-                task_id: None,
-                thread_id: None,
-                run_context: Default::default(),
-                worker_thread_id: None,
-                initial_history: None,
-                checkpoint_dir: None,
-                worktree_action_dir: None,
-                run_queue: None,
-            },
+            with_parent(
+                parent.clone(),
+                SubagentRunOptions {
+                    workspace_descriptor: None,
+                    skill_filter_override: Some("notion".into()),
+                    context: None,
+                    model_override: None,
+                    task_id: None,
+                    thread_id: None,
+                    run_context: Default::default(),
+                    worker_thread_id: None,
+                    initial_history: None,
+                    checkpoint_dir: None,
+                    run_queue: None,
+                    message_run_queue: None,
+                },
+            ),
         )
         .await
     })
@@ -436,8 +495,13 @@ async fn typed_mode_executes_one_tool_then_returns() {
     // Allow the runner to call file_read.
     let def = make_def_named_tools(&["file_read"]);
 
-    let outcome = with_parent_context(parent, async {
-        run_subagent(&def, "read x", SubagentRunOptions::default()).await
+    let outcome = (async {
+        run_host_from_test_options(
+            &def,
+            "read x",
+            with_parent(parent.clone(), SubagentRunOptions::default()),
+        )
+        .await
     })
     .await
     .expect("runner should succeed");
@@ -472,8 +536,13 @@ async fn typed_mode_blocks_unallowed_tool_calls() {
     // Definition only allows file_read.
     let def = make_def_named_tools(&["file_read"]);
 
-    let outcome = with_parent_context(parent, async {
-        run_subagent(&def, "do thing", SubagentRunOptions::default()).await
+    let outcome = (async {
+        run_host_from_test_options(
+            &def,
+            "do thing",
+            with_parent(parent.clone(), SubagentRunOptions::default()),
+        )
+        .await
     })
     .await
     .expect("runner should succeed");
@@ -507,7 +576,7 @@ async fn typed_mode_blocks_unallowed_tool_calls() {
 #[tokio::test]
 async fn runner_errors_outside_parent_context() {
     let def = make_def_named_tools(&[]);
-    let result = run_subagent(&def, "x", SubagentRunOptions::default()).await;
+    let result = run_host_from_test_options(&def, "x", SubagentRunOptions::default()).await;
     assert!(matches!(result, Err(SubagentRunError::NoParentContext)));
 }
 
@@ -528,8 +597,13 @@ async fn subagent_emits_checkpoint_at_iteration_cap_instead_of_erroring() {
     let mut def = make_def_named_tools(&["file_read"]);
     def.max_iterations = 2;
 
-    let outcome = with_parent_context(parent, async {
-        run_subagent(&def, "keep reading forever", SubagentRunOptions::default()).await
+    let outcome = (async {
+        run_host_from_test_options(
+            &def,
+            "keep reading forever",
+            with_parent(parent.clone(), SubagentRunOptions::default()),
+        )
+        .await
     })
     .await
     .expect("hitting the iteration cap should return a checkpoint, not error");
@@ -555,8 +629,13 @@ async fn subagent_checkpoint_falls_back_to_deterministic_when_summary_empty() {
     let mut def = make_def_named_tools(&["file_read"]);
     def.max_iterations = 2;
 
-    let outcome = with_parent_context(parent, async {
-        run_subagent(&def, "keep reading forever", SubagentRunOptions::default()).await
+    let outcome = (async {
+        run_host_from_test_options(
+            &def,
+            "keep reading forever",
+            with_parent(parent.clone(), SubagentRunOptions::default()),
+        )
+        .await
     })
     .await
     .expect("empty summary should fall back, not error");
@@ -579,10 +658,21 @@ async fn runner_allows_spawn_at_max_depth() {
     let parent = make_parent(provider.clone(), vec![]);
     let def = make_def_named_tools(&[]);
 
-    let outcome = with_parent_context(parent, async {
-        with_spawn_depth(MAX_SPAWN_DEPTH - 1, async {
-            run_subagent(&def, "x", SubagentRunOptions::default()).await
-        })
+    let outcome = (async {
+        with_run_depth(
+            RunDepth {
+                depth: MAX_SPAWN_DEPTH - 1,
+                max_depth: MAX_SPAWN_DEPTH,
+            },
+            async {
+                run_host_from_test_options(
+                    &def,
+                    "x",
+                    with_parent(parent.clone(), SubagentRunOptions::default()),
+                )
+                .await
+            },
+        )
         .await
     })
     .await
@@ -591,8 +681,8 @@ async fn runner_allows_spawn_at_max_depth() {
     assert_eq!(outcome.output, "ok");
     assert_eq!(provider.captured.lock().len(), 1);
     assert_eq!(
-        current_spawn_depth(),
-        0,
+        current_run_depth(),
+        None,
         "depth task-local must not leak after the run"
     );
 }

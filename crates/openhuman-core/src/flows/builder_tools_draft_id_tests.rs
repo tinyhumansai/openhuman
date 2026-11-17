@@ -17,17 +17,18 @@ async fn cancel_flow_run_cancels_when_flow_id_matches_the_owner() {
     .unwrap()
     .value;
     let run = ops::flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &flow.id,
         json!({}),
         serde_json::Map::new(),
-        crate::flows::FlowRunTrigger::Rpc,
+        tinyflows_bus::runs::FlowRunTrigger::Rpc,
     )
     .await
     .unwrap();
     let run_id = run.value["thread_id"].as_str().unwrap().to_string();
 
-    let tool = CancelFlowRunTool::new(config.clone());
+    let tool = cancel_flow_run_tool(config.clone());
     let result = tool
         .execute(json!({ "flow_id": flow.id, "run_id": run_id.clone() }))
         .await
@@ -42,7 +43,7 @@ async fn cancel_flow_run_cancels_when_flow_id_matches_the_owner() {
 async fn cancel_flow_run_missing_flow_id_errs() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let tool = CancelFlowRunTool::new(config);
+    let tool = cancel_flow_run_tool(config);
     let result = tool.execute(json!({ "run_id": "some-run" })).await.unwrap();
     assert!(result.is_error);
     assert!(result.output().contains("flow_id"));
@@ -60,7 +61,7 @@ async fn cancel_flow_run_missing_flow_id_errs() {
 fn cancel_flow_run_is_external_effect_so_the_middleware_parks_it() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let tool = CancelFlowRunTool::new(config);
+    let tool = cancel_flow_run_tool(config);
     assert!(
         tool.external_effect(),
         "cancel_flow_run must be external_effect so ApprovalSecurityMiddleware routes it \
@@ -81,7 +82,7 @@ async fn edit_workflow_by_flow_id_seeds_a_retrievable_draft_and_marks_unpersiste
         .unwrap()
         .value;
 
-    let tool = EditWorkflowTool::new(config.clone());
+    let tool = edit_workflow_tool(config.clone());
     let result = tool
         .execute(json!({
             "flow_id": flow.id,
@@ -137,7 +138,7 @@ async fn dry_run_workflow_by_flow_id_runs_the_saved_flow_graph() {
         .await
         .unwrap()
         .value;
-    let tool = DryRunWorkflowTool::new(config.clone());
+    let tool = dry_run_workflow_tool(config.clone());
     let result = tool.execute(json!({ "flow_id": flow.id })).await.unwrap();
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
@@ -147,6 +148,9 @@ async fn dry_run_workflow_by_flow_id_runs_the_saved_flow_graph() {
 
 #[tokio::test]
 async fn validate_workflow_by_draft_id_checks_the_draft_graph() {
+    // Reaches the connector module, whose route is process-wide: hold the module
+    // lock (before TEST_ENV_LOCK, the established order) for the whole test.
+    let _module = crate::integrations::composio::module_client::module_guard().await;
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let draft = ops::flows_draft_create(
@@ -154,16 +158,79 @@ async fn validate_workflow_by_draft_id_checks_the_draft_graph() {
         None,
         "Draft".to_string(),
         valid_graph(),
-        crate::flows::DraftOrigin::Chat,
+        tinyflows_bus::catalog::DraftOrigin::Chat,
     )
     .unwrap()
     .value;
-    let tool = ValidateWorkflowTool::new(config.clone());
+    let tool = validate_workflow_tool(config.clone());
     let result = tool.execute(json!({ "draft_id": draft.id })).await.unwrap();
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["structurally_valid"], true);
+}
+
+/// A draft whose graph differs from every other handle in the call: a dangling
+/// edge makes it structurally invalid, so a tool that reads the draft reports
+/// the invalid graph while one that reads the flow or inline graph passes.
+fn invalid_draft(config: &Arc<Config>, flow_id: Option<String>) -> String {
+    ops::flows_draft_create(
+        config,
+        flow_id,
+        "Broken draft".to_string(),
+        json!({
+            "nodes": [ { "id": "t", "kind": "trigger", "name": "Manual" } ],
+            "edges": [ { "from_node": "t", "to_node": "ghost" } ]
+        }),
+        tinyflows_bus::catalog::DraftOrigin::Chat,
+    )
+    .unwrap()
+    .value
+    .id
+}
+
+#[tokio::test]
+async fn dry_run_workflow_by_draft_id_runs_the_draft_not_the_saved_flow() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = ops::flows_create(&config, "Runnable".to_string(), valid_graph(), false)
+        .await
+        .unwrap()
+        .value;
+    let draft_id = invalid_draft(&config, Some(flow.id.clone()));
+
+    let tool = dry_run_workflow_tool(config.clone());
+    let result = tool
+        .execute(json!({ "draft_id": draft_id, "flow_id": flow.id }))
+        .await
+        .unwrap();
+    // The saved flow dry-runs `ok` (see the flow_id test above); only the
+    // draft's dangling edge can produce this rejection.
+    assert!(result.is_error, "{}", result.output());
+    assert!(
+        result.output().contains("Cannot dry-run an invalid graph"),
+        "{}",
+        result.output()
+    );
+}
+
+#[tokio::test]
+async fn validate_workflow_prefers_draft_id_over_an_inline_graph() {
+    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let draft_id = invalid_draft(&config, None);
+
+    let tool = validate_workflow_tool(config.clone());
+    let result = tool
+        .execute(json!({ "draft_id": draft_id, "graph": valid_graph() }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    // The inline graph is valid; `ok: false` means the draft was checked.
+    assert_eq!(parsed["ok"], false, "{parsed}");
+    assert_eq!(parsed["structurally_valid"], false, "{parsed}");
 }
 
 #[tokio::test]
@@ -178,12 +245,12 @@ async fn save_workflow_by_draft_id_persists_the_draft_graph_onto_the_flow() {
         Some(flow_id.clone()),
         "Draft".to_string(),
         valid_graph(),
-        crate::flows::DraftOrigin::Chat,
+        tinyflows_bus::catalog::DraftOrigin::Chat,
     )
     .unwrap()
     .value;
 
-    let tool = SaveWorkflowTool::new(config.clone());
+    let tool = save_workflow_tool(config.clone());
     let result = tool
         .execute(json!({ "flow_id": flow_id, "draft_id": draft.id }))
         .await
@@ -196,13 +263,13 @@ async fn save_workflow_by_draft_id_persists_the_draft_graph_onto_the_flow() {
 
     // The draft's graph really landed on the flow.
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
-    assert_eq!(saved.graph.nodes.len(), 2);
+    assert_eq!(saved.graph["nodes"].as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]
 async fn revise_workflow_proposal_is_marked_unpersisted() {
     let tmp = TempDir::new().unwrap();
-    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+    let tool = revise_workflow_tool(test_config(&tmp));
     let result = tool
         .execute(json!({ "name": "R", "graph": valid_graph() }))
         .await
@@ -212,7 +279,8 @@ async fn revise_workflow_proposal_is_marked_unpersisted() {
     assert_eq!(parsed["persisted"], false);
 }
 
-/// Docs-drift guard (T-m2): the top-of-file module doc table went stale
+/// Docs-drift guard (T-m2), for the Composio-bound half of the belt that stays
+/// in this host (the copilot crate guards its own table): the top-of-file module doc table went stale
 /// enough to list 11 of ~22 tools, mis-describe `DryRunWorkflowTool`'s
 /// permission, and claim a `create_workflow`-adjacent invariant the code
 /// didn't hold — all silently, because nothing checked the table against the
@@ -227,17 +295,11 @@ async fn revise_workflow_proposal_is_marked_unpersisted() {
 fn module_doc_tool_table_matches_registered_tools() {
     const SOURCE: &str = concat!(
         include_str!("builder_tools.rs"),
-        include_str!("builder_tools/catalog_search.rs"),
-        include_str!("builder_tools/connection_reads.rs"),
-        include_str!("builder_tools/draft_edit.rs"),
-        include_str!("builder_tools/draft_revise.rs"),
-        include_str!("builder_tools/draft_validate.rs"),
-        include_str!("builder_tools/dry_run.rs"),
-        include_str!("builder_tools/flow_reads.rs"),
-        include_str!("builder_tools/kind_reads.rs"),
-        include_str!("builder_tools/persistence.rs"),
-        include_str!("builder_tools/run_control.rs"),
-        include_str!("builder_tools/tool_contract.rs"),
+        include_str!("../integrations/composio/builder_tools/mod.rs"),
+        include_str!("../integrations/composio/builder_tools/catalog_search.rs"),
+        include_str!("../integrations/composio/builder_tools/connection_reads.rs"),
+        include_str!("../integrations/composio/builder_tools/tool_contract.rs"),
+        include_str!("builder_tools_connection_reads.rs"),
     );
 
     let module_doc: String = SOURCE

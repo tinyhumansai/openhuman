@@ -57,7 +57,7 @@ export function DataTable<TRow>({
   return (
     <div
       data-slot="data-table"
-      className={cn(paper, 'w-full max-w-sm overflow-hidden rounded-2xl text-[13px]', className)}
+      className={cn(paper, '@container w-full overflow-hidden rounded-2xl', className)}
       {...props}>
       <div className="flex items-center px-4 pt-3 pb-2">
         {columns.map(column => (
@@ -65,7 +65,7 @@ export function DataTable<TRow>({
             key={column.key}
             className={cn(
               mono,
-              'text-foreground/35',
+              'text-muted-foreground',
               column.align === 'end' ? 'w-16 text-end' : 'flex-1'
             )}>
             {column.header}
@@ -87,7 +87,7 @@ export function DataTable<TRow>({
               key={key}
               className="fade-in slide-in-from-bottom-1 animate-in fill-mode-both hover:bg-foreground/[0.03] flex items-center gap-2.5 px-4 py-2.5 transition-colors duration-300"
               style={{ animationDelay: `${index * 80}ms` }}>
-              <span className="bg-foreground/[0.06] text-foreground/45 flex size-5 shrink-0 items-center justify-center rounded-md text-[9px] font-medium">
+              <span className="bg-foreground/[0.06] text-muted-foreground flex size-5 shrink-0 items-center justify-center rounded-md text-[9px] font-medium">
                 {avatarLetter}
               </span>
               {columns.map(column => (
@@ -96,7 +96,7 @@ export function DataTable<TRow>({
                   className={cn(
                     column === avatarColumn
                       ? 'text-foreground/90 truncate'
-                      : cn(mono, 'text-foreground/55 tabular-nums'),
+                      : cn(mono, 'text-muted-foreground tabular-nums'),
                     column.align === 'end' ? 'w-16 text-end' : 'flex-1'
                   )}>
                   {column.cell(row, index)}

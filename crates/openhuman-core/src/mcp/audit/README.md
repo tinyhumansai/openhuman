@@ -18,15 +18,15 @@ more.
 
 | File | Role |
 | --- | --- |
-| `mod.rs` | Facade: re-exports the payload types (`types` module, from `tinymcp_bus`), `record_write`/`list_writes` (delegating to the `mcp::host` service's `AuditStore`), and the schema re-exports. |
-| `schemas.rs` / `schemas_tests.rs` | The `mcp_audit.list` controller: schema (`limit`/`offset`/`since_ms`/`client_filter`/`tool_filter`/`success_only` inputs, `records` output) and its handler, which loads the config, deserializes the params into `McpWriteListQuery`, and calls `list_writes`. |
-| `stub.rs` | The `mcp`-less mirror: `record_write` is a no-op returning `Ok(0)`, `list_writes` returns `Ok(vec![])`. |
+| [`mod.rs`](./mod.rs) | Facade: re-exports the payload types (`types` module, from `tinymcp_bus`), `record_write`/`list_writes` (delegating to the `mcp::host` service's `AuditStore`), and the schema re-exports. |
+| [`schemas.rs`](./schemas.rs) / [`schemas_tests.rs`](./schemas_tests.rs) | The `mcp_audit.list` controller: schema (`limit`/`offset`/`since_ms`/`client_filter`/`tool_filter`/`success_only` inputs, `records` output) and its handler, which loads the config, deserializes the params into `McpWriteListQuery`, and calls `list_writes`. |
+| [`stub.rs`](./stub.rs) | The `mcp`-less mirror: `record_write` is a no-op returning `Ok(0)`, `list_writes` returns `Ok(vec![])`. |
 
 ## RPC surface
 
 `mcp_audit.list` is the only controller, registered through
 `all_mcp_audit_internal_controllers` in `build_internal_only_controllers`
-(`core/all.rs`, ~line 1020): routable over RPC for the desktop UI/CLI, but
+([`core/all.rs`](../../core/all.rs), ~line 1020): routable over RPC for the desktop UI/CLI, but
 not exposed to agents. The handler deserializes its params straight into
 `tinymcp_bus::McpWriteListQuery` and hands them to `list_writes`; the
 filter and limit semantics (`limit` default 50 / max 500 via
@@ -56,7 +56,7 @@ appears never to have happened, rather than erroring.
 
 ## Used by
 
-- `crates/openhuman-core/src/mcp/server/write_dispatch.rs`: `audit_write`
+- [`crates/openhuman-core/src/mcp/server/write_dispatch.rs`](../server/write_dispatch.rs): `audit_write`
   / `audit_write_rejection[_without_config]` call `audit::record_write` off
   the hot path (`spawn_blocking`, or a thread when no runtime is current)
   for every MCP write-tool attempt, success and rejection; `record_write`
@@ -64,3 +64,9 @@ appears never to have happened, rather than erroring.
   `AuditStore`.
 - `crates/openhuman-core/src/core/all.rs`: registers
   `all_mcp_audit_internal_controllers()`.
+
+## Further reading
+
+- [Parent module README](../README.md)
+- [MCP registry](../../../../../docs/gitbooks/en/developing/architecture/mcp-registry.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)

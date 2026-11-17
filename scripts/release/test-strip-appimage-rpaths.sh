@@ -289,6 +289,7 @@ make_runtime_appdir() {
 
   cp "$HOST_ELF" "$appdir/shared/lib/anylinux.so"
   cp "$HOST_ELF" "$appdir/shared/lib/libxdo.so.3"
+  cp "$HOST_ELF" "$appdir/shared/lib/libasound.so.2"
   # Since #5606 libcef.so is no longer a REQUIRED library (CEF was removed in
   # #5456). It stays in the fixture purely as a sample bundled ELF for the
   # RPATH-injection cases below.
@@ -351,6 +352,57 @@ inject_actions_rpath() {
     "$1/shared/lib/libcef.so"
 }
 
+# The host no longer links libxdo; it must remain available to loaded modules.
+case " $APPIMAGE_PRODUCTION_NEEDED " in
+  *" libxdo.so.3 "*) fail "module libxdo still requires a host NEEDED entry" ;;
+esac
+
+MODULE_RUNTIME="$WORK/module-runtime"
+make_runtime_appdir "$MODULE_RUNTIME"
+rm "$MODULE_RUNTIME/shared/lib/libxdo.so.3" "$MODULE_RUNTIME/shared/lib/libasound.so.2"
+MODULE_SOURCES="$WORK/module-sources"
+mkdir -p "$MODULE_SOURCES"
+cp "$HOST_ELF" "$MODULE_SOURCES/libxdo.so.3"
+cp "$HOST_ELF" "$MODULE_SOURCES/libasound.so.2"
+SAVED_SYSTEM_LOOKUP="$(declare -f system_module_runtime_library || true)"
+system_module_runtime_library() { printf '%s/%s\n' "$MODULE_SOURCES" "$1"; }
+stage_module_runtime_libraries "$MODULE_RUNTIME" \
+  || fail "module runtime dependencies were not staged"
+[ "$MODULE_RUNTIME_LIBRARIES_ADDED" -eq 2 ] \
+  || fail "module runtime staging did not count both dependencies"
+cmp "$MODULE_SOURCES/libxdo.so.3" "$MODULE_RUNTIME/shared/lib/libxdo.so.3" \
+  || fail "staged libxdo differs from the runner library"
+stage_module_runtime_libraries "$MODULE_RUNTIME" \
+  || fail "module runtime staging is not repeatable"
+[ "$MODULE_RUNTIME_LIBRARIES_ADDED" -eq 0 ] \
+  || fail "existing module runtime libraries were replaced"
+rm "$MODULE_RUNTIME/shared/lib/libasound.so.2" "$MODULE_SOURCES/libasound.so.2"
+if stage_module_runtime_libraries "$MODULE_RUNTIME" >"$WORK/missing-module-source.log" 2>&1; then
+  fail "missing runner module library was accepted"
+fi
+[ ! -e "$MODULE_RUNTIME/shared/lib/libasound.so.2" ] \
+  || fail "missing source produced a destination library"
+printf 'not a shared library' >"$MODULE_SOURCES/libasound.so.2"
+if stage_module_runtime_libraries "$MODULE_RUNTIME" >"$WORK/invalid-module-source.log" 2>&1; then
+  fail "non-ELF module runtime library was accepted"
+fi
+
+MODULE_LINUXDEPLOY="$WORK/module-linuxdeploy"
+mkdir -p "$MODULE_LINUXDEPLOY/usr/bin"
+cp "$HOST_ELF" "$MODULE_LINUXDEPLOY/usr/bin/OpenHuman"
+cp "$HOST_ELF" "$MODULE_SOURCES/libasound.so.2"
+stage_module_runtime_libraries "$MODULE_LINUXDEPLOY" \
+  || fail "linuxdeploy module runtime dependencies were not staged"
+validate_module_runtime_libraries "$MODULE_LINUXDEPLOY" \
+  || fail "linuxdeploy module runtime dependencies were rejected"
+rm "$MODULE_LINUXDEPLOY/usr/lib/libasound.so.2"
+if validate_module_runtime_libraries "$MODULE_LINUXDEPLOY" >/dev/null 2>&1; then
+  fail "linuxdeploy accepted missing module ALSA runtime"
+fi
+[ -z "$SAVED_SYSTEM_LOOKUP" ] || eval "$SAVED_SYSTEM_LOOKUP"
+
+echo "[test-rpaths] ok: module libraries are staged without host implementation linkage"
+
 RUNTIME_COMPLETE="$WORK/runtime-complete"
 make_runtime_appdir "$RUNTIME_COMPLETE"
 APPIMAGE_EXPECTED_NEEDED="" validate_extracted_appdir "$RUNTIME_COMPLETE" \
@@ -381,7 +433,7 @@ if APPIMAGE_EXPECTED_NEEDED="" \
   >"$WORK/direct-validator.log" 2>&1; then
   fail "direct validator allowed a fixture override to disable production NEEDED checks"
 fi
-grep -F "missing NEEDED entry 'libxdo.so.3'" \
+grep -F "missing NEEDED entry 'libwebkit2gtk-4.1.so.0'" \
   "$WORK/direct-validator.log" >/dev/null \
   || fail "direct validator did not enforce the production NEEDED contract"
 
@@ -563,7 +615,7 @@ fi
 assert_runtime_layout_rejected missing-anylinux \
   "missing anylinux.so" remove_anylinux
 assert_runtime_layout_rejected missing-libxdo \
-  "missing libxdo.so.*" remove_libxdo
+  "missing libxdo.so.3" remove_libxdo
 assert_runtime_layout_rejected missing-real-app \
   "shared/bin/OpenHuman is not an executable ELF" remove_real_app
 assert_runtime_layout_rejected text-real-app \
@@ -648,6 +700,7 @@ CLEANUP_WORKDIR="$CLEANUP_WORKDIR" \
         command mktemp "$@"
       fi
     }
+    stage_module_runtime_libraries() { MODULE_RUNTIME_LIBRARIES_ADDED=0; }
     ensure_sharun_interpreter() { return 1; }
     rewrite_sharun_lib_path() { return 1; }
     patch_apprun_sharun_cwd() { return 1; }
@@ -673,7 +726,10 @@ NOOP_IMAGE="$WORK/noop-final.AppImage"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   '[ "$1" = "--appimage-extract" ] || exit 9' \
-  'mkdir -p squashfs-root' \
+  'mkdir -p squashfs-root/usr/bin squashfs-root/usr/lib' \
+  'cp "$NOOP_HOST_ELF" squashfs-root/usr/bin/OpenHuman' \
+  'cp "$NOOP_HOST_ELF" squashfs-root/usr/lib/libxdo.so.3' \
+  'cp "$NOOP_HOST_ELF" squashfs-root/usr/lib/libasound.so.2' \
   >"$NOOP_IMAGE"
 chmod +x "$NOOP_IMAGE"
 NOOP_IMAGE_BEFORE="$(sha256sum "$NOOP_IMAGE" | awk '{print $1}')"
@@ -684,6 +740,7 @@ noop_runtime_validator_stub() {
   printf '%s\n' "$1" >>"$NOOP_VALIDATOR_RECORD"
 }
 MODIFIED_PATHS=()
+export NOOP_HOST_ELF="$HOST_ELF"
 APPIMAGE_RUNTIME_VALIDATOR=noop_runtime_validator_stub \
   strip_one_appimage "$NOOP_IMAGE" \
   || fail "strip_one_appimage rejected a valid no-change final artifact"
@@ -799,6 +856,7 @@ fi
 echo "[test-rpaths] ok: guard fails when anylinux.so is absent"
 
 : > "$GUARD_DIR/shared/lib/anylinux.so"
+: > "$GUARD_DIR/shared/lib/libasound.so.2"
 
 # 2b — libxdo absent → must exit non-zero.
 if ( validate_appimage_required_libs "$GUARD_DIR" ) 2>/dev/null; then
@@ -825,5 +883,103 @@ if ! ( validate_appimage_required_libs "$GUARD_DIR" ) 2>/dev/null; then
   fail "validate_appimage_required_libs failed despite libxdo.so.3 present under usr/lib"
 fi
 echo "[test-rpaths] ok: guard passes when libxdo.so.3 is satisfied from usr/lib"
+
+# --- Case 3: linuxdeploy AppRun prefers the host WebKitGTK (#7652) ------------
+# The AppRun below is linuxdeploy's generated wrapper, verbatim in shape.
+WK="$WORK/system-webkit"
+WK_APPDIR="$WK/appdir"
+mkdir -p "$WK_APPDIR/apprun-hooks" "$WK_APPDIR/usr/bin" "$WK/runner" "$WK/stubs"
+cat >"$WK_APPDIR/AppRun" <<'APPRUN'
+#! /usr/bin/env bash
+
+# autogenerated by linuxdeploy
+
+# make sure errors in sourced scripts will cause this script to stop
+set -e
+
+this_dir="$(readlink -f "$(dirname "$0")")"
+
+source "$this_dir"/apprun-hooks/"linuxdeploy-plugin-gtk.sh"
+
+exec "$this_dir"/AppRun.wrapped "$@"
+APPRUN
+printf 'export GTK_HOOK_RAN=1\n' >"$WK_APPDIR/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+printf '#!/bin/sh\necho "bundled gtk=$GTK_HOOK_RAN args=$*"\n' >"$WK_APPDIR/AppRun.wrapped"
+printf '#!/bin/sh\necho "system gtk=${GTK_HOOK_RAN:-} ld=$LD_LIBRARY_PATH gdk=$GDK_BACKEND args=$*"\n' \
+  >"$WK_APPDIR/usr/bin/OpenHuman"
+chmod +x "$WK_APPDIR/AppRun" "$WK_APPDIR/AppRun.wrapped" "$WK_APPDIR/usr/bin/OpenHuman"
+
+: >"$WK/runner/libwebkit2gtk-4.1.so.0.13.7"
+ln -s libwebkit2gtk-4.1.so.0.13.7 "$WK/runner/libwebkit2gtk-4.1.so.0"
+SAVED_SYSTEM_LOOKUP="$(declare -f system_module_runtime_library || true)"
+system_module_runtime_library() { printf '%s/%s\n' "$WK/runner" "$1"; }
+install_system_webkit_hook "$WK_APPDIR" >/dev/null \
+  || fail "system WebKit hook was not installed into a linuxdeploy AppRun"
+if install_system_webkit_hook "$WK_APPDIR" >/dev/null; then
+  fail "system WebKit hook was installed twice"
+fi
+[ -z "$SAVED_SYSTEM_LOOKUP" ] || eval "$SAVED_SYSTEM_LOOKUP"
+[ "$(grep -c "$SYSTEM_WEBKIT_HOOK" "$WK_APPDIR/AppRun")" = "1" ] \
+  || fail "system WebKit hook is not sourced exactly once"
+[ "$(grep -m 1 '^source ' "$WK_APPDIR/AppRun")" = "source \"\$this_dir\"/apprun-hooks/\"$SYSTEM_WEBKIT_HOOK\"" ] \
+  || fail "system WebKit hook is not sourced before the GTK hook"
+grep -q "^OPENHUMAN_BUNDLED_WEBKIT='libwebkit2gtk-4.1.so.0.13.7'$" "$WK_APPDIR/apprun-hooks/$SYSTEM_WEBKIT_HOOK" \
+  || fail "system WebKit hook does not carry the runner's WebKit version"
+
+# A sharun ELF AppRun is not a linuxdeploy wrapper and must be left alone.
+if install_system_webkit_hook "$RELEASED_LAYOUT" >/dev/null 2>&1; then
+  fail "system WebKit hook was installed into a sharun AppDir"
+fi
+
+# Host stubs: a loader cache listing the host WebKit, for this architecture.
+HOST_LIBS="$WK/host-lib"
+mkdir -p "$HOST_LIBS"
+WK_MACHINE="$(uname -m | sed 's/^arm64$/aarch64/')"
+case "$WK_MACHINE" in
+  aarch64) WK_ARCH='AArch64' ;;
+  *) WK_MACHINE='x86_64' WK_ARCH='x86-64' ;;
+esac
+cat >"$WK/stubs/ldconfig" <<LDCONFIG
+#!/bin/sh
+[ "\$1" = "-p" ] || exit 1
+[ -e "$HOST_LIBS/libwebkit2gtk-4.1.so.0" ] || exit 0
+printf '\tlibwebkit2gtk-4.1.so.0 (libc6,$WK_ARCH) => %s\n' "$HOST_LIBS/libwebkit2gtk-4.1.so.0"
+LDCONFIG
+printf '#!/bin/sh\necho %s\n' "$WK_MACHINE" >"$WK/stubs/uname"
+chmod +x "$WK/stubs/ldconfig" "$WK/stubs/uname"
+
+set_host_webkit() {
+  rm -f "$HOST_LIBS"/*
+  [ -n "$1" ] || return 0
+  : >"$HOST_LIBS/$1"
+  ln -s "$1" "$HOST_LIBS/libwebkit2gtk-4.1.so.0"
+  : >"$HOST_LIBS/libjavascriptcoregtk-4.1.so.0"
+}
+run_wk_apprun() {
+  env -u GDK_BACKEND -u LD_LIBRARY_PATH -u GTK_HOOK_RAN PATH="$WK/stubs:$PATH" "$@" \
+    "$WK_APPDIR/AppRun" --flag 2>/dev/null
+}
+
+set_host_webkit libwebkit2gtk-4.1.so.0.19.2
+out="$(run_wk_apprun)"
+[ "$out" = "system gtk= ld=$HOST_LIBS gdk=x11 args=--flag" ] \
+  || fail "newer host WebKit was not preferred: '$out'"
+set_host_webkit libwebkit2gtk-4.1.so.0.13.7
+out="$(run_wk_apprun)"
+case "$out" in system*) ;; *) fail "equal host WebKit was not preferred: '$out'" ;; esac
+out="$(run_wk_apprun OPENHUMAN_APPIMAGE_WEBKIT=bundled)"
+[ "$out" = "bundled gtk=1 args=--flag" ] \
+  || fail "OPENHUMAN_APPIMAGE_WEBKIT=bundled did not keep the bundled WebKit: '$out'"
+set_host_webkit libwebkit2gtk-4.1.so.0.11.9
+out="$(run_wk_apprun)"
+[ "$out" = "bundled gtk=1 args=--flag" ] || fail "older host WebKit was preferred: '$out'"
+set_host_webkit libwebkit2gtk-4.1.so.0.19.2
+rm "$HOST_LIBS/libjavascriptcoregtk-4.1.so.0"
+out="$(run_wk_apprun)"
+[ "$out" = "bundled gtk=1 args=--flag" ] || fail "host WebKit without JavaScriptCore was preferred: '$out'"
+set_host_webkit ""
+out="$(run_wk_apprun)"
+[ "$out" = "bundled gtk=1 args=--flag" ] || fail "missing host WebKit did not fall back: '$out'"
+echo "[test-rpaths] ok: linuxdeploy AppRun prefers a host WebKitGTK at least as new as the bundle"
 
 echo "[test-rpaths] PASS"

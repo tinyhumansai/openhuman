@@ -2,11 +2,13 @@
 
 Push-to-talk + TTS plugin for Tauri v2, targeting iOS.
 
-Wraps `AVAudioEngine` + `Speech.framework` (STT) + `AVSpeechSynthesizer` (TTS).
+Used by the experimental [iOS companion](../../docs/gitbooks/en/features/ios-companion.md). Wraps `AVAudioEngine` + `Speech.framework` (STT) + `AVSpeechSynthesizer` (TTS).
 On non-iOS targets all commands return a `NotSupported` error so the
 desktop build is not affected.
 
 ## Commands
+
+The Rust command handlers are in [`src/commands.rs`](./src/commands.rs) and the Swift side is under [`ios/Sources/tauri-plugin-ptt/`](./ios/Sources/tauri-plugin-ptt). Permissions are declared in [`permissions/`](./permissions).
 
 | Command | Description |
 |---|---|
@@ -27,6 +29,8 @@ desktop build is not affected.
 | `ptt://error` | `{ code: string; message: string }` | Async error (permission, interruption, etc.). |
 
 ### Error codes
+
+The codes map to the variants in [`src/error.rs`](./src/error.rs).
 
 | Code | Trigger |
 |---|---|
@@ -69,7 +73,13 @@ Rust (commands.rs)
   ↓ PluginHandle::run_mobile_plugin
 Swift (PTTPlugin.swift)
   ↓
-  PTTRecorder — AVAudioEngine + SFSpeechRecognizer
-  PTTSpeaker  — AVSpeechSynthesizer
-  AudioSessionManager — AVAudioSession lifecycle + notifications
+  PTTRecorder - AVAudioEngine + SFSpeechRecognizer
+  PTTSpeaker  - AVSpeechSynthesizer
+  AudioSessionManager - AVAudioSession lifecycle + notifications
 ```
+
+## Further reading
+
+- [iOS companion](../../docs/gitbooks/en/features/ios-companion.md) and [Native voice](../../docs/gitbooks/en/features/native-tools/voice.md).
+- [Tauri shell](../../docs/gitbooks/en/developing/architecture/tauri-shell.md) for how plugins are registered.
+- [`app/src/assets/audio/`](../../app/src/assets/audio/README.md) for the desktop PTT chimes.

@@ -31,7 +31,7 @@ pub(super) fn model_registry_signature(config: &Config) -> String {
 /// blank id falls back rather than failing the turn: the registry answers for
 /// `orchestrator` on every install, and a typo in an optional setting should
 /// not take chat down.
-pub(super) fn pick_target_agent_id(config: &Config) -> String {
+pub(crate) fn pick_target_agent_id(config: &Config) -> String {
     const DEFAULT_CHAT_AGENT_ID: &str = "orchestrator";
     let selected = config
         .agent
@@ -61,8 +61,16 @@ pub(crate) fn provider_role_for_model_override(model_override: Option<&str>) -> 
     // A role alias (`hint:coding`) or a retired tier slug (`hint:coding`) picks
     // that workload's route; a concrete model id rides the chat route.
     match model_override.map(str::trim) {
-        Some(value) if value.starts_with("hint:") || crate::config::is_legacy_tier_model(value) => {
-            match crate::inference::provider::factory::role_for_model_tier(value) {
+        Some(value)
+            if crate::inference::provider_model::is_abstract_model(
+                crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                value,
+            ) =>
+        {
+            match crate::inference::provider_model::role_for_provider_model(
+                crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                value,
+            ) {
                 role @ ("agentic" | "coding" | "summarization" | "reasoning") => role,
                 _ => "chat",
             }
@@ -71,23 +79,82 @@ pub(crate) fn provider_role_for_model_override(model_override: Option<&str>) -> 
     }
 }
 
-pub(super) fn build_session_agent(
+/// Build the in-memory config for one web-chat turn. Concrete picker values
+/// may include their provider (`ollama:model`, `huggingface:org/model`) while
+/// managed catalog ids use OpenRouter's `openrouter/...` form. The selected
+/// route belongs only to this clone; saved chat settings and sibling workload
+/// roles remain untouched.
+fn effective_session_config(
+    config: &Config,
+    model_override: Option<&str>,
+    temperature: Option<f64>,
+) -> Config {
+    let mut effective = config.clone();
+    if let Some(model) = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        effective.default_model = Some(model.to_string());
+    }
+
+    // Resolve the effective model even when there was no per-turn override:
+    // persisted defaults must restore their provider after a restart too.
+    if let Some(model) = effective
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| {
+            crate::inference::provider_model::is_raw_model(
+                crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                model,
+            )
+        })
+    {
+        if model.starts_with("openrouter/") {
+            // The managed backend accepts catalog ids verbatim. This also
+            // clears a stale local/BYOK chat route from the effective clone.
+            effective.chat_provider = Some("openhuman".to_string());
+        } else if let Some((provider, model_suffix)) = model.split_once(':') {
+            let provider = provider.trim();
+            let local_route = tinyinference_local::profile::is_local_provider_string(model);
+            let built_in_route = matches!(provider, "claude-code" | "claude_agent_sdk");
+            if local_route || built_in_route {
+                // Keep the complete selected value for local and built-in routes.
+                effective.chat_provider = Some(model.to_string());
+            } else if let Some(entry) = effective
+                .cloud_providers
+                .iter()
+                .find(|entry| entry.slug.eq_ignore_ascii_case(provider))
+            {
+                // The factory matches configured slugs exactly; preserve its canonical slug
+                // while keeping the full selected model suffix, including extra colons.
+                effective.chat_provider = Some(format!("{}:{model_suffix}", entry.slug));
+            } else {
+                // Keep an unknown qualified selection on an invalid route so
+                // factory construction fails explicitly instead of silently
+                // using the previous chat provider.
+                effective.chat_provider = Some(model.to_string());
+            }
+        }
+    }
+
+    if let Some(temp) = temperature {
+        effective.default_temperature = temp;
+    }
+    effective
+}
+
+pub(super) async fn build_session_agent(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     client_id: &str,
     thread_id: &str,
     target_agent_id: &str,
     model_override: Option<String>,
     temperature: Option<f64>,
-    locale: Option<&str>,
 ) -> Result<OpenHumanSessionHost, String> {
-    let mut effective = config.clone();
-    if let Some(model) = model_override {
-        effective.default_model = Some(model);
-    }
+    let effective = effective_session_config(config, model_override.as_deref(), temperature);
     let provider_role = provider_role_for_model_override(effective.default_model.as_deref());
-    if let Some(temp) = temperature {
-        effective.default_temperature = temp;
-    }
 
     log::info!(
         "[web-channel] routing chat turn to '{}' provider_role='{}' (client_id={}, thread_id={})",
@@ -97,18 +164,13 @@ pub(super) fn build_session_agent(
         thread_id
     );
 
-    let locale_directive = locale.and_then(locale_reply_directive);
-    if let Some(s) = locale_directive.as_deref() {
-        log::info!(
-            "[web-channel] injecting locale directive client={} thread={} locale={} directive={:?}",
-            client_id,
-            thread_id,
-            locale.unwrap_or(""),
-            s
-        );
-    }
-
-    let agent_result = OpenHumanSessionHost::from_config_for_agent(&effective, target_agent_id);
+    let agent_result = OpenHumanSessionHost::from_config_for_agent_session(
+        ctx,
+        &effective,
+        target_agent_id,
+        Some(thread_id),
+    )
+    .await;
 
     agent_result
         .map(|mut agent| {
@@ -116,11 +178,7 @@ pub(super) fn build_session_agent(
                 json!({"client_id": client_id, "thread_id": thread_id}).to_string(),
                 "web_channel",
             );
-            let short_thread = if thread_id.len() > 12 {
-                &thread_id[..12]
-            } else {
-                thread_id
-            };
+            let short_thread: String = thread_id.chars().take(12).collect();
             agent.set_agent_definition_name(format!("{target_agent_id}_{short_thread}"));
             // Bind the conversation's durable identity here, not after
             // checkout: everything downstream — resume, transcript binding,
@@ -137,21 +195,31 @@ pub(crate) fn locale_reply_directive(locale: &str) -> Option<String> {
     let language = match locale.trim() {
         "ar" => "Arabic",
         "bn" => "Bengali",
+        "de" => "German",
         "es" => "Spanish",
         "fr" => "French",
         "hi" => "Hindi",
         "id" => "Indonesian",
         "it" => "Italian",
+        "ja" => "Japanese",
+        "ko" => "Korean",
+        "pl" => "Polish",
         "pt" => "Portuguese",
         "ru" => "Russian",
+        "tr" => "Turkish",
         "zh-CN" | "zh" => "Simplified Chinese",
         _ => return None,
     };
-    Some(format!(
+    Some(reply_directive_for(language))
+}
+
+/// The reply-language instruction for `language`.
+fn reply_directive_for(language: &str) -> String {
+    format!(
         "User language: the user's interface is set to {language}. \
          Respond in {language} unless the user explicitly asks for a different language. \
          Keep proper nouns, code, and command names untranslated."
-    ))
+    )
 }
 
 /// Byte offset of the first difference between two signature strings, or
@@ -216,6 +284,12 @@ pub(super) fn fingerprint_diff(
             prior.model_override, next.model_override
         ));
     }
+    if prior.effective_model != next.effective_model {
+        diff.push(format!(
+            "effective_model: {} -> {}",
+            prior.effective_model, next.effective_model
+        ));
+    }
     if prior.temperature != next.temperature {
         diff.push(format!(
             "temperature: {:?} -> {:?}",
@@ -241,6 +315,10 @@ pub(super) fn fingerprint_diff(
             &next.autonomy_signature,
         ));
     }
+    if prior.workspace_dir != next.workspace_dir {
+        // Paths can carry usernames or tenant ids; log only that it moved.
+        diff.push("workspace_dir changed".to_string());
+    }
     if prior.model_registry_signature != next.model_registry_signature {
         diff.push(describe_signature_change(
             "model_registry_signature",
@@ -258,13 +336,20 @@ pub(super) fn build_session_fingerprint(
     target_agent_id: String,
     provider_role: &str,
 ) -> SessionCacheFingerprint {
+    let effective = effective_session_config(config, model_override.as_deref(), temperature);
     SessionCacheFingerprint {
         model_override,
+        effective_model: crate::inference::provider_model::resolve_provider_model_hint(
+            crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+            &format!("hint:{provider_role}"),
+            &effective,
+        ),
         temperature,
-        provider_binding: crate::inference::provider::provider_for_role(provider_role, config),
+        provider_binding: crate::inference::provider::provider_for_role(provider_role, &effective),
         target_agent_id,
         autonomy_signature: autonomy_signature(config),
         model_registry_signature: model_registry_signature(config),
+        workspace_dir: config.workspace_dir.clone(),
     }
 }
 
@@ -306,6 +391,7 @@ pub(crate) struct CheckedOutSession {
 /// turns can never drive one agent; `checkin_session_agent` /
 /// `checkin_session_agent_if_vacant` put it back.
 pub(crate) async fn checkout_session_agent(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     client_id: &str,
     thread_id: &str,
@@ -314,9 +400,10 @@ pub(crate) async fn checkout_session_agent(
     locale: Option<&str>,
     policy: CheckoutPolicy,
 ) -> Result<CheckedOutSession, String> {
-    let map_key = super::ops::key_for(thread_id);
+    let map_key = super::ops::key_for(ctx, thread_id);
     let target_agent_id = pick_target_agent_id(config);
-    let provider_role = provider_role_for_model_override(model_override.as_deref());
+    let effective = effective_session_config(config, model_override.as_deref(), temperature);
+    let provider_role = provider_role_for_model_override(effective.default_model.as_deref());
     let fingerprint = build_session_fingerprint(
         config,
         model_override.clone(),
@@ -330,13 +417,17 @@ pub(crate) async fn checkout_session_agent(
     let prior = if policy == CheckoutPolicy::Fork {
         None
     } else {
-        let mut sessions = super::ops::THREAD_SESSIONS.lock().await;
+        let mut sessions = super::ops::thread_sessions(ctx).lock_owned().await;
         sessions.remove(&map_key)
     };
 
     let (agent, fingerprint) = match prior {
+        // `AdoptCached` takes the thread's agent whatever settings it was
+        // built with, but never one built for another workspace.
         Some(entry)
-            if entry.fingerprint == fingerprint || policy == CheckoutPolicy::AdoptCached =>
+            if entry.fingerprint == fingerprint
+                || (policy == CheckoutPolicy::AdoptCached
+                    && entry.fingerprint.workspace_dir == fingerprint.workspace_dir) =>
         {
             log::info!(
                 "[web-channel] reusing cached session agent id={} for client={} thread={}",
@@ -370,30 +461,69 @@ pub(crate) async fn checkout_session_agent(
             );
             (
                 build_session_agent(
+                    ctx,
                     config,
                     client_id,
                     thread_id,
                     &target_agent_id,
                     model_override,
                     temperature,
-                    locale,
-                )?,
+                )
+                .await?,
                 fingerprint,
             )
         }
         None => (
             build_session_agent(
+                ctx,
                 config,
                 client_id,
                 thread_id,
                 &target_agent_id,
                 model_override,
                 temperature,
-                locale,
-            )?,
+            )
+            .await?,
             fingerprint,
         ),
     };
+
+    // Every checkout re-arms the reply language from this turn's locale: a
+    // reused agent may have been built under a different one, and `None`
+    // (English, or no locale sent) must clear a stale instruction.
+    let mut agent = agent;
+    bind_transcript_store(
+        ctx,
+        config,
+        thread_id,
+        &fingerprint.target_agent_id,
+        &mut agent,
+    )
+    .await;
+    let directive = match locale.and_then(locale_reply_directive) {
+        Some(directive) => Some(directive),
+        // Messages this session already sent carry another language's
+        // directive; an explicit English one supersedes them rather than
+        // leaving the last of them standing in the history.
+        None if locale.map(str::trim) == Some("en")
+            && agent.reply_language_directive().is_some() =>
+        {
+            Some(reply_directive_for("English"))
+        }
+        None => None,
+    };
+    if directive.is_some() {
+        log::info!(
+            "[web-channel] reply language directive armed client={} thread={} locale={}",
+            client_id,
+            thread_id,
+            locale.unwrap_or("")
+        );
+    }
+    agent.set_reply_language_directive(directive);
+    // Re-read per message too, so a zone changed in Settings applies to the
+    // next message of an open conversation.
+    agent.set_time_zone(Some(config.time_zone()));
 
     // Cold-boot resume needs no seeding here. `set_thread_id` binds the
     // session's durable identity and the turn resumes by it, reading the one
@@ -406,17 +536,61 @@ pub(crate) async fn checkout_session_agent(
     Ok(CheckedOutSession { agent, fingerprint })
 }
 
+/// Pin the thread's transcripts to the store key they were first written under.
+///
+/// The key follows `[agent] chat_agent_id`, so after the operator changes it a
+/// session that re-derived the key would write the thread's next turns to a
+/// different store than the one holding its earlier turns, and the readers
+/// (which use the thread's recorded key) would lose them. The first session
+/// bound to a thread records its key; every later one writes there.
+async fn bind_transcript_store(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    thread_id: &str,
+    target_agent_id: &str,
+    agent: &mut OpenHumanSessionHost,
+) {
+    let tenant = match crate::core::runtime::tenant::tenant_in(
+        crate::core::runtime::is_saas(),
+        ctx.resolved().as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(no_tenant) => {
+            log::warn!("[web-channel] transcript key not bound thread={thread_id}: {no_tenant}");
+            return;
+        }
+    };
+    let rule_key = crate::storage::sessions::agent_key_for(&tenant, target_agent_id);
+    let key = crate::threads::store::bind_transcript_key(
+        ctx,
+        &config.workspace_dir,
+        thread_id,
+        rule_key.clone(),
+    )
+    .await;
+    if key != rule_key {
+        log::info!(
+            "[web-channel] thread={thread_id} keeps its recorded transcript store (chat agent changed since it was written)"
+        );
+        agent.set_session_history_locator(crate::storage::sessions::transcripts_or_files(
+            &key,
+            &config.workspace_dir,
+        ));
+    }
+}
+
 /// Return a checked-out agent to the thread cache, replacing whatever is there.
 /// The primary user-turn path: it owns the thread's `IN_FLIGHT` slot, so any
 /// entry it finds was left by a turn that ran concurrently and is now stale.
 pub(crate) async fn checkin_session_agent(
+    ctx: &crate::core::runtime::DispatchCtx,
     thread_id: &str,
     agent: OpenHumanSessionHost,
     fingerprint: SessionCacheFingerprint,
 ) {
-    let mut sessions = super::ops::THREAD_SESSIONS.lock().await;
+    let mut sessions = super::ops::thread_sessions(ctx).lock_owned().await;
     sessions.insert(
-        super::ops::key_for(thread_id),
+        super::ops::key_for(ctx, thread_id),
         SessionEntry { agent, fingerprint },
     );
 }
@@ -427,12 +601,13 @@ pub(crate) async fn checkin_session_agent(
 /// agent and cached it; that one carries the user's newer turn and must win.
 /// Both turns appended to the thread's durable transcript regardless.
 pub(crate) async fn checkin_session_agent_if_vacant(
+    ctx: &crate::core::runtime::DispatchCtx,
     thread_id: &str,
     agent: OpenHumanSessionHost,
     fingerprint: SessionCacheFingerprint,
 ) -> bool {
-    let mut sessions = super::ops::THREAD_SESSIONS.lock().await;
-    match sessions.entry(super::ops::key_for(thread_id)) {
+    let mut sessions = super::ops::thread_sessions(ctx).lock_owned().await;
+    match sessions.entry(super::ops::key_for(ctx, thread_id)) {
         std::collections::hash_map::Entry::Occupied(_) => {
             log::info!(
                 "[web-channel] system turn finished after a newer turn re-cached thread={} — \
@@ -451,3 +626,15 @@ pub(crate) async fn checkin_session_agent_if_vacant(
 #[cfg(test)]
 #[path = "session_checkout_tests.rs"]
 mod session_checkout_tests;
+
+#[cfg(test)]
+#[path = "session_checkout_agents_tests.rs"]
+mod session_checkout_agents_tests;
+
+#[cfg(test)]
+#[path = "session_routing_tests.rs"]
+mod session_routing_tests;
+
+#[cfg(test)]
+#[path = "session_tenant_release_tests.rs"]
+mod session_tenant_release_tests;

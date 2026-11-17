@@ -3,7 +3,7 @@
 //! fires.
 //!
 //! This used to be a `#[ignore]`d unit test in `openhuman-rpc`
-//! (`shims_tests.rs`, #1552). `run_server_embedded` runs the full production
+//! (`shims_tests.rs`, #1552). `host::serve_desktop` runs the full production
 //! bootstrap, which spawns background tasks and writes process-global statics
 //! (`scheduler_gate::STATE`, `SIGNED_OUT`, the LLM permit semaphore, the
 //! `agent.run_turn` registry, ...) with no teardown, so inside the shared unit
@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use openhuman_rpc::host::{desktop_builder, serve_desktop, DesktopOptions};
 use tokio_util::sync::CancellationToken;
 
 async fn wait_until_port(port: u16, accepting: bool) {
@@ -31,9 +32,28 @@ async fn wait_until_port(port: u16, accepting: bool) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_token_stops_axum_listener_within_timeout() {
-    openhuman_core::cron::scheduler_gate::set_signed_out(false);
+#[test]
+fn shutdown_token_stops_axum_listener_within_timeout() {
+    // The core's boot is stack-hungry; give the runtime's threads room, as
+    // `crates/openhuman-rpc/tests/host_desktop.rs` does.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .thread_stack_size(16 * 1024 * 1024)
+                .build()
+                .expect("tokio runtime")
+                .block_on(shutdown_token_stops_listener())
+        })
+        .expect("test thread")
+        .join()
+        .expect("test thread should not panic");
+}
+
+async fn shutdown_token_stops_listener() {
+    openhuman_core::platform::llm_gate::set_signed_out(false);
 
     let workspace = tempfile::tempdir().expect("workspace tempdir");
     // Pin the scheduler-gate policy so the bootstrap's `init_global` snapshot
@@ -47,6 +67,8 @@ async fn shutdown_token_stops_axum_listener_within_timeout() {
     std::env::set_var("OPENHUMAN_WORKSPACE", workspace.path());
     std::env::set_var("OPENHUMAN_DISABLE_CHANNEL_LISTENERS", "1");
     std::env::set_var("OPENHUMAN_CORE_TOKEN", "test-token-shutdown");
+    // serve_desktop connects the TinyHumans layer; keep it off any real host.
+    std::env::set_var("BACKEND_URL", "http://127.0.0.1:9");
 
     let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("allocate test port");
     let port = probe.local_addr().expect("local addr").port();
@@ -54,15 +76,35 @@ async fn shutdown_token_stops_axum_listener_within_timeout() {
 
     let shutdown_token = CancellationToken::new();
     let server_token = shutdown_token.clone();
-    let server = tokio::spawn(async move {
-        openhuman_rpc::server::run_server_embedded(
-            Some("127.0.0.1"),
-            Some(port),
-            false,
-            server_token,
-        )
-        .await
-    });
+    let options = DesktopOptions {
+        host: Some("127.0.0.1".into()),
+        port: Some(port),
+        socketio: false,
+        rpc_token: None,
+    };
+    let builder = desktop_builder(&options);
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(serve_desktop(builder, server_token, ready_tx));
+
+    // Full desktop bootstrap can exceed 30s on a cold CI runner while the
+    // module search path and background services initialize. Match the host's
+    // 60s core-ready budget; this test is about shutdown after readiness.
+    let ready = match tokio::time::timeout(Duration::from_secs(60), ready_rx).await {
+        Ok(Ok(ready)) => ready,
+        Ok(Err(_)) => {
+            let result = server.await.expect("embedded server task should not panic");
+            panic!("embedded server ended before signaling readiness: {result:?}");
+        }
+        Err(_) => {
+            server.abort();
+            let _ = server.await;
+            panic!("embedded server did not signal readiness within timeout");
+        }
+    };
+    assert_eq!(
+        ready.port, port,
+        "embedded server selected an unexpected port"
+    );
 
     wait_until_port(port, true).await;
     shutdown_token.cancel();

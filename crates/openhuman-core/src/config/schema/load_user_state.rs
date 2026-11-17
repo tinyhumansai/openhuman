@@ -234,7 +234,7 @@ pub fn clear_active_user(default_openhuman_dir: &Path) -> Result<()> {
 /// Returns the user-scoped openhuman directory for the given user id:
 /// `{default_openhuman_dir}/users/{user_id}`.
 pub fn user_openhuman_dir(default_openhuman_dir: &Path, user_id: &str) -> PathBuf {
-    default_openhuman_dir.join("users").join(user_id)
+    crate::config::schema::profile_layout::users_dir(default_openhuman_dir).join(user_id)
 }
 
 /// Stable id used to scope the openhuman directory before any user has

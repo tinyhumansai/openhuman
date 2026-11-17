@@ -1,5 +1,6 @@
 //! Local desktop enablement and permission-aware status.
 
+use crate::core::runtime::DispatchCtx;
 use std::fs;
 use std::io::Write;
 use std::sync::{
@@ -25,11 +26,11 @@ const DESKTOP_AGENT_TOOLS: &[&str] = &[
 /// A registered desktop tool skips only approval parks when its explicit
 /// desktop setting is off. Permission caps, denies, enabled state, OS grants,
 /// and the action budget still run at their normal gates.
-pub(crate) async fn approvals_disabled_for(tool: &dyn tinytools::Tool) -> bool {
+pub(crate) async fn approvals_disabled_for(ctx: &DispatchCtx, tool: &dyn tinytools::Tool) -> bool {
     if tool.family() != Some("desktop") || !DESKTOP_AGENT_TOOLS.contains(&tool.name()) {
         return false;
     }
-    crate::config::rpc::load_config_with_timeout()
+    ctx.load_config()
         .await
         .is_ok_and(|config| approval_bypass_decision(&config, tool))
 }
@@ -108,6 +109,11 @@ struct LocalState {
     enabled: bool,
 }
 
+// Deliberately local, not on the storage port: this is the one machine's own
+// consent to let the agent drive its desktop. A shared backend would let a
+// flag set on one host enable control on another that never consented, and
+// corrupt or missing state must keep failing closed. Allowlisted in
+// `scripts/ci/check-storage-bypass.mjs`.
 fn state_path(config: &Config) -> std::path::PathBuf {
     config
         .workspace_dir
@@ -115,8 +121,13 @@ fn state_path(config: &Config) -> std::path::PathBuf {
         .join("desktop-control.json")
 }
 
+/// Effective desktop control: the `[components] computer` ceiling AND this
+/// machine's local consent. The flag can only remove access, never grant it.
 /// Corrupt or unreadable local state fails closed, never enabling desktop access.
 pub fn enabled(config: &Config) -> bool {
+    if !config.components.computer {
+        return false;
+    }
     let _lock = STATE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -160,17 +171,24 @@ fn save(config: &Config, value: bool) -> Result<(), String> {
 
 pub async fn set_enabled(config: &Config, value: bool) -> Result<DesktopStatus, String> {
     if value && !supported() {
-        return Err(
-            "desktop control requires macOS or Windows and a loopback core listener".to_owned(),
-        );
+        return Err(UNSUPPORTED_REASON.to_owned());
     }
     save(config, value)?;
     tracing::info!(enabled = value, "[desktop] local enablement changed");
     Ok(status(config).await)
 }
 
+const UNSUPPORTED_REASON: &str = "desktop control requires macOS and a loopback core listener";
+
+/// macOS only. The Windows and Linux backends in the pinned TinyComputer
+/// engine implement no desktop surfaces yet, so every call there would fail
+/// with `PLATFORM_NOT_SUPPORTED` (#7164).
+pub(super) const fn platform_supported() -> bool {
+    cfg!(target_os = "macos")
+}
+
 fn supported() -> bool {
-    cfg!(any(target_os = "macos", target_os = "windows")) && listener_is_loopback()
+    platform_supported() && listener_is_loopback()
 }
 
 fn permission(data: &serde_json::Value, field: &str) -> String {
@@ -224,13 +242,11 @@ where
         module_state,
         accessibility: "unknown".to_owned(),
         screen_recording: "unknown".to_owned(),
-        jev_ready: crate::modules::desktop::jev_ready(config),
+        jev_ready: crate::modules::desktop::jev_ready(config).await,
         reason: None,
     };
     if !result.supported {
-        reason = Some(
-            "desktop control requires macOS or Windows and a loopback core listener".to_owned(),
-        );
+        reason = Some(UNSUPPORTED_REASON.to_owned());
     } else if local_enabled {
         match permissions().await {
             Ok(response) if response.ok => {

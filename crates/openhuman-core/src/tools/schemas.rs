@@ -10,9 +10,7 @@
 #[path = "schemas_tests.rs"]
 mod tests;
 
-mod apify;
 mod composio;
-mod linkedin;
 mod registry;
 mod web_search;
 

@@ -1,80 +1,115 @@
-//! Sub-agent cap-hit checkpoint summary.
-//!
-//! When the iteration cap is hit, summarize the run-so-far into a resumable
-//! checkpoint (so the delegating agent can continue from partial progress)
-//! instead of erroring. Falls back to a deterministic digest summary if the
-//! summarization call fails or returns no prose.
+//! OpenHuman billing adapter for TinyAgents' cap-hit checkpoint summary.
 
-use crate::inference::provider::BilledUsage;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tinyagents_harness::summarization::CapToolResult;
+use tinyagents_orchestration::subagent::{summarize_at_cap, CapSummaryModel};
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelRequest};
+use tinyinference_llm::usage::BilledUsage;
 
-/// A checkpoint result. `usage`, when present, is the provider usage from the
-/// summary call so the caller can fold it into sub-agent token/cost accounting.
+/// The provider usage from a summary call, charged by the host after the owner
+/// API applies its shared digest and fallback policy.
 pub(super) struct SubagentCheckpointOutcome {
     pub(super) text: String,
     pub(super) usage: Option<BilledUsage>,
 }
 
-/// Sub-agent cap-hit summary: when the iteration cap is hit, summarize the
-/// run-so-far into a resumable checkpoint (so the delegating agent can continue
-/// from partial progress) instead of erroring. Falls back to a deterministic
-/// digest summary if the summarization call fails or returns no prose.
-///
-/// The summary runs on a crate [`ChatModel`] (built from the turn's
-/// [`TurnModelSource`](crate::agent::tinyagents::TurnModelSource) — model +
-/// temperature baked in), so the checkpoint no longer names the `Provider` trait
-/// (issue #4249, Phase 3 / Motion A).
+/// The host owns provider invocation and billing; TinyAgents owns summary
+/// selection, deterministic fallback, and the bounded tool-result digest.
 pub(super) struct SubagentCheckpoint {
     pub(super) chat_model: Arc<dyn ChatModel<()>>,
     pub(super) agent_id: String,
+    pub(super) model: String,
     pub(super) max_output_tokens: u32,
+    pub(super) trace: Option<Arc<crate::agent::tinyagents::SupplementalTrace>>,
 }
 
 impl SubagentCheckpoint {
     pub(super) async fn summarize_cap_hit(
         &self,
-        digest: &str,
+        results: &[CapToolResult<'_>],
         max_iterations: usize,
     ) -> anyhow::Result<SubagentCheckpointOutcome> {
-        let agent_id = &self.agent_id;
-        let deterministic = format!(
-            "I reached my tool-call limit ({max_iterations} steps) before finishing this task. \
-             Progress so far (tool calls + results):\n{digest}\n\nThe task is incomplete — the above is \
-             what I accomplished; continue from here."
-        );
+        let model = HostCapSummaryModel {
+            checkpoint: self,
+            usage: Mutex::new(None),
+        };
+        let summary = summarize_at_cap(Some(&model), max_iterations, results, 800).await;
+        let usage = model
+            .usage
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Ok(SubagentCheckpointOutcome {
+            text: summary.text,
+            usage,
+        })
+    }
+}
+
+struct HostCapSummaryModel<'a> {
+    checkpoint: &'a SubagentCheckpoint,
+    usage: Mutex<Option<BilledUsage>>,
+}
+
+#[async_trait::async_trait]
+impl CapSummaryModel for HostCapSummaryModel<'_> {
+    async fn summarize(&self, max_calls: usize, digest: &str) -> Result<String, String> {
         let summary_input = vec![Message::user(format!(
-            "You are sub-agent `{agent_id}` and reached your tool-call limit before finishing. Here are \
+            "You are sub-agent `{}` and reached your tool-call limit before finishing. Here are \
              the tool calls you made and their results — compile a brief progress checkpoint (what you \
-             accomplished, what still remains) for the agent that delegated to you. Do not call tools.\n\n{digest}"
+             accomplished, what still remains) for the agent that delegated to you. Do not call tools.\n\n{digest}",
+            self.checkpoint.agent_id,
         ))];
-        // Bounded progress-summary turn; the cap also keeps the reservation-pricing
-        // pre-flight realistic (TAURI-RUST-C62). Temperature is baked into the model.
-        let request = ModelRequest::new(summary_input).with_max_tokens(self.max_output_tokens);
-        match self.chat_model.invoke(&(), request).await {
-            Ok(resp) => {
-                let usage = crate::agent::tinyagents::model::usage_info_from_response(&resp);
-                let raw = resp.text();
-                let (prose, _) = tinytools_agent::parse_tool_calls(&raw);
-                let text = if prose.trim().is_empty() {
-                    deterministic
-                } else {
-                    prose
-                };
-                Ok(SubagentCheckpointOutcome { text, usage })
+        let request =
+            ModelRequest::new(summary_input).with_max_tokens(self.checkpoint.max_output_tokens);
+        let trace_input =
+            serde_json::to_value(&request.messages).unwrap_or(serde_json::Value::Null);
+        let trace_call = self
+            .checkpoint
+            .trace
+            .as_ref()
+            .map(|trace| (trace.clone(), trace.begin(&self.checkpoint.model)));
+        match self.checkpoint.chat_model.invoke(&(), request).await {
+            Ok(mut response) => {
+                // Direct ChatModel invocation skips the normal stream adapter's
+                // response normalization. Keep the product fold and native trace
+                // on the same message-level usage when providers only fill it there.
+                if response.usage.is_none() {
+                    response.usage = response.message.usage;
+                }
+                if let Some((trace, (call_id, started_at_ms))) = trace_call {
+                    trace.completed(
+                        call_id,
+                        &self.checkpoint.model,
+                        started_at_ms,
+                        trace_input,
+                        &response,
+                    );
+                }
+                let usage = tinyinference_llm::usage::usage_info_from_response(&response);
+                *self
+                    .usage
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = usage;
+                let (prose, _) = tinytools_agent::parse_tool_calls(&response.text());
+                Ok(prose)
             }
-            Err(e) => {
+            Err(error) => {
+                if let Some((trace, (call_id, started_at_ms))) = trace_call {
+                    trace.failed(call_id, &self.checkpoint.model, started_at_ms);
+                }
                 tracing::warn!(
-                    agent_id = %self.agent_id,
-                    error = %e,
+                    agent_id = %self.checkpoint.agent_id,
+                    max_calls,
+                    error = %error,
                     "[subagent_host] checkpoint summary call failed — using deterministic fallback"
                 );
-                Ok(SubagentCheckpointOutcome {
-                    text: deterministic,
-                    usage: None,
-                })
+                Err(error.to_string())
             }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "checkpoint_tests.rs"]
+mod tests;

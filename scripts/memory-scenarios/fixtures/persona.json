@@ -1,0 +1,81 @@
+{
+  "_comment": "Entirely fictional. One persona; every domain is *.example; the phone numbers are in the reserved 555-01xx range. Safe to commit and to store on a real account (the run forgets everything it wrote).",
+  "today": "2026-10-08",
+  "yesterday": "2026-10-07",
+  "time_zone": "Asia/Kolkata",
+  "user": {
+    "name": "Jordan Lee",
+    "email": "jordan.lee@example.com",
+    "phone": "+15555550142",
+    "language": "English"
+  },
+  "contacts": [
+    {
+      "name": "Priya Raman",
+      "email": "priya.raman@example.com",
+      "phone": "+15555550117"
+    },
+    {
+      "name": "Mateo Alvarez",
+      "email": "mateo@alvarez-design.example",
+      "phone": "+15555550188"
+    }
+  ],
+  "learnings": [
+    {
+      "kind": "preference",
+      "text": "Jordan prefers meeting summaries as three bullet points, never prose."
+    },
+    {
+      "kind": "fact",
+      "text": "Jordan's sister Priya Raman lives in Pune and visits every Diwali."
+    },
+    {
+      "kind": "procedure",
+      "text": "To file an expense, Jordan exports the receipt as PDF and emails it to expenses@northwind.example."
+    },
+    {
+      "kind": "correction",
+      "text": "Jordan's manager is Dana Whitfield, not Dana Whitman."
+    },
+    {
+      "kind": "other",
+      "text": "Jordan keeps a running list of book recommendations in a note titled Reading Queue."
+    }
+  ],
+  "planted": {
+    "text": "Jordan is allergic to peanuts; never suggest dishes with peanuts.",
+    "probe": "Suggest one quick Thai dish I could cook tonight.",
+    "must_not_contain": ["peanut"]
+  },
+  "dated": [
+    {
+      "date": "2026-10-07",
+      "turn": "Today I finished the quarterly vendor review for Northwind and sent it to Dana."
+    },
+    {
+      "date": "2026-10-03",
+      "turn": "Today I booked the dentist for the 20th and renewed my library card."
+    }
+  ],
+  "cross_thread": {
+    "store": "My bike lock combination is not something to store, but my bike is a teal Brompton named Kestrel.",
+    "probe": "What colour is my bike, and what did I name it?",
+    "expect_any": ["teal", "kestrel"]
+  },
+  "negative_control": {
+    "probe": "What is the name of my pet tortoise?",
+    "must_not_invent": true
+  },
+  "brain_doc": {
+    "title": "Northwind travel policy (fictional)",
+    "text": "Northwind Travel Policy. Economy class for flights under 6 hours. Hotel cap is 180 EUR per night in Berlin and 140 EUR elsewhere in Germany. Per diem is 45 EUR. Bookings go through travel@northwind.example at least 14 days ahead.",
+    "probe": "What is the Northwind hotel cap per night in Berlin?",
+    "expect_any": ["180"]
+  },
+  "path_file": {
+    "relative": "home/jordan.lee/notes/reading-queue.md",
+    "basename": "reading-queue.md",
+    "username": "jordan.lee"
+  }
+}

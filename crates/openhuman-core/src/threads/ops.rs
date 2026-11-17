@@ -8,11 +8,15 @@ mod crud;
 mod edit;
 mod live_state;
 mod purge;
+mod queued_attachments;
+mod search;
 mod support;
+mod thread_delete;
 mod title_generation;
 mod transcript;
 mod turn_state_ops;
 mod usage;
+mod working_dir;
 
 pub use crud::{
     delete_after, message_append, message_update, messages_list, thread_create_new, thread_delete,
@@ -22,15 +26,22 @@ pub use edit::{
     edit_message, regenerate, EditMessageRequest, EditOrRegenerateResponse, RegenerateRequest,
 };
 pub use live_state::{
-    goal_get, todos_get, ThreadGoalGetResponse, ThreadLiveStateRequest, ThreadTodosGetResponse,
+    goal_get, state_get, todos_get, ThreadGoalGetResponse, ThreadLiveStateRequest,
+    ThreadStateGetResponse, ThreadTodosGetResponse,
 };
 pub use purge::threads_purge;
+#[cfg(test)]
+pub(crate) use purge::threads_purge_inner_with_snapshot_hook;
+pub(crate) use queued_attachments::persist_queued_user_message;
+pub use search::{thread_search, ThreadSearchHit, ThreadSearchRequest, ThreadSearchResponse};
 pub use title_generation::thread_generate_title;
 pub use transcript::{transcript_get, TranscriptGetRequest};
 pub use turn_state_ops::{
     turn_state_clear, turn_state_get, turn_state_get_turn, turn_state_history, turn_state_list,
 };
 pub use usage::{token_usage, SubagentUsageDto, ThreadTokenUsageRequest, ThreadTokenUsageResponse};
+pub use working_dir::thread_update_working_dir;
+pub(crate) use working_dir::thread_working_dir;
 
 // Test-only re-exports so `use super::*;` in the split-out test modules below
 // keeps resolving the shared helpers that now live in `support`.

@@ -32,75 +32,6 @@ fn max_iterations_filter_keeps_unrelated_events() {
     assert!(!is_max_iterations_event(&sentry::protocol::Event::default()));
 }
 
-// ── is_channel_message_not_found_event (TAURI-R7) ────────────────────────
-
-#[cfg(feature = "crash-reporting")]
-#[test]
-fn channel_message_not_found_filter_matches_patch() {
-    // Canonical TAURI-R7 shape: PATCH 404 on a channel-message path.
-    assert!(is_channel_message_not_found_event(
-        &channel_message_404_event("PATCH")
-    ));
-}
-
-#[cfg(feature = "crash-reporting")]
-#[test]
-fn channel_message_not_found_filter_matches_delete() {
-    assert!(is_channel_message_not_found_event(
-        &channel_message_404_event("DELETE")
-    ));
-}
-
-#[cfg(feature = "crash-reporting")]
-#[test]
-fn channel_message_not_found_filter_ignores_get_404() {
-    // GET 404 on a channel-message path is NOT an expected state — must keep Sentry signal.
-    assert!(!is_channel_message_not_found_event(
-        &channel_message_404_event("GET")
-    ));
-}
-
-#[cfg(feature = "crash-reporting")]
-#[test]
-fn channel_message_not_found_filter_ignores_non_channel_path() {
-    let mut event = channel_message_404_event("PATCH");
-    event.message = Some("PATCH /auth/profile failed (404); response_body_len=42".to_string());
-    assert!(!is_channel_message_not_found_event(&event));
-}
-
-#[cfg(feature = "crash-reporting")]
-#[test]
-fn channel_message_not_found_filter_ignores_wrong_status() {
-    let mut event = channel_message_404_event("PATCH");
-    event.tags.insert("status".into(), "403".into());
-    assert!(!is_channel_message_not_found_event(&event));
-}
-
-#[cfg(feature = "crash-reporting")]
-#[test]
-fn channel_message_not_found_filter_ignores_wrong_domain() {
-    let mut event = channel_message_404_event("PATCH");
-    event.tags.insert("domain".into(), "channels".into());
-    assert!(!is_channel_message_not_found_event(&event));
-}
-
-#[cfg(feature = "crash-reporting")]
-#[test]
-fn channel_message_not_found_filter_matches_exception_path() {
-    // sentry-tracing with attach_stacktrace=true populates exception list.
-    let mut event = sentry::protocol::Event::default();
-    event.tags.insert("domain".into(), "backend_api".into());
-    event.tags.insert("failure".into(), "non_2xx".into());
-    event.tags.insert("status".into(), "404".into());
-    event.tags.insert("method".into(), "PATCH".into());
-    event.exception = vec![sentry::protocol::Exception {
-        value: Some("PATCH /channels/discord/messages/abc failed (404): Not Found".to_string()),
-        ..Default::default()
-    }]
-    .into();
-    assert!(is_channel_message_not_found_event(&event));
-}
-
 // ── LoopbackUnavailable (TAURI-R5, TAURI-R6) ─────────────────────────────
 
 /// Verbatim body shape from OPENHUMAN-TAURI-R5 (~2.5k events): the
@@ -451,6 +382,10 @@ fn expected_kind_demotes_every_backend_owned_error_code() {
     // re-demote into a suppressed bucket.
     let payload = "OpenHuman API error (413 Payload Too Large): \
          {\"error\":{\"errorCode\":\"PAYLOAD_TOO_LARGE\",\"message\":\"request entity too large\"}}";
+    register_backend_classifier_fixture(
+        payload,
+        reportable_fixture(BackendErrorKind::PayloadTooLarge, false),
+    );
     assert_eq!(
         expected_error_kind(payload),
         None,
@@ -462,6 +397,10 @@ fn expected_kind_demotes_every_backend_owned_error_code() {
     // suppressed `ContextWindowExceeded` bucket (CodeRabbit).
     let context = "OpenHuman API error (400 Bad Request): \
          {\"error\":{\"errorCode\":\"CONTEXT_LENGTH_EXCEEDED\",\"message\":\"This model's maximum context length is 128000 tokens, however you requested more\"}}";
+    register_backend_classifier_fixture(
+        context,
+        reportable_fixture(BackendErrorKind::ContextLengthExceeded, false),
+    );
     assert_eq!(
         expected_error_kind(context),
         None,
@@ -485,6 +424,10 @@ fn expected_kind_lets_malformed_bad_request_page() {
     // classify it as expected, so capture proceeds.
     let body = "OpenHuman API error (400 Bad Request): \
          {\"error\":{\"errorCode\":\"BAD_REQUEST\",\"malformed\":true}}";
+    register_backend_classifier_fixture(
+        body,
+        reportable_fixture(BackendErrorKind::BadRequest, true),
+    );
     assert_eq!(expected_error_kind(body), None);
 }
 
@@ -544,6 +487,14 @@ fn before_send_filter_drops_backend_owned_error_code_events() {
          {\"error\":{\"errorCode\":\"PAYLOAD_TOO_LARGE\",\"message\":\"request entity too large\"}}";
     let context = "OpenHuman API error (400 Bad Request): \
          {\"error\":{\"errorCode\":\"CONTEXT_LENGTH_EXCEEDED\",\"message\":\"This model's maximum context length is 128000 tokens\"}}";
+    register_backend_classifier_fixture(
+        payload,
+        reportable_fixture(BackendErrorKind::PayloadTooLarge, false),
+    );
+    register_backend_classifier_fixture(
+        context,
+        reportable_fixture(BackendErrorKind::ContextLengthExceeded, false),
+    );
     for body in [payload, context] {
         let event = event_with_message(body);
         assert!(
@@ -556,10 +507,13 @@ fn before_send_filter_drops_backend_owned_error_code_events() {
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn before_send_filter_keeps_malformed_bad_request_event() {
-    let event = event_with_message(
-        "OpenHuman API error (400 Bad Request): \
-         {\"error\":{\"errorCode\":\"BAD_REQUEST\",\"malformed\":true}}",
+    let body = "OpenHuman API error (400 Bad Request): \
+         {\"error\":{\"errorCode\":\"BAD_REQUEST\",\"malformed\":true}}";
+    register_backend_classifier_fixture(
+        body,
+        reportable_fixture(BackendErrorKind::BadRequest, true),
     );
+    let event = event_with_message(body);
     assert!(
         !is_backend_error_code_event(&event),
         "malformed BAD_REQUEST must survive before_send and page (F8)"

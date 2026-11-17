@@ -117,13 +117,13 @@ export function ComposerCommandItem({
 }: Omit<ComponentProps<'button'>, 'children'> & { command: ComposerCommand; active: boolean }) {
   return (
     <ComposerMenuItem active={active} {...props}>
-      <command.icon className="text-foreground/35 size-3.5 shrink-0" />
+      <command.icon className="text-muted-foreground size-3.5 shrink-0" />
       <span className="font-medium">/{command.name}</span>
-      <span className="text-foreground/45 flex-1 truncate text-start text-xs">
+      <span className="text-muted-foreground flex-1 truncate text-start text-xs">
         {command.description}
       </span>
       {active && (
-        <kbd className="bg-foreground/[0.06] text-foreground/45 rounded px-1 font-mono text-[10px]">
+        <kbd className="bg-foreground/[0.06] text-muted-foreground rounded px-1 font-mono text-[10px]">
           ↵
         </kbd>
       )}

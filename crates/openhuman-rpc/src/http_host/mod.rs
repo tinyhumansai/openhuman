@@ -28,7 +28,9 @@ pub use schemas::{
 
 pub(crate) const LOG_PREFIX: &str = "[http_host]";
 
-use openhuman_core::core::all::{register_controller_extension, ControllerExtension, DomainGroup};
+use crate::core_host::core::all::{
+    register_controller_extension, ControllerExtension, DomainGroup,
+};
 
 const NAMESPACES: &[(&str, &str)] = &[(
     "http_host",
@@ -42,11 +44,19 @@ const NAMESPACES: &[(&str, &str)] = &[(
 /// own, so it is gated as [`DomainGroup::Platform`].
 pub fn register_controllers() -> Result<(), String> {
     log::debug!("{LOG_PREFIX} registering controller extension");
-    register_controller_extension(ControllerExtension {
+    register_controller_extension(extension())
+}
+
+/// The `http_host.*` controllers as a controller extension, for a runtime
+/// builder's `controller_extension` option (what [`crate::host`] wires).
+/// Kernel surface with no family of its own, so gated as
+/// [`DomainGroup::Platform`].
+pub fn extension() -> ControllerExtension {
+    ControllerExtension {
         group: DomainGroup::Platform,
         controllers: all_http_host_registered_controllers(),
         namespaces: NAMESPACES,
-    })
+    }
 }
 
 /// [`register_controllers`] for server setup paths that cannot return an

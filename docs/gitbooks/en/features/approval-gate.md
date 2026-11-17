@@ -1,0 +1,179 @@
+---
+description: >-
+  The agent asks before it does anything risky. When the autonomy policy is
+  on, risky actions wait for your approval and are denied if you don't answer.
+icon: shield-check
+---
+
+# Approval gate
+
+The approval gate sits between the agent and the outside world. TinySecurity evaluates policy and owns the durable request state; OpenHuman parks the live call, displays the prompt and carries out the result. When the autonomy tier requires a check, the call waits for your decision. Actions your tier already allows run without a prompt. On the `full` tier, for example, a write is never prompted.
+
+{% hint style="warning" %}
+The autonomy policy is off by default, and the gate is part of it. With `[autonomy] enabled = false`, command classification, the tier table, the allowlist, the hourly action budget, `workspace_only` and `forbidden_paths` do nothing, and acting tool calls run without a prompt. The exceptions are the forced approvals below.
+
+This is deliberate. Agents are expected to run inside a container, a platform jail or a Docker sandbox that already provides isolation, and a shell that refuses ordinary shell syntax is not a usable shell. To turn the policy on, set `[autonomy] enabled = true` in `config.toml`.
+{% endhint %}
+
+## What still holds with the policy off
+
+Three protections do not depend on `[autonomy] enabled`:
+
+- Credential stores and system roots stay unreachable. `~/.ssh`, `~/.gnupg`, `~/.aws` and system roots are always refused, as are `..` traversal and null bytes in a path.
+- Hard blocks inside the tools themselves, including the tool-policy middleware, always run.
+- Sandboxing is separate. The platform jail and the Docker backend are chosen by `[runtime]` and the session's origin, not by the autonomy tier. See [Privacy and security](privacy-and-security.md).
+
+Everything below describes the policy with `[autonomy] enabled = true`.
+
+## What triggers a prompt
+
+The agent classifies every acting tool call into a command class. Your autonomy tier then decides whether that class runs, prompts or is blocked.
+
+| Command class | What it covers                                                    |
+| ------------- | ----------------------------------------------------------------- |
+| Read          | Provably read-only or observational (a curated allowlist)         |
+| Write         | Changes state. This is the default for anything unrecognized      |
+| Network       | Reaches the network (curl, wget, ssh, scp, and so on)             |
+| Install       | Installs an OS or global language package                         |
+| Destructive   | Catastrophic, irreversible or privilege-escalating                |
+
+You pick the tier in **Settings > Permissions** (`[autonomy].level`):
+
+| Tier                                           | Read  | Write  | Network, Install, Destructive |
+| ---------------------------------------------- | ----- | ------ | ----------------------------- |
+| `readonly`                                     | Allow | Block  | Block                         |
+| `supervised` (default when the policy is on)   | Allow | Prompt | Prompt                        |
+| `full`                                         | Allow | Allow  | Prompt                        |
+
+A call that lands on Prompt waits at the gate. A call that lands on Block is refused, and no approval can override it.
+
+Classification fails closed. A command that is not provably read-only counts as at least a write. In a piped command the highest class wins, so `ls | curl ...` is Network. A quoted heredoc body (`<< 'EOF' ... EOF`) is treated as data and not scanned. An unquoted one (`<< EOF`) is expanded and scanned.
+
+## How a request flows
+
+```text
+agent wants to act
+        │
+        ▼
+ classify command ──► Block ──► refused
+        │
+     Prompt
+        │
+        ▼
+ on "Always allow" list? ──► yes ──► run immediately
+        │ no
+        ▼
+ park call · persist pending row · emit approval_request
+        │
+        ▼
+ ┌──────────────┬───────────────┬────────────┐
+ ▼              ▼               ▼            ▼
+Approve     Always allow      Deny      10-min TTL
+(once)    (+ allowlist)                     │
+ │             │               │            ▼
+ ▼             ▼               ▼          Deny
+ run           run           refused   (fail closed)
+```
+
+A parked call shows an approval card above the chat composer. The card has the tool name, a one-line summary of the action and the redacted command. You have three choices:
+
+- **Approve** runs this one call.
+- **Always allow** runs it and adds the tool to your `auto_approve` list, so it skips the prompt next time.
+- **Deny** refuses the call.
+
+You can also type "yes" or "no" in chat, and the reply goes to the parked request.
+
+## Always allow
+
+Choosing **Always allow** records the approval decision and saves the tool name to `[autonomy].auto_approve`; OpenHuman reloads the host policy. Later calls can skip this prompt, but still pass the active policy checks and hard blocks. To be prompted again, remove the entry in **Settings > Agent access**. An agent's **Always allow** is not copied into the operator's list.
+
+### Jev review
+
+TinySecurity also supports optional Jev scoring for a request that still needs
+approval. It is disabled in OpenHuman's current module configuration. If a host
+explicitly enables it, a qualified score can approve only that exact request
+once, after the decision is durably audited. It cannot override a hard denial
+or create a reusable tool or flow grant. An uncertain score, timeout or service
+error leaves the request for the human approval path; without an available
+human prompt, the request is denied.
+
+The default list is `file_read`, `memory_search`, `memory_list`, `get_time`, `list_dir`, `glob` and `grep`. Four of those names no longer match a registered tool. Memory is now one tool called `memory`, the clock is `current_time`, and directory listing is `list`. So only `file_read`, `glob` and `grep` have any effect.
+
+## auto_approve_all
+
+`[autonomy].auto_approve_all` approves every call without asking. Before you enable it, know three things:
+
+- A call from an unlabelled call site is still denied, and the hard blocks inside the tools still apply.
+- It skips the human prompt. TinySecurity still records the automatic host-policy decision in the audit stream; the tool runs without a pending human request.
+- It does not override a forced approval.
+
+## Forced approvals
+
+Browser page interactions cannot be pre-authorized. Every `click`, `double_click`, `fill`, `type`, `press`, `select` and `check` goes through a forced approval, which works differently:
+
+- Every shortcut is skipped. `auto_approve_all`, the `auto_approve` list and per-flow tool trust are ignored. The call parks even with `[autonomy] enabled = false`.
+- The decision is one-time. **Always allow** is refused, so you can only approve once or deny.
+- It needs a live chat. A turn that is not a web-chat turn is denied instead of parked, so a cron job, channel message or flow cannot drive your browser.
+
+The card names the action, the page origin and a SHA-256 digest that ties the action to that URL. If the page navigates while you decide, the approved action is refused and not replayed on the new page.
+
+## Fail-closed behavior
+
+Every path that is not an approval ends in a denial:
+
+- A parked request lives for 10 minutes. If you have not decided by then, it is denied.
+- If saving the request fails or the channel drops, the call is denied.
+- On timeout the gate re-reads the stored decision first, so an approval that landed at the last moment still wins.
+
+TinySecurity owns pending and decided request state, expiry, reusable grants, and
+the audit stream. OpenHuman serves the document-store and prompt callbacks and
+parks the current tool future until a decision or terminal outcome arrives.
+After an approved tool finishes, the host reports its outcome to TinySecurity
+for the audit trail. Sensitive arguments and text are redacted before they are
+stored or shown.
+
+## What the turn's origin decides
+
+The gate is interactive, so a parked call needs a surface that can answer it. The turn's origin decides what gets parked and what passes straight through:
+
+| Turn origin | At the gate |
+| --- | --- |
+| Cron | Read-only: shell, acting and external-effect tools are denied, never parked |
+| Cron job whose agent sets `scheduled_actions = true` (see below) | Allowed, no row, no event, for the job's own run only |
+| Internal background jobs | Allowed, no row, no event |
+| A saved flow's pre-declared action | Allowed, no row, no event |
+| CLI, a delegated sub-agent, and a triage dispatch started on your own machine | Allowed, no row, no event |
+| Web chat | Parks for your decision |
+| A triage dispatch from a connector or webhook payload | Parks and writes a pending-approval row |
+| An external channel turn (Telegram, Slack and so on) | Parks and writes a row |
+| An unlabelled call site | Denied |
+
+A triage dispatch that your own machine started keeps the authority its caller already had. One steered by an outside payload parks and leaves an audit row. No surface can decide a background park yet, so it expires at the timeout. You get the audit trail, not a working escalation. Under `auto_approve_all` the call is approved instead of parked, and that auto-approval is still audited (see above).
+
+The browser's consequential actions (click, fill, type, key press, select, check, and a task's `needs_approval` step) are the exception. They use the **forced** gate, which ignores auto-approval and denies every turn that is not a routable WebChat chat, cron included. An operator opts specific action kinds back in for cron, background and approval-free workflow turns with `[browser] unattended_actions`. See [TinyComputer browser on Linux and Docker](../developing/tinycomputer-docker.md#4-unattended-actions).
+
+A scheduled job has nobody to ask, so its turns are read-only. An agent definition can opt its cron jobs into acting with `scheduled_actions = true`, and only when it also names its tools explicitly (`[tools] named = [...]`). Such a job runs as `TrustedAutomation { CronActions }`: its own run may use shell and acting tools without a prompt, while sub-agents it spawns stay read-only. It is also trusted automation for the wallet: it may execute prepared transfers within the `[wallet_policy]` caps (when `automation_enabled` is set) and pay x402 within the per-request budget. A plain cron job can only read (including balances); it can neither execute a transfer nor pay x402. A job created from a channel conversation keeps running as that channel's `ExternalChannel` turn, so `wallet_execute_prepared` transfers and x402 payments are refused for it, opted-in agent or not. The autonomy tier, TinySecurity's command analysis and protected-path floor, the agent's sandbox, the browser's allowed websites and its checkpoint before payment still apply, and SaaS mode ignores the setting. See `crates/openhuman-core/src/cron/README.md`, "Scheduled actions".
+
+An external channel turn parks because remote input is untrusted. The row is written, and you can still decide on the thread card before the timeout.
+
+## Configuration and RPC
+
+- `[autonomy].enabled` is the master switch for the policy. It is `false` by default. Forced approvals and the always-forbidden floor work without it.
+- `OPENHUMAN_APPROVAL_GATE` set to `0` or `false` skips installing the gate even with the policy on. With no gate, Prompt-class calls run unprompted.
+- `[autonomy].level` and `[autonomy].auto_approve` set the tier and the allowlist. Change them with the `config.update_autonomy_settings` RPC or in the settings panels.
+
+The `approval` controller exposes three JSON-RPC methods:
+
+| Method                                     | Purpose                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `openhuman.approval_list_pending`          | The live queue of parked requests.                                                                           |
+| `openhuman.approval_list_recent_decisions` | Decided and executed audit rows (`limit` 1 to 500, default 50), shown in **Settings > Approval history**.    |
+| `openhuman.approval_decide`                | Applies a decision (`approve_once`, `approve_always_for_tool` or `deny`).                                    |
+
+The two list methods return an empty list, not an error, when no gate is installed. `decide` returns an error when the gate is absent or the request is unknown or already decided.
+
+## See also
+
+- [Privacy and security](privacy-and-security.md): what leaves the machine, and the layers underneath this one.
+- [Security architecture](../developing/architecture/security.md): command classification and policy internals.
+- [Agent access settings](settings.md): where the tier, the trusted roots and the allowlist are edited.

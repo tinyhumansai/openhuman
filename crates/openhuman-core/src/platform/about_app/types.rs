@@ -94,6 +94,9 @@ pub enum CapabilityStatus {
     ComingSoon,
     #[serde(rename = "deprecated")]
     Deprecated,
+    /// Backed by a component switched off in `[components]`.
+    #[serde(rename = "disabled")]
+    Disabled,
 }
 
 impl CapabilityStatus {
@@ -103,6 +106,7 @@ impl CapabilityStatus {
             Self::Beta => "beta",
             Self::ComingSoon => "coming_soon",
             Self::Deprecated => "deprecated",
+            Self::Disabled => "disabled",
         }
     }
 }

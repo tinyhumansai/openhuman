@@ -2,7 +2,7 @@
 mod env_guard;
 use env_guard::EnvVarGuard;
 use openhuman_core::config::schema::{Config, StreamMode, TelegramConfig};
-use openhuman_core::security::keyring;
+use openhuman_core::security::secret_storage;
 use std::sync::OnceLock;
 
 async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
@@ -22,7 +22,7 @@ async fn config_secrets_roundtrip_via_keyring_backed_master_key_migration() {
 
     let _keyring_backend = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
     let _workspace_override = EnvVarGuard::set("OPENHUMAN_WORKSPACE", &openhuman_dir);
-    keyring::init_workspace(&workspace_dir);
+    secret_storage::init_workspace(&workspace_dir);
 
     let legacy_key_path = openhuman_dir.join(".secret_key");
     std::fs::write(
@@ -38,6 +38,7 @@ async fn config_secrets_roundtrip_via_keyring_backed_master_key_migration() {
         api_key: Some("sk-direct-secret".into()),
         search: openhuman_core::config::schema::SearchConfig {
             brave: openhuman_core::config::schema::SearchEngineCredentials {
+                base_url: None,
                 api_key: Some("brave-secret".into()),
             },
             ..Default::default()

@@ -1,8 +1,11 @@
+use crate::core::runtime::DispatchCtx;
 use serde::de::{self, DeserializeOwned};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::all::{
+    BoundRegisteredController, ControllerEntry, ControllerFuture, RegisteredController,
+};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::ops::StoredAppStatePatch;
@@ -36,6 +39,18 @@ pub fn all_app_state_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_update_local_state,
         },
     ]
+}
+
+pub(crate) fn all_app_state_controller_entries() -> Vec<ControllerEntry> {
+    vec![
+        ControllerEntry::bound(snapshot_controller()),
+        ControllerEntry::bound(update_local_state_controller()),
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn app_state_parameter_contracts() -> Vec<crate::core::all::ControllerParamContract> {
+    tests::parameter_contracts()
 }
 
 pub fn app_state_schemas(function: &str) -> ControllerSchema {
@@ -92,25 +107,53 @@ pub fn app_state_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_snapshot(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_snapshot(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    snapshot_controller().invoke(ctx, _params)
+}
+
+fn handle_update_local_state(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    update_local_state_controller().invoke(ctx, params)
+}
+
+fn snapshot_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(app_state_schemas("snapshot"), parse_snapshot, run_snapshot)
+}
+
+fn update_local_state_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        app_state_schemas("update_local_state"),
+        parse_update_local_state,
+        run_update_local_state,
+    )
+}
+
+fn parse_snapshot(_params: Map<String, Value>) -> Result<(), String> {
+    Ok(())
+}
+
+fn parse_update_local_state(params: Map<String, Value>) -> Result<StoredAppStatePatch, String> {
+    let payload: UpdateLocalStateParams = serde_json::from_value(Value::Object(params))
+        .map_err(|e| format!("invalid params: {e}"))?;
+    Ok(StoredAppStatePatch {
+        encryption_key: payload.encryption_key,
+        onboarding_tasks: payload.onboarding_tasks,
+        keyring_consent: payload.keyring_consent,
+    })
+}
+
+fn run_snapshot(ctx: DispatchCtx, (): ()) -> ControllerFuture {
     Box::pin(async move {
-        crate::desktop::app_state::snapshot()
+        crate::desktop::app_state::snapshot(&ctx)
             .await?
             .into_cli_compatible_json()
     })
 }
 
-fn handle_update_local_state(params: Map<String, Value>) -> ControllerFuture {
+fn run_update_local_state(ctx: DispatchCtx, patch: StoredAppStatePatch) -> ControllerFuture {
     Box::pin(async move {
-        let payload: UpdateLocalStateParams = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("invalid params: {e}"))?;
-        crate::desktop::app_state::update_local_state(StoredAppStatePatch {
-            encryption_key: payload.encryption_key,
-            onboarding_tasks: payload.onboarding_tasks,
-            keyring_consent: payload.keyring_consent,
-        })
-        .await?
-        .into_cli_compatible_json()
+        crate::desktop::app_state::update_local_state(&ctx, patch)
+            .await?
+            .into_cli_compatible_json()
     })
 }
 

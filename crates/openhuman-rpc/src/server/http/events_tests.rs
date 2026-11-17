@@ -32,7 +32,7 @@ fn active_workspace_resolution_failure_is_nonfatal() {
 
 #[test]
 fn domain_event_payload_includes_redacted_detail_and_workspace_handle() {
-    let event = openhuman_core::core::events::DomainEvent::McpServerProbeTimedOut {
+    let event = crate::core_host::core::events::DomainEvent::McpServerProbeTimedOut {
         server_id: "server-1".into(),
         qualified_name: "example.test/mcp".into(),
         probe_timeout_secs: 10,
@@ -64,12 +64,12 @@ fn query(client_id: &str, token: Option<&str>) -> Query<EventsQuery> {
 
 #[tokio::test]
 async fn events_require_a_credential_and_reject_unknown_bind_tokens() {
-    let missing = events_handler(HeaderMap::new(), query("client", None)).await;
+    let missing = events_handler(HeaderMap::new(), None, query("client", None)).await;
     assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(missing.into_body(), usize::MAX).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("Missing credentials"));
 
-    let invalid = events_handler(HeaderMap::new(), query("client", Some("unknown"))).await;
+    let invalid = events_handler(HeaderMap::new(), None, query("client", Some("unknown"))).await;
     assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(invalid.into_body(), usize::MAX).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("unknown, expired"));
@@ -77,14 +77,14 @@ async fn events_require_a_credential_and_reject_unknown_bind_tokens() {
 
 #[tokio::test]
 async fn events_bind_token_is_client_bound_and_single_use() {
-    let token = openhuman_core::core::event_bind_tokens::issue("right", None)
+    let token = crate::server::http::events_bind_tokens::issue("right", None)
         .expect("bind token")
         .token;
 
-    let wrong = events_handler(HeaderMap::new(), query("wrong", Some(&token))).await;
+    let wrong = events_handler(HeaderMap::new(), None, query("wrong", Some(&token))).await;
     assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
 
-    let accepted = events_handler(HeaderMap::new(), query("right", Some(&token))).await;
+    let accepted = events_handler(HeaderMap::new(), None, query("right", Some(&token))).await;
     assert_eq!(accepted.status(), StatusCode::OK);
     assert_eq!(
         accepted.headers()[header::CONTENT_TYPE],
@@ -92,31 +92,38 @@ async fn events_bind_token_is_client_bound_and_single_use() {
     );
     drop(accepted);
 
-    let replay = events_handler(HeaderMap::new(), query("right", Some(&token))).await;
+    let replay = events_handler(HeaderMap::new(), None, query("right", Some(&token))).await;
     assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn events_stream_forwards_only_the_bound_client() {
-    use openhuman_core::web_chat::{publish_web_channel_event, WebChannelEvent};
+    use crate::core_host::web_chat::{publish_web_channel_event, WebChannelEvent};
     use tokio_stream::StreamExt;
 
-    let token = openhuman_core::core::event_bind_tokens::issue("stream-client", None)
+    let token = crate::server::http::events_bind_tokens::issue("stream-client", None)
         .expect("bind token")
         .token;
-    let response = events_handler(HeaderMap::new(), query("stream-client", Some(&token))).await;
+    let response =
+        events_handler(HeaderMap::new(), None, query("stream-client", Some(&token))).await;
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
 
-    publish_web_channel_event(WebChannelEvent {
-        event: "wrong_client_probe".into(),
-        client_id: "another-client".into(),
-        ..Default::default()
+    publish_web_channel_event(WebChannelEvent::UserError {
+        context: crate::core_host::web_chat::WebEventContext {
+            client_id: "another-client".into(),
+            ..Default::default()
+        },
+        error_type: Some("wrong_client_probe".into()),
+        error_source: None,
     });
-    publish_web_channel_event(WebChannelEvent {
-        event: "right_client_probe".into(),
-        client_id: "stream-client".into(),
-        ..Default::default()
+    publish_web_channel_event(WebChannelEvent::UserError {
+        context: crate::core_host::web_chat::WebEventContext {
+            client_id: "stream-client".into(),
+            ..Default::default()
+        },
+        error_type: Some("right_client_probe".into()),
+        error_source: None,
     });
 
     let chunk = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
@@ -125,13 +132,14 @@ async fn events_stream_forwards_only_the_bound_client() {
         .expect("SSE body chunk")
         .expect("SSE bytes");
     let event = String::from_utf8_lossy(&chunk);
-    assert!(event.contains("event: right_client_probe"));
+    assert!(event.contains("event: user_error"));
+    assert!(event.contains("right_client_probe"));
     assert!(!event.contains("wrong_client_probe"));
 }
 
 #[tokio::test]
 async fn domain_events_require_a_bearer() {
-    let response = domain_events_handler(HeaderMap::new()).await;
+    let response = domain_events_handler(HeaderMap::new(), None).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("Bearer token required"));
@@ -139,8 +147,8 @@ async fn domain_events_require_a_bearer() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn domain_events_stream_config_then_published_events() {
+    use crate::core_host::core::events::DomainEvent;
     use futures::StreamExt;
-    use openhuman_core::core::events::DomainEvent;
     use std::ffi::OsString;
 
     let workspace = tempfile::tempdir().expect("workspace tempdir");
@@ -148,13 +156,13 @@ async fn domain_events_stream_config_then_published_events() {
         "OPENHUMAN_WORKSPACE",
         OsString::from(workspace.path()),
     )]);
-    openhuman_core::core::auth::init_rpc_token_with_value("events-http-tests-token")
+    crate::core_host::core::auth::init_rpc_token_with_value("events-http-tests-token")
         .expect("initialize test bearer");
-    let token = openhuman_core::core::auth::get_rpc_token()
+    let token = crate::core_host::core::auth::get_rpc_token()
         .expect("test bearer initialized")
         .to_string();
-    if openhuman_core::core::bus::BUS.get().is_none() {
-        openhuman_core::core::bus::init()
+    if crate::core_host::core::bus::BUS.get().is_none() {
+        crate::core_host::core::bus::init()
             .await
             .expect("initialize in-process event bus");
     }
@@ -164,7 +172,7 @@ async fn domain_events_stream_config_then_published_events() {
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
-    let response = domain_events_handler(headers).await;
+    let response = domain_events_handler(headers, None).await;
     assert_eq!(response.status(), StatusCode::OK);
     let mut chunks = response.into_body().into_data_stream();
 
@@ -175,7 +183,7 @@ async fn domain_events_stream_config_then_published_events() {
         .expect("SSE bytes");
     assert!(String::from_utf8_lossy(&config).contains("event: config"));
 
-    openhuman_core::core::bus::BUS.publish(DomainEvent::SystemStartup {
+    crate::core_host::core::bus::BUS.publish(DomainEvent::SystemStartup {
         component: "events-test".into(),
     });
     let event = tokio::time::timeout(std::time::Duration::from_secs(1), chunks.next())

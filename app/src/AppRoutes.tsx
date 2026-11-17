@@ -19,7 +19,6 @@ import FlowsPage from './pages/FlowsPage';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
-import { PttOverlayPage } from './pages/PttOverlayPage';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import WebCallbackPage from './pages/WebCallbackPage';
@@ -237,8 +236,6 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
           </ProtectedRoute>
         }
       />
-
-      <Route path="/ptt-overlay" element={<PttOverlayPage />} />
 
       {/* Dev-only harnesses. Registered behind `IS_DEV` so their component
           trees are dead code in a production build and drop out of the bundle

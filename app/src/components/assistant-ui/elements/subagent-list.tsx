@@ -6,6 +6,9 @@
  * Changes from upstream:
  * - `cn` import path (`@/components/assistant-ui/lib/utils`).
  * - `../utils/range` -> `@/components/assistant-ui/utils/range`.
+ * - `SubagentItem.done`: an agent's own finished flag. Upstream marks the
+ *   first `completedCount` rows done, which is only right when workers finish
+ *   in list order; parallel workers do not.
  * No hard-coded user-facing copy — `agent.name`/`agent.model` are
  * caller-supplied props, so there is nothing to route through `useT()` here.
  */
@@ -19,6 +22,8 @@ import { mono, paper } from './surfaces';
 export interface SubagentItem {
   name: string;
   model: string;
+  /** This agent has finished; falls back to `index < completedCount` when absent. */
+  done?: boolean;
 }
 
 export function SubagentList({
@@ -42,10 +47,10 @@ export function SubagentList({
   return (
     <div
       data-slot="subagent-list"
-      className={cn('flex min-h-[14.5rem] w-full max-w-xs flex-col gap-2', className)}
+      className={cn('flex w-full flex-col gap-2', className)}
       {...props}>
       {agents.map((agent, index) => {
-        const done = index < completedCount;
+        const done = agent.done ?? index < completedCount;
         const width = progress[index] ?? 0;
         const percentage = pct(width, 100);
 
@@ -57,10 +62,10 @@ export function SubagentList({
               {done ? (
                 <CheckIcon className="fade-in zoom-in-90 animate-in size-3.5 shrink-0 text-emerald-500 duration-200" />
               ) : (
-                <Loader2Icon className="text-foreground/35 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+                <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
               )}
               <span className="flex-1 truncate text-[13.5px]">{agent.name}</span>
-              <span className={cn(mono, 'text-foreground/35')}>{agent.model}</span>
+              <span className={cn(mono, 'text-muted-foreground')}>{agent.model}</span>
             </div>
             <span
               role="progressbar"
@@ -68,10 +73,10 @@ export function SubagentList({
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={percentage}
-              className="bg-foreground/[0.06] h-[3px] w-full overflow-hidden rounded-full">
+              className="bg-foreground/[0.06] inset-ring-border h-[3px] w-full overflow-hidden rounded-full inset-ring forced-colors:outline">
               <span
                 className={cn(
-                  'block h-full rounded-full transition-[width] duration-700',
+                  'block h-full rounded-full transition-[width] duration-700 forced-color-adjust-none',
                   done ? 'bg-emerald-500/70' : 'bg-foreground/60'
                 )}
                 style={{ width: `${percentage}%` }}
@@ -87,16 +92,16 @@ export function SubagentList({
             'fade-in slide-in-from-bottom-2 animate-in flex flex-col gap-2 rounded-2xl px-3.5 py-2.5 duration-300'
           )}>
           <div className="flex items-center gap-2">
-            <Loader2Icon className="text-foreground/35 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+            <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
             <span className="flex-1 truncate text-[13.5px]">{summaryAgent.name}</span>
-            <span className={cn(mono, 'text-foreground/35')}>{summaryAgent.model}</span>
+            <span className={cn(mono, 'text-muted-foreground')}>{summaryAgent.model}</span>
           </div>
           <span
             role="progressbar"
             aria-label={`${summaryAgent.name} progress`}
             aria-valuemin={0}
             aria-valuemax={100}
-            className="bg-foreground/[0.06] h-[3px] w-full overflow-hidden rounded-full">
+            className="bg-foreground/[0.06] inset-ring-border h-[3px] w-full overflow-hidden rounded-full inset-ring forced-colors:outline">
             <span className="shimmer shimmer-bg block h-full w-full rounded-full motion-reduce:animate-none" />
           </span>
         </div>

@@ -1,12 +1,14 @@
 use super::*;
-use crate::channels::email_channel::EmailConfig;
-use crate::channels::providers::yuanbao::YuanbaoConfig;
 use crate::config::schema::{DiscordConfig, IMessageConfig};
+use crate::core::Outcome;
 use tempfile::tempdir;
+use tinychannels_bus::config::{EmailConfig, YuanbaoConfig};
+use tinychannels_bus::controllers::{ChannelAuthMode, ChannelConnectionResult};
 
 fn isolated_test_config() -> (tempfile::TempDir, Config) {
     let tmp = tempdir().expect("failed to create temp dir");
     let mut config = Config::default();
+    config.modules.allow_download = false;
     config.workspace_dir = tmp.path().join("workspace");
     config.config_path = tmp.path().join("config.toml");
     std::fs::create_dir_all(&config.workspace_dir).expect("failed to create workspace dir");
@@ -44,24 +46,34 @@ fn seed_discord_with_allowlist(config: &mut Config) {
     });
 }
 
-// ── Yuanbao channel credential verification ────────────────────
-// Issue: connect_channel for yuanbao previously stored creds and returned
-// "connected" without ever calling the upstream sign-token endpoint, so
-// random input (e.g. app_key=12) showed as Connected in the UI. The fix
-// calls `/api/v5/robotLogic/sign-token` and propagates the API error.
-
-/// Build a Config pre-pointed at a mock `api_domain` so the verification
-/// step hits the wiremock server instead of the live prod URL.
-fn yuanbao_test_config(mock_uri: &str) -> (tempfile::TempDir, Config) {
-    let (tmp, mut config) = isolated_test_config();
-    config.channels_config.yuanbao = Some(YuanbaoConfig {
-        api_domain: mock_uri.to_string(),
-        ..Default::default()
-    });
-    (tmp, config)
-}
-
 #[path = "ops_connect_status_tests.rs"]
 mod connect_status_tests;
 #[path = "ops_yuanbao_email_tests.rs"]
 mod yuanbao_email_tests;
+
+/// A recorded module result fixture: host tests exercise custody/persistence,
+/// while native verification and provider defaults are tested in TinyChannels.
+async fn persist_module_fixture(
+    config: &Config,
+    channel: &str,
+    mode: ChannelAuthMode,
+    credentials: serde_json::Value,
+    update: tinychannels_bus::module_controller::ChannelConfigUpdate,
+) -> Result<Outcome<ChannelConnectionResult>, String> {
+    connect::persist_prepared_connection(
+        config,
+        channel,
+        mode,
+        credentials,
+        tinychannels_bus::module_controller::PreparedChannelConnection {
+            result: ChannelConnectionResult {
+                status: "connected".into(),
+                restart_required: true,
+                auth_action: None,
+                message: Some("verified by module fixture".into()),
+            },
+            config_update: Some(update),
+        },
+    )
+    .await
+}

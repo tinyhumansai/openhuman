@@ -5,14 +5,14 @@ This directory is intentionally near-empty.
 Authoritative docs for AI agents and contributors:
 
 - **[`AGENTS.md`](../../AGENTS.md)** — all project conventions, commands, architecture, testing, patterns. (`CLAUDE.md` redirects here.)
-- **[`gitbooks/developing/architecture.md`](../../gitbooks/developing/architecture.md)** — narrative architecture, dual-socket sync.
-- **[`gitbooks/developing/architecture/frontend.md`](../../gitbooks/developing/architecture/frontend.md)** — frontend layout.
-- **[`gitbooks/developing/architecture/tauri-shell.md`](../../gitbooks/developing/architecture/tauri-shell.md)** — Tauri shell.
-- **[`gitbooks/developing/architecture/agent-harness.md`](../../gitbooks/developing/architecture/agent-harness.md)** — agent harness / tool surface.
-- **[`gitbooks/developing/e2e-testing.md`](../../gitbooks/developing/e2e-testing.md)** — WDIO/Appium testing.
-- **[`gitbooks/developing/cef.md`](../../gitbooks/developing/cef.md)** — historical CEF runtime notes (the shell now uses Wry).
-- **[`gitbooks/developing/testing-strategy.md`](../../gitbooks/developing/testing-strategy.md)** — testing strategy.
-- **[`gitbooks/developing/agent-observability.md`](../../gitbooks/developing/agent-observability.md)** — agent observability.
+- **[`docs/gitbooks/en/developing/architecture.md`](../../docs/gitbooks/en/developing/architecture.md)** — narrative architecture, dual-socket sync.
+- **[`docs/gitbooks/en/developing/architecture/frontend.md`](../../docs/gitbooks/en/developing/architecture/frontend.md)** — frontend layout.
+- **[`docs/gitbooks/en/developing/architecture/tauri-shell.md`](../../docs/gitbooks/en/developing/architecture/tauri-shell.md)** — Tauri shell.
+- **[`docs/gitbooks/en/developing/architecture/agent-harness.md`](../../docs/gitbooks/en/developing/architecture/agent-harness.md)** — agent harness / tool surface.
+- **[`docs/gitbooks/en/developing/e2e-testing.md`](../../docs/gitbooks/en/developing/e2e-testing.md)** — WDIO/Appium testing.
+- **[`docs/gitbooks/en/developing/cef.md`](../../docs/gitbooks/en/developing/cef.md)** — historical CEF runtime notes (the shell now uses Wry).
+- **[`docs/gitbooks/en/developing/testing-strategy.md`](../../docs/gitbooks/en/developing/testing-strategy.md)** — testing strategy.
+- **[`docs/gitbooks/en/developing/agent-observability.md`](../../docs/gitbooks/en/developing/agent-observability.md)** — agent observability.
 
 ## When to add a file here
 

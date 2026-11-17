@@ -1,27 +1,19 @@
 //! Public RPC-facing operations for the web channel: sending a chat message,
 //! cancelling in-flight turns (primary and parallel, scoped or unscoped), and
-//! inspecting/clearing a thread's run queue.
+//! inspecting/clearing a thread's run queue. The turns and their queues live
+//! in the context's turn runner; these are the thin entry points over it.
 
 use serde_json::{json, Value};
 
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
+use crate::web_chat::event_context;
 use crate::web_chat::WebChannelEvent;
 
-use super::super::event_bus::publish_web_channel_event;
+use super::super::event_bus::publish_web_channel_event_in;
+use super::super::runner::{runtime, scope_of, CancelNote};
 use super::super::types::ChatRequestMetadata;
-use super::parallel_turn::{cancel_parallel_turn_by_request_id, cancel_parallel_turns_for_thread};
-use super::start_chat::start_chat;
-use super::state::{cancel_in_flight_gracefully, cancel_should_target, key_for, IN_FLIGHT};
-
-/// Cancel whatever turn is currently running on a thread (unscoped stop).
-///
-/// Back-compat entry point (Stop button / session teardown). For a cancel that
-/// must only affect a specific turn — so a stale cancel can't kill a newer turn
-/// on the same thread — use [`cancel_chat_scoped`] with the target `request_id`
-/// (#4760).
-pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<String>, String> {
-    cancel_chat_scoped(client_id, thread_id, None).await
-}
+use crate::agent::queued_turn::StoredAttachmentInput;
 
 /// Cancel the in-flight turn(s) for a thread.
 ///
@@ -32,13 +24,43 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
 /// whatever is running on the thread (primary + every parallel) — the "stop
 /// everything" behaviour used by session teardown / a Stop button.
 pub async fn cancel_chat_scoped(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: Option<&str>,
 ) -> Result<Option<String>, String> {
-    Ok(cancel_chat_inner(client_id, thread_id, request_id)
-        .await?
-        .request_id)
+    Ok(
+        cancel_chat_inner(ctx, client_id, thread_id, request_id, false)
+            .await?
+            .request_id,
+    )
+}
+
+/// The placeholder `client_id` a lease-loss teardown logs under. It carries no
+/// meaning: fence state is the explicit `fenced` flag of `cancel_chat_inner`.
+const FENCE_CLIENT_ID: &str = "profile-fence";
+
+/// Stop every turn running in the calling context — what a profile whose
+/// lease was lost does before it closes. Each thread is torn down as an
+/// unscoped stop would (primary, parallel turns and detached sub-agents).
+/// Returns how many threads had something to stop.
+pub async fn cancel_all_turns(ctx: &DispatchCtx) -> usize {
+    let threads = super::state::live_thread_ids(ctx).await;
+    let mut stopped = 0;
+    for thread_id in &threads {
+        match cancel_chat_inner(ctx, FENCE_CLIENT_ID, thread_id, None, true).await {
+            Ok(outcome) if outcome.request_id.is_some() => stopped += 1,
+            Ok(_) => {}
+            Err(error) => {
+                log::warn!("[web-channel] stopping thread_id={thread_id} failed: {error}");
+            }
+        }
+    }
+    log::info!(
+        "[web-channel] cancel_all_turns threads={} stopped={stopped}",
+        threads.len()
+    );
+    stopped
 }
 
 /// What one cancel tore down.
@@ -50,9 +72,13 @@ struct CancelOutcome {
 }
 
 async fn cancel_chat_inner(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: Option<&str>,
+    // True for a lease-loss teardown no client asked for: each turn's events
+    // then go to the client that started it instead of `client_id`.
+    fenced: bool,
 ) -> Result<CancelOutcome, String> {
     let client_id = client_id.trim();
     let thread_id = thread_id.trim();
@@ -64,73 +90,91 @@ async fn cancel_chat_inner(
         return Err("thread_id is required".to_string());
     }
 
-    let map_key = key_for(thread_id);
-    let mut removed_request_id: Option<String> = None;
-
+    let rt = runtime(ctx);
+    let scope = scope_of(ctx);
+    let live: Vec<_> = rt
+        .runner
+        .live_turns()
+        .await
+        .into_iter()
+        .filter(|turn| turn.scope == scope && turn.thread_id == thread_id)
+        .collect();
+    // The runner publishes each cancelled turn's terminal event; tell it why.
+    // A fence cancel names no real client, so each turn's events go to the
+    // client that started it; a user's cancel keeps the caller's id.
+    for turn in live
+        .iter()
+        .filter(|turn| request_id.is_none_or(|rid| turn.request_id == rid))
     {
-        let mut in_flight = IN_FLIGHT.lock().await;
-        // #4760: only tear down the primary turn when the cancel is unscoped OR
-        // targets exactly the request that is running. A stale cancel for an
-        // already-superseded request must be a no-op so the newer turn lives.
-        let should_cancel_primary = in_flight
-            .get(&map_key)
-            .map(|entry| cancel_should_target(request_id, &entry.request_id))
-            .unwrap_or(false);
-        if should_cancel_primary {
-            if let Some(existing) = in_flight.remove(&map_key) {
-                removed_request_id = Some(cancel_in_flight_gracefully(existing));
-            }
-        } else if let Some(rid) = request_id {
+        rt.shared.note_cancel(
+            &turn.request_id,
+            CancelNote {
+                user_stop: true,
+                client_id: (!fenced).then(|| client_id.to_string()),
+                superseded_by: None,
+            },
+        );
+    }
+    // #4760: a scoped cancel tears down only the turn it names. A stale cancel
+    // for an already-superseded request is a no-op, so the newer turn lives.
+    let cancelled = rt
+        .runner
+        .cancel_requests(&scope, thread_id, request_id)
+        .await;
+    if cancelled.is_empty() {
+        if let Some(rid) = request_id {
             log::info!(
-                "[web-channel] ignoring stale cancel request_id={} for thread_id={} — current in-flight is {:?}; newer turn preserved",
-                rid,
-                thread_id,
-                in_flight.get(&map_key).map(|e| e.request_id.as_str())
+                "[web-channel] ignoring stale cancel request_id={rid} for thread_id={thread_id} — current in-flight is {:?}; newer turn preserved",
+                live.iter()
+                    .find(|turn| !turn.parallel)
+                    .map(|turn| turn.request_id.as_str())
             );
         }
     }
 
-    // Also tear down concurrent parallel (forked) turns. A scoped cancel targets
-    // only the named parallel turn (if it is one); an unscoped cancel/stop
-    // covers every parallel turn on the thread, not just the primary one.
-    let cancelled_parallel = match request_id {
-        Some(rid) => cancel_parallel_turn_by_request_id(thread_id, rid).await,
-        None => cancel_parallel_turns_for_thread(thread_id).await,
-    };
-
-    // #4760: a scoped cancel that matched only a parallel (forked) turn — not the
-    // primary — still genuinely tore a turn down and emitted its cancelled event.
-    // Surface that id so `channel_web_cancel` reports `cancelled: true` with the
-    // right request_id instead of misreporting a no-op just because the primary
-    // turn wasn't the one cancelled.
-    let cancelled_any = removed_request_id
-        .clone()
-        .or_else(|| cancelled_parallel.first().cloned());
+    // #4760: a scoped cancel that matched only a parallel (forked) turn still
+    // genuinely tore a turn down; the primary comes first when both did.
+    let cancelled_any = cancelled.first().cloned();
 
     // An unscoped stop also halts the thread's detached work. Async sub-agents
-    // (`spawn_async_subagent`) run on their own tasks and deliberately drop the
+    // (`spawn_subagent`) run on their own tasks and deliberately drop the
     // spawning turn's cancellation, so tearing the turn down leaves them
     // running — and when one finishes, background delivery starts a fresh
     // system turn on the thread, which reads as "Stop did nothing". Abort them
     // first, then drop anything already queued for delivery, so no result lands
     // in the gap. A scoped cancel names one turn and leaves the rest alone.
+    // A turn cancelled cooperatively may never publish a terminal event, which
+    // would leave its session marked busy and defer this thread's background
+    // deliveries until restart.
+    //
+    // Only once nothing is left running on the thread: a scoped cancel can leave
+    // the primary or a parallel turn alive, and those still owe a terminal event.
+    let others_live = live
+        .iter()
+        .any(|turn| !cancelled.contains(&turn.request_id));
+    if cancelled_any.is_some() && !others_live {
+        crate::agent::orchestration::busy_guard::clear_busy_for_thread(ctx, thread_id);
+        // A drain that fired while the cancelled turn counted as busy returned
+        // without claiming anything; ask for another.
+        crate::agent::orchestration::background_delivery::kick_delivery(ctx, thread_id);
+    }
     let subagents_cancelled = if request_id.is_none() {
         // Gate completion recording before aborting: Tokio abort is
         // cooperative, so a child already finishing can otherwise enqueue in
         // the gap between abort and the queue sweep.
         let discarded =
             crate::agent::orchestration::background_completions::discard_pending_for_thread(
-                thread_id,
+                ctx, thread_id,
             );
-        let stopped = crate::agent::orchestration::running_subagents::stop_for_thread(thread_id);
+        let stopped =
+            crate::agent::orchestration::running_subagents::stop_for_thread(ctx, thread_id);
         crate::agent::orchestration::background_completions::finish_stop_for_thread(
-            thread_id, &stopped,
+            ctx, thread_id, &stopped,
         );
         log::info!(
-            "[web-channel] stop thread_id={} turn={:?} parallel={} subagents_cancelled={} completions_discarded={}",
+            "[web-channel] stop thread_id={} turns={:?} subagents_cancelled={} completions_discarded={}",
             thread_id,
-            removed_request_id,
-            cancelled_parallel.len(),
+            cancelled,
             stopped.len(),
             discarded
         );
@@ -139,32 +183,6 @@ async fn cancel_chat_inner(
         0
     };
 
-    // Emit a cancelled chat_error for each cancelled turn (primary + parallels)
-    // so every interleaved branch's UI is resolved. `chat_cancelled` is the new,
-    // purpose-built terminal event (structured `cancel_reason`, no
-    // `error_type` string to parse); `chat_error{error_type:"cancelled"}` is
-    // kept alongside it for one release so an older frontend build still
-    // resolves the turn.
-    for request_id in removed_request_id.into_iter().chain(cancelled_parallel) {
-        publish_web_channel_event(WebChannelEvent {
-            event: "chat_error".to_string(),
-            client_id: client_id.to_string(),
-            thread_id: thread_id.to_string(),
-            request_id: request_id.clone(),
-            message: Some("Cancelled".to_string()),
-            error_type: Some("cancelled".to_string()),
-            ..Default::default()
-        });
-        publish_web_channel_event(WebChannelEvent {
-            event: "chat_cancelled".to_string(),
-            client_id: client_id.to_string(),
-            thread_id: thread_id.to_string(),
-            request_id,
-            cancel_reason: Some("user_stop".to_string()),
-            ..Default::default()
-        });
-    }
-
     Ok(CancelOutcome {
         request_id: cancelled_any,
         subagents_cancelled,
@@ -172,6 +190,7 @@ async fn cancel_chat_inner(
 }
 
 pub async fn channel_web_chat(
+    ctx: &crate::core::runtime::DispatchCtx,
     client_id: &str,
     thread_id: &str,
     message: &str,
@@ -181,7 +200,75 @@ pub async fn channel_web_chat(
     queue_mode: Option<String>,
     run_mode: Option<String>,
     metadata: ChatRequestMetadata,
+    voice_note_id: Option<String>,
 ) -> Result<Outcome<Value>, String> {
+    channel_web_chat_with_stored_attachments(
+        ctx,
+        client_id,
+        thread_id,
+        message,
+        model_override,
+        temperature,
+        locale,
+        queue_mode,
+        run_mode,
+        metadata,
+        voice_note_id,
+        None,
+    )
+    .await
+}
+
+pub async fn channel_web_chat_with_stored_attachments(
+    ctx: &crate::core::runtime::DispatchCtx,
+    client_id: &str,
+    thread_id: &str,
+    message: &str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    locale: Option<String>,
+    queue_mode: Option<String>,
+    run_mode: Option<String>,
+    metadata: ChatRequestMetadata,
+    voice_note_id: Option<String>,
+    stored_attachments: Option<StoredAttachmentInput>,
+) -> Result<Outcome<Value>, String> {
+    channel_web_chat_with_attachments(
+        ctx,
+        client_id,
+        thread_id,
+        message,
+        model_override,
+        temperature,
+        locale,
+        queue_mode,
+        run_mode,
+        metadata,
+        voice_note_id,
+        stored_attachments,
+        None,
+    )
+    .await
+}
+
+pub async fn channel_web_chat_with_attachments(
+    ctx: &crate::core::runtime::DispatchCtx,
+    client_id: &str,
+    thread_id: &str,
+    message: &str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    locale: Option<String>,
+    queue_mode: Option<String>,
+    run_mode: Option<String>,
+    metadata: ChatRequestMetadata,
+    voice_note_id: Option<String>,
+    stored_attachments: Option<StoredAttachmentInput>,
+    attachment_uploads: Option<Vec<tinychannels_bus::ContentPart>>,
+) -> Result<Outcome<Value>, String> {
+    // A SaaS user chooses the thread id; the same rules as `threads_upsert`
+    // apply (no reserved prefixes, no path-like ids). No-op outside SaaS.
+    crate::profiles::surface::check_thread_id(thread_id.trim())?;
     // Mirrors the socket `chat:start` payload's `run_mode` handling
     // (`openhuman_rpc::server::socketio`): apply it before starting the turn so
     // `plan_mode_middleware` sees the requested mode from the first tool
@@ -189,9 +276,9 @@ pub async fn channel_web_chat(
     // `agent.set_run_mode` RPC. Unrecognized values are logged and ignored
     // — a stale/typo'd client build must not fail the whole turn.
     if let Some(run_mode) = run_mode.as_deref() {
-        match crate::agent::tinyagents::run_mode::parse_mode_label(run_mode) {
+        match crate::threads::run_mode::parse_mode_label(run_mode) {
             Some(mode) => {
-                crate::agent::tinyagents::run_mode::set_mode(thread_id, mode);
+                crate::threads::run_mode::set_mode(ctx, thread_id, mode);
             }
             None => log::warn!(
                 "[web_chat] channel_web_chat thread_id={thread_id} ignoring unrecognized run_mode={run_mode}"
@@ -199,7 +286,8 @@ pub async fn channel_web_chat(
         }
     }
 
-    let result = start_chat(
+    let result = super::start_chat::start_chat_with_attachments(
+        ctx,
         client_id,
         thread_id,
         message,
@@ -208,6 +296,9 @@ pub async fn channel_web_chat(
         locale,
         queue_mode,
         metadata,
+        voice_note_id,
+        stored_attachments,
+        attachment_uploads,
     )
     .await?;
 
@@ -215,13 +306,15 @@ pub async fn channel_web_chat(
         return Ok(Outcome::single_log(parsed, "web channel message queued"));
     }
 
+    let accepted = serde_json::to_value(crate::threads::rpc_models::StartedChatAck {
+        accepted: true,
+        client_id: client_id.trim().to_owned(),
+        thread_id: thread_id.trim().to_owned(),
+        request_id: result,
+    })
+    .map_err(|error| format!("serialize started chat ack: {error}"))?;
     Ok(Outcome::single_log(
-        json!({
-            "accepted": true,
-            "client_id": client_id.trim(),
-            "thread_id": thread_id.trim(),
-            "request_id": result,
-        }),
+        accepted,
         "web channel request accepted",
     ))
 }
@@ -233,39 +326,20 @@ fn queue_item_json(
     item: &crate::agent::queued_turn::QueuedTurn,
 ) -> Value {
     json!({
-        "id": item.id,
+        "id": item.request_id,
         "lane": lane.as_str(),
         "text_preview": crate::agent::queued_turn::text_preview(&item.text),
     })
 }
 
-pub async fn channel_web_queue_status(thread_id: &str) -> Result<Outcome<Value>, String> {
-    let map_key = key_for(thread_id);
-    let in_flight = IN_FLIGHT.lock().await;
-    if let Some(entry) = in_flight.get(&map_key) {
-        let status = entry.run_queue.status().await;
-        let items: Vec<Value> = entry
-            .run_queue
-            .snapshot()
-            .await
-            .iter()
-            .map(|(lane, item)| queue_item_json(*lane, item))
-            .collect();
-        Ok(Outcome::single_log(
-            json!({
-                "thread_id": thread_id.trim(),
-                "active": true,
-                "request_id": entry.request_id,
-                "steers": status.steers,
-                "followups": status.followups,
-                "collects": status.collects,
-                "total": status.total,
-                "items": items,
-            }),
-            "queue status retrieved",
-        ))
-    } else {
-        Ok(Outcome::single_log(
+pub async fn channel_web_queue_status(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+) -> Result<Outcome<Value>, String> {
+    let runner = &runtime(ctx).runner;
+    let scope = scope_of(ctx);
+    let Some(request_id) = runner.in_flight_request_id(&scope, thread_id).await else {
+        return Ok(Outcome::single_log(
             json!({
                 "thread_id": thread_id.trim(),
                 "active": false,
@@ -276,8 +350,28 @@ pub async fn channel_web_queue_status(thread_id: &str) -> Result<Outcome<Value>,
                 "items": Vec::<Value>::new(),
             }),
             "no active turn for thread",
-        ))
-    }
+        ));
+    };
+    let status = runner.queue_status(&scope, thread_id).await;
+    let items: Vec<Value> = runner
+        .queue_snapshot(&scope, thread_id)
+        .await
+        .iter()
+        .map(|(lane, item)| queue_item_json(*lane, item))
+        .collect();
+    Ok(Outcome::single_log(
+        json!({
+            "thread_id": thread_id.trim(),
+            "active": true,
+            "request_id": request_id,
+            "steers": status.steers,
+            "followups": status.followups,
+            "collects": status.collects,
+            "total": status.total,
+            "items": items,
+        }),
+        "queue status retrieved",
+    ))
 }
 
 /// `channel.web_queue_remove` — retract one specific queued item (e.g. the
@@ -286,6 +380,7 @@ pub async fn channel_web_queue_status(thread_id: &str) -> Result<Outcome<Value>,
 /// removal; a no-op removal (unknown id, or no active turn) is silently
 /// `removed: false` — the item is already gone either way.
 pub async fn channel_web_queue_remove(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     item_id: &str,
@@ -296,9 +391,14 @@ pub async fn channel_web_queue_remove(
     if item_id.is_empty() {
         return Err("item_id is required".to_string());
     }
-    let map_key = key_for(thread_id);
-    let in_flight = IN_FLIGHT.lock().await;
-    let Some(entry) = in_flight.get(&map_key) else {
+    let rt = runtime(ctx);
+    let scope = scope_of(ctx);
+    if rt
+        .runner
+        .in_flight_request_id(&scope, thread_id)
+        .await
+        .is_none()
+    {
         return Ok(Outcome::single_log(
             json!({
                 "thread_id": thread_id,
@@ -307,25 +407,22 @@ pub async fn channel_web_queue_remove(
             }),
             "no active turn for thread",
         ));
-    };
-    let removed = entry
-        .run_queue
-        .remove_where(|item| item.id == item_id)
-        .await;
-    drop(in_flight);
+    }
+    let removed = rt.runner.remove_queued(&scope, thread_id, item_id).await;
     if removed > 0 {
+        rt.shared.forget_queued(item_id);
         log::info!("[web-channel] removed queued item thread_id={thread_id} item_id={item_id}");
-        publish_web_channel_event(WebChannelEvent {
-            event: "queue_item_removed".to_string(),
-            client_id: client_id.to_string(),
-            thread_id: thread_id.to_string(),
-            queue_item: Some(crate::web_chat::QueueItemPayload {
-                id: item_id.to_string(),
-                lane: None,
-                text_preview: None,
-            }),
-            ..Default::default()
-        });
+        publish_web_channel_event_in(
+            ctx,
+            WebChannelEvent::QueueItemRemoved {
+                context: event_context(client_id, thread_id, ""),
+                queue_item: Some(crate::web_chat::QueueItemPayload {
+                    id: item_id.to_string(),
+                    lane: None,
+                    text_preview: None,
+                }),
+            },
+        );
     }
     Ok(Outcome::single_log(
         json!({
@@ -337,42 +434,49 @@ pub async fn channel_web_queue_remove(
     ))
 }
 
-pub async fn channel_web_queue_clear(thread_id: &str) -> Result<Outcome<Value>, String> {
-    let map_key = key_for(thread_id);
-    let in_flight = IN_FLIGHT.lock().await;
-    if let Some(entry) = in_flight.get(&map_key) {
-        let dropped = entry.run_queue.clear().await;
-        log::info!(
-            "[web-channel] cleared queue thread_id={} dropped={}",
-            thread_id,
-            dropped
-        );
-        Ok(Outcome::single_log(
-            json!({
-                "thread_id": thread_id.trim(),
-                "cleared": true,
-                "dropped": dropped,
-            }),
-            "queue cleared",
-        ))
-    } else {
-        Ok(Outcome::single_log(
+pub async fn channel_web_queue_clear(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+) -> Result<Outcome<Value>, String> {
+    let rt = runtime(ctx);
+    let scope = scope_of(ctx);
+    if rt
+        .runner
+        .in_flight_request_id(&scope, thread_id)
+        .await
+        .is_none()
+    {
+        return Ok(Outcome::single_log(
             json!({
                 "thread_id": thread_id.trim(),
                 "cleared": false,
                 "dropped": 0,
             }),
             "no active turn for thread",
-        ))
+        ));
     }
+    for (_, item) in rt.runner.queue_snapshot(&scope, thread_id).await {
+        rt.shared.forget_queued(&item.request_id);
+    }
+    let dropped = rt.runner.clear_queue(&scope, thread_id).await;
+    log::info!("[web-channel] cleared queue thread_id={thread_id} dropped={dropped}");
+    Ok(Outcome::single_log(
+        json!({
+            "thread_id": thread_id.trim(),
+            "cleared": true,
+            "dropped": dropped,
+        }),
+        "queue cleared",
+    ))
 }
 
 pub async fn channel_web_cancel(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: Option<&str>,
 ) -> Result<Outcome<Value>, String> {
-    let outcome = cancel_chat_inner(client_id, thread_id, request_id).await?;
+    let outcome = cancel_chat_inner(ctx, client_id, thread_id, request_id, false).await?;
 
     // `request_id` is set only when a turn was torn down, and only then does a
     // `cancelled` chat_error follow. A client that sees `request_id: null` knows

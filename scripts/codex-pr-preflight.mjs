@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
-const REQUIRED_FILES = ['AGENTS.md', 'gitbooks/developing/README.md', 'Cargo.toml', 'app/package.json'];
+const REQUIRED_FILES = ['AGENTS.md', 'docs/gitbooks/en/developing/README.md', 'Cargo.toml', 'app/package.json'];
 const APP_PATTERNS = [/^app\//, /^docs\//];
 const ROOT_RUST_PATTERNS = [/^src\//, /^tests\//, /^Cargo\.toml$/, /^Cargo\.lock$/];
 const TAURI_PATTERNS = [/^crates\/openhuman-app\//];
@@ -92,11 +92,11 @@ function recommendations(changedFiles, lightweight) {
     lines.push('pnpm --dir app exec vitest run <changed-test-files> --config test/vitest.config.ts');
   }
   if (hasPattern(changedFiles, ROOT_RUST_PATTERNS)) {
-    lines.push('cargo fmt --manifest-path Cargo.toml --all --check');
+    lines.push('cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check');
     if (!lightweight) lines.push('pnpm debug rust <test-filter>');
   }
   if (hasPattern(changedFiles, TAURI_PATTERNS)) {
-    lines.push('cargo fmt --manifest-path crates/openhuman-app/Cargo.toml --all --check');
+    lines.push('cargo fmt --manifest-path crates/openhuman-app/Cargo.toml --package openhuman-app -- --check');
   }
   return [...new Set(lines)];
 }

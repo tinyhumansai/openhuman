@@ -2,7 +2,6 @@ import { expect, type Page, test } from '@playwright/test';
 
 import {
   bootRuntimeReadyGuestPage,
-  callCoreRpc,
   dismissWalkthroughIfPresent,
   signInViaBypassUser,
   waitForAppReady,
@@ -11,10 +10,7 @@ import {
 const CONNECTOR_NAME = 'Gmail';
 const TOOLKIT_SLUG = 'gmail';
 const CONNECTION_ID = 'c-gmail-1';
-const ACTION = 'GMAIL_FETCH_EMAILS';
 const MOCK_BASE = 'http://127.0.0.1:' + (process.env.E2E_MOCK_PORT || '18473');
-
-type RequestLogEntry = { method?: string; url?: string; body?: string };
 
 async function mockFetch(path: string, init?: RequestInit) {
   const response = await fetch(MOCK_BASE + path, init);
@@ -36,11 +32,6 @@ async function setMockBehavior(behavior: Record<string, unknown>) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ behavior }),
   });
-}
-
-async function getRequestLog(): Promise<RequestLogEntry[]> {
-  const payload = await mockFetch('/__admin/requests');
-  return (payload.data as RequestLogEntry[]) ?? [];
 }
 
 async function seedConnector(status: 'ACTIVE' | 'FAILED' | 'EXPIRED' = 'ACTIVE') {
@@ -65,11 +56,13 @@ async function bootSkillsPage(page: Page, userId: string) {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
-    // Phase 2: /skills → /connections
-    window.location.hash = '/connections';
   });
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
+  // Navigate through the shell after sign-in: startup route restoration can
+  // otherwise replace a hash assigned during the authenticated boot.
+  await page.getByRole('button', { name: 'Connections' }).click();
+  await expect(page).toHaveURL(/#\/connections/);
   // Tab is "Apps"; the grid renders in the composio-integrations-card container.
   await page.getByTestId('two-pane-nav-composio').click();
   // Wait for the Apps tab grid container to be visible.
@@ -102,7 +95,11 @@ test.describe('Gmail Integration Flows', () => {
     await page.getByTestId('two-pane-nav-composio').click();
 
     await page.getByTestId('skill-install-composio-gmail').click();
-    await expect(page.getByRole('dialog', { name: /Connect Gmail/i })).toBeVisible();
+    const dialog = page.getByRole('dialog', { name: /Connect Gmail/i });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('skill-install-composio-gmail')).toHaveAccessibleName(/Connect/i);
   });
 
   test('connected Gmail exposes management affordances', async ({ page }) => {
@@ -111,20 +108,31 @@ test.describe('Gmail Integration Flows', () => {
     await expect(dialog.getByTestId('trigger-toggles')).toBeVisible();
   });
 
-  test('authorize routes through the mock backend', async () => {
-    await callCoreRpc('openhuman.composio_authorize', { toolkit: TOOLKIT_SLUG });
-    const requests = await getRequestLog();
-    const authReq = requests.find(
-      request =>
-        request.method === 'POST' && request.url?.includes('/agent-integrations/composio/authorize')
-    );
-    expect(authReq).toBeDefined();
+  test('disconnects Gmail from the current Composio management screen', async ({ page }) => {
+    const dialog = await openModal(page);
+    await expect(dialog).toContainText('Gmail is connected');
+
+    await dialog.getByRole('button', { name: 'Disconnect', exact: true }).click();
+
+    await expect(dialog.getByRole('button', { name: 'Connect Gmail', exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(dialog).not.toContainText('Gmail is connected');
+    await dialog.getByRole('button', { name: /close/i }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('skill-install-composio-gmail')).toHaveAccessibleName(/Connect/i);
+
+    await page.getByTestId('skill-install-composio-gmail').click();
+    const setup = page.getByRole('dialog', { name: /Connect Gmail/i });
+    await expect(setup).toBeVisible();
+    await expect(setup.getByRole('button', { name: 'Connect Gmail', exact: true })).toBeVisible();
   });
 
   test('failed and expired states remain usable', async ({ page }) => {
     await seedConnector('FAILED');
     await page.reload();
     await waitForAppReady(page);
+    await expect(page.getByRole('button', { name: 'Connections' })).toBeVisible();
     // Phase 2: "Composio" tab renamed to "Apps"
     await page.getByTestId('two-pane-nav-composio').click();
     await expect(page.getByTestId('skill-install-composio-gmail')).toContainText(CONNECTOR_NAME);
@@ -132,26 +140,11 @@ test.describe('Gmail Integration Flows', () => {
     await seedConnector('EXPIRED');
     await page.reload();
     await waitForAppReady(page);
+    await expect(page.getByRole('button', { name: 'Connections' })).toBeVisible();
     // Phase 2: "Composio" tab renamed to "Apps"
     await page.getByTestId('two-pane-nav-composio').click();
     await expect(page.getByTestId(`skill-install-composio-${TOOLKIT_SLUG}`)).toContainText(
       /Auth expired|Reconnect/i
     );
-  });
-
-  test('execute and disconnect routes do not blank the skills page', async ({ page }) => {
-    await callCoreRpc('openhuman.composio_execute', { tool: ACTION, arguments: {} });
-    // Tab is "Apps"; the grid renders in the composio-integrations-card container.
-    await page.getByTestId('two-pane-nav-composio').click();
-    await expect(page.getByTestId('composio-integrations-card')).toBeVisible();
-
-    await callCoreRpc('openhuman.composio_delete_connection', { connection_id: CONNECTION_ID });
-    const requests = await getRequestLog();
-    const deleteReq = requests.find(
-      request =>
-        request.method === 'DELETE' &&
-        request.url?.includes('/agent-integrations/composio/connections/')
-    );
-    expect(deleteReq).toBeDefined();
   });
 });

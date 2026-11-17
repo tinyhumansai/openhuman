@@ -1493,7 +1493,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                   ? 'primary'
                   : r.status === 'DONE'
                     ? 'success'
-                    : r.status === 'DEGENERATE'
+                    : r.status === 'DEGENERATE' || r.status === 'STOPPED'
                       ? 'warning'
                       : 'danger';
               const dur = r.duration_ms !== null ? `${Math.round(r.duration_ms / 1000)}s` : '—';

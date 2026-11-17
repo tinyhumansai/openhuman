@@ -116,7 +116,7 @@ test.describe('Connector session guard matrix', () => {
       page,
     }) => {
       const card = page.getByTestId(`skill-install-composio-${toolkit.slug}`);
-      await expect(card).toContainText(toolkit.name);
+      await expect(card).toContainText(toolkit.name, { timeout: 30_000 });
       await card.click();
       await expect(page.getByRole('dialog', { name: new RegExp(toolkit.name, 'i') })).toBeVisible();
       await page.keyboard.press('Escape');

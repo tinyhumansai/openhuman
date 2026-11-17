@@ -14,14 +14,42 @@ impl Config {
             let dsn = dsn.trim();
             if !dsn.is_empty() {
                 self.observability.sentry_dsn = Some(dsn.to_string());
+                let env_var = if env.contains("OPENHUMAN_CORE_SENTRY_DSN") {
+                    Some("OPENHUMAN_CORE_SENTRY_DSN")
+                } else if env.contains("OPENHUMAN_SENTRY_DSN") {
+                    Some("OPENHUMAN_SENTRY_DSN")
+                } else if option_env!("OPENHUMAN_CORE_SENTRY_DSN").is_some() {
+                    Some("OPENHUMAN_CORE_SENTRY_DSN")
+                } else if option_env!("OPENHUMAN_SENTRY_DSN").is_some() {
+                    Some("OPENHUMAN_SENTRY_DSN")
+                } else {
+                    None
+                };
+                if let Some(env_var) = env_var {
+                    self.record_env_override_var(env, "observability.sentry_dsn", env_var);
+                }
             }
         }
 
         if let Some(flag) = env.get("OPENHUMAN_ANALYTICS_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.observability.analytics_enabled = true,
-                "0" | "false" | "no" | "off" => self.observability.analytics_enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.observability.analytics_enabled = true;
+                    self.record_env_override(
+                        env,
+                        "observability.analytics_enabled",
+                        &["OPENHUMAN_ANALYTICS_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.observability.analytics_enabled = false;
+                    self.record_env_override(
+                        env,
+                        "observability.analytics_enabled",
+                        &["OPENHUMAN_ANALYTICS_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
@@ -32,10 +60,20 @@ impl Config {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "1" | "true" | "yes" | "on" => {
-                    self.observability.agent_tracing.capture_content = true
+                    self.observability.agent_tracing.capture_content = true;
+                    self.record_env_override(
+                        env,
+                        "observability.agent_tracing.capture_content",
+                        &["OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT"],
+                    );
                 }
                 "0" | "false" | "no" | "off" => {
-                    self.observability.agent_tracing.capture_content = false
+                    self.observability.agent_tracing.capture_content = false;
+                    self.record_env_override(
+                        env,
+                        "observability.agent_tracing.capture_content",
+                        &["OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT"],
+                    );
                 }
                 _ => {}
             }

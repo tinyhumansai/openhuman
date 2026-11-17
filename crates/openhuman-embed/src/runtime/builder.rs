@@ -1,39 +1,116 @@
-//! Assembling a [`Runtime`].
+//! Assembling a [`Runtime`](super::Runtime): the builder and its knobs.
 //!
 //! The builder turns typed inputs into one in-memory base [`Config`] plus a
 //! [`DomainSet`]/[`ServiceSet`]/[`ToolGroups`] triple, installs the API key
-//! into the credential store, and hands everything to [`CoreBuilder`].
+//! into the credential store, installs the host's process-global seams, and
+//! hands everything to [`CoreBuilder`](openhuman_core::core::runtime::CoreBuilder).
 //! Nothing here mutates the process environment.
+//!
+//! The pieces live beside this file: [`presets`](super::presets) (the
+//! per-host starting points), [`seams`](super::seams) (process-global
+//! installers restored on drop), `build.rs` (the boot sequence) and `run.rs`
+//! (the CLI entry).
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use openhuman_core::backend::BackendTransport;
 use openhuman_core::config::Config;
-use openhuman_core::core::runtime::{CoreBuilder, DomainSet, ServiceSet, TokenSource};
+use openhuman_core::core::runtime::{CoreBootMode, DomainSet, ServiceSet, TokenSource};
 use openhuman_core::core::types::HostKind;
 use openhuman_core::tools::toolpacks::ToolGroups;
+use tinyagents_session::port::SessionStoreProvider;
 
-use super::{ApiKey, Runtime, RuntimeError, RUNTIME_LIVE};
-use crate::harness::workspace::ResolvedWorkspace;
+use super::seams::HostSeams;
+use super::ApiKey;
 use crate::harness::{Access, Provider, Workspace};
-use crate::{Core, Session};
+use crate::Session;
 
-/// Builder for a [`Runtime`]. Obtain with [`Runtime::builder`].
-pub struct RuntimeBuilder {
-    workspace: Workspace,
-    provider: Provider,
-    access: Access,
-    services: Option<ServiceSet>,
-    domains: Option<DomainSet>,
-    tool_groups: Option<ToolGroups>,
-    host_kind: HostKind,
-    config: Option<Config>,
-    session: Option<Session>,
-    backend_url: Option<String>,
-    api_key: Option<ApiKey>,
-    backend_transport: Option<Arc<dyn BackendTransport>>,
-    memory_engine: Option<Arc<dyn tinymemory_api::MemoryEngine>>,
+// Re-exported for the sibling test module and older call sites that reached
+// the default triples through this module.
+pub(crate) use super::build::apply_provider;
+
+/// Whether `services` asks for any background work.
+pub(crate) fn requests_background_services(services: ServiceSet) -> bool {
+    services != ServiceSet::none()
 }
+
+/// Whether [`RuntimeBuilder::build`] starts `services` itself: only when they
+/// ask for background work and the host did not
+/// [defer](RuntimeBuilder::defer_services) them.
+pub(crate) fn starts_services_on_build(services: ServiceSet, deferred: bool) -> bool {
+    !deferred && requests_background_services(services)
+}
+
+#[cfg(test)]
+pub(crate) use super::build::{effective_host_kind, routed_provider_effective};
+#[cfg(test)]
+pub(crate) use super::presets::{default_domains, default_services};
+#[cfg(test)]
+pub(crate) use super::{RuntimeError, RUNTIME_LIVE};
+
+/// Who produces the [`Config`] the core boots with.
+///
+/// The choice is not cosmetic. A config the core is *handed* makes it a
+/// scoped embedder: credentials live under that config's root, the operator's
+/// `active_user.toml` is never read or written, and handlers see that exact
+/// config for the life of the process. A config the core *discovers* is the
+/// operator's install, re-read from `config.toml` and the environment, with
+/// per-user activation — what the desktop app, the CLI and the TUI run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigSource {
+    /// The builder resolves the config — from the [`Workspace`], a supplied
+    /// [`RuntimeBuilder::config`], and the other knobs — and hands it to the
+    /// core verbatim. The library default.
+    #[default]
+    Resolved,
+    /// The core discovers its config itself, exactly as a desktop, CLI or TUI
+    /// host does. Requires [`Workspace::Inherit`]; refuses the knobs that
+    /// would edit a config (`config`, `backend_url`, `workspace_dir`,
+    /// `action_dir`, `api_key`), because there is no config in hand to edit.
+    /// [`RuntimeBuilder::access`] and [`RuntimeBuilder::provider`] then only
+    /// set the defaults of agents created with [`crate::Runtime::agent`](super::Runtime::agent).
+    Discovered,
+}
+
+/// Builder for a [`Runtime`](super::Runtime). Obtain with
+/// [`crate::Runtime::builder`](super::Runtime::builder) or one of the host presets
+/// ([`RuntimeBuilder::library`], [`desktop`](RuntimeBuilder::desktop),
+/// [`cli`](RuntimeBuilder::cli), [`tui`](RuntimeBuilder::tui)).
+pub struct RuntimeBuilder {
+    pub(super) workspace: Workspace,
+    pub(super) workspace_dir: Option<PathBuf>,
+    pub(super) action_dir: Option<PathBuf>,
+    pub(super) config_source: ConfigSource,
+    pub(super) boot_mode: CoreBootMode,
+    pub(super) provider: Provider,
+    pub(super) access: Access,
+    pub(super) services: Option<ServiceSet>,
+    pub(super) defer_services: bool,
+    pub(super) domains: Option<DomainSet>,
+    pub(super) tool_groups: Option<ToolGroups>,
+    pub(super) host_kind: HostKind,
+    pub(super) token: TokenSource,
+    pub(super) listen_host: Option<String>,
+    pub(super) listen_port: Option<u16>,
+    pub(super) config: Option<Config>,
+    pub(super) session: Option<Session>,
+    pub(super) backend_url: Option<String>,
+    pub(super) api_key: Option<ApiKey>,
+    pub(super) memory_engine: Option<Arc<dyn tinymemory_api::MemoryEngine>>,
+    pub(super) session_store: Option<Arc<dyn SessionStoreProvider>>,
+    pub(super) cron_delivery: Option<Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>>,
+    pub(super) cron_job_handlers: Vec<(crate::cron::JobKind, Arc<dyn crate::cron::JobKindHandler>)>,
+    pub(super) seams: HostSeams,
+    pub(super) max_agents: usize,
+    pub(super) agent_opener: Option<super::host_agents::AgentOpener>,
+    pub(super) agent_defaults: super::AgentDefaults,
+    pub(super) config_knobs: super::info::ConfigKnobs,
+    pub(super) selection: Option<super::ModuleSelection>,
+}
+
+/// Live agents a runtime hosts unless [`RuntimeBuilder::max_agents`] says
+/// otherwise.
+pub const DEFAULT_MAX_AGENTS: usize = 1024;
 
 impl Default for RuntimeBuilder {
     fn default() -> Self {
@@ -44,56 +121,309 @@ impl Default for RuntimeBuilder {
 impl RuntimeBuilder {
     /// A builder with safe defaults: an ephemeral workspace, the machine's
     /// configured inference, the supervised access tier, no background
-    /// services, and every domain a library agent can use.
+    /// services, and every domain a library agent can use. Same as
+    /// [`RuntimeBuilder::library`].
     pub fn new() -> Self {
         Self {
             workspace: Workspace::default(),
+            workspace_dir: None,
+            action_dir: None,
+            config_source: ConfigSource::Resolved,
+            boot_mode: CoreBootMode::Normal,
             provider: Provider::inherit(),
             access: Access::default(),
             services: None,
+            defer_services: false,
             domains: None,
             tool_groups: None,
             host_kind: HostKind::Library,
+            token: TokenSource::EnvOrFile,
+            listen_host: None,
+            listen_port: None,
             config: None,
             session: None,
             backend_url: None,
             api_key: None,
-            backend_transport: None,
             memory_engine: None,
+            session_store: None,
+            cron_delivery: None,
+            cron_job_handlers: Vec::new(),
+            seams: HostSeams::default(),
+            max_agents: DEFAULT_MAX_AGENTS,
+            agent_opener: None,
+            agent_defaults: super::AgentDefaults::default(),
+            config_knobs: super::info::ConfigKnobs::default(),
+            selection: None,
         }
     }
 
-    /// The transport the runtime reaches the hosted TinyHumans backend
-    /// through (see [`BackendTransport`]).
+    /// Replace the runtime-wide agent defaults. Explicit individual setters still win.
+    pub fn agent_defaults(mut self, defaults: super::AgentDefaults) -> Self {
+        self.provider = defaults.provider.clone();
+        self.access = defaults.access.clone();
+        self.domains = Some(defaults.domains);
+        self.tool_groups = Some(defaults.tool_groups.clone());
+        self.agent_defaults = defaults;
+        self
+    }
+    /// Sampling defaults inherited by agents and then overridden per turn.
+    pub fn model_defaults(mut self, model: super::ModelDefaults) -> Self {
+        self.agent_defaults.model = model;
+        self
+    }
+    /// Default confinement for new agents.
+    pub fn sandbox(mut self, mode: crate::SandboxModeSpec) -> Self {
+        self.agent_defaults.sandbox = mode;
+        self
+    }
+    /// Default definition extended by each agent.
+    pub fn definition_base(mut self, definition: crate::AgentDefinitionSpec) -> Self {
+        self.agent_defaults.definition = definition;
+        self
+    }
+    /// Runtime-wide skill installation and discovery policy.
+    pub fn skills(mut self, policy: super::SkillsPolicy) -> Self {
+        self.agent_defaults.skills = policy;
+        self
+    }
+    /// Servers inherited by every agent, with agent declarations added afterwards.
+    #[cfg(feature = "mcp")]
+    pub fn mcp_baseline(mut self, servers: impl IntoIterator<Item = crate::McpServer>) -> Self {
+        self.agent_defaults.mcp_baseline = servers.into_iter().collect();
+        self
+    }
+    /// Detailed autonomy settings; access tiers are subsequently applied to each agent.
+    pub fn autonomy(mut self, value: openhuman_core::config::schema::AutonomyConfig) -> Self {
+        self.config_knobs.autonomy = Some(value);
+        self
+    }
+    /// Tool rules applied to every agent, which agents may only narrow.
+    pub fn tool_rules(mut self, value: tinytools::ToolRules) -> Self {
+        self.config_knobs.tool_rules = Some(value);
+        self
+    }
+    /// Data egress policy for this runtime.
+    pub fn privacy(mut self, value: openhuman_core::config::schema::PrivacyConfig) -> Self {
+        self.config_knobs.privacy = Some(value);
+        self
+    }
+    /// Whether untrusted input is screened for prompt injection before a turn,
+    /// a tool result or an inbound message is processed (`[prompt_screen]`).
     ///
-    /// The core carries no backend client of its own: without a transport
-    /// every hosted-backend surface (billing, integrations tools, channel
-    /// relay, cloud voice) answers with a typed "backend unavailable" error
-    /// while agents, memory, skills and RPC work as normal. The
-    /// `openhuman-tinyhumans` crate supplies the SDK-backed implementation
-    /// and a builder that installs it for you.
-    pub fn backend_transport(mut self, transport: Arc<dyn BackendTransport>) -> Self {
-        self.backend_transport = Some(transport);
+    /// The screen is TinySecurity's, and while security is enforced it fails
+    /// closed: input is held for review whenever no verdict can be had. A host
+    /// that runs the module but screens input itself passes
+    /// [`PromptScreenConfig::off`](crate::config::PromptScreenConfig::off); the
+    /// runtime then allows input unscreened and says so once at boot. With
+    /// security off ([`Self::security`]) or a build without the
+    /// `security-module` feature the screen is off whatever this says.
+    /// Leaving it unset keeps the configured (by default enforced) screen.
+    pub fn prompt_screen(
+        mut self,
+        value: openhuman_core::config::schema::PromptScreenConfig,
+    ) -> Self {
+        self.config_knobs.prompt_screen = Some(value);
+        self
+    }
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`).
+    ///
+    /// Enforced by default: the prompt screen, tool-call classification and
+    /// approvals, path checks, the action budget, egress privacy checks,
+    /// redaction and the audit trail ask the module and fail closed when it
+    /// cannot answer. A host with its own controls passes
+    /// [`SecurityModeConfig::off`](crate::config::SecurityModeConfig::off): those
+    /// checks then allow, tool output, diagnostics and log URLs are not
+    /// redacted, and the runtime says so once at boot. `[privacy] mode =
+    /// "local_only"` still refuses external transfers, approvals a channel or
+    /// flow demands still need a person, and the encrypted secret store and
+    /// device pairing still need the module. A build without the `security-module` feature behaves as off.
+    /// Leaving it unset keeps the configured (by default enforced) mode.
+    pub fn security(mut self, value: openhuman_core::config::schema::SecurityModeConfig) -> Self {
+        self.config_knobs.security = Some(value);
+        self
+    }
+    /// The route to TinySecurity's Jev judge, for a host that holds its own
+    /// Jev credential.
+    ///
+    /// The judge is on by default: it may settle a call that needs approval
+    /// when it is sure the call is intended, reversible and sends nothing out,
+    /// and anything else still goes to a person. Without a route the judge
+    /// stays off, whatever credentials are stored. Turn it off with `judge` on
+    /// [`Self::security`].
+    pub fn security_judge(
+        mut self,
+        value: openhuman_core::config::schema::SecurityJudgeRoute,
+    ) -> Self {
+        self.config_knobs.security_judge = Some(value);
+        self
+    }
+    /// Credential encryption policy.
+    pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self {
+        self.config_knobs.secrets = Some(value);
+        self
+    }
+    /// Background memory learning defaults.
+    pub fn learning(mut self, value: super::LearningSettings) -> Self {
+        self.config_knobs.learning = Some(value);
+        self
+    }
+    /// Cron scheduler configuration; `services` separately controls its lifecycle.
+    pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self {
+        self.config_knobs.cron = Some(value);
         self
     }
 
-    /// The memory engine every agent and [`Runtime::memory`] use, in place of
-    /// the configured `[memory]` engine (TinyHumans over the backend
-    /// credential, or CortexDB with a stored key).
+    /// The memory engine every agent and [`crate::Runtime::memory`](super::Runtime::memory)
+    /// use, in place of the configured `[memory]` engine (TinyHumans over the
+    /// backend credential, or CortexDB with a stored key).
     ///
     /// For a host that owns its memory store, or a test that wants
     /// TinyMemory's in-memory reference engine: memory then runs without a
     /// TinyHumans credential. The engine's writes are scrubbed like any
-    /// other's. It is process-wide, as the runtime is.
+    /// other's. It is process-wide, as the runtime is, and the core has no
+    /// uninstall for it: it stays installed for the life of the process.
     pub fn memory_engine(mut self, engine: Arc<dyn tinymemory_api::MemoryEngine>) -> Self {
         self.memory_engine = Some(engine);
         self
     }
 
+    /// Where every agent's conversations are kept, in place of files under
+    /// the workspace: transcripts, the turn journal and run status, goals and
+    /// todos, each agent's apart from every other's (the provider is asked for
+    /// the stores of the agent's id).
+    ///
+    /// For a host serving many users from one process out of its own
+    /// database; pair it with [`Workspace::Stateless`] so nothing durable is
+    /// left on disk. A provider from the `testkit` feature can keep everything
+    /// in memory. It is process-wide, as the runtime is, and
+    /// is removed with the runtime.
+    pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self {
+        self.session_store = Some(provider);
+        self
+    }
+
+    /// Route the replies of the agents' scheduled jobs yourself.
+    ///
+    /// An `origin`-mode run of an agent's cron job hands its output to
+    /// [`CronDelivery::deliver`](crate::CronDelivery::deliver) with the agent
+    /// id, the thread the job was created in and its
+    /// [`JobOrigin`](crate::JobOrigin), instead of writing into a local thread
+    /// or channel. A failed run is never delivered, nor is `NO_REPLY` from a
+    /// job whose prompt allows it; any other job always delivers a message.
+    /// Jobs still run only while their agent is live (the scheduler service
+    /// must be on). It is process-wide, as the runtime is, and the core has no
+    /// uninstall for it: it stays installed for the life of the process.
+    pub fn cron_delivery(
+        mut self,
+        delivery: Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>,
+    ) -> Self {
+        self.cron_delivery = Some(delivery);
+        self
+    }
+
+    /// Run scheduled jobs of `kind` through `handler` instead of the built-in
+    /// one (see [`Runtime::register_job_handler`](crate::Runtime::register_job_handler)).
+    /// Registered when the runtime is built and restored when it drops, so a
+    /// host can swap how `shell`, `agent` or `flow` jobs run without touching
+    /// cron internals. Call it once per kind; a later call replaces an earlier
+    /// one for the same kind.
+    pub fn cron_job_handler(
+        mut self,
+        kind: crate::cron::JobKind,
+        handler: Arc<dyn crate::cron::JobKindHandler>,
+    ) -> Self {
+        self.cron_job_handlers
+            .retain(|(existing, _)| *existing != kind);
+        self.cron_job_handlers.push((kind, handler));
+        self
+    }
+
+    /// Open an agent on demand when a scheduled job targets one that is not
+    /// live. `opener` receives the job's agent id and returns the agent after
+    /// creating it (for example with [`Runtime::agent`](crate::Runtime::agent));
+    /// the job then runs as that agent, and the returned handle is held for
+    /// the run and released afterwards, so a host need not keep every agent
+    /// alive between runs. Returning `None`, or an agent under another id,
+    /// fails the job: a job whose agent cannot be found never runs as a
+    /// different one. Without an opener a job for a missing agent fails the
+    /// same way.
+    ///
+    /// The opener is stored in the runtime, so it must not hold a strong
+    /// `Arc<Runtime>` (that would keep the runtime alive forever); capture a
+    /// `Weak`. Concurrent opens are serialised.
+    pub fn on_missing_agent<F, Fut>(mut self, opener: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Option<crate::Agent>> + Send + 'static,
+    {
+        self.agent_opener = Some(Arc::new(move |id| Box::pin(opener(id))));
+        self
+    }
+
+    /// The most agents this runtime hosts at once; [`crate::Runtime::agent`]
+    /// returns [`AgentError::AgentLimit`](crate::AgentError::AgentLimit)
+    /// beyond it. Removed and dropped agents do not count. Defaults to
+    /// [`DEFAULT_MAX_AGENTS`].
+    pub fn max_agents(mut self, limit: usize) -> Self {
+        self.max_agents = limit;
+        self
+    }
+
     /// Where the runtime keeps its credential store, session database and
     /// every agent's memory, transcripts and skills.
+    ///
+    /// [`workspace_dir`](Self::workspace_dir) and
+    /// [`action_dir`](Self::action_dir) refine the paths this resolves to.
     pub fn workspace(mut self, workspace: Workspace) -> Self {
         self.workspace = workspace;
+        self
+    }
+
+    /// Put the core's internal state (`config.workspace_dir`: session
+    /// database, memory, attachments, every agent's `agents/<id>/` home) at
+    /// exactly `dir`, created if absent.
+    ///
+    /// Applied **after** the [`Workspace`] is resolved and only to that one
+    /// field: the credential root (`config_path`'s parent) stays where the
+    /// `Workspace` put it, so this splits state from credentials rather than
+    /// moving both. Use [`Workspace::Dir`] to move everything together.
+    /// Not available with [`ConfigSource::Discovered`].
+    pub fn workspace_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.workspace_dir = Some(dir.into());
+        self
+    }
+
+    /// The runtime-wide read/write root for acting tools (`config.action_dir`),
+    /// created if absent. Agents may still name their own.
+    ///
+    /// Overrides the sibling `action/` directory an ephemeral or `Dir`
+    /// workspace would otherwise create, and the operator's configured
+    /// `action_dir` under [`Workspace::Inherit`]. Keep it outside the
+    /// workspace: acting tools are refused inside it. Not available with
+    /// [`ConfigSource::Discovered`].
+    pub fn action_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.action_dir = Some(dir.into());
+        self
+    }
+
+    /// Who produces the boot [`Config`]; see [`ConfigSource`]. The host
+    /// presets other than [`library`](Self::library) pick
+    /// [`ConfigSource::Discovered`].
+    pub fn config_source(mut self, source: ConfigSource) -> Self {
+        self.config_source = source;
+        self
+    }
+
+    /// Choose normal host startup or a side-effect-limited inspection build.
+    ///
+    /// Inspection requires an inherited workspace, a supplied resolved
+    /// config, and a fixed in-memory bearer. It does not discover ambient
+    /// config, open persistent storage, install session stores, bootstrap
+    /// workspace state, or start background services. The runtime still has
+    /// a real `CoreContext` and can dispatch in-process RPC.
+    pub fn boot_mode(mut self, mode: CoreBootMode) -> Self {
+        self.boot_mode = mode;
         self
     }
 
@@ -134,22 +464,46 @@ impl RuntimeBuilder {
 
     /// Override which background services run.
     ///
-    /// The default is deliberately minimal (only the harness init step):
-    /// cron, the login-gated services and the memory queue each write to the workspace on
-    /// their own schedule, turning a library call into a background process
-    /// the caller did not ask for.
+    /// The library default is deliberately minimal (no services): cron, the
+    /// login-gated services and the memory queue each write
+    /// to the workspace on their own schedule, turning a library call into a
+    /// background process the caller did not ask for.
+    ///
+    /// A set that selects background work (`cron: true` to let
+    /// [`crate::Runtime::cron`] jobs fire on their own, say) is started by
+    /// [`build`](Self::build) and stopped when the runtime drops; see
+    /// [`crate::Runtime::start_services`] / [`crate::Runtime::stop_services`]. Starting is
+    /// idempotent, so a transport that serves the runtime
+    /// (`openhuman-rpc`) and calls `start_services` once its listener is
+    /// bound does not start them twice.
     pub fn services(mut self, services: ServiceSet) -> Self {
         self.services = Some(services);
+        self
+    }
+
+    /// Build without starting the background services the [`ServiceSet`]
+    /// selects; the host starts them with
+    /// [`Runtime::start_services`](crate::Runtime::start_services) once it is
+    /// ready.
+    ///
+    /// For a host that registers
+    /// [`Runtime::on_system_job`](crate::Runtime::on_system_job) handlers:
+    /// a job stored by an earlier process can be due the moment the
+    /// scheduler starts, and a system job with no handler yet is announced
+    /// and recorded `ok` without running. Build deferred, register every
+    /// handler, upsert the jobs, then start.
+    pub fn defer_services(mut self) -> Self {
+        self.defer_services = true;
         self
     }
 
     /// Override which domain families exist at runtime.
     ///
     /// Families are registered once, at boot, so an agent can only *narrow*
-    /// this set. The default is [`DomainSet::embedded`] plus `mcp` and
-    /// `skills` when those features are compiled in — the runtime cannot know
-    /// yet which agents will declare servers or skills, and an agent that
-    /// declares none narrows them back off for itself.
+    /// this set. The library default is [`DomainSet::embedded`] plus `mcp`
+    /// and `skills` when those features are compiled in — the runtime cannot
+    /// know yet which agents will declare servers or skills, and an agent
+    /// that declares none narrows them back off for itself.
     pub fn domains(mut self, domains: DomainSet) -> Self {
         self.domains = Some(domains);
         self
@@ -172,6 +526,39 @@ impl RuntimeBuilder {
         self
     }
 
+    /// How the per-process RPC bearer is seeded. Defaults to
+    /// [`TokenSource::EnvOrFile`]: `OPENHUMAN_CORE_TOKEN` when set, otherwise
+    /// a fresh token written to `core.token` beside the config. A host that
+    /// already holds the bearer in memory (the desktop shell) passes
+    /// [`TokenSource::Fixed`] so it never crosses the environment.
+    pub fn token(mut self, token: TokenSource) -> Self {
+        self.token = token;
+        self
+    }
+
+    /// The address a transport serving this runtime binds.
+    ///
+    /// Recorded on the core runtime only: the runtime binds nothing itself.
+    /// A piece left unset falls back, at serve time, to `OPENHUMAN_CORE_HOST`
+    /// / `OPENHUMAN_CORE_PORT` and then `127.0.0.1:7788`. See also
+    /// [`listen_host`](Self::listen_host) and [`listen_port`](Self::listen_port)
+    /// for setting one half.
+    pub fn listen(self, host: impl Into<String>, port: u16) -> Self {
+        self.listen_host(host).listen_port(port)
+    }
+
+    /// The bind host alone; see [`listen`](Self::listen).
+    pub fn listen_host(mut self, host: impl Into<String>) -> Self {
+        self.listen_host = Some(host.into());
+        self
+    }
+
+    /// The bind port alone; see [`listen`](Self::listen).
+    pub fn listen_port(mut self, port: u16) -> Self {
+        self.listen_port = Some(port);
+        self
+    }
+
     /// Install an app session before the first turn.
     ///
     /// Kept for hosts that drive authenticated backend features on behalf of
@@ -190,199 +577,6 @@ impl RuntimeBuilder {
     pub fn config(mut self, config: Config) -> Self {
         self.config = Some(config);
         self
-    }
-
-    /// Build the core and return a runtime ready to host agents.
-    ///
-    /// # Errors
-    ///
-    /// [`RuntimeError::AlreadyRunning`] if this process already has one;
-    /// [`RuntimeError::BlankApiKey`] for an empty key.
-    pub async fn build(self) -> Result<Runtime, RuntimeError> {
-        // Claim the process slot before doing any work, so a losing racer
-        // neither creates a temp dir nor half-initializes global state.
-        if RUNTIME_LIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
-            return Err(RuntimeError::AlreadyRunning);
-        }
-        // From here on every early return must release the slot, or a failed
-        // build would permanently poison the process against retrying.
-        match self.build_inner().await {
-            Ok(runtime) => Ok(runtime),
-            Err(e) => {
-                RUNTIME_LIVE.store(false, std::sync::atomic::Ordering::Release);
-                Err(e)
-            }
-        }
-    }
-
-    async fn build_inner(self) -> Result<Runtime, RuntimeError> {
-        if self.api_key.as_ref().is_some_and(ApiKey::is_blank) {
-            return Err(RuntimeError::BlankApiKey);
-        }
-        if let Some(engine) = self.memory_engine.clone() {
-            openhuman_core::memory::engine::install_host_engine(engine);
-        }
-        let inherit = self.workspace.is_operator_owned();
-        let resolved = ResolvedWorkspace::resolve(&self.workspace, None).map_err(map_ws)?;
-
-        // `Inherit` starts from the operator's own config — loaded here rather
-        // than left to `build()` to discover, because the builder's other
-        // knobs (access tier, backend URL, API key) are applied *on top* of it.
-        let mut config = match (&self.workspace, self.config) {
-            (Workspace::Inherit, Some(config)) => config,
-            (Workspace::Inherit, None) => {
-                Config::load_or_init().await.map_err(RuntimeError::Build)?
-            }
-            (_, supplied) => {
-                let mut config = supplied.unwrap_or_default();
-                config.workspace_dir = resolved.workspace_dir.clone();
-                config.action_dir = resolved.action_dir.clone();
-                // Credential state, auth profiles and the keyring file backend
-                // all resolve against this path's parent, not `workspace_dir`.
-                config.config_path = resolved.config_path.clone();
-                config
-            }
-        };
-
-        if let Some(url) = self.backend_url.clone() {
-            config.api_url = Some(url);
-        }
-        self.access.apply(&mut config);
-        apply_provider(&mut config, &self.provider);
-
-        // Before `CoreBuilder::build()`: the scheduler gate reads the credential
-        // store exactly once, at boot, to decide whether it is signed in.
-        let has_api_key = if let Some(key) = self.api_key.as_ref() {
-            let state_dir = config
-                .config_path
-                .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| config.config_path.clone());
-            openhuman_core::security::credentials::api_key::store_api_key_in(
-                &state_dir,
-                config.secrets.encrypt,
-                key.expose(),
-            )
-            .map_err(RuntimeError::Build)?;
-            true
-        } else {
-            false
-        };
-
-        // An endpoint without a model is deliberately ignored by the route
-        // applicator, so host policy follows the effective behaviour: only a
-        // *usable* runtime-default route exempts an inherited install from
-        // its session gate. An API key is a credential in its own right.
-        let routed_provider_effective = self.provider.has_usable_route()
-            && config
-                .default_model
-                .as_deref()
-                .is_some_and(|model| !model.trim().is_empty());
-        let host_kind = effective_host_kind(
-            self.host_kind,
-            inherit,
-            routed_provider_effective || has_api_key,
-        );
-
-        let domains = self.domains.unwrap_or_else(default_domains);
-        let tool_groups = self.tool_groups.unwrap_or_default();
-        let services = self.services.unwrap_or_else(default_services);
-
-        log::debug!(
-            "[embed][runtime] building host_kind={:?} inherit_workspace={inherit} \
-             routed_provider={} api_key={has_api_key} domains={domains:?} tool_groups={tool_groups:?}",
-            host_kind,
-            self.provider.is_routed(),
-        );
-
-        let mut builder = CoreBuilder::new(host_kind)
-            .domains(domains)
-            .tool_groups(tool_groups.clone())
-            .services(services)
-            .token(TokenSource::EnvOrFile)
-            .config(config.clone());
-        if let Some(transport) = self.backend_transport {
-            builder = builder.backend_transport(transport);
-        }
-        let runtime = builder.build().await.map_err(RuntimeError::Build)?;
-        let core = Core::from_runtime(Arc::new(runtime));
-
-        if let Some(session) = self.session {
-            core.auth().store(session).await?;
-        }
-
-        Ok(Runtime::new(
-            core,
-            resolved,
-            config,
-            inherit,
-            domains,
-            tool_groups,
-            self.provider,
-            self.access,
-        ))
-    }
-}
-
-fn map_ws(err: crate::HarnessError) -> RuntimeError {
-    match err {
-        crate::HarnessError::Workspace { what, source } => RuntimeError::Workspace { what, source },
-        crate::HarnessError::Invalid(msg) => RuntimeError::Invalid(msg),
-        crate::HarnessError::Build(e) => RuntimeError::Build(e),
-        crate::HarnessError::Call(e) => RuntimeError::Call(e),
-        crate::HarnessError::AlreadyRunning => RuntimeError::AlreadyRunning,
-    }
-}
-
-/// Preserve the installed application's authentication policy when the
-/// runtime borrows both its workspace and provider. `Library` means the host
-/// supplied inference (a route or an API key); it must not become a blanket
-/// way to bypass the session gate around an operator-installed provider.
-pub(crate) fn effective_host_kind(
-    requested: HostKind,
-    inherit_workspace: bool,
-    host_supplied_credential: bool,
-) -> HostKind {
-    if requested == HostKind::Library && inherit_workspace && !host_supplied_credential {
-        HostKind::Cli
-    } else {
-        requested
-    }
-}
-
-/// Apply a [`Provider`]'s model to the config.
-///
-/// Only the model: the *route* is a per-turn parameter, never a config write,
-/// because config routes persist. See the [`provider`](crate::harness::provider)
-/// module docs.
-pub(crate) fn apply_provider(config: &mut Config, provider: &Provider) {
-    if let Some(model) = provider.model_id() {
-        config.default_model = Some(model.to_string());
-    }
-}
-
-/// Domain families a runtime registers by default: the embedded set plus
-/// whichever of `mcp` / `skills` this build compiles in, because agents can
-/// only narrow what the runtime registered.
-pub(crate) fn default_domains() -> DomainSet {
-    #[allow(unused_mut)]
-    let mut domains = DomainSet::embedded();
-    #[cfg(feature = "mcp")]
-    {
-        domains.mcp = true;
-    }
-    #[cfg(feature = "skills")]
-    {
-        domains.skills = true;
-    }
-    domains
-}
-
-/// Background services a runtime runs by default: only `harness_init`.
-pub(crate) fn default_services() -> ServiceSet {
-    ServiceSet {
-        harness_init: true,
-        ..ServiceSet::none()
     }
 }
 

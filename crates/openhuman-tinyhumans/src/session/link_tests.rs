@@ -23,6 +23,10 @@ fn core_auth_state_parses_camel_case_and_kind() {
     assert!(state.is_authenticated);
     assert_eq!(state.kind(), Some(CredentialKind::ApiKey));
     assert_eq!(state.expires_at.as_deref(), Some("2100-01-01T00:00:00Z"));
+    assert!(
+        state.issuing_backend.is_none(),
+        "legacy DTOs remain compatible"
+    );
 
     let signed_out: CoreAuthState =
         serde_json::from_value(json!({ "isAuthenticated": false })).unwrap();

@@ -65,14 +65,20 @@ describe('chatErrorCopyText', () => {
     expect(chatErrorCopyText({ message: 'english' }, t)).toBe('english');
   });
 
-  it('has an English string for every key in the core failure-copy table', () => {
-    const tablePath = resolve(
+  it('has an English string for every provider and host failure-copy key', () => {
+    const hostTablePath = resolve(
       process.cwd(),
       '../crates/openhuman-core/src/inference/failure_copy/table.rs'
     );
-    const keys = [...readFileSync(tablePath, 'utf8').matchAll(/"(chat_error\.[a-z_]+)"/g)].map(
-      m => m[1]
+    const providerTablePath = resolve(
+      process.cwd(),
+      '../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm/src/failure/copy.rs'
     );
+    const failureCopySources = [
+      readFileSync(hostTablePath, 'utf8'),
+      readFileSync(providerTablePath, 'utf8'),
+    ].join('\n');
+    const keys = [...failureCopySources.matchAll(/"(chat_error\.[a-z_]+)"/g)].map(m => m[1]);
     expect(keys.length).toBeGreaterThanOrEqual(28);
     const missing = keys.filter(key => !(key in (en as Record<string, string>)));
     expect(missing).toEqual([]);

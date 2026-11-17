@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
-use tinymcp::ServerToolSpec;
+use tinyagents_harness_tools::static_schema;
+use tinymcp_bus::ServerToolSpec;
 
 use super::types::{
     McpToolSpec, FETCH_MODES, ITEM_KINDS, LEARNING_KINDS, MEMORY_FORGET_MAX_IDS, MEMORY_MAX_LIMIT,
@@ -51,15 +52,7 @@ pub fn web_answer_tool_spec() -> McpToolSpec {
         title: "Grounded Web Answer",
         description: "Answer a question from live web sources (Gemini with Google Search grounding by default) and return the answer with its citations. `depth: deep` runs deep research when a Gemini key is configured.",
         rpc_method: Some("openhuman.tools_web_answer"),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "minLength": 1, "description": "The question to answer."},
-                "depth": {"type": "string", "enum": ["quick", "deep"], "description": "quick (default) or deep."}
-            },
-            "required": ["query"],
-            "additionalProperties": false
-        }),
+        input_schema: static_schema!(include_str!("parameters/web_answer_input.json")),
         annotations: json!({"readOnlyHint": true, "openWorldHint": true}),
     }
 }
@@ -95,21 +88,7 @@ pub fn base_tool_specs() -> Vec<McpToolSpec> {
             title: "Run Subagent",
             description: "Run a registered OpenHuman sub-agent directly from the core and return its final response.",
             rpc_method: None,
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Registered sub-agent id (for example `planner`, `code_executor`, `critic`)."
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "Task prompt for the sub-agent. Include the context it needs because this is a fresh session."
-                    }
-                },
-                "required": ["agent_id", "prompt"],
-                "additionalProperties": false
-            }),
+            input_schema: static_schema!(include_str!("parameters/run_subagent_input.json")),
             // Sub-agent execution is the one Act-policy surface on the MCP
             // server today (see `enforce_act_policy` dispatch in `call_tool`).
             // Sub-agents can call further tools, so destructive/openWorld are
@@ -180,7 +159,8 @@ pub fn base_tool_specs() -> Vec<McpToolSpec> {
 }
 
 /// Annotation preset for the read-only, closed-world tools that just read
-/// OpenHuman's local memory or agent registry. The MCP spec defaults are
+/// OpenHuman's memory engine (hosted TinyHumans or the user's CortexDB, never
+/// a local store) or its agent registry. The MCP spec defaults are
 /// `readOnlyHint: false` / `openWorldHint: true`, so both fields must be set
 /// explicitly to communicate the actual shape to clients. Destructive and
 /// idempotent hints are deliberately omitted — per the spec they are
@@ -192,8 +172,8 @@ pub fn read_only_local_annotations() -> Value {
     })
 }
 
-/// Annotation for `memory.learn`: writes a new item into the local memory
-/// engine, never overwrites or removes (`destructiveHint: false`). Each call
+/// Annotation for `memory.learn`: writes a new item into the bound memory
+/// engine (CortexDB, hosted or direct; not stored locally), never overwrites or removes (`destructiveHint: false`). Each call
 /// stores another item, so it is not idempotent. Closed-world.
 pub fn learn_annotations() -> Value {
     json!({
@@ -235,10 +215,10 @@ pub fn searxng_tool_spec() -> McpToolSpec {
 
 /// Every tool this config can serve: the base set plus the search tools with
 /// a usable provider.
-pub fn tool_specs_for_loaded_config(config: &crate::config::Config) -> Vec<McpToolSpec> {
+pub async fn tool_specs_for_loaded_config(config: &crate::config::Config) -> Vec<McpToolSpec> {
     tool_specs_for_config(
         config,
-        crate::search::providers::backend_credential_available(config),
+        crate::search::providers::backend_credential_available(config).await,
     )
 }
 
@@ -264,7 +244,7 @@ pub fn tool_specs_for_config(
     specs
 }
 
-/// A catalog entry as `tinymcp` advertises it in `tools/list`.
+/// A catalog entry as TinyMCP advertises it in `tools/list`.
 pub fn server_tool_spec(spec: &McpToolSpec) -> ServerToolSpec {
     ServerToolSpec::new(spec.name, spec.description, spec.input_schema.clone())
         .with_title(spec.title)
@@ -459,3 +439,7 @@ fn searxng_search_schema() -> Value {
         "additionalProperties": false
     })
 }
+
+#[cfg(test)]
+#[path = "specs_schema_tests.rs"]
+mod schema_tests;

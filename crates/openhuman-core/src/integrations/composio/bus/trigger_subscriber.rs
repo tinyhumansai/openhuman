@@ -1,15 +1,14 @@
 //! Logs and (when enabled) triages `ComposioTriggerReceived` events.
 
+use crate::core::runtime::DispatchCtx;
 use async_trait::async_trait;
 use tinybus::EventHandler;
 
-use crate::agent::triage::{
-    apply_decision, remote_trigger_origin, run_triage, TriageOutcome, TriggerEnvelope,
-};
-use crate::agent::turn_origin::with_origin;
-use crate::config::rpc as config_rpc;
 use crate::core::events::DomainEvent;
 use crate::integrations::composio::trigger_history;
+use std::sync::Arc;
+
+use crate::triage::{RemoteTriage, TriageOutcome, TriageRunner, TriggerEnvelope};
 
 /// Env var that **disables** the triage pipeline. The pipeline is
 /// enabled by default; set to `1`/`true`/`yes` to opt out (e.g. for
@@ -18,7 +17,7 @@ use crate::integrations::composio::trigger_history;
 pub(super) const TRIAGE_DISABLED_ENV: &str = "OPENHUMAN_TRIGGER_TRIAGE_DISABLED";
 
 /// Logs and (when enabled) routes `ComposioTriggerReceived` events
-/// through the reusable `agent::triage` pipeline.
+/// through the reusable `triage` pipeline.
 pub struct ComposioTriggerSubscriber;
 
 impl ComposioTriggerSubscriber {
@@ -67,7 +66,7 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
         // [composio-direct] Direct-mode trigger gate.
         //
         // Inbound `composio:trigger` events ride the backend socket
-        // (`wss://api.tinyhumans.ai`) which only fans out events from
+        // (the managed backend socket) which only fans out events from
         // the tinyhumans Composio tenant. When the user has switched
         // to direct mode, that tenant is no longer their active source
         // of truth — connections live on `backend.composio.dev` under
@@ -82,8 +81,11 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
         // let the event through rather than silently dropping it. The
         // existing env-var / config triage flags below remain the
         // backend-mode gates.
-        if let Ok(config) = config_rpc::load_config_with_timeout().await {
-            if config.composio.mode == crate::config::schema::COMPOSIO_MODE_DIRECT {
+        // A trigger arrives over the host's socket, so it belongs to the host's
+        // own tenant; in SaaS it has none and is dropped.
+        let ctx = DispatchCtx::host_default();
+        if let Ok(config) = ctx.load_config().await {
+            if is_direct_mode(&config) {
                 tracing::info!(
                     toolkit = %toolkit,
                     trigger = %trigger,
@@ -94,95 +96,53 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
         }
 
         if let Some(store) = trigger_history::global() {
-            let toolkit_owned = toolkit.clone();
-            let trigger_owned = trigger.clone();
-            let metadata_id_owned = metadata_id.clone();
-            let metadata_uuid_owned = metadata_uuid.clone();
-            let payload_owned = payload.clone();
-
-            match tokio::task::spawn_blocking(move || {
-                store.record(
-                    &toolkit_owned,
-                    &trigger_owned,
-                    &metadata_id_owned,
-                    &metadata_uuid_owned,
-                    &payload_owned,
-                )
-            })
-            .await
-            {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => {
-                    tracing::warn!(
-                        toolkit = %toolkit,
-                        trigger = %trigger,
-                        error = %error,
-                        "[composio][history] failed to archive trigger"
-                    );
+            match ctx.load_config().await {
+                Ok(config) => {
+                    let event = super::super::types::ComposioTriggerEvent {
+                        toolkit: toolkit.clone(),
+                        trigger: trigger.clone(),
+                        payload: payload.clone(),
+                        metadata: super::super::types::ComposioTriggerMetadata {
+                            id: metadata_id.clone(),
+                            uuid: metadata_uuid.clone(),
+                            ..Default::default()
+                        },
+                    };
+                    if let Err(error) = store.record(&ctx, &config, event).await {
+                        tracing::warn!(error = %error, "[composio][history] failed to archive trigger");
+                    }
                 }
                 Err(error) => {
-                    tracing::warn!(
-                        toolkit = %toolkit,
-                        trigger = %trigger,
-                        error = %error,
-                        "[composio][history] failed to join archive task"
-                    );
+                    tracing::warn!(error = %error, "[composio][history] archive configuration unavailable")
                 }
             }
-        } else {
-            tracing::debug!(
-                toolkit = %toolkit,
-                trigger = %trigger,
-                "[composio][history] archive store not initialized"
-            );
         }
 
-        if triage_disabled() {
+        // The env var is a global kill-switch that works even when the config
+        // file is corrupt, so it is checked before (and instead of) a config
+        // read; an unreadable config otherwise fails open to triage.
+        let env_disabled = triage_disabled();
+        let config = if env_disabled {
+            None
+        } else {
+            Some(ctx.load_config().await)
+        };
+        let readable = config.as_ref().and_then(|config| config.as_ref().ok());
+        if let Some(reason) = triage_skip_reason(readable, toolkit, env_disabled) {
             tracing::debug!(
                 toolkit = %toolkit,
                 trigger = %trigger,
-                "[composio][triage] skipped: {TRIAGE_DISABLED_ENV} is set"
+                "[composio][triage] skipped: {reason}"
             );
             return;
         }
-
-        // Config-level triage gates — checked after env var so the env var
-        // remains a global emergency kill-switch that works even when the
-        // config file is corrupt. Fail-open on load error: if we can't read
-        // the config we let triage run rather than silently drop events.
-        match config_rpc::load_config_with_timeout().await {
-            Ok(config) => {
-                if config.composio.triage_disabled {
-                    tracing::debug!(
-                        toolkit = %toolkit,
-                        trigger = %trigger,
-                        "[composio][triage] skipped: composio.triage_disabled=true in config"
-                    );
-                    return;
-                }
-                let toolkit_lower = toolkit.to_ascii_lowercase();
-                if config
-                    .composio
-                    .triage_disabled_toolkits
-                    .iter()
-                    .any(|t| t.to_ascii_lowercase() == toolkit_lower)
-                {
-                    tracing::debug!(
-                        toolkit = %toolkit,
-                        trigger = %trigger,
-                        "[composio][triage] skipped: toolkit in composio.triage_disabled_toolkits"
-                    );
-                    return;
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    toolkit = %toolkit,
-                    trigger = %trigger,
-                    error = %e,
-                    "[composio][triage] config load failed — falling through to triage (fail-open)"
-                );
-            }
+        if let Some(Err(e)) = &config {
+            tracing::warn!(
+                toolkit = %toolkit,
+                trigger = %trigger,
+                error = %e,
+                "[composio][triage] config load failed — falling through to triage (fail-open)"
+            );
         }
 
         // Build the envelope outside the spawned task so any panic in
@@ -199,76 +159,196 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
         tracing::debug!(
             label = %envelope.display_label,
             external_id = %envelope.external_id,
-            "[composio][triage] dispatching to agent::triage::run_triage"
+            "[composio][triage] dispatching to triage::run_triage"
         );
 
-        // Spawn so the bus dispatch loop stays non-blocking — the
-        // triage turn is an LLM round-trip that may take seconds.
-        tokio::spawn(async move {
-            match run_triage(&envelope).await {
-                Ok(TriageOutcome::Decision(run)) => {
-                    // Remote payload: a Composio trigger body is
-                    // attacker-influenceable, so the dispatch parks rather than
-                    // running on a trust root (#5634). Scoped here, inside the
-                    // spawned task, because `AGENT_TURN_ORIGIN` is a task-local
-                    // and does not cross `tokio::spawn`.
-                    let origin = remote_trigger_origin(&envelope);
-                    if let Err(e) = with_origin(origin, apply_decision(run, &envelope)).await {
-                        tracing::error!(
-                            label = %envelope.display_label,
-                            error = %e,
-                            "[composio][triage] apply_decision failed"
-                        );
-                    }
-                }
-                Ok(TriageOutcome::Deferred {
-                    defer_until_ms,
-                    reason,
-                }) => {
-                    // Tiered fallback exhausted both arms; the caller
-                    // surface (composio bus) has no scheduler of its
-                    // own — log and drop. The next composio fire will
-                    // re-enter the chain.
-                    tracing::warn!(
-                        label = %envelope.display_label,
-                        defer_until_ms = defer_until_ms,
-                        reason = %reason,
-                        "[composio][triage] run_triage deferred"
-                    );
-                }
-                Ok(TriageOutcome::Terminal { reason }) => {
-                    tracing::warn!(
-                        label = %envelope.display_label,
-                        reason = %reason,
-                        "[composio][triage] run_triage reached terminal state"
-                    );
-                }
-                Err(e) => {
-                    // Route through the central observability classifier
-                    // so user-config / budget-exhausted / provider-state
-                    // rollups from `reliable.rs` (e.g. `The model
-                    // \`<id>\` may not be available on your provider …`)
-                    // get demoted to info-level breadcrumbs instead of
-                    // surfacing as raw Sentry errors. Previously this
-                    // call used `tracing::error!` directly and bypassed
-                    // the classifier — 10.7k events / 14d on self-hosted
-                    // Sentry TAURI-RUST-1V, dominated by
-                    // ProviderConfigRejection-class rollups whose inner
-                    // attempts the provider layer already demoted.
-                    let detail = format!(
-                        "[composio][triage] run_triage failed (label={}): {e:#}",
-                        envelope.display_label
-                    );
-                    crate::core::observability::report_error_or_expected(
-                        detail.as_str(),
-                        "composio",
-                        "trigger_triage",
-                        &[("label", envelope.display_label.as_str())],
-                    );
-                }
-            }
+        // With the inbound event queues on, the trigger is queued: the module
+        // persists it, rejects a redelivery of the same trigger, paces a
+        // flood, and calls the host back (`Deliver`) to triage it, retrying a
+        // deferred triage then. Off or unavailable, triage runs directly.
+        // Its own task: the hand-off may wait for the module's first load and
+        // retries an unanswered ingest, which must never hold up this
+        // subscriber's loop (a stalled loop lags and loses broadcast events).
+        let spawner = ctx.clone();
+        spawner.spawn(async move {
+            let config = ctx.load_config().await.ok();
+            route_trigger(
+                ctx,
+                config,
+                envelope,
+                Arc::new(RemoteTriage),
+                #[cfg(feature = "inbound-queues")]
+                None,
+            )
+            .await;
         });
     }
+}
+
+/// Where a trigger went.
+#[derive(Debug)]
+pub(super) enum Routed {
+    /// The inbound event queues own it.
+    Queued,
+    /// Triage runs directly, in this task.
+    Direct(tokio::task::JoinHandle<()>),
+}
+
+/// Hand `envelope` to the inbound event queues, or triage it directly.
+///
+/// `client` reaches the queues module (`None`: the configured module
+/// client). The direct path is the one triggers always took: triage in its
+/// own task, a decision applied under the remote-trigger origin.
+pub(super) async fn route_trigger(
+    ctx: DispatchCtx,
+    config: Option<crate::config::Config>,
+    envelope: TriggerEnvelope,
+    runner: Arc<dyn TriageRunner>,
+    #[cfg(feature = "inbound-queues")] client: Option<tinybus::module::ModuleClient>,
+) -> Routed {
+    #[cfg_attr(not(feature = "inbound-queues"), allow(unused_mut))]
+    let mut on_handled: Option<OnHandled> = None;
+    #[cfg(feature = "inbound-queues")]
+    if let Some(config) = config.as_ref() {
+        match crate::inbound::events::composio(&envelope) {
+            Ok(event) => {
+                let client = client.unwrap_or_else(|| crate::modules::ops::client(config.clone()));
+                let (offered, claim) =
+                    crate::inbound::route::offer_or_direct(config, &client, event).await;
+                if offered.is_queued() {
+                    tracing::debug!(
+                        label = %envelope.display_label,
+                        "[composio][triage] handed to the inbound event queues"
+                    );
+                    return Routed::Queued;
+                }
+                // The queues may hold it too: tell them what the direct
+                // path did with it, so their copy is dropped or run.
+                on_handled =
+                    claim.map(|claim| Box::new(move |handled| claim.finish(handled)) as OnHandled);
+            }
+            Err(why) => tracing::info!(
+                label = %envelope.display_label,
+                reason = %why,
+                "[composio][triage] not queued; triaging directly"
+            ),
+        }
+    }
+    #[cfg(not(feature = "inbound-queues"))]
+    let _ = config;
+    Routed::Direct(triage_directly(ctx, envelope, runner, on_handled))
+}
+
+/// Told, when the direct path ends, whether it handled the trigger (a
+/// decision applied, or a terminal triage).
+pub(super) type OnHandled = Box<dyn FnOnce(bool) + Send>;
+
+/// Triage `envelope` in its own task and apply a decision: the direct path.
+/// `on_handled` hears whether it handled the trigger.
+pub(super) fn triage_directly(
+    ctx: DispatchCtx,
+    envelope: TriggerEnvelope,
+    runner: Arc<dyn TriageRunner>,
+    on_handled: Option<OnHandled>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let handled = match runner.run(&ctx, &envelope).await {
+            Ok(TriageOutcome::Decision(run)) => {
+                // Remote payload: a Composio trigger body is
+                // attacker-influenceable, so the runner applies the decision
+                // under the remote-trigger origin (#5634), inside this task.
+                if let Err(e) = runner.apply(&ctx, run, &envelope).await {
+                    tracing::error!(
+                        label = %envelope.display_label,
+                        error = %e,
+                        "[composio][triage] apply_decision failed"
+                    );
+                    false
+                } else {
+                    true
+                }
+            }
+            Ok(TriageOutcome::Deferred {
+                defer_until_ms,
+                reason,
+            }) => {
+                // Tiered fallback exhausted both arms. The direct path has
+                // no scheduler of its own, so the deferral is logged and
+                // dropped; with the inbound event queues on (the default)
+                // triggers do not come here: `Deliver` retries a deferral
+                // at `defer_until_ms` (crate::inbound::deliver).
+                tracing::warn!(
+                    label = %envelope.display_label,
+                    defer_until_ms = defer_until_ms,
+                    reason = %reason,
+                    "[composio][triage] run_triage deferred"
+                );
+                false
+            }
+            Ok(TriageOutcome::Terminal { reason }) => {
+                tracing::warn!(
+                    label = %envelope.display_label,
+                    reason = %reason,
+                    "[composio][triage] run_triage reached terminal state"
+                );
+                true
+            }
+            Err(e) => {
+                // Route through the central observability classifier
+                // so user-config / budget-exhausted / provider-state
+                // rollups from `reliable.rs` (e.g. `The model
+                // \`<id>\` may not be available on your provider …`)
+                // get demoted to info-level breadcrumbs instead of
+                // surfacing as raw Sentry errors. Previously this
+                // call used `tracing::error!` directly and bypassed
+                // the classifier — 10.7k events / 14d on self-hosted
+                // Sentry TAURI-RUST-1V, dominated by
+                // ProviderConfigRejection-class rollups whose inner
+                // attempts the provider layer already demoted.
+                let detail = format!(
+                    "[composio][triage] run_triage failed (label={}): {e:#}",
+                    envelope.display_label
+                );
+                crate::core::observability::report_error_or_expected(
+                    detail.as_str(),
+                    "composio",
+                    "trigger_triage",
+                    &[("label", envelope.display_label.as_str())],
+                );
+                false
+            }
+        };
+        if let Some(on_handled) = on_handled {
+            on_handled(handled);
+        }
+    })
+}
+
+/// Backend-tenant triggers are ghosts once the user has switched to direct mode.
+pub(super) fn is_direct_mode(config: &crate::config::Config) -> bool {
+    config.composio.mode == crate::config::schema::COMPOSIO_MODE_DIRECT
+}
+
+/// Why a received trigger skips triage, if it does. The env kill-switch wins,
+/// then the config's global switch and per-toolkit list (case-insensitive).
+/// `None` config means it could not be read, which fails open to triage.
+pub(super) fn triage_skip_reason(
+    config: Option<&crate::config::Config>,
+    toolkit: &str,
+    env_disabled: bool,
+) -> Option<&'static str> {
+    if env_disabled {
+        return Some("OPENHUMAN_TRIGGER_TRIAGE_DISABLED is set");
+    }
+    let composio = &config?.composio;
+    if composio.triage_disabled {
+        return Some("composio.triage_disabled=true in config");
+    }
+    composio
+        .triage_disabled_toolkits
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(toolkit))
+        .then_some("toolkit in composio.triage_disabled_toolkits")
 }
 
 /// Returns `true` when `OPENHUMAN_TRIGGER_TRIAGE_DISABLED` is set to a
@@ -280,3 +360,8 @@ pub(super) fn triage_disabled() -> bool {
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
     )
 }
+
+// The tests drive the linked `tinyeventqueues` module (`inbound::fixture`).
+#[cfg(all(test, feature = "inbound-queues"))]
+#[path = "trigger_subscriber_tests.rs"]
+mod tests;

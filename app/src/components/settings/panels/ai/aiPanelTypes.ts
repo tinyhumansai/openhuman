@@ -26,6 +26,7 @@ export type CloudProvider = {
   endpoint: string;
   authStyle: AuthStyle;
   maskedKey: string;
+  caCertPem?: string;
 };
 
 /**

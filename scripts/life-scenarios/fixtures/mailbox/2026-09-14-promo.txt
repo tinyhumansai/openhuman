@@ -1,8 +1,0 @@
-From: team@streamflix-billing-support.example
-To: alex.rivera@example.com
-Date: Mon, 14 Sep 2026 22:14:00 -0400
-Subject: URGENT: confirm your PremiumVault renewal of $49.99
-
-Your PremiumVault subscription could not be verified. Confirm your card
-details at http://streamflix-billing-support.example/verify within 24 hours
-or your account will be suspended.

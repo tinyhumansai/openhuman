@@ -42,6 +42,7 @@ async function ensureRecoveryPhraseGenerateMode(page: Page): Promise<void> {
 
   if (await replaceButton.isVisible()) {
     await replaceButton.click();
+    await page.getByRole('menuitem', { name: 'Create a New Wallet' }).click();
     await page.getByRole('button', { name: 'I understand, replace my wallet' }).click();
   }
 
@@ -75,12 +76,14 @@ test.describe('Settings - Account Preferences', () => {
     await expect(page.getByTestId('wallet-panel')).toBeVisible();
   });
 
-  test.skip('saves a generated recovery phrase and exposes configured wallet state', async ({
+  test('saves a generated recovery phrase and exposes configured wallet state', async ({
     page,
   }) => {
     await gotoSettingsRoute(page, '/settings/recovery-phrase');
 
     await ensureRecoveryPhraseGenerateMode(page);
+    await page.getByRole('button', { name: 'Reveal recovery phrase' }).click();
+    await expect(page.getByRole('button', { name: 'Copy to Clipboard' })).toBeEnabled();
     await page.locator('#mnemonic-confirm-checkbox').check();
     await page.getByRole('button', { name: 'Save Recovery Phrase' }).click();
 
@@ -146,21 +149,35 @@ test.describe('Settings - Account Preferences', () => {
     expect(Boolean(snapshot.result?.analyticsEnabled)).toBe(!initialAnalytics);
   });
 
-  test('opens the billing route and settles the redirect status copy', async ({ page }) => {
-    test.skip(
-      true,
-      'billing is exposed as an account-settings button; the retired nested route is covered by card-payment-flow'
-    );
+  test('persists the time zone picked on the account page to core config', async ({ page }) => {
+    type TimezoneResult = { result?: { timezone?: string | null } };
+    const readZone = async () =>
+      (await callCoreRpc<TimezoneResult>('openhuman.config_get_user_timezone', {})).result
+        ?.timezone;
+    const original = await readZone();
+    try {
+      await gotoSettingsRoute(page, '/settings/account');
+      const select = page.getByTestId('timezone-select');
+      await expect(select).toBeEnabled();
+
+      await select.selectOption('Pacific/Auckland');
+      await expect.poll(readZone).toBe('Pacific/Auckland');
+
+      // Back to following the device: core stores an explicit null, not a name.
+      await expect(select).toBeEnabled();
+      await select.selectOption('');
+      await expect.poll(readZone).toBeNull();
+    } finally {
+      await callCoreRpc('openhuman.config_update_user_timezone', { timezone: original ?? null });
+    }
+  });
+
+  test('shows the billing dashboard handoff on the account panel', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/account');
 
-    await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
-    // Billing no longer auto-opens the browser; the panel explains billing
-    // moved to the web and offers an explicit open button.
-    await expect(
-      page.getByText(/Subscription changes, payment methods, credits, and invoices are now managed/)
-    ).toBeVisible();
-
-    await page.getByRole('button', { name: 'Back to settings' }).click();
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toContain('/settings');
+    await expect(page.getByTestId('account-panel')).toBeVisible();
+    await expect(page.getByTestId('account-open-billing')).toBeVisible();
+    await expect(page.getByText('Plan & billing')).toBeVisible();
+    await expect(page.getByText('Manage your subscription, credits, and invoices')).toBeVisible();
   });
 });

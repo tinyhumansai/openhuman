@@ -54,7 +54,7 @@ export function createDirectiveText(
               data-directive-type={seg.type}
               data-directive-id={seg.id}
               aria-label={`${seg.type}: ${seg.label}`}
-              className="aui-directive-chip items-baseline text-[13px] leading-none [&_svg]:self-center">
+              className="aui-directive-chip items-baseline px-1.5 py-0.5 text-[13px] leading-none [&_svg]:self-center">
               {Icon && <Icon />}
               {seg.label}
             </Badge>

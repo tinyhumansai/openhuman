@@ -1,14 +1,16 @@
 //! OpenHuman terminal client, embedding the core in-process.
 //!
-//! A [ratatui]-based agent cockpit with Chat, Logs, Config, and Settings,
+//! A [ratatui]-based conversation UI with mouse control, themes, and diagnostics,
 //! persistent thread resume, command/file pickers, approvals, plan review,
 //! agent/skill/MCP/artifact views, Git review, and a multiline composer.
 //! Chat uses the **same `web_chat` surface** the desktop app drives (`openhuman.channel_web_chat` /
 //! `openhuman.channel_web_cancel` +
-//! [`web_chat::subscribe_web_channel_events`](openhuman_core::web_chat::subscribe_web_channel_events)).
-//! It boots the core in-process — no HTTP, no sockets — via
-//! `CoreBuilder::new(HostKind::Cli).domains(DomainSet::full()).services(ServiceSet::none())`
-//! and streams a live transcript in the terminal.
+//! [`web_chat::subscribe_web_channel_events`](openhuman_rpc::embed::chat_surface::subscribe_web_channel_events)).
+//! It boots the core in-process — no HTTP, no sockets — through
+//! `openhuman_rpc::host::tui` (the embed `tui` preset: every domain, no
+//! background services, the on-disk session store, connected to the
+//! TinyHumans backend) and streams a live transcript in the terminal.
+//! `openhuman-rpc` is its only openhuman dependency.
 //!
 //! The terminal dependencies and UI code live entirely in this crate, keeping
 //! the shared core crate free of terminal-specific dependencies.
@@ -28,17 +30,29 @@
 //!
 //! See `README.md` for build/run instructions and the packaging story.
 
+mod account;
+mod actions;
+mod activity;
 mod app;
+mod benchmark;
 mod cockpit;
 mod composer;
 mod controls;
 mod crash_reporting;
+mod demo;
+mod effects;
+mod event_view;
+mod input;
+mod presentation;
 mod render;
 mod runner;
 mod session;
 mod state;
+mod state_events;
 mod terminal;
+mod theme;
 mod ui_state;
+mod viewport;
 
 pub use crash_reporting::init_crash_reporting;
 pub use runner::run_from_cli;

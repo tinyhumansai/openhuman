@@ -24,7 +24,9 @@ import { registerChatSurface } from '../../../providers/chatSurfaceHandlers';
 import chatRuntimeReducer from '../../../store/chatRuntimeSlice';
 import mascotReducer from '../../../store/mascotSlice';
 import runModeReducer from '../../../store/runModeSlice';
+import threadGoalReducer from '../../../store/threadGoalSlice';
 import threadReducer from '../../../store/threadSlice';
+import threadTodosReducer from '../../../store/threadTodosSlice';
 import type { ThreadMessage } from '../../../types/thread';
 import { AssistantUiChat } from './AssistantUiChat';
 
@@ -55,6 +57,8 @@ function buildStore(messages: ThreadMessage[]) {
   return configureStore({
     reducer: combineReducers({
       thread: threadReducer,
+      threadGoal: threadGoalReducer,
+      threadTodos: threadTodosReducer,
       chatRuntime: chatRuntimeReducer,
       mascot: mascotReducer,
       // The composer's `/plan` / `/build` commands read it (`useRunMode`).

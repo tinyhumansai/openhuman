@@ -1,14 +1,9 @@
 //! Data types shared across the prompt-plumbing pipeline.
 //!
-//! Everything in this file is pure data (structs, enums, traits,
-//! constants). The rendering logic — section implementations,
-//! `SystemPromptBuilder`, `render_subagent_system_prompt` — lives in
-//! the sibling `mod.rs` so type edits don't pull in the whole 2 000-line
-//! renderer.
+//! Data shared by OpenHuman's agent prompt adapters.
 
-use crate::skills::Workflow;
-use anyhow::Result;
 use std::path::Path;
+use tinyskills::Skill as Workflow;
 use tinytools::Tool;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,68 +244,6 @@ pub fn swap_deferred_for_discovery_bridge<'a>(
     }
 }
 
-/// How TinyTools should render and parse an agent's tool calls.
-///
-/// The prompt layer carries this only to select the TinyTools dialect; it does
-/// not define a tool-call protocol of its own.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ToolCallFormat {
-    /// Compact positional legacy dialect.
-    PFormat,
-    /// JSON-in-tag rendering with full schemas. The default.
-    #[default]
-    Json,
-    /// Provider supplies structured tool calls — catalogue is
-    /// informational. Renders in the same JSON-schema form as `Json`.
-    Native,
-    /// Python `def` signatures; the model calls `name(arg="value")`.
-    Python,
-    /// TypeScript `function` signatures; the model calls `name({arg: "value"})`.
-    TypeScript,
-}
-
-impl ToolCallFormat {
-    /// The harness policy that speaks this format.
-    ///
-    /// `Native` maps to `Auto` rather than forcing native: the session only
-    /// picks it when the provider profile supports native tools, and `Auto`
-    /// resolves to the same thing while still letting the harness fall back
-    /// for a model that turns out not to.
-    pub(crate) fn harness_dispatcher(self) -> tinyagents_harness::config::ToolDispatcher {
-        use tinyagents_harness::config::ToolDispatcher;
-        match self {
-            ToolCallFormat::PFormat => ToolDispatcher::Pformat,
-            ToolCallFormat::Json => ToolDispatcher::Xml,
-            ToolCallFormat::Native => ToolDispatcher::Auto,
-            ToolCallFormat::Python => ToolDispatcher::Python,
-            ToolCallFormat::TypeScript => ToolDispatcher::Typescript,
-        }
-    }
-
-    /// The code style behind a code-call format, `None` for the others.
-    pub(crate) fn code_style(self) -> Option<tinytools_agent::dialect::CodeStyle> {
-        match self {
-            ToolCallFormat::Python => Some(tinytools_agent::dialect::CodeStyle::Python),
-            ToolCallFormat::TypeScript => Some(tinytools_agent::dialect::CodeStyle::TypeScript),
-            ToolCallFormat::PFormat | ToolCallFormat::Json | ToolCallFormat::Native => None,
-        }
-    }
-}
-
-/// Map the canonical dialect's catalogue spelling onto the host prompt wire
-/// vocabulary at the prompt boundary.
-pub(crate) fn tool_call_format_from_dialect(
-    format: tinytools_agent::dialect::ToolCallFormat,
-) -> ToolCallFormat {
-    match format {
-        tinytools_agent::dialect::ToolCallFormat::PFormat => ToolCallFormat::PFormat,
-        tinytools_agent::dialect::ToolCallFormat::Json => ToolCallFormat::Json,
-        tinytools_agent::dialect::ToolCallFormat::Native => ToolCallFormat::Native,
-        tinytools_agent::dialect::ToolCallFormat::Python => ToolCallFormat::Python,
-        tinytools_agent::dialect::ToolCallFormat::TypeScript => ToolCallFormat::TypeScript,
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Authenticated user identity
 // ─────────────────────────────────────────────────────────────────────────────
@@ -355,13 +288,18 @@ pub struct PromptContext<'a> {
     pub model_name: &'a str,
     /// Id of the agent this prompt is being built for.
     pub agent_id: &'a str,
+    /// Archetype text fetched by the caller for a TinyFlows-backed builtin.
+    ///
+    /// Flow prompt builders remain synchronous; async host entrypoints fetch
+    /// this value from the scoped TinyFlows Copilot bus before rendering.
+    pub flow_archetype_text: Option<&'a str>,
     pub tools: &'a [PromptTool<'a>],
     pub workflows: &'a [Workflow],
     pub dispatcher_instructions: &'a str,
     /// When non-empty, only tools in this set are rendered. Skills
     /// section is also omitted when a filter is active.
     pub visible_tool_names: &'a std::collections::HashSet<String>,
-    pub tool_call_format: ToolCallFormat,
+    pub tool_call_format: tinytools_agent::dialect::ToolCallFormat,
     /// Active Composio integrations the user has connected.
     pub connected_integrations: &'a [ConnectedIntegration],
     /// Pre-rendered `## Connected Identities` markdown block loaded once
@@ -377,124 +315,16 @@ pub struct PromptContext<'a> {
     /// Empty for non-master agents.
     pub personality_roster: Vec<PersonalityRosterEntry>,
     /// Pre-loaded global `AGENTS.md` content (`<workspace_dir>/AGENTS.md`),
-    /// injected by [`crate::agent::prompts::sections::AgentsInstructionsSection`].
+    /// injected by [`crate::prompts::sections::AgentsInstructionsSection`].
     /// `None` when the file is absent/empty or the `agents_md_enabled` config
     /// gate is off. Loaded once at system-prompt build time (never re-read per
     /// turn) so the frozen system-prompt prefix / KV-cache contract holds.
     pub agents_md_global: Option<String>,
     /// Pre-loaded project-layer `AGENTS.md` content — `<action_dir>/AGENTS.md`,
-    /// or a sub-agent's `worktree_action_dir` override. `None` when the file is
-    /// absent/empty, deduplicated against the global layer (same dir), or the
+    /// `None` when the file is absent/empty, deduplicated against the global
+    /// layer (same dir), or the
     /// gate is off. Rendered after the global layer.
     pub agents_md_local: Option<String>,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PromptSection trait + rendered output
-// ─────────────────────────────────────────────────────────────────────────────
-
-pub trait PromptSection: Send + Sync {
-    fn name(&self) -> &str;
-    fn build(&self, ctx: &PromptContext<'_>) -> Result<String>;
-
-    /// The section's bytes split by cache tier.
-    ///
-    /// Most sections live in exactly one tier, so the default is one part in
-    /// [`Self::tier`]. A section whose body spans tiers (the orchestrator's
-    /// dynamic builder renders identity, per-install context and the user's
-    /// state in one pass) overrides this so the builder can place each slice
-    /// with its peers instead of dragging the stable bytes into the volatile
-    /// tail.
-    fn build_parts(&self, ctx: &PromptContext<'_>) -> Result<Vec<(PromptTier, String)>> {
-        Ok(vec![(self.tier(), self.build(ctx)?)])
-    }
-
-    /// Which cache tier this section's bytes belong to.
-    ///
-    /// Defaults to [`PromptTier::Stable`], which is right for the large
-    /// majority: identity, role, rules, safety, grounding and style are the
-    /// same bytes on every turn of every session. A section must override this
-    /// only if its output can change — and then it **must**, because a volatile
-    /// section rendered inside the stable tier invalidates every byte after it.
-    fn tier(&self) -> PromptTier {
-        PromptTier::Stable
-    }
-}
-
-/// How stable a [`PromptSection`]'s bytes are, which decides where in the
-/// assembled prompt they are emitted.
-///
-/// The prompt is frozen after turn 1 (`session/turn/core.rs`), so within a
-/// session nothing here moves. The tiers matter *across* sessions and to
-/// providers that must be told where to cache: a prefix is reusable only up to
-/// the first byte that differs, so the ordering rule is simply "most stable
-/// first". Put the user's memory near the front — as this builder did until
-/// #5701's successor — and one memory write invalidates the identity, the
-/// rules, the safety contract and the entire tool catalogue behind it.
-///
-/// Hermes reaches the same three-way split from the same reasoning
-/// (`agent/system_prompt.py`'s `stable` / `context` / `volatile`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PromptTier {
-    /// Identical across sessions for a given build and agent: identity, role,
-    /// delegation rules, safety, grounding, writing style.
-    Stable,
-    /// Stable for the life of a session but not across sessions — project
-    /// instructions (`AGENTS.md`) and the resolved workspace.
-    Context,
-    /// Changes whenever the user's state does: memory, profile, the skills
-    /// index, connected integrations, the clock.
-    Volatile,
-}
-
-/// Marker a dynamic prompt builder emits on its own line to say "everything
-/// after this belongs to the `Context` tier".
-///
-/// A [`PromptSource::Dynamic`](crate::agent::harness::definition::PromptSource)
-/// builder returns one string. Splitting it on these markers is how it
-/// declares tiers without a second builder signature, and the markers never
-/// reach the model: [`split_prompt_tiers`] removes them, and a renderer that
-/// bypasses the builder sees an HTML comment the model ignores.
-pub const PROMPT_TIER_CONTEXT_MARKER: &str = "<!--prompt-tier:context-->";
-/// Marker for the start of the `Volatile` tier. See [`PROMPT_TIER_CONTEXT_MARKER`].
-pub const PROMPT_TIER_VOLATILE_MARKER: &str = "<!--prompt-tier:volatile-->";
-
-/// Split a dynamic builder's body on the tier markers.
-///
-/// Text before the first marker is `default_tier` (the tier the section
-/// declares); text after [`PROMPT_TIER_CONTEXT_MARKER`] is `Context` and text
-/// after [`PROMPT_TIER_VOLATILE_MARKER`] is `Volatile`. Markers may appear in
-/// either order and at most once each; empty slices are dropped.
-#[must_use]
-pub fn split_prompt_tiers(body: &str, default_tier: PromptTier) -> Vec<(PromptTier, String)> {
-    let mut parts: Vec<(PromptTier, String)> = Vec::new();
-    let mut tier = default_tier;
-    let mut current = String::new();
-    for line in body.split_inclusive('\n') {
-        let trimmed = line.trim();
-        let next = if trimmed == PROMPT_TIER_CONTEXT_MARKER {
-            Some(PromptTier::Context)
-        } else if trimmed == PROMPT_TIER_VOLATILE_MARKER {
-            Some(PromptTier::Volatile)
-        } else {
-            None
-        };
-        match next {
-            Some(next_tier) => {
-                if !current.trim().is_empty() {
-                    parts.push((tier, std::mem::take(&mut current)));
-                } else {
-                    current.clear();
-                }
-                tier = next_tier;
-            }
-            None => current.push_str(line),
-        }
-    }
-    if !current.trim().is_empty() {
-        parts.push((tier, current));
-    }
-    parts
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -503,7 +333,7 @@ pub fn split_prompt_tiers(body: &str, default_tier: PromptTier) -> Vec<(PromptTi
 
 /// Per-definition rendering flags passed into the sub-agent prompt
 /// renderer. Mirrors the `omit_*` fields on
-/// [`crate::agent::harness::definition::AgentDefinition`]
+/// [`crate::agent_registry::host_definition::AgentDefinition`]
 /// but inverted into positive-sense `include_*` form.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SubagentRenderOptions {

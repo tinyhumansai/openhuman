@@ -11,8 +11,9 @@ use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 use super::super::client::{resolve_composio_route, ComposioRoute};
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::ComposioToolkitsResponse;
+use tinyconnectors_bus::names::methods;
 
 pub struct ComposioListToolkitsTool {
     /// Held instead of a pre-resolved route so the
@@ -52,7 +53,7 @@ impl Tool for ComposioListToolkitsTool {
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&config, outcome)
+        redact_composio_outcome(&config, outcome).await
     }
 }
 
@@ -86,7 +87,7 @@ impl ComposioListToolkitsTool {
                 );
             }
         };
-        match resolve_composio_route(&live_config) {
+        match resolve_composio_route(&live_config).await {
             Ok(ComposioRoute::Backend) => {
                 tracing::debug!("[composio] list_toolkits.execute: backend variant");
             }

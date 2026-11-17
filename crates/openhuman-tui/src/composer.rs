@@ -6,6 +6,15 @@ use unicode_width::UnicodeWidthChar;
 /// OpenHuman-native: commands either map to a stable core RPC or a local view.
 pub const COMMANDS: &[(&str, &str)] = &[
     ("help", "show commands and keyboard shortcuts"),
+    ("login", "sign in to TinyHumans with your browser"),
+    ("login-token", "paste a one-time token as a fallback"),
+    ("login-cancel", "cancel a pending browser sign-in"),
+    ("sessions", "browse saved conversations"),
+    ("subagents", "inspect child agent activity"),
+    ("tools", "inspect tool calls and output"),
+    ("themes", "choose system, dark, light or monochrome"),
+    ("mouse", "toggle terminal mouse capture"),
+    ("chat", "return to the conversation"),
     ("new", "start a new thread"),
     ("resume", "browse saved threads"),
     ("rename", "rename the current thread"),
@@ -253,21 +262,25 @@ impl Composer {
         let mut cursor_row = 0usize;
         let mut cursor_col = 0usize;
         for (idx, ch) in self.text.chars().enumerate() {
-            if idx == self.cursor {
-                cursor_row = row;
-                cursor_col = col;
-            }
             if ch == '\n' {
+                if idx == self.cursor {
+                    cursor_row = row;
+                    cursor_col = col;
+                }
                 rows.push(String::new());
                 row += 1;
                 col = 0;
                 continue;
             }
-            let cw = ch.width().unwrap_or(0).max(1);
+            let cw = ch.width().unwrap_or(0);
             if col + cw > width {
                 rows.push(String::new());
                 row += 1;
                 col = 0;
+            }
+            if idx == self.cursor {
+                cursor_row = row;
+                cursor_col = col;
             }
             rows[row].push(ch);
             col += cw;
@@ -277,6 +290,34 @@ impl Composer {
             cursor_col = col;
         }
         (rows, cursor_row, cursor_col)
+    }
+
+    /// Position the cursor at a cell coordinate in the wrapped editor.
+    pub fn click(&mut self, target_row: usize, target_col: usize, width: usize) {
+        let mut row = 0;
+        let mut col = 0;
+        let width = width.max(1);
+        for (index, ch) in self.text.chars().enumerate() {
+            let cells = ch.width().unwrap_or(0);
+            if ch != '\n' && cells > 0 && col + cells > width {
+                row += 1;
+                col = 0;
+            }
+            if row > target_row
+                || (row == target_row && col + cells > target_col)
+                || (ch == '\n' && row == target_row)
+            {
+                self.cursor = index;
+                return;
+            }
+            if ch == '\n' {
+                row += 1;
+                col = 0;
+            } else {
+                col += cells;
+            }
+        }
+        self.cursor = self.text.chars().count();
     }
 }
 

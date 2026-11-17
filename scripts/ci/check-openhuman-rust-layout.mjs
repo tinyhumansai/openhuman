@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { rootRustTargetNames } from "../lib/root-rust-targets.mjs";
 
 const ROOT = "crates/openhuman-core/src";
 const CRATES_ROOT = "crates";
@@ -21,43 +22,18 @@ const WARN_AT = 725;
 // spent again. No new exception can appear, and one file may be listed only
 // once (a Map keeps the last duplicate, which silently discards the other pin).
 const LEGACY_LIMIT_ENTRIES = [
-  // These orchestration files crossed the general limit in the already-merged
-  // runtime compatibility work. They are being split along semantic seams.
-  // `spawn_async_subagent_execute.rs`: 847 -> 821 when the argument prologue
-  // moved to `spawn_async_subagent_args.rs`, 821 -> 809 via
-  // `AbortReport::deliver`. Still exempt because the rest of that function's
-  // phases close over locals whose types are not nameable from this module
-  // (see that fragment's header); taking it under 750 needs a visibility
-  // change in `subagent_sessions`.
-  [
-    "crates/openhuman-core/src/agent/orchestration/tools/spawn_async_subagent_execute.rs",
-    799,
-  ],
   // `spawn_subagent_tool_impl.rs` had its entry DELETED, not lowered: the
   // parameter schema moved to `spawn_subagent_parameters.rs` and the file is
   // under the general 750 limit, so it needs no exception at all.
-  // The session-todo integration added transcript metadata construction to
-  // this already-exempt composition seam. Keep its allowance exact.
-  ["crates/openhuman-core/src/agent/session_host/runtime_session.rs", 1492],
-  // Session-host factory still assembles the product's deliberately coupled
-  // provider, security, memory, tool and prompt policy.  Generic session
-  // state moved to tinyagents-runtime; this remaining composition is split in
-  // a follow-up without reintroducing an old harness/session exception.
-  ["crates/openhuman-core/src/agent/session_host/builder/factory.rs", 1003],
-  ["crates/openhuman-core/src/agent/subagent_host/lifecycle.rs", 1309],
-  ["crates/openhuman-core/src/agent/subagent_host/ops/runner.rs", 1152],
-  ["crates/openhuman-core/src/tools/ops.rs", 1209],
-  ["crates/openhuman-core/src/web_chat/progress_bridge.rs", 1304],
+  ["crates/openhuman-core/src/agent/subagent_host/ops/runner.rs", 878],
   // These established external test modules grew with upstream coverage. Pin
   // their current sizes while follow-up work separates their test concerns.
   // `core/` was pruned from the line limit by name until these pins; its
   // oversized files are pinned at the size they had when enforcement began.
-  ["crates/openhuman-core/src/core/all.rs", 1492],
-  ["crates/openhuman-core/src/core/all_tests.rs", 1632],
-  ["crates/openhuman-core/src/core/events.rs", 1808],
-  ["crates/openhuman-core/src/core/events_tests.rs", 1003],
-  ["crates/openhuman-core/src/core/observability.rs", 3502],
-  ["crates/openhuman-core/src/core/runtime/builder.rs", 813],
+  ["crates/openhuman-core/src/core/all.rs", 1080],
+  ["crates/openhuman-core/src/core/all_tests.rs", 1465],
+  ["crates/openhuman-core/src/core/events.rs", 1412],
+  ["crates/openhuman-core/src/core/events_tests.rs", 988],
 ];
 const LEGACY_LIMITS = new Map(LEGACY_LIMIT_ENTRIES);
 
@@ -76,7 +52,7 @@ function allRustFiles(directory) {
   });
 }
 
-const INLINE_TEST_MODULE_RE =
+const INLINE_TESTS_MODULE_RE =
   /^\s*#\[cfg\([^\n]*\btest\b[^\n]*\)\]\s*\n(?:\s*#\[[^\n]+\]\s*\n)*\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{/m;
 
 const failures = [];
@@ -113,7 +89,7 @@ for (const file of allRustFiles(CRATES_ROOT)) {
       `${file}: test modules must use a descriptive *_tests.rs filename`,
     );
   }
-  if (INLINE_TEST_MODULE_RE.test(source)) {
+  if (INLINE_TESTS_MODULE_RE.test(source)) {
     failures.push(
       `${file}: inline test module; move it to a sibling *_tests.rs file`,
     );
@@ -159,16 +135,14 @@ for (const [directory, table] of [
   ["tests", "test"],
   ["examples", "example"],
 ]) {
-  const files = new Set(
-    fs
-      .readdirSync(directory)
-      .filter((name) => name.endsWith(".rs"))
-      .map((name) => name.slice(0, -3)),
-  );
+  const files = rootRustTargetNames(directory);
+
   const declared = declaredTargets(table);
   for (const name of files) {
     if (!declared.has(name))
-      failures.push(`${directory}/${name}.rs: missing [[${table}]] entry in ${CLI_MANIFEST}`);
+      failures.push(
+        `${directory}/${name}.rs: missing [[${table}]] entry in ${CLI_MANIFEST}`,
+      );
   }
   for (const name of declared) {
     if (!files.has(name))

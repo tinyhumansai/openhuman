@@ -4,7 +4,7 @@
 //! resolution. This module owns "what a tick actually does" so it can be
 //! exercised against a real chat.db without a Tauri runtime.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 
@@ -152,11 +152,6 @@ impl TickDeps for HttpDeps {
     ) -> anyhow::Result<()> {
         super::ingest_group(account_id, key, transcript).await
     }
-}
-
-#[allow(dead_code)]
-pub(crate) fn chat_db_exists(path: &Path) -> bool {
-    path.exists()
 }
 
 #[cfg(test)]

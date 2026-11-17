@@ -1,114 +1,100 @@
-# mcp: MCP host
+# MCP
 
-Host-side half of Model Context Protocol support. Both transports, the
-static config-declared server set, the dynamic (Smithery/official-catalog)
-registry with its store, its reconnect supervisor and browser sign-in, and
-the write-audit log moved out to [`tinymcp`](https://github.com/tinyhumansai/tinymcp).
-What is here is what belongs to this application: the one holder of that
-library's services, the RPC surface over it, the agent-facing tools, and the
-`openhuman mcp` server that exposes this application's own tools to external
-MCP hosts.
+This folder contains OpenHuman's host integration for the TinyMCP module. The
+module owns MCP client and server protocol behavior, transports, configured and
+installed server state, tool caches, OAuth and reconnect supervision. OpenHuman
+owns product configuration and policy, the `mcp_clients` and `mcp_audit` RPC
+surfaces, agent approval and prompt-injection screening, and the host entry
+points for the local MCP server.
 
-## Responsibilities
+Host calls cross the module boundary through `tinymcp-bus`; the host does not
+link TinyMCP's implementation into the normal build graph. `module_client.rs`
+keeps one serialized module object per workspace. The receipt state machine and
+the client cache with its cleanup reservations are
+`tinymcp_bus::client_lifecycle`; the host only performs the bus calls.
 
-- Hold the `tinymcp` service, one per workspace, and open it at boot
-  ([`host`]).
-- Expose the `mcp_clients` RPC namespace (including the user's `mcp.json`
-  document), the agent-facing `mcp_registry_*` tools, and the
-  prompt-injection scan over remote tool definitions ([`registry`]).
-- Expose the RPC surface over the write-audit log ([`audit`]).
-- Run the `openhuman mcp` stdio/HTTP server that serves this application's
-  own tools to external MCP clients ([`server`]), the *server* side, which
-  did not move because it is bound to the tool registry, the permission
-  model and the agent turn machinery.
+## How it works
 
-## Where the boundary fell
+```text
+  OpenHuman host policy and adapters           TinyMCP module
+ +--------------------------------+     +--------------------------------+
+ | configuration, proxy, approval |---->| MCP transports and protocol    |
+ | mcp_clients / mcp_audit RPCs    |     | stores, registry, supervisor   |
+ | tool exposure and event mapping |<--->| static and installed servers   |
+ | local stdio / HTTP entry points|---->| tool validation and execution |
+ +--------------------------------+     +--------------------------------+
+```
 
-Three things stayed here on purpose, each because it is host policy rather
-than protocol:
+The module's wire vocabulary lives in `tinymcp-bus`. `mcp::module_client`
+serializes access to the per-workspace configured object. `mcp::host` converts
+OpenHuman configuration to bus DTOs and applies product proxy and credential
+transport policy. Registry handlers and agent tools call module operations,
+then translate outcomes into OpenHuman RPC results and domain events.
 
-- **Prompt-injection detection** over remote tool definitions
-  (`registry::tools_safe_for_agent`). The detector, its rules, and what a hit
-  means belong to this application's threat model. The *lexical* half
-  (control characters, prompt-template fences, length caps) lives in the
-  contract instead, applied by the display accessors on every remote
-  description.
-- **Events.** `tinymcp` reports what happened in its return values;
-  translating that into a `DomainEvent` happens here, where the vocabulary is
-  known (`registry::ops`/`setup_ops` for the RPC-driven lifecycle events,
-  `registry::supervisor_events` for what the reconnect supervisor observed,
-  `registry::tools_safe_for_agent` for `McpToolRejected`). `audit` publishes
-  nothing.
-- **The proxy decision.** Whether a proxy applies to MCP traffic is decided
-  by this application's proxy scope setting, per-service list and no-proxy
-  list, `host::proxy_for_mcp` consults them and hands `tinymcp` the answer.
+The configured object's bus path remains private to `module_client.rs`. Open
+and close receipts are retained by `tinymcp_bus::client_lifecycle` so retries
+can finish after a caller is cancelled or loses its reply. Calls that carry client credentials
+use TinyBus confidential delivery.
 
-## Key files
+The local MCP server keeps its OpenHuman tool catalog, authorization policy,
+write audit decisions, and RPC dispatch. TinyMCP owns the protocol session,
+stdio/HTTP framing, HTTP session admission, and transport lifecycle. The host
+passes requests and callbacks through bus operations rather than parsing MCP
+protocol messages itself. A successful HTTP DELETE closes the module session
+before the host cancels and joins its in-flight callback and removes the local
+session; a rejected DELETE leaves the host session intact.
 
-| Path | Purpose |
-| --- | --- |
-| `mod.rs` | Family root, entry points, and the two re-export facades below. |
-| `host.rs` / `host_tests.rs` | The per-workspace `tinymcp` service holder, see [its own doc comment](host.rs) for the shape (`HOSTS` map, `McpHost`, `for_config`/`try_service`/`init`, `client_config`, `proxy_for_mcp`). |
-| [`registry/README.md`](registry/README.md) | `mcp_clients` RPC (incl. `mcp.json`), agent tools, reconnect-supervisor events. |
-| [`audit/README.md`](audit/README.md) | `mcp_audit` RPC over the write-audit log. |
-| [`server/README.md`](server/README.md) | The `openhuman mcp` server (this application as an MCP host's target). |
+## Host responsibilities
 
-## The two re-export modules
+- `host.rs` builds `McpClientConfig`, resolves the product proxy, refuses
+  credentialed plaintext non-loopback HTTP, and selects the OAuth callback URL.
+- `module_client.rs` drives the module-owned lifecycle (admission gate,
+  shutdown hook, bus calls) and adapts the bus interface to host callers.
+- `registry/` owns the product RPC schemas and outcomes, `mcp.json` editing,
+  prompt-injection screening, permission/exposure mapping, and domain events.
+  The module owns the catalogs, stores, connections, and supervisor.
+- `audit/` exposes the module-owned write-audit records as OpenHuman RPC.
+- `server/` owns the OpenHuman tool catalog and dispatch policy for the local
+  MCP server. TinyMCP owns the wire protocol and session lifecycle.
+- `tools/` holds the generic bridge agent tools (`mcp_list_servers`,
+  `mcp_list_tools`, `mcp_call_tool`), one file each; `server_tools.rs` builds
+  the direct `mcp_<server>_<tool>` executors; `gitbooks_tools.rs` is the
+  GitBooks docs tool. They use confidential bus calls and keep product
+  approval checks on the host. Every static-server path gets its tools through
+  `McpConfiguredClient::safe_static_tools` (list, scrub, prompt-injection
+  screen).
 
-`mcp::http_client` and `mcp::config_servers` are not directories. They no
-longer hold transport source, only `pub use` re-exports of `tinymcp`:
+The static server set comes from OpenHuman config (`[[mcp_client.servers]]`).
+The installed server set comes from the user's `mcp.json` document. The host
+preserves the existing `mcp_clients.*` and `mcp_audit.*` RPC names and the
+stdio/Streamable HTTP entry points while delegating protocol and server state
+to the module.
 
-- `http_client` (ungated), the Streamable HTTP transport:
-  `tinymcp::transport::http::{McpHttpClient, McpHttpClientBuilder}`,
-  `tinymcp::Error` as `McpError`, `redact_endpoint`, `render_tool_result`, and
-  the `tinymcp_bus` wire types (`McpRemoteTool`, `McpServerToolResult`,
-  `McpSseEvent`, the OAuth challenge/metadata types). Always compiled because
-  the ungated `gitbooks` tool (`tools/impl/network/gitbooks.rs`) dials
-  `McpHttpClient`; `mcp::server`'s test-only HTTP round-trip names it too.
-- `config_servers` (`mcp` feature), the statically declared, TOML-configured
-  server set: `tinymcp::transport::stdio::McpStdioClient`,
-  `McpRegistrySource`, `McpServerDefinition`, `McpServerRegistry`,
-  `McpTransportClient`, and `tinymcp_bus::McpAuthConfig` re-exported as
-  `McpDefinitionAuth` (distinct from this application's own
-  `config::McpAuthConfig`, which the TOML file declares).
+## Boundaries
 
-Neither module implements a transport, a handshake, or OAuth discovery any
-more. That all lives in `tinymcp` now. Read
-[the tinymcp repo](https://github.com/tinyhumansai/tinymcp) for that half.
+- `tinymcp` owns MCP protocol, transports, registries, stores, server
+  supervision, generic argument validation, rendering, and output scrubbing.
+  Implement those capabilities in `vendor/tinymcp` and publish the owner
+  release before changing its host pin.
+- `tinymcp-bus` owns payload types and member names. Do not duplicate its wire
+  DTOs in OpenHuman.
+- OpenHuman owns configuration, credential custody, proxy policy, approvals,
+  prompt-injection screening, product RPCs, and event mapping.
+- Never send host credentials through an ordinary bus call. Operations that
+  carry credentials or sensitive tool data must use TinyBus confidential
+  delivery.
+- Keep MCP user data and provider responses out of analytics. Logs must use
+  the shared endpoint redactor and must not contain credentials or response
+  payloads.
 
-## Startup wiring
+## Tests
 
-`mcp::start(config)` initializes the registry's bus subscriber and opens the
-host service; it never fails (MCP being unavailable must not stop the core
-coming up). `mcp::start_boot_jobs(config)` additionally spawns the
-installed-server boot pass and the reconnect supervisor. Both are called from
-`core/runtime/subscribers.rs` (`start` on the RPC-enable path) and
-`core/runtime/services.rs` (`start_boot_jobs` on the boot path); each is
-idempotent so the two callers can't double-register or double-spawn.
+The module owns protocol and generic MCP behavior tests. OpenHuman tests cover
+host policy, bus lifecycle/retry behavior, tool mapping, and product RPCs. Run
+the focused host tests with `cargo test -p openhuman --features modules,mcp
+mcp::`, and check that the normal graph does not include the implementation
+with `scripts/assert-shed.sh default tinymcp`.
 
-## Compile-time gate (`mcp` feature)
-
-`pub mod mcp;` is always compiled. The family root is a facade. `host` and
-`http_client` are ungated because the startup path and always-on consumers
-reach them unconditionally. `registry`, `audit`, and `server` keep
-their own gate and their own `stub.rs`, so a build without the feature still
-serves `/rpc` without those namespaces; `config_servers` is simply
-`#[cfg(feature = "mcp")]` with no stub.
-
-## Dependencies
-
-- `tinymcp` (path dependency on `vendor/tinymcp`, `default-features = false`):
-  the extracted client library.
-- `tinymcp-bus`: the wire contract: payload types and member names, with no
-  transport and no runtime, also used to generate the desktop settings
-  schema.
-- `crate::config`: `McpClientConfig`/`McpServerConfig`/`McpAuthConfig` and
-  the runtime proxy config `host::client_config`/`proxy_for_mcp` convert
-  from.
-- `crate::core::bus` / `crate::core::events`: `DomainEvent` publishing for
-  everything that stayed host-side.
-
-See `Cargo.toml` (`crates/openhuman-core/Cargo.toml`, the `tinymcp` block)
-for why this stays a path dependency rather than the pinned release, and
-`crates/openhuman-core/src/modules/registry/records_mcp_connectors.rs` for
-the release version this application does pin for the loadable-module path.
+Further reading: [MCP registry](../../../../docs/gitbooks/en/developing/architecture/mcp-registry.md),
+[MCP server](../../../../docs/gitbooks/en/developing/mcp-server.md), and
+[`tinymcp`](../../../../vendor/tinymcp/README.md).

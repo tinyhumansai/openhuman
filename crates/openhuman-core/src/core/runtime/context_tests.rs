@@ -6,13 +6,25 @@ fn ctx(dir: &str) -> Arc<CoreContext> {
         host_kind: HostKind::Cli,
         workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
             workspace_dir: Some(PathBuf::from(dir)),
+            config_path: None,
         }))),
         domains: crate::core::runtime::DomainSet::full(),
         tool_groups: Default::default(),
+        autonomy_tier_source: AutonomyTierSource::LiveConfig,
+        autonomy_tier_ceiling: None,
+        components: Default::default(),
         embedder_config: None,
+        latest_embedder_config: None,
         user_skill_roots: true,
-        backend_transport: None,
+        extensions: Default::default(),
         turn_origin: None,
+        host_secret_grant: None,
+        channel_thread: None,
+        session_agent: None,
+        profile: None,
+        profile_admission: Arc::new(()),
+        agent: Default::default(),
+        bare: false,
     })
 }
 
@@ -32,18 +44,7 @@ fn ctx(dir: &str) -> Arc<CoreContext> {
 // configures boot and watches its turns run somewhere else entirely.
 
 fn ctx_with_config(config: crate::config::Config) -> Arc<CoreContext> {
-    Arc::new(CoreContext {
-        host_kind: HostKind::Cli,
-        workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
-            workspace_dir: Some(config.workspace_dir.clone()),
-        }))),
-        domains: crate::core::runtime::DomainSet::full(),
-        tool_groups: Default::default(),
-        embedder_config: Some(config),
-        user_skill_roots: true,
-        backend_transport: None,
-        turn_origin: None,
-    })
+    CoreContext::for_test_with_config(crate::core::runtime::DomainSet::full(), config)
 }
 
 #[test]
@@ -65,6 +66,38 @@ fn an_embedder_config_is_readable_from_the_context() {
     assert_eq!(read.default_model.as_deref(), Some("embedder-model"));
 }
 
+/// The desktop's secret preflight replaces the snapshot once it has opened
+/// the sealed config; the replacement must return and stay bound.
+#[test]
+fn replacing_the_embedder_config_returns_and_keeps_it_bound() {
+    let ctx = ctx_with_config(crate::config::Config::default());
+    let mut replacement = crate::config::Config::default();
+    replacement.default_model = Some("after-preflight".into());
+
+    let (done, finished) = std::sync::mpsc::channel();
+    let replacing = Arc::clone(&ctx);
+    std::thread::spawn(move || {
+        replacing.replace_latest_embedder_config(replacement);
+        let _ = done.send(());
+    });
+    finished
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("replacing the embedder config returns");
+
+    let read = ctx.latest_embedder_config().expect("snapshot is bound");
+    assert_eq!(read.default_model.as_deref(), Some("after-preflight"));
+    let snapshot = ctx.latest_embedder_config.as_ref().expect("snapshot");
+    let bound = snapshot
+        .lock()
+        .unwrap()
+        .runtime_state
+        .context_snapshot
+        .clone();
+    assert!(bound
+        .and_then(|weak| weak.upgrade())
+        .is_some_and(|bound| Arc::ptr_eq(&bound, snapshot)));
+}
+
 #[tokio::test]
 async fn the_current_dispatch_sees_the_scoped_embedder_config() {
     // This is the read path `load_config_with_timeout` uses. If it resolved
@@ -82,6 +115,42 @@ async fn the_current_dispatch_sees_the_scoped_embedder_config() {
     let scoped = scoped.expect("a scoped embedder config is visible to the dispatch");
     assert_eq!(scoped.default_model.as_deref(), Some("scoped-model"));
     assert_eq!(scoped.workspace_dir, PathBuf::from("/tmp/scoped-ws"));
+}
+
+#[test]
+fn a_synchronous_scope_serves_its_context_to_blocking_readers() {
+    // The session builder is synchronous and reads the ambient context while
+    // it assembles a belt; a host agent's session has to be built inside its
+    // own context, not the process default.
+    let mut config = crate::config::Config::default();
+    config.default_model = Some("sync-scoped-model".into());
+
+    let seen = CoreContext::sync_scope(ctx_with_config(config), || {
+        CoreContext::current_embedder_config().and_then(|config| config.default_model)
+    });
+
+    assert_eq!(seen.as_deref(), Some("sync-scoped-model"));
+}
+
+#[tokio::test]
+async fn the_current_embedder_config_can_be_read_without_cloning_it() {
+    // `with_current_embedder_config` is the borrow-only twin of
+    // `current_embedder_config`: same scoped config, projected through a closure.
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = PathBuf::from("/tmp/borrowed-ws");
+
+    let read = CoreContext::scope(ctx_with_config(config), async {
+        CoreContext::with_current_embedder_config(|c| c.workspace_dir.clone())
+    })
+    .await;
+    assert_eq!(read, Some(PathBuf::from("/tmp/borrowed-ws")));
+
+    // Without an embedder config the closure never runs.
+    let none = CoreContext::scope(ctx("/tmp/no-embedder-ws"), async {
+        CoreContext::with_current_embedder_config(|_| panic!("no config to read"))
+    })
+    .await;
+    assert_eq!(none, None::<()>);
 }
 
 // ---- derived per-agent contexts (the multi-agent library seam) -----------
@@ -175,6 +244,44 @@ fn derive_with_defaults_to_visible_user_skill_roots() {
     );
     assert!(overlay.user_skill_roots);
     assert!(ctx("/tmp/ws").derive_with(overlay).user_skill_roots());
+}
+
+#[test]
+fn profile_admission_lineage_is_inherited_only_within_the_same_profile() {
+    let root = ctx("/tmp/profile-root");
+    let profile = root.derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            crate::core::runtime::DomainSet::full(),
+            Default::default(),
+        )
+        .profile("profile-a"),
+    );
+    let derived = profile.derive_with(ContextOverlay::new(
+        crate::config::Config::default(),
+        crate::core::runtime::DomainSet::full(),
+        Default::default(),
+    ));
+    let same_profile = profile.derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            crate::core::runtime::DomainSet::full(),
+            Default::default(),
+        )
+        .profile("profile-a"),
+    );
+    let switched = profile.derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            crate::core::runtime::DomainSet::full(),
+            Default::default(),
+        )
+        .profile("profile-b"),
+    );
+
+    assert!(profile.shares_profile_admission(&derived));
+    assert!(profile.shares_profile_admission(&same_profile));
+    assert!(!profile.shares_profile_admission(&switched));
 }
 
 #[tokio::test]
@@ -335,13 +442,25 @@ fn degraded_context_rejects_workspace_bound_stores() {
         host_kind: HostKind::Cli,
         workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
             workspace_dir: None,
+            config_path: None,
         }))),
         domains: crate::core::runtime::DomainSet::full(),
         tool_groups: Default::default(),
+        autonomy_tier_source: AutonomyTierSource::LiveConfig,
+        autonomy_tier_ceiling: None,
+        components: Default::default(),
         embedder_config: None,
+        latest_embedder_config: None,
         user_skill_roots: true,
-        backend_transport: None,
+        extensions: Default::default(),
         turn_origin: None,
+        host_secret_grant: None,
+        channel_thread: None,
+        session_agent: None,
+        profile: None,
+        profile_admission: Arc::new(()),
+        agent: Default::default(),
+        bare: false,
     };
 
     // `workspace_dir()` is the gate every workspace-bound store goes
@@ -356,4 +475,18 @@ fn degraded_context_rejects_workspace_bound_stores() {
         err.contains("workspace unavailable"),
         "unexpected error: {err}"
     );
+}
+
+#[path = "context_turn_origin_tests.rs"]
+mod turn_origin_tests;
+#[test]
+fn inspection_context_uses_captured_autonomy_tier_without_a_ceiling() {
+    let context = CoreContext::for_inspection(crate::config::Config::default());
+
+    assert_eq!(
+        context.autonomy_tier_source(),
+        AutonomyTierSource::Captured,
+        "inspection runs against its explicitly supplied config snapshot"
+    );
+    assert_eq!(context.autonomy_tier_ceiling(), None);
 }

@@ -6,7 +6,7 @@ import type {
 
 /**
  * A background process = a *detached* sub-agent spawned with
- * `spawn_async_subagent` (a fire-and-forget tokio task that keeps running after
+ * `spawn_subagent` (a fire-and-forget tokio task that keeps running after
  * the parent turn returns). The backend marks these with `mode: "async"` on the
  * `SubagentSpawned` event (every blocking spawn emits `mode: "typed"`), and the
  * frontend carries it through on {@link SubagentActivity.mode}. So the whole

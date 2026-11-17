@@ -33,14 +33,17 @@
  */
 import { expect, type Page, test } from '@playwright/test';
 
+import { composerText } from '../helpers/chat-composer';
 import { bootAuthenticatedPage, dismissWalkthroughIfPresent } from '../helpers/core-rpc';
 
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
 const USER_ID = 'pw-chat-scroll-stick';
+const FIRST_PROMPT = 'First long answer please';
+const SECOND_PROMPT = 'Second long answer please';
 
 /** A long reply, so the transcript overflows and there is somewhere to scroll. */
 const LONG_REPLY = Array.from(
-  { length: 40 },
+  { length: 120 },
   (_, i) => `Line ${i + 1}: the transcript needs enough height to actually overflow the viewport. `
 ).join('\n\n');
 
@@ -162,22 +165,20 @@ async function selectedThreadId(page: Page): Promise<string | null> {
 
 async function startNewThread(page: Page): Promise<void> {
   await dismissWalkthroughIfPresent(page);
-  const sidebar = page.getByTestId('new-thread-sidebar-button');
-  if (await sidebar.isVisible().catch(() => false)) {
-    await sidebar.click({ force: true });
-  } else {
-    await page.getByTestId('new-thread-button').click({ force: true });
-  }
+  const previousThread = await selectedThreadId(page);
+  await page.getByTestId('new-thread-button').click({ force: true });
+  await expect.poll(() => selectedThreadId(page), { timeout: 20_000 }).not.toBe(previousThread);
 }
 
 async function sendMessage(page: Page, prompt: string): Promise<void> {
   await dismissWalkthroughIfPresent(page);
   // The live input is a Lexical contenteditable, not a textarea — `fill()` and
   // `toHaveValue()` do not apply to it.
-  await page.getByTestId('chat-message-input').click();
-  await page.keyboard.type(prompt);
+  const input = page.getByTestId('chat-message-input');
+  await input.pressSequentially(prompt);
+  await expect.poll(() => composerText(input), { timeout: 15_000 }).toBe(prompt);
   await expect(page.getByTestId('send-message-button')).toBeVisible();
-  await page.getByTestId('send-message-button').click();
+  await input.press('Enter');
 }
 
 /** Send one turn and wait for the whole reply to land. */
@@ -206,28 +207,26 @@ async function completeTurn(page: Page, prompt: string, marker: string): Promise
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Chat transcript stick-to-bottom', () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
     await resetMock();
     await setMockBehavior('llmStreamChunkDelayMs', '5');
   });
 
   test('a new message does NOT yank a reader who has scrolled up', async ({ page }) => {
     await setMockBehavior(
-      'llmForcedResponses',
+      'llmKeywordRules',
       JSON.stringify([
-        { content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
-        { content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
+        { keyword: FIRST_PROMPT, content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
+        { keyword: SECOND_PROMPT, content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
       ])
     );
     await openChat(page);
 
-    await completeTurn(page, 'First long answer please', 'FIRST-REPLY-END');
+    await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const overflowing = await scrollState(page);
-    test.skip(
-      overflowing.scrollHeight <= overflowing.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(overflowing.scrollHeight).toBeGreaterThan(overflowing.clientHeight + 200);
 
     // Park the reader well above the bottom, past the 80px stick threshold.
     const parkedTop = Math.max(0, overflowing.scrollHeight - overflowing.clientHeight - 600);
@@ -241,7 +240,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     const beforeAnchor = await anchorY(page, 'FIRST-REPLY-END');
 
     // Now a second turn arrives and grows the transcript underneath them.
-    await completeTurn(page, 'Second long answer please', 'SECOND-REPLY-END');
+    await completeTurn(page, SECOND_PROMPT, 'SECOND-REPLY-END');
 
     const after = await scrollState(page);
     const afterAnchor = await anchorY(page, 'FIRST-REPLY-END');
@@ -279,26 +278,22 @@ test.describe('Chat transcript stick-to-bottom', () => {
     // What the user actually needs is that the new turn is brought into view,
     // and that is what this asserts.
     await setMockBehavior(
-      'llmForcedResponses',
+      'llmKeywordRules',
       JSON.stringify([
-        { content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
-        { content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
+        { keyword: FIRST_PROMPT, content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
+        { keyword: SECOND_PROMPT, content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
       ])
     );
     await openChat(page);
 
-    await completeTurn(page, 'First long answer please', 'FIRST-REPLY-END');
+    await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const first = await scrollState(page);
-    test.skip(
-      first.scrollHeight <= first.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(first.scrollHeight).toBeGreaterThan(first.clientHeight + 200);
 
     await scrollTo(page, first.scrollHeight);
     expect((await scrollState(page)).distanceFromBottom).toBeLessThanOrEqual(80);
 
-    const SECOND_PROMPT = 'Second long answer please';
     await completeTurn(page, SECOND_PROMPT, 'SECOND-REPLY-END');
 
     // The end of the streamed reply must be on screen.
@@ -326,8 +321,8 @@ test.describe('Chat transcript stick-to-bottom', () => {
     // keeps the newest content on screen thereafter. For a reply TALLER than
     // the viewport the two are mutually exclusive — the question is pushed off
     // the top by the answer it is waiting for. This fixture deliberately uses
-    // an overflowing reply (`test.skip` above requires the transcript to
-    // overflow), so the prompt is expected to leave the viewport here.
+    // an overflowing reply (asserted above), so the prompt is expected to
+    // leave the viewport here.
     //
     // Keeping the old assertion would have pinned the defect in place: it is
     // satisfied by the pin alone, so it stayed green for a reader who could not
@@ -384,14 +379,16 @@ test.describe('Chat transcript stick-to-bottom', () => {
     expect(threadA, 'thread A must have an id').not.toBeNull();
 
     const overflowing = await scrollState(page);
-    test.skip(
-      overflowing.scrollHeight <= overflowing.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(overflowing.scrollHeight).toBeGreaterThan(overflowing.clientHeight + 200);
 
     // Thread B. Leaving A is what puts A's messages in the cache.
     await startNewThread(page);
+    await expect.poll(() => selectedThreadId(page), { timeout: 15_000 }).not.toBe(threadA);
+    const threadB = await selectedThreadId(page);
+    expect(threadB, 'the new conversation must select a distinct thread').not.toBeNull();
+    expect(threadB).not.toBe(threadA);
     await completeTurn(page, 'Second thread please', 'THREAD-B-END');
+    expect(await selectedThreadId(page)).toBe(threadB);
 
     // Scroll UP in B before leaving it. This is what makes the test
     // discriminating rather than merely passing.
@@ -412,6 +409,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
 
     // Back to A — the cached path.
     await page.getByTestId(`thread-row-${threadA}`).click({ force: true });
+    await expect.poll(() => selectedThreadId(page), { timeout: 15_000 }).toBe(threadA);
     await expect(page.getByText('THREAD-A-END', { exact: false }).last()).toBeVisible({
       timeout: 20_000,
     });

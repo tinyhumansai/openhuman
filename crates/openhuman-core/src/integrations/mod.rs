@@ -1,24 +1,22 @@
-//! Agent integration tools.
+//! Agent integrations that run through the core itself.
 //!
-//! Most integrations proxy through backend endpoints authenticated with the
-//! user's session token, so billing, rate limiting, and provider markup stay
-//! server-side. Some integrations, such as SearXNG, call user-configured
-//! endpoints directly when enabled; those callers must keep configured base URLs
-//! trusted because requests leave the local core process.
+//! Composio connectors ([`composio`]) and task sources ([`task_sources`]) live
+//! here. The hosted integrations client, its managed tools (Google
+//! Places, stock data, file storage, media generation) and the web3 crypto
+//! client are not part of the core: a host that has such a service plugs them
+//! in through the generic registries (tool sources, the Composio route
+//! builders, the wallet-backend hook). With none registered the core runs
+//! without them.
 
-pub mod client;
+pub(crate) mod announcement_notes;
 pub mod composio;
-pub mod file_storage;
+mod connected_identities;
+pub mod gmail;
+pub(crate) mod recorded_tools;
 pub mod task_sources;
-pub mod tools;
-pub mod types;
+pub use connected_identities::{render_connected_identities, render_connected_identities_async};
 
-pub use client::{build_client, pricing_for_config, IntegrationClient};
-pub use tinytools::ToolScope;
-pub use types::{
-    BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations,
+// Product prompt metadata shared by connector discovery and agent surfaces.
+pub use crate::agent::prompts::{
+    ConnectedIntegration, ConnectedIntegrationTool, GatedIntegrationTool, IntegrationConnection,
 };
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;

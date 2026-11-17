@@ -2,7 +2,7 @@
 //!
 //! The hooks themselves are **not** configured here. They live in `hooks.json`
 //! files discovered across four layers
-//! (`tinyagents_runtime::command_hooks::config`), because a hook set belongs with the
+//! (`tinyagents_hooks::command::config`), because a hook set belongs with the
 //! repository it guards and has to be readable by a human who has never seen
 //! this config file. This block only carries the decisions that belong to the
 //! host: whether the system runs at all, and how long a hook that names no

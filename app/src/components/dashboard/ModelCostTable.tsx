@@ -68,7 +68,12 @@ const ModelCostTable = ({ models, currency, title, description }: ModelCostTable
       header: t('settings.costDashboard.cost'),
       align: 'right',
       className: 'whitespace-nowrap font-medium tabular-nums text-content',
-      cell: row => formatCurrency(row.cost_usd, currency),
+      // Every request unpriced: the cost is not known, so show none rather
+      // than a $0 that reads as free.
+      cell: row =>
+        row.request_count > 0 && (row.unpriced_request_count ?? 0) >= row.request_count
+          ? '—'
+          : formatCurrency(row.cost_usd, currency),
     },
     {
       id: 'share',

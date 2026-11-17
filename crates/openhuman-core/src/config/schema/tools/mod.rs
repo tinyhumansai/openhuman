@@ -7,7 +7,7 @@ pub mod mcp;
 pub mod multimodal;
 pub mod search;
 
-pub use browser::{BrowserComputerUseConfig, BrowserConfig};
+pub use browser::{BrowserConfig, BrowserUpstreamProxy};
 pub use http::{CurlConfig, HttpRequestConfig};
 pub use integrations::{
     ComposioConfig, ComposioDirectBaseUrls, ComposioHostCredential, IntegrationToggle,
@@ -20,9 +20,10 @@ pub use mcp::{
 };
 pub use multimodal::{MultimodalConfig, MultimodalFileConfig};
 pub use search::{
-    LegacySearchInputs, SearchConfig, SearchEngineCredentials, SearchPresentation,
-    SearchProviderSettings, SearchRoute, SearxngConfig, SeltzConfig, WebSearchConfig,
-    MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA,
-    SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
-    SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
+    LegacySearchInputs, PresentationMode, ProviderRoute, SearchConfig, SearchEngineCredentials,
+    SearchHostCredential, SearchProviderSettings, SearxngConfig, SeltzConfig,
+    UnknownKeyedSearchProvider, MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE,
+    SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
+    SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER,
+    SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
 };

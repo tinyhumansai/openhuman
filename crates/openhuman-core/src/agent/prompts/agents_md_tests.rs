@@ -1,5 +1,6 @@
 use super::*;
 use std::fs;
+use tinyagents_harness::context::{AGENTS_MD_FILENAME, MAX_AGENTS_MD_READ_BYTES};
 
 fn tmp() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};

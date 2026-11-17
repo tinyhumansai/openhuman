@@ -129,8 +129,55 @@ describe('skillsApi.installWorkflowFromUrl', () => {
       method: 'openhuman.skills_install_from_url',
       params: { url: 'https://example.com/my-skill.tgz', timeout_secs: 120 },
     });
-    expect(result.newWorkflows).toEqual(['my-skill']);
-    expect(result.stdout).toBe('added my-skill');
+    expect(result).toMatchObject({
+      status: 'installed',
+      newWorkflows: ['my-skill'],
+      stdout: 'added my-skill',
+    });
+  });
+
+  it('returns a scan_blocked outcome and forwards the acknowledgement', async () => {
+    const { callCoreRpc } = await import('../../coreRpcClient');
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      status: 'scan_blocked',
+      target: 'https://example.com/SKILL.md',
+      fetched_from: 'https://example.com/SKILL.md',
+      slug: 'bad',
+      digest: 'abc',
+      findings: [{ check: 'invisible_code_points', verdict: 'block', field: 'body', message: 'm' }],
+      message: 'blocked',
+    });
+
+    const blocked = await skillsApi.installWorkflowFromUrl({ url: 'https://example.com/SKILL.md' });
+    expect(blocked).toEqual({
+      status: 'scan_blocked',
+      scan: {
+        target: 'https://example.com/SKILL.md',
+        fetchedFrom: 'https://example.com/SKILL.md',
+        slug: 'bad',
+        digest: 'abc',
+        findings: [
+          { check: 'invisible_code_points', verdict: 'block', field: 'body', message: 'm' },
+        ],
+        message: 'blocked',
+      },
+    });
+
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      status: 'installed',
+      url: 'https://example.com/SKILL.md',
+      stdout: '',
+      stderr: '',
+      new_workflows: ['bad'],
+    });
+    await skillsApi.installWorkflowFromUrl({
+      url: 'https://example.com/SKILL.md',
+      acknowledgedDigest: 'abc',
+    });
+    expect(vi.mocked(callCoreRpc).mock.calls[1][0].params).toEqual({
+      url: 'https://example.com/SKILL.md',
+      acknowledged_digest: 'abc',
+    });
   });
 
   it('omits timeout_secs when not provided and normalizes missing new_workflows', async () => {
@@ -146,7 +193,7 @@ describe('skillsApi.installWorkflowFromUrl', () => {
 
     const call = vi.mocked(callCoreRpc).mock.calls[0][0];
     expect(call.params).toEqual({ url: 'https://example.com/x' });
-    expect(result.newWorkflows).toEqual([]);
+    expect(result).toMatchObject({ status: 'installed', newWorkflows: [] });
   });
 
   it('unwraps an envelope response', async () => {
@@ -160,8 +207,7 @@ describe('skillsApi.installWorkflowFromUrl', () => {
       },
     });
     const result = await skillsApi.installWorkflowFromUrl({ url: 'https://example.com/y' });
-    expect(result.newWorkflows).toEqual(['y-skill']);
-    expect(result.stderr).toBe('warn');
+    expect(result).toMatchObject({ newWorkflows: ['y-skill'], stderr: 'warn' });
   });
 });
 

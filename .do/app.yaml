@@ -2,7 +2,7 @@
 #
 # Deploys the headless Rust core (`openhuman-core`) from the repo Dockerfile,
 # exposing the JSON-RPC server on the public HTTP port. Used by the "Deploy
-# to DigitalOcean" button (see gitbooks/developing/cloud-deploy.md) and by `doctl apps create`.
+# to DigitalOcean" button (see docs/gitbooks/en/developing/cloud-deploy.md) and by `doctl apps create`.
 #
 # After deploy:
 #   - /health is publicly reachable (no auth — used for liveness)

@@ -42,16 +42,16 @@ describe('nav separator visibility', () => {
     expect(separator).toHaveClass('my-2.5');
   });
 
-  it('hides it on chat, whose region opens with its own outlined button', () => {
+  it('shows the standard separator on chat', () => {
     renderAppSidebar({ initialEntries: ['/chat'] });
     const separator = screen.getByTestId('sidebar-nav-separator');
-    expect(separator.className).toContain('opacity-0');
-    expect(separator).toHaveClass('my-2');
+    expect(separator.className).not.toContain('opacity-0');
+    expect(separator).toHaveClass('my-2.5');
   });
 
-  it('hides it on a chat thread route too', () => {
+  it('shows it on a chat thread route too', () => {
     renderAppSidebar({ initialEntries: ['/chat/abc123'] });
-    expect(screen.getByTestId('sidebar-nav-separator').className).toContain('opacity-0');
+    expect(screen.getByTestId('sidebar-nav-separator').className).not.toContain('opacity-0');
   });
 
   it('keeps the separator mounted when hidden', () => {

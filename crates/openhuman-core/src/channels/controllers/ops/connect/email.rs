@@ -5,8 +5,8 @@
 //! `providers::verify_email_credentials`); writing it to `config.toml` without
 //! the secret is this host's policy.
 
-use crate::channels::email_channel::EmailConfig;
 use crate::config::Config;
+use tinychannels_bus::config::EmailConfig;
 
 /// Persist an already-built + verified [`EmailConfig`] into
 /// `channels_config.email` so the supervised IMAP/SMTP listener picks it up on
@@ -28,10 +28,13 @@ pub(crate) async fn persist_email_config(
 
     let mut persisted = config.clone();
     persisted.channels_config.email = Some(email_cfg);
-    persisted
-        .save()
-        .await
-        .map_err(|e| format!("failed to persist email config.toml: {e}"))?;
+    persisted.save().await.map_err(|error| {
+        crate::config::ops::config_save_error_with_context(
+            error,
+            "failed to persist email config.toml",
+            false,
+        )
+    })?;
 
     tracing::info!(
         target: "openhuman::channels",

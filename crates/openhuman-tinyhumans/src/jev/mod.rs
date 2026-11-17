@@ -2,7 +2,7 @@
 //!
 //! The core's harness advertises a `tool_search` bridge over every deferred
 //! tool and ranks searches with whatever ranker the process installed
-//! (`openhuman_core::agent::tinyagents::discovery`). This module installs
+//! (`openhuman_embed::__host::agent::tinyagents::discovery`). This module installs
 //! [`TinyHumansJevRanker`]: `tinytools_jev::JevRanker` — BM25 retrieval to a
 //! shortlist, one Jev `Choice` to decide — reached over the route
 //! `agent.tool_search.jev_route` selects: the TinyHumans backend's
@@ -27,7 +27,7 @@ pub use route::{JevRoute, OPENROUTER_API_KEY_ENV, TYPESAFE_API_KEY_ENV};
 
 use std::sync::Arc;
 
-use openhuman_core::agent::tinyagents::discovery::install_tool_ranker;
+use openhuman_embed::__host::agent::tinyagents::discovery::install_tool_ranker;
 
 /// Install the Jev ranker as the process-wide `tool_search` ranker.
 ///

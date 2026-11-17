@@ -12,7 +12,9 @@ impl SessionHostBuilder {
         Self {
             turn_model_source: None,
             runtime_config: None,
+            security_policy: None,
             tools: None,
+            pack_registry_handle: None,
             synthesized_tools: None,
             visible_tool_names: None,
             withheld_tool_names: std::collections::HashSet::new(),
@@ -39,7 +41,7 @@ impl SessionHostBuilder {
             session_history_locator: None,
             omit_memory_context: None,
             payload_summarizer: None,
-            tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Full,
+            tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Full,
             tool_policy: None,
         }
     }
@@ -70,27 +72,53 @@ impl SessionHostBuilder {
         self
     }
 
-    /// Sets the AI provider as a **crate-native** turn-model source (Phase 3 P3-B):
-    /// `build`/`build_summarizer` construct crate `ChatModel`s from `(role, config)`
-    /// via `create_turn_chat_model` (managed → `OpenHumanBackendModel`, local/cloud →
-    /// crate `OpenAiModel`) instead of wrapping `provider` in `native model adapters.
+    /// Sets the AI provider as a **crate-native** turn-model source:
+    /// `build`/`build_summarizer` use TinyAgents' `TurnModelSet` to construct
+    /// the primary, workload routes, and summarizer through the host model factory,
+    /// rather than wrapping `provider` in generic model adapters.
     /// Used by the production session factory; the plain
     /// [`provider`](Self::provider) setter (Provider path) stays for tests that
     /// inject a mock they observe.
     pub fn crate_native_provider(
         mut self,
+        ctx: &crate::core::runtime::DispatchCtx,
         role: impl Into<String>,
         config: Arc<crate::config::Config>,
     ) -> Self {
         self.turn_model_source = Some(crate::agent::tinyagents::TurnModelSource::new_crate_native(
-            role, config,
+            ctx, role, config,
         ));
+        self
+    }
+
+    pub(crate) fn turn_model_source(
+        mut self,
+        source: crate::agent::tinyagents::TurnModelSource,
+    ) -> Self {
+        self.turn_model_source = Some(source);
+        self
+    }
+
+    /// Sets the policy the hosted base carries: the same instance the session's
+    /// tools were built with, so `build` makes no stand-in from a default config.
+    pub(crate) fn security_policy(mut self, policy: Arc<crate::security::SecurityPolicy>) -> Self {
+        self.security_policy = Some(policy);
         self
     }
 
     /// Sets the available tools for the agent.
     pub fn tools(mut self, tools: Vec<Box<dyn Tool>>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+
+    /// Retains the host-owned pack handle used by the session's `use_skill`
+    /// tool so registry refreshes can rebind its durable and synthesized views.
+    pub fn pack_registry_handle(
+        mut self,
+        handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,
+    ) -> Self {
+        self.pack_registry_handle = handle;
         self
     }
 
@@ -163,10 +191,8 @@ impl SessionHostBuilder {
         self
     }
 
-    /// Sets the global context-management configuration. Threaded
-    /// into the [`ContextManager`] constructed in [`Self::build`]. If
-    /// not set the manager is constructed with
-    /// [`ContextConfig::default`].
+    /// Sets the context middleware configuration used by this session. If
+    /// unset, [`ContextConfig::default`] applies.
     pub fn context_config(mut self, context_config: ContextConfig) -> Self {
         self.context_config = Some(context_config);
         self
@@ -192,6 +218,17 @@ impl SessionHostBuilder {
         self
     }
 
+    /// Substitutes the transcript backing store for the whole turn path: resume
+    /// reads, turn commits and compaction generations go through `locator`
+    /// instead of files under the workspace.
+    pub fn with_session_history_locator(
+        mut self,
+        locator: Arc<dyn tinyagents_session::transcript::TranscriptLocator>,
+    ) -> Self {
+        self.session_history_locator = Some(locator);
+        self
+    }
+
     /// Sets the workspace directory for the agent.
     pub fn workspace_dir(mut self, workspace_dir: std::path::PathBuf) -> Self {
         self.workspace_dir = Some(workspace_dir);
@@ -213,7 +250,7 @@ impl SessionHostBuilder {
     }
 
     /// Sets the skills available to the agent.
-    pub fn workflows(mut self, skills: Vec<crate::skills::Workflow>) -> Self {
+    pub fn workflows(mut self, skills: Vec<tinyskills::Skill>) -> Self {
         self.workflows = Some(skills);
         self
     }
@@ -221,7 +258,7 @@ impl SessionHostBuilder {
     /// Sets the post-turn hooks to be executed after each turn.
     pub fn post_turn_hooks(
         mut self,
-        hooks: Vec<Arc<dyn crate::agent::hooks::PostTurnHook>>,
+        hooks: Vec<Arc<dyn tinyagents_harness::host::LearningSink>>,
     ) -> Self {
         self.post_turn_hooks = hooks;
         self
@@ -254,19 +291,15 @@ impl SessionHostBuilder {
     /// This value is stamped onto the built [`OpenHumanSessionHost`] and surfaces in
     /// the following places:
     ///
-    /// * **Transcript filename on disk** — `transcript::write_transcript`
-    ///   and `transcript::find_latest_transcript` use it as the
-    ///   `{agent}` prefix in `sessions/DDMMYYYY/{agent}_{index}.md`.
-    ///   Both the write path and the resume-lookup path read the same
-    ///   field on `self`, so a session is always self-consistent; the
-    ///   user-visible signal is which filename the transcript lands
-    ///   under. Leaving it at the legacy `"main"` fallback silently
-    ///   misfiles every non-orchestrator session under `main_*.md`.
-    /// * **Transcript metadata header** — `transcript::write_transcript`
-    ///   stamps it into the `<!-- session_transcript\nagent: {name}\n… -->`
-    ///   block at the top of every `.md` file. This is the ground-truth
-    ///   signal for "which agent definition ran this session" when
-    ///   inspecting transcripts after the fact.
+    /// * **Transcript identity** — the session's store key and its
+    ///   `SessionRef` use it, on both the write path and the resume-lookup
+    ///   path, so a session is always self-consistent. Leaving it at the
+    ///   legacy `"main"` fallback silently misfiles every non-orchestrator
+    ///   session under `main`.
+    /// * **Transcript metadata header** — it is stamped into the transcript's
+    ///   `_meta` (`agent`, `agent_id`). This is the ground-truth signal for
+    ///   "which agent definition ran this session" when inspecting
+    ///   transcripts after the fact.
     /// * **[`PromptContext::agent_id`]** at prompt-build time (see
     ///   `turn.rs`). The stamped `prompt_builder` injected by
     ///   [`OpenHumanSessionHost::from_config_for_agent`] is what actually
@@ -324,7 +357,7 @@ impl SessionHostBuilder {
     /// [`OpenHumanDefinitionRegistry::with_session_definition`]: crate::agent::tinyagents::host::OpenHumanDefinitionRegistry::with_session_definition
     pub fn agent_definition(
         mut self,
-        definition: Arc<crate::agent::harness::definition::AgentDefinition>,
+        definition: Arc<crate::agent_registry::host_definition::AgentDefinition>,
     ) -> Self {
         self.session_definition = Some(definition);
         self
@@ -352,13 +385,13 @@ impl SessionHostBuilder {
 
     /// Wire the model behind TinyJuice's oversized-tool-result summary into the
     /// agent. `ToolOutputMiddleware` calls
-    /// [`crate::agent::tinyagents::payload_summarizer::PayloadSummarizer::prepare`]
+    /// [`crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer::prepare`]
     /// for a large result and TinyJuice runs the call if it decides to
     /// summarize. Currently set only for the orchestrator session by
     /// [`OpenHumanSessionHost::build_session_agent_inner`].
     pub fn payload_summarizer(
         mut self,
-        summarizer: Arc<dyn crate::agent::tinyagents::payload_summarizer::PayloadSummarizer>,
+        summarizer: Arc<crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer>,
     ) -> Self {
         self.payload_summarizer = Some(summarizer);
         self
@@ -368,7 +401,14 @@ impl SessionHostBuilder {
     ///
     /// The default policy allows all calls. Custom policies can deny a call
     /// before `Tool::execute_with_options` runs.
-    pub fn tool_policy(mut self, policy: Arc<dyn crate::agent::tool_policy::ToolPolicy>) -> Self {
+    pub fn tool_policy(
+        mut self,
+        policy: Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    ) -> Self {
         self.tool_policy = Some(policy);
         self
     }
@@ -376,7 +416,7 @@ impl SessionHostBuilder {
     /// Set the per-agent TokenJuice tool-output compression profile.
     pub fn tokenjuice_compression(
         mut self,
-        profile: crate::inference::tokenjuice::AgentTokenjuiceCompression,
+        profile: tinyjuice_bus::types::AgentTokenjuiceCompression,
     ) -> Self {
         self.tokenjuice_compression = profile;
         self

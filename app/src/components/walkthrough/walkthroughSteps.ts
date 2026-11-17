@@ -59,25 +59,7 @@ export function createWalkthroughSteps(
   t: Translator = (_key, fallback) => fallback ?? _key
 ): Step[] {
   return [
-    // ── Step 1 — /chat empty state ────────────────────────────────────────
-    {
-      target: '[data-walkthrough="home-card"]',
-      title: t('walkthrough.steps.startChat.title'),
-      content: t('walkthrough.steps.startChat.content'),
-      placement: 'bottom',
-      skipBeacon: true,
-    },
-
-    // ── Step 2 — /chat empty state ────────────────────────────────────────
-    {
-      target: '[data-walkthrough="home-cta"]',
-      title: t('walkthrough.steps.sayHello.title'),
-      content: t('walkthrough.steps.sayHello.content'),
-      placement: 'bottom',
-      skipBeacon: true,
-    },
-
-    // ── Step 3 — /chat ────────────────────────────────────────────────────
+    // ── Step 1 — /chat ────────────────────────────────────────────────────
     {
       target: '[data-walkthrough="chat-agent-panel"]',
       title: t('walkthrough.steps.meetAi.title'),
@@ -90,7 +72,7 @@ export function createWalkthroughSteps(
       },
     },
 
-    // ── Step 4 — /connections (Apps tab) ──────────────────────────────────
+    // ── Step 2 — /connections (Apps tab) ──────────────────────────────────
     {
       target: '[data-walkthrough="skills-grid"]',
       title: t('walkthrough.steps.connectWorld.title'),
@@ -98,12 +80,12 @@ export function createWalkthroughSteps(
       placement: 'top',
       skipBeacon: true,
       before: async () => {
-        navigate('/connections');
+        navigate('/connections?tab=composio');
         await waitForTarget('skills-grid');
       },
     },
 
-    // ── Step 5 — /connections (Messaging tab) ────────────────────────────
+    // ── Step 3 — /connections (Messaging tab) ────────────────────────────
     {
       target: '[data-walkthrough="skills-channels"]',
       title: t('walkthrough.steps.messagingApps.title'),
@@ -111,11 +93,12 @@ export function createWalkthroughSteps(
       placement: 'bottom',
       skipBeacon: true,
       before: async () => {
+        navigate('/connections?tab=channels');
         await waitForTarget('skills-channels');
       },
     },
 
-    // ── Step 6 — /settings ────────────────────────────────────────────────
+    // ── Step 4 — /settings ────────────────────────────────────────────────
     {
       target: '[data-walkthrough="settings-menu"]',
       title: t('walkthrough.steps.settings.title'),
@@ -128,7 +111,7 @@ export function createWalkthroughSteps(
       },
     },
 
-    // ── Step 7 — primary nav: Chat ────────────────────────────────────────
+    // ── Step 5 — primary nav: Chat ────────────────────────────────────────
     {
       target: '[data-walkthrough="tab-chat"]',
       title: t('walkthrough.steps.chatTab.title'),
@@ -141,7 +124,7 @@ export function createWalkthroughSteps(
       },
     },
 
-    // ── Step 9 — primary nav: Connections ────────────────────────────────
+    // ── Step 6 — primary nav: Connections ────────────────────────────────
     {
       target: '[data-walkthrough="tab-connections"]',
       title: t('walkthrough.steps.connectionsTab.title'),
@@ -157,7 +140,7 @@ export function createWalkthroughSteps(
     // Removed rather than re-pointed: nothing else in the header is the same
     // subject, and `walkthrough.steps.feedbackTab.*` went with it.
 
-    // ── Step 11 — /chat (pre-seeded welcome message) ──────────────────────
+    // ── Step 7 — /chat (pre-seeded welcome message) ──────────────────────
     {
       target: '[data-walkthrough="chat-agent-panel"]',
       title: t('walkthrough.steps.allSet.title'),

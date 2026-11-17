@@ -2,7 +2,6 @@ use serde::de::{DeserializeOwned, Deserializer};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::core::Outcome;
 use crate::core::{FieldSchema, TypeSchema};
 
 pub(super) const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
@@ -26,7 +25,12 @@ pub(super) struct CloudProviderUpdate {
     /// Auth style: "bearer" | "anthropic" | "openhuman_jwt" | "none".
     #[serde(default)]
     pub(super) auth_style: Option<String>,
+    /// Optional PEM CA bundle for this provider. Empty string removes it.
+    #[serde(default)]
+    pub(super) ca_cert_pem: Option<String>,
     /// Legacy field — tolerated on read for back-compat but not required.
+    // keep until v0.66 (review after 2027-01-11): incoming RPC discriminator
+    // remains accepted until shipped-client parameter coverage exists.
     #[serde(rename = "type", default)]
     pub(super) legacy_type: Option<String>,
     /// Legacy field — tolerated on read.
@@ -83,6 +87,7 @@ pub(super) struct RuntimeSettingsUpdate {
     pub(super) kind: Option<String>,
     pub(super) reasoning_enabled: Option<bool>,
     pub(super) reasoning_effort: Option<String>,
+    pub(super) reasoning_effort_model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +103,7 @@ pub(super) struct BrowserSettingsUpdate {
     pub(super) download_dir: Option<String>,
     pub(super) max_task_steps: Option<usize>,
     pub(super) task_timeout_secs: Option<u64>,
+    pub(super) learn_from_tasks: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,11 +114,21 @@ pub(super) struct ComputerSettingsUpdate {
     pub(super) planner_model: Option<String>,
     pub(super) rescue_model: Option<String>,
     pub(super) max_rescues: Option<u32>,
+    pub(super) captcha_solver: Option<bool>,
+    pub(super) captcha_provider: Option<String>,
+    pub(super) captcha_model: Option<String>,
+    pub(super) max_captcha_attempts: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct AnalyticsSettingsUpdate {
     pub(super) enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct UserTimezoneUpdate {
+    #[serde(default)]
+    pub(super) timezone: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,6 +146,7 @@ pub(super) struct LocalAiSettingsUpdate {
     pub(super) chat_model_id: Option<String>,
     pub(super) usage_embeddings: Option<bool>,
     pub(super) api_key: Option<String>,
+    pub(super) native_tool_calling: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,30 +171,6 @@ pub(super) struct OnboardingCompletedSetParams {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct DictationSettingsUpdate {
-    pub(super) enabled: Option<bool>,
-    pub(super) hotkey: Option<String>,
-    pub(super) activation_mode: Option<String>,
-    pub(super) llm_refinement: Option<bool>,
-    pub(super) streaming: Option<bool>,
-    pub(super) streaming_interval_ms: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct VoiceServerSettingsUpdate {
-    pub(super) auto_start: Option<bool>,
-    pub(super) hotkey: Option<String>,
-    pub(super) activation_mode: Option<String>,
-    pub(super) skip_cleanup: Option<bool>,
-    pub(super) min_duration_secs: Option<f32>,
-    pub(super) silence_threshold: Option<f32>,
-    pub(super) custom_dictionary: Option<Vec<String>>,
-    pub(super) always_on_enabled: Option<bool>,
-    pub(super) wake_word: Option<String>,
-    pub(super) stt_engine: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct ComposioTriggerSettingsUpdate {
     pub(super) triage_disabled: Option<bool>,
     pub(super) triage_disabled_toolkits: Option<Vec<String>>,
@@ -189,7 +182,7 @@ pub(super) struct AutonomySettingsUpdate {
     /// (`AutonomyConfig::enabled`): with it off, classification, the approval
     /// gate, the allowlist, the action budget and containment are all inert,
     /// and every other field in this patch has no effect until it is `true`.
-    /// `is_always_forbidden` applies either way.
+    /// TinySecurity's protected-path floor applies either way.
     pub(super) enabled: Option<bool>,
     /// `"readonly" | "supervised" | "full"` (case-insensitive).
     pub(super) level: Option<String>,
@@ -265,30 +258,12 @@ where
     Value::deserialize(deserializer).map(Some)
 }
 
-pub fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
 pub fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
         comment,
         required: false,
-    }
-}
-
-pub fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
     }
 }
 
@@ -308,17 +283,4 @@ pub fn optional_number(name: &'static str, comment: &'static str) -> FieldSchema
         comment,
         required: false,
     }
-}
-
-pub fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
-}
-
-pub(super) fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

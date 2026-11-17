@@ -28,8 +28,9 @@
 //! preference: two sources of truth for a permission is how one of them ends up
 //! stale and permissive.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use futures_util::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tinybus::Proxy;
@@ -39,6 +40,7 @@ use super::types::ModuleState;
 use super::{ops, registry};
 use crate::config::schema::{COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT};
 use crate::config::Config;
+use crate::core::slots::HookSlot;
 
 /// The module's id in [`registry`].
 pub const MODULE_ID: &str = "tinyconnectors";
@@ -49,6 +51,51 @@ pub const MODULE_ID: &str = "tinyconnectors";
 /// as a string literal: a renamed member is then a compile error here instead
 /// of an "unknown method" at runtime on a user's machine.
 pub use names::methods;
+
+/// Where the connector module's proxy route sends its requests: the origin and
+/// the bearer secret it authenticates with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyTarget {
+    /// The origin the proxy route is joined onto.
+    pub base_url: String,
+    /// The bearer secret (a session token or an API key).
+    pub auth_token: String,
+}
+
+/// Resolves the [`ProxyTarget`] for one `composio.mode`, or the user-facing
+/// reason there is none (not signed in, no credential).
+pub type ProxyTargetResolver =
+    Arc<dyn for<'a> Fn(&'a Config) -> BoxFuture<'a, Result<ProxyTarget, String>> + Send + Sync>;
+
+static MODULE_PROXY_TARGETS: HookSlot<ProxyTargetResolver> =
+    HookSlot::new("modules::connectors::proxy_targets");
+
+#[path = "connectors/inspection.rs"]
+mod inspection;
+
+pub(crate) use inspection::{call_existing_readonly, ExistingCallError};
+
+pub(crate) fn note_module_config_for_load(config: &Config, module_config: &serde_json::Value) {
+    inspection::note_module_config_for_load(config, module_config);
+}
+
+pub(crate) fn note_load_resolution_ready() {
+    inspection::note_load_resolution_ready();
+}
+
+/// Registers `resolve` as the proxy target for `mode` (`"backend"` is the one
+/// mode the proxy route serves). Nothing registered => the mode has no route.
+pub fn register_proxy_target<F>(mode: impl Into<String>, resolve: F)
+where
+    F: for<'a> Fn(&'a Config) -> BoxFuture<'a, Result<ProxyTarget, String>> + Send + Sync + 'static,
+{
+    MODULE_PROXY_TARGETS.register(mode, Arc::new(resolve));
+}
+
+/// Removes the process-wide proxy target for `mode`.
+pub fn unregister_proxy_target(mode: &str) -> bool {
+    MODULE_PROXY_TARGETS.unregister(mode)
+}
 
 /// The configuration blob the module is loaded with.
 ///
@@ -63,16 +110,74 @@ pub use names::methods;
 /// with no key, or a mode string that is neither. A typo in `config.toml` fails
 /// loudly rather than silently downgrading to the other route, which would send
 /// a user's requests somewhere they did not choose.
-pub fn module_config(config: &Config) -> Result<serde_json::Value, String> {
+pub async fn module_config(config: &Config) -> Result<serde_json::Value, String> {
+    module_config_with_proxy(config, &crate::config::runtime_proxy_config()).await
+}
+
+/// [`module_config`] against an explicit proxy policy rather than the
+/// process-global runtime one.
+pub(crate) async fn module_config_with_proxy(
+    config: &Config,
+    proxy: &crate::config::schema::ProxyConfig,
+) -> Result<serde_json::Value, String> {
+    let mut payload = route_config(config, proxy).await?;
+    payload["offered_toolkits"] = offered_toolkits(config);
+    Ok(payload)
+}
+
+/// The host's offered-toolkit policy as the module reads it
+/// (`tinyconnectors_bus::vocabulary::OfferedToolkits`). Also the whole load
+/// blob when no route can be named, so the policy still applies to the
+/// capability listings of a signed-out module.
+#[must_use]
+pub fn offered_toolkits(config: &Config) -> serde_json::Value {
+    serde_json::json!({
+        "allow": config.composio.offered_toolkits_allow,
+        "deny": config.composio.offered_toolkits_deny,
+    })
+}
+
+async fn route_config(
+    config: &Config,
+    proxy: &crate::config::schema::ProxyConfig,
+) -> Result<serde_json::Value, String> {
     let state_dir = config.workspace_dir.join("state");
+
+    // A host-pinned credential outranks the mode and the credential store, the
+    // way `resolve_composio_route` resolves it, so the module's configured route
+    // (executes, the connected-integrations overview) is the pinned tenant too.
+    if let Some(pinned) = config.composio.host_credential.as_ref() {
+        let base = pinned.direct_base_urls().map(|urls| urls.v3.clone());
+        let destination = base
+            .as_deref()
+            .unwrap_or("https://backend.composio.dev/api/v3");
+        let mut payload = serde_json::json!({
+            "route": "direct",
+            "api_key": pinned.api_key(),
+            "entity_id": pinned.entity(),
+            "base_url": base,
+            "state_dir": state_dir,
+        });
+        if let Some(transport) =
+            crate::integrations::composio::client::module_transport_with_proxy(destination, proxy)
+        {
+            payload["transport"] = serde_json::json!(transport);
+        }
+        return Ok(payload);
+    }
 
     match config.composio.mode.trim() {
         // Empty is the default, for hand-edited configs that omit the field.
         "" | COMPOSIO_MODE_BACKEND => {
-            let client = crate::integrations::build_client(config).ok_or_else(|| {
-                "composio backend mode is unavailable: no backend session token. Sign in or set a TinyHumans API key."
-                    .to_string()
-            })?;
+            let resolve = MODULE_PROXY_TARGETS
+                .get(COMPOSIO_MODE_BACKEND)
+                .ok_or_else(|| {
+                    format!(
+                        "{}composio backend mode is not available in this build",
+                        crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+                    )
+                })?;
+            let target = resolve(config).await?;
             // The backend renders Composio results (Gmail timestamps) for the
             // model; with the user's zone it prints local time beside UTC. A
             // module before contract 1.9 ignores the field. It is part of the
@@ -81,11 +186,11 @@ pub fn module_config(config: &Config) -> Result<serde_json::Value, String> {
                 crate::integrations::composio::googlecalendar_args::current_iana_timezone();
             Ok(serde_json::json!({
                 "route": "proxy",
-                "base_url": client.backend_url,
+                "base_url": target.base_url,
                 // The session JWT or the TinyHumans API key. The proxy route
                 // sends it as `Authorization: Bearer`; the backend recognises
                 // a key there by its `tiny_` prefix, so no scheme flag is needed.
-                "auth_token": client.auth_token,
+                "auth_token": target.auth_token,
                 "timezone": timezone,
                 "state_dir": state_dir,
             }))
@@ -93,7 +198,8 @@ pub fn module_config(config: &Config) -> Result<serde_json::Value, String> {
         COMPOSIO_MODE_DIRECT => {
             // The keychain wins over `config.toml`: the encrypted store is the
             // source of truth, and the file is a fallback for power users.
-            let stored = crate::security::credentials::get_composio_api_key(config)
+            let stored = crate::integrations::composio::get_composio_api_key(config)
+                .await
                 .map_err(|error| format!("failed to read the stored composio api key: {error}"))?;
             let api_key = stored
                 .or_else(|| {
@@ -142,7 +248,10 @@ pub fn module_config(config: &Config) -> Result<serde_json::Value, String> {
                 .as_deref()
                 .unwrap_or("https://backend.composio.dev/api/v3");
             if let Some(transport) =
-                crate::integrations::composio::client::module_transport(destination)
+                crate::integrations::composio::client::module_transport_with_proxy(
+                    destination,
+                    proxy,
+                )
             {
                 payload["transport"] = serde_json::json!(transport);
             }
@@ -152,6 +261,17 @@ pub fn module_config(config: &Config) -> Result<serde_json::Value, String> {
             "unknown composio mode: \"{unknown}\". Supported: \"{COMPOSIO_MODE_BACKEND}\", \
              \"{COMPOSIO_MODE_DIRECT}\""
         )),
+    }
+}
+
+/// Read the connector module's curated catalogs into the host's snapshot.
+///
+/// Called once the module is serving (see `ops::start_resolution`) and at
+/// boot when it was already serving from the search path. A failure only
+/// delays the snapshot: the next connector call primes it again.
+pub async fn prime_catalogs(config: &Config) {
+    if let Err(error) = crate::integrations::composio::contract::curated::prime(config).await {
+        tracing::debug!("[connectors] catalog prime failed: {error}");
     }
 }
 
@@ -173,6 +293,17 @@ fn fingerprint(route: &serde_json::Value) -> u64 {
     hasher.finish()
 }
 
+/// Under test, one route-dependent call at a time.
+///
+/// The module's route is process-global, and every call first sets it from its
+/// own caller's config (`ensure_routed`). libtest runs a crate's tests in one
+/// process, so a test with no session could switch the route to `none` between
+/// another test's CONFIGURE and its call. Holding this across both makes each
+/// call atomic with its route. ponytail: test-only; production callers with
+/// different routes can still interleave the same way, which this does not fix.
+#[cfg(test)]
+static ROUTE_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Tell the module which route to use, if that answer has changed.
 ///
 /// The module is registered `Lazy`, so it is commonly loaded the first time
@@ -192,13 +323,26 @@ fn fingerprint(route: &serde_json::Value) -> u64 {
 /// user's session no longer owns, and "your account is broken" is a bad way to
 /// tell someone they are signed out.
 async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
-    let mut route =
-        module_config(config).unwrap_or_else(|_| serde_json::json!({ "route": "none" }));
+    let _inspection_guard = inspection::route_lock().lock().await;
+    let mut route = module_config(config)
+        .await
+        .unwrap_or_else(|_| serde_json::json!({ "route": "none" }));
     // `state_dir` is load-time only: the trigger archive opens once, and moving
     // it later would strand the history already written there.
     if let Some(object) = route.as_object_mut() {
         object.remove("state_dir");
+        // Load-time like `state_dir`: the policy is not part of the route.
+        object.remove("offered_toolkits");
     }
+
+    // Preferences and trigger history from before the storage contract move
+    // into the module's storage before it first serves a call. Once per state
+    // directory, best effort: a failure is retried on the next call.
+    super::import_legacy_connectors(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config.workspace_dir.join("state"),
+    )
+    .await;
 
     let current = fingerprint(&route);
     if *last_route()
@@ -209,16 +353,18 @@ async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
         return Ok(());
     }
 
+    let inspection_binding = inspection::configured_binding_for_route(config, &route).await;
     proxy
-        .call::<serde_json::Value>(methods::CONFIGURE, (route,))
+        .call_confidential::<serde_json::Value>(methods::CONFIGURE, (route,))
         .await
-        .map_err(|error| format!("{}: {error}", methods::CONFIGURE))?;
+        .map_err(|error| bus_failure(methods::CONFIGURE, &error))?;
 
     // Recorded only after the module accepted it, so a failed reconfiguration
     // is retried on the next call rather than remembered as done.
     *last_route()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(current);
+    inspection::record_configured_route(inspection_binding);
     Ok(())
 }
 
@@ -233,7 +379,9 @@ async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
 /// the artifact missing or failing its digest check, or the bus refusing the
 /// proxy.
 pub async fn proxy(config: &Config) -> Result<Proxy, String> {
-    ops::ensure_loaded(config, MODULE_ID).await?;
+    ops::ensure_loaded(config, MODULE_ID)
+        .await
+        .map_err(|_| tinybus::module::ModuleCallError::Unavailable.to_string())?;
     let proxy = proxy_to_serving().await?;
     ensure_routed(config, &proxy).await?;
     Ok(proxy)
@@ -244,12 +392,13 @@ pub async fn proxy(config: &Config) -> Result<Proxy, String> {
 async fn proxy_to_serving() -> Result<Proxy, String> {
     let record =
         registry::find(MODULE_ID).ok_or_else(|| format!("unknown module '{MODULE_ID}'"))?;
-    let runtime = super::host::runtime()
-        .await
-        .map_err(|error| format!("the module runtime is unavailable: {error}"))?;
+    let runtime = super::runtime::runtime().await.map_err(|_| {
+        super::report::transport_failed(record);
+        tinybus::module::ModuleCallError::TransportFailed.to_string()
+    })?;
     runtime
         .proxy(record.bus_name, record.object_path)
-        .map_err(|error| format!("could not reach '{MODULE_ID}': {error}"))
+        .map_err(|error| bus_failure("Connect", &error))
 }
 
 /// Give an already-serving module the route the current configuration
@@ -274,6 +423,8 @@ pub async fn reconcile_route_if_loaded(config: &Config) -> Result<(), String> {
     if ops::state_of(MODULE_ID) != ModuleState::Ready {
         return Ok(());
     }
+    #[cfg(test)]
+    let _turn = ROUTE_TURN.lock().await;
     let proxy = proxy_to_serving().await?;
     ensure_routed(config, &proxy).await
 }
@@ -292,6 +443,26 @@ pub(crate) fn last_route_is_none() -> bool {
 #[cfg(test)]
 pub(crate) async fn proxy_without_reconcile() -> Result<Proxy, String> {
     proxy_to_serving().await
+}
+
+fn bus_failure(member: &str, error: &tinybus::Error) -> String {
+    let outcome = super::report::proxy_failure(
+        registry::find(MODULE_ID).expect("registered connector module"),
+        error,
+    );
+    if let tinybus::Error::MethodFailed { name, message } = error {
+        if message.starts_with("[composio:error:") {
+            // Preserve the existing provider presentation contract. This is
+            // product output only; telemetry above contains no remote text.
+            return message.clone();
+        }
+        if name == tinybus::Error::FAILED {
+            // Keep provider presentation byte-for-byte. The Composio reporting
+            // boundary recognizes this wire envelope without a visible marker.
+            return format!("{member}: {error}");
+        }
+    }
+    format!("{member}: {outcome}")
 }
 
 /// Call one member with an argument and decode its reply.
@@ -313,11 +484,13 @@ where
     Request: Serialize + Send,
     Reply: DeserializeOwned,
 {
+    #[cfg(test)]
+    let _turn = ROUTE_TURN.lock().await;
     let proxy = proxy(config).await?;
     proxy
         .call::<Reply>(member, (request,))
         .await
-        .map_err(|error| format!("{member}: {error}"))
+        .map_err(|error| bus_failure(member, &error))
 }
 
 /// Call a member that carries its own credential, without touching the route.
@@ -344,41 +517,14 @@ where
     // The module's own HTTP deadline is 30s; give the bus a little longer so a
     // slow Composio surfaces as the module's message, not a bus timeout.
     const STATELESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
-    ops::ensure_loaded(config, MODULE_ID).await?;
+    ops::ensure_loaded(config, MODULE_ID)
+        .await
+        .map_err(|_| tinybus::module::ModuleCallError::Unavailable.to_string())?;
     let proxy = proxy_to_serving().await?.with_timeout(STATELESS_TIMEOUT);
     proxy
-        .call::<Reply>(member, (request,))
+        .call_confidential::<Reply>(member, (request,))
         .await
-        .map_err(|error| format!("{member}: {error}"))
-}
-
-/// Call a long-running member with a deadline sized for it.
-///
-/// The default bus deadline (30s) fits request-shaped members. `Sync` is not
-/// one: the module pages a whole connected account through inside the call —
-/// "a full sync is minutes of paging" is its own documentation — and a 30s
-/// deadline made the host report failure while the module went on to finish
-/// (observed live: timeout at 30s, `run finished … ingested=200` at 38s, and
-/// a Sync button that spun forever on a run that had actually succeeded).
-///
-/// # Errors
-///
-/// As [`call`].
-pub async fn call_slow<Request, Reply>(
-    config: &Config,
-    member: &str,
-    request: Request,
-) -> Result<Reply, String>
-where
-    Request: Serialize + Send,
-    Reply: DeserializeOwned,
-{
-    const SLOW_MEMBER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-    let proxy = proxy(config).await?.with_timeout(SLOW_MEMBER_TIMEOUT);
-    proxy
-        .call::<Reply>(member, (request,))
-        .await
-        .map_err(|error| format!("{member}: {error}"))
+        .map_err(|error| bus_failure(member, &error))
 }
 
 /// Call a member that takes no arguments.
@@ -390,11 +536,13 @@ pub async fn call_bare<Reply: DeserializeOwned>(
     config: &Config,
     member: &str,
 ) -> Result<Reply, String> {
+    #[cfg(test)]
+    let _turn = ROUTE_TURN.lock().await;
     let proxy = proxy(config).await?;
     proxy
         .call::<Reply>(member, ())
         .await
-        .map_err(|error| format!("{member}: {error}"))
+        .map_err(|error| bus_failure(member, &error))
 }
 
 #[cfg(test)]

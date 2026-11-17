@@ -115,7 +115,8 @@ const UsageLogPanel = () => {
       header: t('settings.costDashboard.cost'),
       align: 'right',
       className: 'w-px whitespace-nowrap tabular-nums font-medium text-content',
-      cell: record => formatCurrency(record.cost_usd, currency),
+      cell: record =>
+        record.cost_source === 'unknown' ? '—' : formatCurrency(record.cost_usd, currency),
     },
     {
       id: 'source',
@@ -124,6 +125,8 @@ const UsageLogPanel = () => {
       cell: record =>
         record.cost_source === 'provider_charged' ? (
           <Badge variant="success">{t('settings.costDashboard.providerCharged')}</Badge>
+        ) : record.cost_source === 'unknown' ? (
+          '—'
         ) : (
           <Badge>{t('settings.costDashboard.estimated')}</Badge>
         ),

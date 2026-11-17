@@ -14,6 +14,8 @@ use crate::config::Config;
 pub(crate) fn config_in(tmp: &tempfile::TempDir) -> Config {
     let workspace = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace dir");
+    #[cfg(feature = "storage-sqlite")]
+    crate::storage::local::use_persistent_default_for_test(&workspace);
     Config {
         workspace_dir: workspace.clone(),
         action_dir: workspace,
@@ -56,9 +58,8 @@ pub(crate) struct RefusingEngine {
 impl RefusingEngine {
     /// The hosted engine's refusal for an exhausted credit balance (HTTP 402).
     pub(crate) fn out_of_credits() -> Self {
-        Self::with(tinymemory_api::Error::Engine(
-            "[USER_INSUFFICIENT_CREDITS] memory API fetch on api.example: the account has \
-             insufficient credits (HTTP 402)"
+        Self::with(tinymemory_api::Error::InsufficientCredits(
+            "memory API fetch on api.example: the account has insufficient credits (HTTP 402)"
                 .into(),
         ))
     }
@@ -119,10 +120,295 @@ impl MemoryEngine for RefusingEngine {
         Err(self.error.clone())
     }
 
+    async fn export(
+        &self,
+        _req: ListRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::ExportPage> {
+        Err(self.error.clone())
+    }
+
     async fn consolidate(
         &self,
         _req: tinymemory_api::ConsolidateRequest,
     ) -> tinymemory_api::Result<tinymemory_api::ConsolidateReceipt> {
         Err(self.error.clone())
+    }
+}
+
+/// The reference engine, recording which deletions it was asked for, and
+/// optionally refusing to erase the way an engine without erasure does.
+pub(crate) struct RecordingEngine {
+    pub(crate) inner: ReferenceEngine,
+    /// `"erase"` / `"forget"`, in call order.
+    pub(crate) calls: std::sync::Mutex<Vec<&'static str>>,
+    erase_unsupported: bool,
+    fail_next_store: std::sync::atomic::AtomicBool,
+    fail_next_forget: std::sync::atomic::AtomicBool,
+    pause_next_store: std::sync::atomic::AtomicBool,
+    store_paused: tokio::sync::Notify,
+    release_store: tokio::sync::Notify,
+}
+
+impl RecordingEngine {
+    /// Records and passes every call through.
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: ReferenceEngine::new(),
+            calls: std::sync::Mutex::new(Vec::new()),
+            erase_unsupported: false,
+            fail_next_store: std::sync::atomic::AtomicBool::new(false),
+            fail_next_forget: std::sync::atomic::AtomicBool::new(false),
+            pause_next_store: std::sync::atomic::AtomicBool::new(false),
+            store_paused: tokio::sync::Notify::new(),
+            release_store: tokio::sync::Notify::new(),
+        }
+    }
+
+    /// Records, and refuses every erase with `Unsupported`.
+    pub(crate) fn without_erase() -> Self {
+        Self {
+            erase_unsupported: true,
+            ..Self::new()
+        }
+    }
+
+    /// Binds `engine` to `config`'s workspace.
+    pub(crate) fn bind(engine: &Arc<Self>, config: &Config) {
+        crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
+    }
+
+    /// The recorded calls.
+    pub(crate) fn calls(&self) -> Vec<&'static str> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    /// Makes the next store fail, then resumes normal behavior.
+    pub(crate) fn fail_next_store(&self) {
+        self.fail_next_store
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Makes the next forget fail, then resumes normal behavior.
+    pub(crate) fn fail_next_forget(&self) {
+        self.fail_next_forget
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Pauses the next store until [`Self::release_paused_store`] is called.
+    pub(crate) fn pause_next_store(&self) {
+        self.pause_next_store
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Waits until the paused store has reached the barrier.
+    pub(crate) async fn wait_for_paused_store(&self) {
+        self.store_paused.notified().await;
+    }
+
+    /// Releases a store paused by [`Self::pause_next_store`].
+    pub(crate) fn release_paused_store(&self) {
+        self.release_store.notify_one();
+    }
+}
+
+#[async_trait::async_trait]
+impl MemoryEngine for RecordingEngine {
+    fn descriptor(&self) -> &tinymemory_api::EngineDescriptor {
+        self.inner.descriptor()
+    }
+
+    async fn health(&self) -> tinymemory_api::EngineHealth {
+        self.inner.health().await
+    }
+
+    async fn recall(
+        &self,
+        req: tinymemory_api::RecallRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::RecallAnswer> {
+        self.inner.recall(req).await
+    }
+
+    async fn fetch(
+        &self,
+        req: tinymemory_api::FetchRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::FetchPage> {
+        self.inner.fetch(req).await
+    }
+
+    async fn store(
+        &self,
+        item: tinymemory_api::StoreItem,
+    ) -> tinymemory_api::Result<tinymemory_api::StoreReceipt> {
+        if self
+            .pause_next_store
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.store_paused.notify_one();
+            self.release_store.notified().await;
+        }
+        if self
+            .fail_next_store
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(tinymemory_api::Error::Engine(
+                "injected store failure".into(),
+            ));
+        }
+        self.inner.store(item).await
+    }
+
+    async fn forget(
+        &self,
+        target: tinymemory_api::ForgetTarget,
+    ) -> tinymemory_api::Result<tinymemory_api::ForgetReport> {
+        self.calls.lock().unwrap().push("forget");
+        if self
+            .fail_next_forget
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(tinymemory_api::Error::Engine(
+                "injected forget failure".into(),
+            ));
+        }
+        self.inner.forget(target).await
+    }
+
+    async fn forget_within(
+        &self,
+        ids: Vec<tinymemory_api::ItemId>,
+        reach: tinymemory_api::Reach,
+    ) -> tinymemory_api::Result<tinymemory_api::ForgetReport> {
+        self.calls.lock().unwrap().push("forget_within");
+        self.inner.forget_within(ids, reach).await
+    }
+
+    async fn list(&self, req: ListRequest) -> tinymemory_api::Result<tinymemory_api::ListPage> {
+        self.inner.list(req).await
+    }
+
+    async fn export(&self, req: ListRequest) -> tinymemory_api::Result<tinymemory_api::ExportPage> {
+        self.inner.export(req).await
+    }
+
+    async fn consolidate(
+        &self,
+        req: tinymemory_api::ConsolidateRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::ConsolidateReceipt> {
+        self.inner.consolidate(req).await
+    }
+
+    async fn erase(
+        &self,
+        req: tinymemory_api::EraseRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::EraseReport> {
+        self.calls.lock().unwrap().push("erase");
+        if self.erase_unsupported {
+            return Err(tinymemory_api::Error::Unsupported("no erase".into()));
+        }
+        self.inner.erase(req).await
+    }
+}
+
+/// The reference engine with every memory-block read (`beliefs` and `list`)
+/// taking `delay` first, the way the hosted engine's round trips do. It counts
+/// the reads it served, so a test can tell a render from a reused block.
+pub(crate) struct SlowEngine {
+    inner: Arc<ReferenceEngine>,
+    delay: std::time::Duration,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl SlowEngine {
+    /// A slow engine over a fresh reference engine.
+    pub(crate) fn new(delay: std::time::Duration) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Arc::new(ReferenceEngine::new()),
+            delay,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    /// The engine underneath, to store through without the delay.
+    pub(crate) fn inner(&self) -> &Arc<ReferenceEngine> {
+        &self.inner
+    }
+
+    /// Binds the engine to `config`'s workspace.
+    pub(crate) fn bind(engine: &Arc<Self>, config: &Config) {
+        crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
+    }
+
+    /// How many `beliefs` and `list` reads were served.
+    pub(crate) fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    async fn slow(&self) {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        tokio::time::sleep(self.delay).await;
+    }
+}
+
+#[async_trait::async_trait]
+impl MemoryEngine for SlowEngine {
+    fn descriptor(&self) -> &tinymemory_api::EngineDescriptor {
+        self.inner.descriptor()
+    }
+
+    async fn health(&self) -> tinymemory_api::EngineHealth {
+        self.inner.health().await
+    }
+
+    async fn recall(
+        &self,
+        req: tinymemory_api::RecallRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::RecallAnswer> {
+        self.inner.recall(req).await
+    }
+
+    async fn fetch(
+        &self,
+        req: tinymemory_api::FetchRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::FetchPage> {
+        self.inner.fetch(req).await
+    }
+
+    async fn store(
+        &self,
+        item: tinymemory_api::StoreItem,
+    ) -> tinymemory_api::Result<tinymemory_api::StoreReceipt> {
+        self.inner.store(item).await
+    }
+
+    async fn forget(
+        &self,
+        target: tinymemory_api::ForgetTarget,
+    ) -> tinymemory_api::Result<tinymemory_api::ForgetReport> {
+        self.inner.forget(target).await
+    }
+
+    async fn list(&self, req: ListRequest) -> tinymemory_api::Result<tinymemory_api::ListPage> {
+        self.slow().await;
+        self.inner.list(req).await
+    }
+
+    async fn export(&self, req: ListRequest) -> tinymemory_api::Result<tinymemory_api::ExportPage> {
+        self.inner.export(req).await
+    }
+
+    async fn consolidate(
+        &self,
+        req: tinymemory_api::ConsolidateRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::ConsolidateReceipt> {
+        self.slow().await;
+        self.inner.consolidate(req).await
+    }
+
+    async fn beliefs(
+        &self,
+        req: tinymemory_api::BeliefsRequest,
+    ) -> tinymemory_api::Result<Vec<tinymemory_api::Hit>> {
+        self.slow().await;
+        self.inner.beliefs(req).await
     }
 }

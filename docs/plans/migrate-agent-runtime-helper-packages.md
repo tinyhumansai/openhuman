@@ -1,5 +1,8 @@
 # Agent runtime helper migration packages
 
+> **Status, verified 2026-10-07:** landed. See [`README.md`](README.md) for
+> the whole set and how to re-check it.
+
 These tasks extend Task 2 in
 [`migrate-agent-runtime-to-tinyagents.md`](migrate-agent-runtime-to-tinyagents.md).
 Every GREEN step includes direct consumer imports and deletion of the old path;

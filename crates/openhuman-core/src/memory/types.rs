@@ -7,10 +7,11 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-
-pub use tinymemory_api::{
-    Citation, EngineDescriptor, FetchMode, Hit, ItemKind, LearningKind, MemoryMeta, MetaFilter,
+use tinymemory_api::{
+    Citation, EngineDescriptor, FetchMode, Hit, LearningKind, MemoryMeta, MetaFilter,
 };
+use tinymemory_integrations::import::ImportState;
+use tinymemory_integrations::sources::SourceStatus;
 
 use crate::config::schema::MemorySourceKind;
 
@@ -96,12 +97,27 @@ pub struct RecallParams {
     /// Most citations to return.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// The local days the question is about: memories from them rank
+    /// first, nothing is dropped. Read in the user's time zone.
+    #[serde(default)]
+    pub refers_to: Option<RefersTo>,
+}
+
+/// Local calendar days (`YYYY-MM-DD`), inclusive; `to` defaults to `from`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RefersTo {
+    /// First day.
+    pub from: chrono::NaiveDate,
+    /// Last day; the same as `from` for a single day.
+    #[serde(default)]
+    pub to: Option<chrono::NaiveDate>,
 }
 
 /// `memory_recall` result.
 #[derive(Debug, Clone, Serialize)]
 pub struct RecallView {
-    /// The synthesised answer.
+    /// The synthesised answer; in evidence mode
+    /// ([`super::ops::recall_with`]), the recalled evidence as text.
     pub answer: String,
     /// The items it rests on.
     pub citations: Vec<Citation>,
@@ -127,6 +143,9 @@ pub struct FetchParams {
     /// Engine cursor from a previous page.
     #[serde(default)]
     pub cursor: Option<String>,
+    /// The local days the query is about (see [`RecallParams::refers_to`]).
+    #[serde(default)]
+    pub refers_to: Option<RefersTo>,
 }
 
 /// `memory_fetch` result.
@@ -181,6 +200,21 @@ pub struct ForgetView {
     pub forgotten: usize,
 }
 
+/// `memory_erase_all` params.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EraseAllParams {
+    /// Must be `true`: an interlock, because nothing erased comes back.
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+/// `memory_erase_all` result.
+#[derive(Debug, Clone, Serialize)]
+pub struct EraseAllView {
+    /// How many of the engine's scopes (kind stores) were erased.
+    pub erased_scopes: usize,
+}
+
 /// `memory_items_list` params.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ItemsListParams {
@@ -196,6 +230,12 @@ pub struct ItemsListParams {
     /// Explorer path, applied on top of `filter` (see [`super::explore`]).
     #[serde(default)]
     pub path: Vec<super::explore::PathStep>,
+    /// A view that shows a snippet of each item and reads one whole with
+    /// `memory_items_get` when it is opened: a conversation's or chunked
+    /// document's text may then be only its start, which an engine can
+    /// list without assembling each item (`MemoryEngine::list_preview`).
+    #[serde(default)]
+    pub preview: bool,
 }
 
 /// `memory_items_list` result.
@@ -208,19 +248,6 @@ pub struct ItemsListView {
     pub next_cursor: Option<String>,
 }
 
-/// A source's sync status.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceStatus {
-    /// Not syncing.
-    #[default]
-    Idle,
-    /// A sync is running.
-    Syncing,
-    /// The last sync failed.
-    Error,
-}
-
 /// One document source, as the UI sees it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceView {
@@ -228,7 +255,7 @@ pub struct SourceView {
     pub id: String,
     /// What it reads.
     pub kind: MemorySourceKind,
-    /// Path, URL, `owner/repo`, feed URL or Composio toolkit.
+    /// Path, URL, `owner/repo` or feed URL.
     pub target: String,
     /// Display label.
     pub label: String,
@@ -259,7 +286,7 @@ pub struct SourcesListView {
 pub struct SourcesAddParams {
     /// What it reads.
     pub kind: String,
-    /// Path, URL, `owner/repo`, feed URL or Composio toolkit.
+    /// Path, URL, `owner/repo` or feed URL.
     pub target: String,
     /// Display label; defaults to the target.
     #[serde(default)]
@@ -315,11 +342,12 @@ pub struct SourcesSyncView {
 /// Item counts a legacy store would import.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportCounts {
-    /// Documents (and chunked source documents).
+    /// Documents, and every memory-tree chunk source.
     pub documents: u64,
     /// Conversations.
     pub conversations: u64,
-    /// Learnings (including profile facets).
+    /// Learnings: distilled facts, profile facets, extracted events, turn
+    /// lessons, graph relations, and the goals and persona files.
     pub learnings: u64,
 }
 
@@ -341,101 +369,11 @@ pub struct ImportStartParams {
     pub consent: bool,
 }
 
-/// Where an import stands.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ImportPhase {
-    /// Never started.
-    #[default]
-    Idle,
-    /// Running.
-    Running,
-    /// Finished.
-    Done,
-    /// Stopped on an error; starting again resumes.
-    Error,
-}
-
-/// `memory_import_*` state.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImportState {
-    /// Phase.
-    pub phase: ImportPhase,
-    /// Items stored so far.
-    pub imported: u64,
-    /// Items found by the scan.
-    pub total: u64,
-    /// Why it stopped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
+/// Where an import stands, and its progress (`memory_import_*` state): the
+/// module's own types, so the persisted file and the wire share one shape.
 /// `memory_import_start` / `_status` result.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportStateView {
     /// The state.
     pub state: ImportState,
 }
-
-/// A recall citation attached to a chat reply so the UI can show where a
-/// memory-informed answer came from. Same JSON shape the chat surface has
-/// always rendered: `key` is the item kind, `namespace` its source kind,
-/// `timestamp` when it was observed, `snippet` a short excerpt.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TurnCitation {
-    /// Item id.
-    pub id: String,
-    /// Item kind (`document`, `conversation`, `learning`).
-    pub key: String,
-    /// Source kind (`folder`, `agent`, …).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    /// Relevance, when the engine reports one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub score: Option<f64>,
-    /// When the item was observed (RFC 3339), or empty.
-    pub timestamp: String,
-    /// Short excerpt.
-    pub snippet: String,
-}
-
-impl From<&Hit> for TurnCitation {
-    fn from(hit: &Hit) -> Self {
-        Self {
-            id: hit.id.0.clone(),
-            key: hit.kind.as_str().to_string(),
-            namespace: Some(hit.meta.source.kind.as_str().to_string()),
-            score: Some(f64::from(hit.score)).filter(|score| *score > 0.0),
-            timestamp: hit
-                .meta
-                .observed_at
-                .map(|at| at.to_rfc3339())
-                .unwrap_or_default(),
-            snippet: hit.text.chars().take(TURN_CITATION_SNIPPET_CHARS).collect(),
-        }
-    }
-}
-
-impl From<&Citation> for TurnCitation {
-    fn from(citation: &Citation) -> Self {
-        Self {
-            id: citation.id.0.clone(),
-            key: citation.kind.as_str().to_string(),
-            namespace: Some(citation.meta.source.kind.as_str().to_string()),
-            score: citation.score.map(f64::from),
-            timestamp: citation
-                .meta
-                .observed_at
-                .map(|at| at.to_rfc3339())
-                .unwrap_or_default(),
-            snippet: citation
-                .snippet
-                .chars()
-                .take(TURN_CITATION_SNIPPET_CHARS)
-                .collect(),
-        }
-    }
-}
-
-/// Longest snippet a [`TurnCitation`] carries.
-pub const TURN_CITATION_SNIPPET_CHARS: usize = 280;

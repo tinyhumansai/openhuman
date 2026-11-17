@@ -1,114 +1,266 @@
-//! Host adapters over the wallet engine: the read and write operations wrapped
-//! in the controller contract's [`Outcome`].
-//!
-//! The logic (balances, transfers, lookups, the quote store) lives in
-//! `tinywallet_web3::crypto`. What this file adds is the `Outcome` envelope and
-//! its log lines, and the engine the operations run on
-//! ([`crate::web3::seams::engine`]).
+//! Typed TinyWallet module operations adapted to product controller results.
+//! This host supplies configuration, custody, transport and approvals; wallet
+//! algorithms and user-scoped service state remain in the compiled module.
 
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
-use crate::web3::seams::engine;
+use crate::modules::{wallet as wallet_module, wallet_service};
+use tinywallet_bus::names::methods;
+use tinywallet_bus::wire::{NativeWalletServiceRequest, NativeWalletTransactionRequest};
 
-pub use tinywallet_web3::crypto::execution::{
+pub use tinywallet_bus::wire::{
     BalanceInfo, ChainStatus, ExecutePreparedParams, ExecutionResult, PrepareTransferParams,
     PreparedKind, PreparedStatus, PreparedTransaction, ProviderStatus, SupportedAsset,
-    TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
+    TokenBalanceInfo, TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
 };
 
-use tinywallet_web3::crypto::defaults::{EvmNetwork, WalletNetworkDefaults};
+use tinywallet_bus::wire::{EvmNetwork, WalletNetworkDefaults};
 
 use super::ops::WalletChain;
 
 /// Default row for every supported network, with the host's endpoints.
-pub async fn network_defaults() -> Result<Outcome<Vec<WalletNetworkDefaults>>, String> {
+pub async fn network_defaults(
+    ctx: &DispatchCtx,
+) -> Result<Outcome<Vec<WalletNetworkDefaults>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_NETWORK_DEFAULTS,
+            NativeWalletServiceRequest { service },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().network_defaults(),
+        result,
         vec!["wallet network defaults listed".to_string()],
     ))
 }
 
 /// Every asset the wallet catalogues.
-pub async fn supported_assets() -> Result<Outcome<Vec<SupportedAsset>>, String> {
+pub async fn supported_assets(ctx: &DispatchCtx) -> Result<Outcome<Vec<SupportedAsset>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_SUPPORTED_ASSETS,
+            NativeWalletServiceRequest { service },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().supported_assets(),
+        result,
         vec!["wallet supported_assets listed".to_string()],
     ))
 }
 
 /// Which chains have an account and a provider.
-pub async fn chain_status() -> Result<Outcome<Vec<ChainStatus>>, String> {
+pub async fn chain_status(ctx: &DispatchCtx) -> Result<Outcome<Vec<ChainStatus>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_CHAIN_STATUS,
+            NativeWalletServiceRequest { service },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().chain_status().await?,
+        result,
         vec!["wallet chain_status listed".to_string()],
     ))
 }
 
 /// Live native balances.
-pub async fn balances() -> Result<Outcome<Vec<BalanceInfo>>, String> {
+pub async fn balances(ctx: &DispatchCtx) -> Result<Outcome<Vec<BalanceInfo>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_BALANCES,
+            NativeWalletServiceRequest { service },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().balances().await?,
+        result,
         vec!["wallet balances listed".to_string()],
+    ))
+}
+
+/// Live balances of the catalogued tokens (the cluster's USDC SPL mint on
+/// Solana), read by the module (`NativeWalletTokenBalances`, contract 1.15).
+pub async fn token_balances(ctx: &DispatchCtx) -> Result<Outcome<Vec<TokenBalanceInfo>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_TOKEN_BALANCES,
+            NativeWalletServiceRequest { service },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(Outcome::new(
+        result,
+        vec!["wallet token balances listed".to_string()],
     ))
 }
 
 /// Validate a transfer and store a quote for it.
 pub async fn prepare_transfer(
+    ctx: &DispatchCtx,
     params: PrepareTransferParams,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<Outcome<PreparedTransaction>, String> {
+    let config = ctx.load_config().await?;
+    let quote = wallet_service::prepare_native_transfer(ctx, &config, owner, params)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().prepare_transfer(params).await?,
+        quote,
         vec!["wallet transfer prepared".to_string()],
     ))
 }
 
-/// Confirm and execute a prepared transfer.
+/// Confirm and execute a prepared transfer from the wallet UI's RPC, where a
+/// person pressed confirm (an interactive execute under the spend policy).
 pub async fn execute_prepared(
+    ctx: &DispatchCtx,
     params: ExecutePreparedParams,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<Outcome<ExecutionResult>, String> {
+    execute_prepared_as(ctx, params, owner, super::policy::ExecutionOrigin::rpc()).await
+}
+
+/// Confirm and execute a prepared transfer for `origin`, through the spend
+/// policy and ledger (`super::policy`).
+pub async fn execute_prepared_as(
+    ctx: &DispatchCtx,
+    params: ExecutePreparedParams,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
+    origin: super::policy::ExecutionOrigin,
+) -> Result<Outcome<ExecutionResult>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::execute_native_transfer(ctx, &config, owner, params, origin)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().execute_prepared(params).await?,
+        result,
         vec!["wallet transaction broadcast".to_string()],
     ))
 }
 
 /// Check the on-chain lifecycle state of a broadcast transaction.
 pub async fn tx_status(
+    ctx: &DispatchCtx,
     chain: WalletChain,
     evm_network: Option<EvmNetwork>,
     hash: &str,
 ) -> Result<Outcome<TxStatusInfo>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_TX_STATUS,
+            NativeWalletTransactionRequest {
+                service,
+                chain,
+                evm_network,
+                hash: hash.to_owned(),
+            },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().tx_status(chain, evm_network, hash).await?,
+        result,
         vec!["wallet tx status fetched".to_string()],
     ))
 }
 
 /// Fetch the receipt of a broadcast transaction.
 pub async fn tx_receipt(
+    ctx: &DispatchCtx,
     chain: WalletChain,
     evm_network: Option<EvmNetwork>,
     hash: &str,
 ) -> Result<Outcome<TxReceiptInfo>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_TX_RECEIPT,
+            NativeWalletTransactionRequest {
+                service,
+                chain,
+                evm_network,
+                hash: hash.to_owned(),
+            },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().tx_receipt(chain, evm_network, hash).await?,
+        result,
         vec!["wallet tx receipt fetched".to_string()],
     ))
 }
 
 /// Look up the raw transaction payload by hash.
 pub async fn lookup_tx(
+    ctx: &DispatchCtx,
     chain: WalletChain,
     evm_network: Option<EvmNetwork>,
     hash: &str,
 ) -> Result<Outcome<TxLookupInfo>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_LOOKUP_TX,
+            NativeWalletTransactionRequest {
+                service,
+                chain,
+                evm_network,
+                hash: hash.to_owned(),
+            },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
-        engine().lookup_tx(chain, evm_network, hash).await?,
+        result,
         vec!["wallet tx looked up".to_string()],
     ))
+}
+
+/// Encode ERC-20 transfer calldata in the loaded wallet module.
+pub async fn encode_erc20_transfer(
+    ctx: &DispatchCtx,
+    to_address: &str,
+    amount_raw: &str,
+) -> Result<String, String> {
+    let config = ctx.load_config().await?;
+    wallet_module::encode_erc20_transfer(&config, to_address, amount_raw)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// The quotes that can still be executed. Test support and the introspection
 /// harness read the engine's store through this.
 pub fn prepared_quotes_for_test() -> Vec<PreparedTransaction> {
-    engine().prepared_quotes()
+    Vec::new()
 }

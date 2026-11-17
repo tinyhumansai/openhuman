@@ -15,78 +15,55 @@ pub(super) fn publish_flow_changed(flow_id: &str, kind: &str, actor: &str) {
 
 /// Creates a new flow from a name and a raw graph JSON value.
 ///
-/// Issue B29 (save/enable safety) — two server-side rules apply here,
-/// authoritative regardless of what the caller passed, so no creation path
-/// (prompt bar, scratch/template modal, proposal "save & enable", copilot
-/// `save_workflow`, …) can silently hand the user an armed, unattended
-/// automation:
-///
-/// - **Rule 1** ([`trigger_is_automatic`]): a graph whose trigger fires
-///   without a human in the loop (`schedule` / `app_event` / `webhook`)
-///   persists **disabled**. The user arms it explicitly via
-///   `flows_set_enabled` — the same toggle already used everywhere else. A
-///   `manual` trigger (or no trigger-kind discriminator at all) still
-///   persists enabled: it only ever runs via an explicit `flows_run`, so
-///   there is no surprise, and gating it would just add friction.
-///
-///   This means a caller that represents an explicit user-arming action
-///   (e.g. `WorkflowProposalCard`'s "Save & enable" click,
-///   `app/src/components/chat/WorkflowProposalCard.tsx`) must check the
-///   returned [`Flow`]'s `enabled` field and follow up with
-///   `flows_set_enabled(id, true)` when it comes back `false` — otherwise
-///   the button's own label lies to the user. That follow-up call is a
-///   legitimate, explicit enable, not the silent copilot auto-arm this rule
-///   exists to prevent (the copilot's `save_workflow` path has no such
-///   follow-up and stays disabled).
-/// - **Rule 2** ([`graph_has_outbound_side_effect`]): a graph containing any
-///   `tool_call` / `http_request` / `code` node — the three kinds that can
-///   produce a real outbound effect — forces `require_approval: true`,
-///   overriding whatever the caller passed. A read-only graph (only
-///   `trigger` / `agent` / `transform` / `condition` / data-flow nodes) is
-///   unaffected.
-///
-/// An enabled flow still has its automatic-dispatch side effect bound
-/// immediately (e.g. the schedule-trigger cron job registered), reusing the
-/// same [`bind_trigger`] helper `flows_set_enabled` uses — but per Rule 1
-/// that now only happens for a `manual`-triggered (or trigger-kind-less)
-/// flow. Best-effort, same as `flows_set_enabled`: a binding failure is
-/// logged, not fatal to create.
+/// Catalog.PutWorkflow validates and persists the graph, applies automatic-
+/// trigger disarm and outbound-action approval policy, and returns its
+/// authoritative `born_disabled` / `approval_forced` results for the host RPC
+/// logs. OpenHuman binds the automatic-dispatch trigger only when the saved
+/// result is enabled.
 pub async fn flows_create(
     config: &Config,
     name: String,
     graph_json: Value,
     require_approval: bool,
 ) -> Result<Outcome<Flow>, String> {
-    let graph = validate_and_migrate_graph(graph_json)?;
-    ensure_config_aware_engine_compatible(config, &graph)?;
+    flows_create_with_context(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        name,
+        graph_json,
+        require_approval,
+    )
+    .await
+}
+
+pub(crate) async fn flows_create_with_context(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    name: String,
+    graph_json: Value,
+    require_approval: bool,
+) -> Result<Outcome<Flow>, String> {
+    ctx.enter(async move {
+        let graph = validate_and_migrate_graph(ctx, config, graph_json).await?;
+        ensure_config_aware_engine_compatible(ctx, config, &graph).await?;
 
     // Rule 1: automatic triggers create DISABLED — the user must arm them
     // explicitly.
-    let enabled = !trigger_is_automatic(&graph);
-
-    // Rule 2: any outbound side-effect node forces require_approval, no
-    // matter what the caller asked for.
-    let (effective_require_approval, side_effect_forced) =
-        enforce_side_effect_approval(&graph, require_approval);
-    if side_effect_forced {
-        tracing::info!(
-            target: "flows",
-            %name,
-            "[flows] flows_create: forcing require_approval=true — graph contains outbound \
-             side-effect node(s) (tool_call / http_request / code)"
-        );
-    }
-
     tracing::debug!(
         target: "flows",
         %name,
-        node_count = graph.nodes.len(),
-        enabled,
-        require_approval = effective_require_approval,
+        node_count = graph
+            .get("nodes")
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len),
+        require_approval,
         "[flows] flows_create: persisting new flow"
     );
-    let flow = store::create_flow(config, name, graph, effective_require_approval, enabled)
+    let result = store::create_flow(config, name, graph, require_approval, true)
         .map_err(|e| e.to_string())?;
+    let flow = result.workflow;
+    let born_disabled = result.born_disabled;
+    let approval_forced = result.approval_forced;
 
     if flow.enabled {
         tracing::debug!(target: "flows", flow_id = %flow.id, "[flows] flows_create: flow is enabled — binding automatic-dispatch trigger");
@@ -94,19 +71,22 @@ pub async fn flows_create(
     }
 
     let mut logs = vec!["flow created".to_string()];
-    if !enabled {
-        let trigger_label = flow
-            .graph
-            .trigger()
-            .and_then(|t| t.config.get("trigger_kind"))
-            .and_then(Value::as_str)
-            .unwrap_or("automatic");
+    if born_disabled {
+        let trigger_label = match bus::describe_trigger(config, &flow) {
+            Ok(details) => details
+                .kind
+                .unwrap_or_else(|| "automatic".to_string()),
+            Err(error) => {
+                tracing::warn!(target: "flows", flow_id = %flow.id, %error, "[flows] could not describe trigger after create");
+                "automatic".to_string()
+            }
+        };
         logs.push(format!(
             "Flow created DISABLED because it has an automatic trigger ({trigger_label}). \
              Enable it explicitly (flows_set_enabled) when you are ready for it to fire."
         ));
     }
-    if side_effect_forced {
+    if approval_forced {
         logs.push(
             "require_approval forced to true because the graph contains outbound side-effect \
              nodes (tool_call / http_request / code)."
@@ -114,8 +94,10 @@ pub async fn flows_create(
         );
     }
 
-    publish_flow_changed(&flow.id, "created", "system");
-    Ok(Outcome::new(flow, logs))
+        publish_flow_changed(&flow.id, "created", "system");
+        Ok(Outcome::new(flow, logs))
+    })
+    .await
 }
 
 /// Duplicates a saved flow: creates an independent copy of its graph under a
@@ -151,16 +133,14 @@ pub async fn flows_get(config: &Config, id: &str) -> Result<Outcome<Flow>, Strin
     Ok(Outcome::single_log(flow, format!("flow loaded: {id}")))
 }
 
-/// Loads a saved flow's portable [`WorkflowGraph`] by id, for the
-/// `sub_workflow`-by-`workflow_id` resolver capability
-/// (`tinyflows::caps::WorkflowResolver`, implemented in
-/// `crates/openhuman-core/src/flows/tinyflows/caps.rs`).
+/// Loads a saved flow's portable JSON graph by id, for the
+/// `sub_workflow`-by-`workflow_id` resolver capability through the compiled
+/// TinyFlows module's Catalog contract.
 ///
 /// Returns `Ok(None)` when no flow with that id exists (the resolver turns that
 /// into a capability error naming the missing id), and `Err` only on a store
-/// failure. Kept sync (the underlying [`store::get_flow`] is sync) so the
-/// resolver can call it directly from its async method without a runtime hop.
-pub fn load_flow_graph(config: &Config, id: &str) -> Result<Option<WorkflowGraph>, String> {
+/// failure. Kept sync because the underlying [`store::get_flow`] is sync.
+pub fn load_flow_graph(config: &Config, id: &str) -> Result<Option<Value>, String> {
     tracing::debug!(target: "flows", flow_id = %id, "[flows] load_flow_graph: loading saved flow graph for sub_workflow resolver");
     let graph = store::get_flow(config, id)
         .map_err(|e| e.to_string())?
@@ -177,13 +157,15 @@ pub fn load_flow_graph(config: &Config, id: &str) -> Result<Option<WorkflowGraph
 /// Resolver-only saved-graph lookup. Authoring tools use [`load_flow_graph`]
 /// so a legacy draft can still be opened and repaired; execution resolves only
 /// graphs the current engine can run safely.
-pub(crate) fn load_engine_compatible_flow_graph(
+pub(crate) async fn load_engine_compatible_flow_graph(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     id: &str,
-) -> Result<Option<WorkflowGraph>, String> {
+) -> Result<Option<Value>, String> {
     let graph = load_flow_graph(config, id)?;
     if let Some(graph) = graph.as_ref() {
-        ensure_config_aware_engine_compatible(config, graph)
+        ensure_config_aware_engine_compatible(ctx, config, graph)
+            .await
             .map_err(|error| format!("workflow_id '{id}' is engine-incompatible: {error}"))?;
     }
     Ok(graph)
@@ -220,25 +202,37 @@ pub async fn flows_list(config: &Config) -> Result<Outcome<Vec<Flow>>, String> {
 
 /// Deletes a flow by id.
 ///
-/// Unbinds the flow's automatic-dispatch trigger (e.g. the schedule-trigger
-/// cron job) *before* removing the flow definition. `flow_runs` cascades on
-/// delete via a same-database `FOREIGN KEY ... ON DELETE CASCADE`, but a
-/// bound cron job lives in the entirely separate `cron.db` — it does NOT
-/// cascade — so skipping this would orphan the cron job, leaving it pointing
-/// at a now-nonexistent `flow_id` forever. Best-effort: a lookup failure
-/// (flow already gone, store error) is logged and does not block the delete
-/// itself — `store::remove_flow` below still errors clearly if `id` doesn't
-/// exist.
+/// Removes the flow definition before unbinding its separately persisted
+/// automatic-dispatch trigger (e.g. the schedule-trigger job). Removing the
+/// flow first means a failed delete leaves its still-existing schedule intact.
+/// Best-effort: a lookup failure is logged and does not block the delete.
 pub async fn flows_delete(config: &Config, id: &str) -> Result<Outcome<Value>, String> {
-    match store::get_flow(config, id) {
-        Ok(Some(flow)) => unbind_trigger(config, &flow),
-        Ok(None) => {}
+    flows_delete_with_remove(config, id, |config, id| {
+        store::remove_flow(config, id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Delete implementation split at the fallible store operation so failure
+/// ordering can be exercised without corrupting the configured storage.
+pub(super) async fn flows_delete_with_remove(
+    config: &Config,
+    id: &str,
+    remove: impl FnOnce(&Config, &str) -> Result<(), String>,
+) -> Result<Outcome<Value>, String> {
+    let flow = match store::get_flow(config, id) {
+        Ok(Some(flow)) => Some(flow),
+        Ok(None) => None,
         Err(e) => {
             tracing::warn!(target: "flows", flow_id = %id, error = %e, "[flows] flows_delete: failed to load flow before unbind — proceeding with delete anyway");
+            None
         }
-    }
+    };
 
-    store::remove_flow(config, id).map_err(|e| e.to_string())?;
+    remove(config, id)?;
+    if let Some(flow) = flow {
+        unbind_trigger(config, &flow);
+    }
     tracing::debug!(target: "flows", flow_id = %id, "[flows] flows_delete: removed");
 
     // Best-effort: purge the flow's pre-authorized tool trust with its row —

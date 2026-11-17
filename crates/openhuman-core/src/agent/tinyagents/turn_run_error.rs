@@ -1,9 +1,9 @@
 //! Map a failed `tinyagents` harness run onto the typed OpenHuman error the
-//! caller expects, for [`run_turn_via_tinyagents_shared`](super::run_turn_via_tinyagents_shared).
+//! caller expects, for [`TurnSpec::run`](TurnSpec::run).
 
 use crate::agent::tinyagents::journal::TurnJournal;
-use crate::agent::tinyagents::model::ModelErrorSlot;
-use crate::agent::tinyagents::turn_models::tinyagents_depth_error;
+use tinyagents_harness::turn_run_error::{classify_run_failure, RunFailureKind};
+use tinyinference_llm::model::ModelErrorSlot;
 
 /// Map the harness's run failure `e` onto the typed error the turn caller
 /// expects, stamping the durable journal's terminal failed status first
@@ -31,39 +31,48 @@ pub(super) async fn map_turn_run_error(
     if let Some(journal) = turn_journal {
         journal.finish_failed(&e.to_string()).await;
     }
-    // The model-call cap (when not pausing gracefully — the channel/CLI
-    // path) maps to the typed `AgentError::MaxIterationsExceeded` so
-    // callers downcast it (Sentry skip) and render the canonical
-    // "Agent exceeded maximum tool iterations" message, matching the
-    // legacy `ErrorCheckpoint`.
-    if let tinyagents_harness::TinyAgentsError::LimitExceeded(msg) = &e {
-        if msg.contains("model call") {
-            tracing::debug!(
-                model,
-                "[tinyagents] run hit the model-call cap; mapping to MaxIterationsExceeded (not consulting error_slot) — #4457 defect B"
-            );
-            return anyhow::Error::new(crate::agent::error::AgentError::MaxIterationsExceeded {
-                max: max_iterations,
-            });
-        }
-    }
-    if let Some(depth_err) = tinyagents_depth_error(&e) {
-        return anyhow::Error::new(depth_err);
-    }
-    // A timeout or cancellation is the run's own failure, not a provider's: a
-    // provider error left in the slot by an earlier attempt must not be
-    // re-surfaced as its cause (#6724).
-    if matches!(
-        e,
-        tinyagents_harness::TinyAgentsError::Timeout(_)
-            | tinyagents_harness::TinyAgentsError::CallTimeout(_)
-            | tinyagents_harness::TinyAgentsError::Cancelled
-    ) {
+    // A host admission refusal is a terminal policy result, not a provider
+    // failure. Preserve its typed source before consulting the provider error
+    // slot, which may still contain an earlier successful route's stale error.
+    if let tinyagents_harness::TinyAgentsError::PhysicalDispatchAdmission(refusal) = &e {
         error_slot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        return anyhow::anyhow!("tinyagents harness run failed: {e}");
+        return anyhow::Error::new(*refusal);
+    }
+    // The harness owns the ordering-sensitive classification; the host only
+    // maps each kind onto its typed error.
+    match classify_run_failure(&e) {
+        RunFailureKind::ModelCallCap => {
+            tracing::debug!(
+                model,
+                "[tinyagents] run hit the model-call cap; mapping to MaxIterationsExceeded (not consulting error_slot) — #4457 defect B"
+            );
+            return anyhow::Error::new(
+                tinyagents_harness::agent_error::AgentError::MaxIterationsExceeded {
+                    max: max_iterations,
+                },
+            );
+        }
+        RunFailureKind::DepthLimit { max_depth } => {
+            return anyhow::Error::new(
+                crate::agent::subagent_host::SubagentRunError::SpawnDepthExceeded {
+                    attempted_depth: max_depth.saturating_add(1),
+                    max_depth,
+                },
+            );
+        }
+        // A timeout or cancellation is the run's own failure, not a
+        // provider's: a stale provider error must not be its cause (#6724).
+        RunFailureKind::TimeoutOrCancelled => {
+            error_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            return anyhow::anyhow!("tinyagents harness run failed: {e}");
+        }
+        RunFailureKind::Other => {}
     }
     // Otherwise prefer the original typed provider error (preserves
     // `AgentError` downcasts the caller relies on) over the harness's
@@ -81,7 +90,7 @@ pub(super) async fn map_turn_run_error(
             model,
             "[tinyagents] re-surfacing typed provider error from error_slot as the run failure — #4457 defect B"
         );
-        return original;
+        return anyhow::Error::new(original);
     }
     anyhow::anyhow!("tinyagents harness run failed: {e}")
 }

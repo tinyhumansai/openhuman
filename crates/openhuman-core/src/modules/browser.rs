@@ -10,13 +10,20 @@ use std::sync::Arc;
 use serde::{de::DeserializeOwned, Serialize};
 use tinycomputer_bus::agent::Capabilities;
 use tinycomputer_bus::browser::{
-    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, NavigateRequest, PageState,
-    PageText, ReadRequest, SessionId, SessionInfo, SessionOptions, SessionRef, SessionRequest,
-    Snapshot, SnapshotRequest, Viewport,
+    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, EvaluateRequest,
+    NavigateRequest, OutputChunk, OutputRef, OutputRequest, PageState, PageText, ReadOutputRequest,
+    ReadRequest, ScreenshotRequest, SessionId, SessionInfo, SessionOptions, SessionRef,
+    SessionRequest, Snapshot, SnapshotRequest, Viewport,
 };
 use tinycomputer_bus::DesktopResponse;
 
 use crate::config::Config;
+
+#[path = "browser_never_open.rs"]
+pub(crate) mod never_open;
+#[path = "browser_output.rs"]
+mod output;
+use output::{append_output_chunk, check_output_size, finish_output, ReleaseOnDrop};
 
 pub const MODULE_ID: &str = super::desktop::MODULE_ID;
 
@@ -30,9 +37,53 @@ pub(crate) const CHROME_NOT_FOUND_HINT: &str = "Chrome was not found. Ask the us
     Chrome path (for example /Applications/Google Chrome.app/Contents/MacOS/Google Chrome), \
     then try again. Do not install or download a browser yourself.";
 
+/// What the agent is told when the Chrome path the user set names no Chrome
+/// the module can start: refused when a task starts, or when the browser
+/// launches. Left without it, the agent reads TinyComputer's own field name
+/// (`browser_executable`), which is nothing the user can find.
+pub(crate) const CHROME_PATH_HINT: &str = "Chrome could not be started from the Chrome \
+    path the user set. Ask the user to set Connections > Computer Control > Browser > Chrome \
+    path to the Chrome program itself (for example /Applications/Google Chrome.app/Contents/\
+    MacOS/Google Chrome), then try again. Do not install or download a browser yourself.";
+
+/// How TinyComputer says no Chrome was found: agent-browser's own words
+/// before TinyComputer 0.11, and the module's since.
+/// Where Chrome puts a tab whose navigation failed
+/// (`chrome-error://chromewebdata/`).
+const CHROME_ERROR_SCHEME: &str = "chrome-error:";
+
+const CHROME_MISSING: &[&str] = &["chrome not found", "no chrome or chromium was found"];
+
+/// How TinyComputer says the browser binary it was given would not start, or
+/// is no executable at all (refused before a task starts).
+const CHROME_UNUSABLE: &[&str] = &[
+    "browser binary given could not be started",
+    "browser_executable must be the absolute path",
+];
+
 /// Whether a module error or task failure says Chrome could not be found.
 pub(crate) fn chrome_not_found(text: &str) -> bool {
-    text.to_ascii_lowercase().contains("chrome not found")
+    let text = text.to_ascii_lowercase();
+    CHROME_MISSING.iter().any(|said| text.contains(said))
+}
+
+/// Whether a module error or task failure says the Chrome path the user set
+/// names no Chrome the module can start.
+pub(crate) fn chrome_path_unusable(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    CHROME_UNUSABLE.iter().any(|said| text.contains(said))
+}
+
+/// What the agent is told to ask of the user when `text`, a module error or a
+/// task failure, says Chrome is missing or its path is unusable.
+pub(crate) fn chrome_hint(text: &str) -> Option<&'static str> {
+    if chrome_not_found(text) {
+        Some(CHROME_NOT_FOUND_HINT)
+    } else if chrome_path_unusable(text) {
+        Some(CHROME_PATH_HINT)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -70,10 +121,9 @@ impl BrowserCallError {
             .and_then(serde_json::Value::as_str)
             .map(|name| name.rsplit('.').next().unwrap_or(name).to_owned())
             .unwrap_or_else(|| error.code.clone());
-        let message = if chrome_not_found(&error.message) {
-            format!("{} {CHROME_NOT_FOUND_HINT}", error.message)
-        } else {
-            error.message.clone()
+        let message = match chrome_hint(&error.message) {
+            Some(hint) => format!("{} {hint}", error.message),
+            None => error.message.clone(),
         };
         Self::Bus { name, message }
     }
@@ -132,7 +182,7 @@ impl BrowserClient {
     ) -> Result<SessionInfo, BrowserCallError> {
         self.ensure_ready().await?;
         let domains = self.browser_domains();
-        if domains.is_empty() && !browser_allow_all() {
+        if domains.is_empty() && !browser_allow_all() && !self.allows_any_site() {
             return Err(BrowserCallError::Policy(
                 "allowed websites list is empty".into(),
             ));
@@ -165,11 +215,23 @@ impl BrowserClient {
         } else {
             None
         };
+        let claimed = claim_profile(
+            &self.config,
+            &mut options,
+            super::profile_claim::SESSION_WAIT_MS,
+        )
+        .await;
         options.download_dir = browser.download_dir.clone();
         options.default_timeout_ms = browser.task_timeout_secs.saturating_mul(1000);
         options.allowed_origins =
             origin.map_or_else(|| self.browser_origins(), |origin| vec![origin]);
-        self.call(names::methods::OPEN_SESSION, options).await
+        let opened = self.call(names::methods::OPEN_SESSION, options).await;
+        // An open session's Chrome holds the profile itself; one that did
+        // not open holds nothing.
+        if let Some(profile) = claimed {
+            super::profile_claim::release(&self.config, &profile).await;
+        }
+        opened
     }
 
     /// Open a session bound to the host tree of an explicit destination.
@@ -281,6 +343,106 @@ impl BrowserClient {
         .await
     }
 
+    /// A picture of the session's page, as the bytes of `request.format`.
+    pub async fn screenshot(
+        &self,
+        session: &SessionId,
+        request: ScreenshotRequest,
+    ) -> Result<Vec<u8>, BrowserCallError> {
+        Ok(self
+            .screenshot_checked(session, request, || async { Ok(true) })
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// A picture of the session's page, kept only when `keep` (run right
+    /// after the module took it, before a byte of it is read) says yes;
+    /// `None` when it says no.
+    ///
+    /// The module holds the image and answers a handle ([`OutputRef`]); the
+    /// bytes are pulled in chunks, checked against the handle's size and
+    /// SHA-256, and the held output is released whether or not that worked,
+    /// a cancelled call included.
+    pub(crate) async fn screenshot_checked<F, Fut>(
+        &self,
+        session: &SessionId,
+        request: ScreenshotRequest,
+        keep: F,
+    ) -> Result<Option<Vec<u8>>, BrowserCallError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<bool, BrowserCallError>>,
+    {
+        let held: OutputRef = self
+            .call(
+                names::methods::SCREENSHOT,
+                SessionRequest::new(session.clone(), request),
+            )
+            .await?;
+        let mut release = ReleaseOnDrop {
+            client: Some(self.clone()),
+            output: held.id.clone(),
+            ctx: crate::core::runtime::DispatchCtx::ambient(),
+        };
+        let read = match keep().await {
+            Ok(true) => self.read_output(&held).await.map(Some),
+            Ok(false) => Ok(None),
+            Err(error) => Err(error),
+        };
+        // The guard stays armed until the release has gone through.
+        let _released: Result<serde_json::Value, _> = self
+            .call(
+                names::methods::RELEASE_OUTPUT,
+                OutputRequest {
+                    output: held.id.clone(),
+                },
+            )
+            .await;
+        release.client = None;
+        read
+    }
+
+    async fn read_output(&self, held: &OutputRef) -> Result<Vec<u8>, BrowserCallError> {
+        check_output_size(held)?;
+        let mut bytes = Vec::new();
+        loop {
+            let chunk: OutputChunk = self
+                .call(
+                    names::methods::READ_OUTPUT,
+                    ReadOutputRequest {
+                        offset: bytes.len() as u64,
+                        ..ReadOutputRequest::new(held.id.clone())
+                    },
+                )
+                .await?;
+            append_output_chunk(held, &mut bytes, &chunk)?;
+            if chunk.eof {
+                finish_output(held, &bytes)?;
+                return Ok(bytes);
+            }
+        }
+    }
+
+    /// Runs `expression` in the session's page and returns its value. For the
+    /// host's own checks only; never offered to a model.
+    pub(crate) async fn evaluate(
+        &self,
+        session: &SessionId,
+        expression: &str,
+    ) -> Result<serde_json::Value, BrowserCallError> {
+        self.call(
+            names::methods::EVALUATE,
+            SessionRequest::new(
+                session.clone(),
+                EvaluateRequest {
+                    expression: expression.to_owned(),
+                    ..EvaluateRequest::default()
+                },
+            ),
+        )
+        .await
+    }
+
     pub async fn close_session(&self, session: &SessionId) -> Result<(), BrowserCallError> {
         let _closed: serde_json::Value = self
             .call(names::methods::CLOSE_SESSION, session_ref(session))
@@ -320,7 +482,13 @@ impl BrowserClient {
                 "local/private host '{host}' is blocked"
             )));
         }
+        // The operator's never-open list holds whatever allow-all says; a
+        // list that cannot be read refuses every page (fails closed).
+        if let Some(reason) = never_open::refusal(url.as_str()) {
+            return Err(BrowserCallError::Policy(reason));
+        }
         if !allow_all
+            && !self.allows_any_site()
             && !self.browser_domains().iter().any(|allowed| {
                 host.eq_ignore_ascii_case(allowed)
                     || host
@@ -342,7 +510,54 @@ impl BrowserClient {
         if raw.eq_ignore_ascii_case("about:blank") {
             return Ok(());
         }
-        self.check_url(raw)
+        // A navigation that failed (DNS, a refused or reset connection, a
+        // certificate) leaves Chrome on its own error page. Refusing it as
+        // a policy breach hid the failure: an agent read "only HTTPS URLs"
+        // and kept clicking. Say the page did not load.
+        if raw
+            .get(..CHROME_ERROR_SCHEME.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(CHROME_ERROR_SCHEME))
+        {
+            return Err(BrowserCallError::Bus {
+                name: "PageLoadFailed".into(),
+                message: "the page failed to load (Chrome showed its error page); \
+                          the site or the network refused it"
+                    .into(),
+            });
+        }
+        // Name the scheme the page is on, never the rest of its address: a
+        // log then says what it was without keeping what was in it.
+        self.check_url(raw).map_err(|error| match error {
+            BrowserCallError::Policy(reason) if reason == "only HTTPS URLs are allowed" => {
+                let scheme = raw.split_once(':').map_or("", |(scheme, _)| scheme);
+                let scheme = if !scheme.is_empty()
+                    && scheme.len() <= 32
+                    && scheme
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+                {
+                    format!("{}:", scheme.to_ascii_lowercase())
+                } else {
+                    "an unknown scheme".into()
+                };
+                BrowserCallError::Policy(format!(
+                    "only HTTPS URLs are allowed (the page is on {scheme})"
+                ))
+            }
+            other => other,
+        })
+    }
+
+    /// Whether the allowed websites are "Allow all" (`*`): the browser may
+    /// open any public site, as web fetch may. Private and local addresses
+    /// stay refused, here by `check_url` and in the module by its own `*`
+    /// rule. The browser itself is off until the user turns it on.
+    fn allows_any_site(&self) -> bool {
+        self.config
+            .http_request
+            .allowed_domains
+            .iter()
+            .any(|domain| domain.trim() == "*")
     }
 
     fn browser_domains(&self) -> Vec<String> {
@@ -355,9 +570,11 @@ impl BrowserClient {
             .collect()
     }
 
-    /// Origins a TinyComputer task may load: the allowed websites, in the
-    /// module's `https://.host` spelling. Empty when none are allowed, which a
-    /// task refuses, since an empty list means any origin to the module.
+    /// Origins a TinyComputer task may open pages on: `*` (any public site)
+    /// under "Allow all", else the allowed websites in the module's
+    /// `https://.host` spelling. Empty when none are allowed, which a task
+    /// refuses, since an empty list means any origin, private ones included,
+    /// to the module.
     pub(crate) fn task_origins(&self) -> Vec<String> {
         self.browser_origins()
     }
@@ -371,6 +588,9 @@ impl BrowserClient {
             // A nonempty, unmatchable origin keeps TinyComputer's document
             // guard active before the caller supplies an explicit URL.
             return vec!["https://.".to_owned()];
+        }
+        if self.allows_any_site() {
+            return vec!["*".to_owned()];
         }
         self.browser_domains()
             .iter()
@@ -423,11 +643,52 @@ fn parsed_browser_url(raw: &str) -> Result<url::Url, BrowserCallError> {
         .map_err(|_| BrowserCallError::Policy("invalid URL".into()))
 }
 
+/// Claims `options`' persistent profile for the session's browser, or leaves
+/// it a fresh profile when another browser still holds the folder after
+/// `wait`; the folder it claimed. Chrome lets one browser at a time use a
+/// profile folder: a second one hands its window to the first and exits, and
+/// a session in one conversation found the profile held by another
+/// conversation's browser, or a task's.
+async fn claim_profile(
+    config: &Config,
+    options: &mut SessionOptions,
+    wait_ms: u64,
+) -> Option<String> {
+    let profile = options.user_data_dir.clone()?;
+    match super::profile_claim::claim(config, &profile, wait_ms).await {
+        super::profile_claim::Claim::Claimed(path) => Some(path),
+        super::profile_claim::Claim::Fresh => {
+            tracing::warn!(
+                "[browser] another browser holds the persistent profile; this session uses a fresh profile"
+            );
+            options.user_data_dir = None;
+            None
+        }
+    }
+}
+
 fn browser_allow_all() -> bool {
     matches!(
         std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok().as_deref(),
         Some("1" | "true" | "TRUE" | "yes" | "YES")
     )
+}
+
+/// Whether `raw` is an https URL on a public host (no userinfo, no private
+/// or local address): what the browser may be asked to open at all.
+pub(crate) fn is_public_https(raw: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw) else {
+        return false;
+    };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Ipv6(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Domain(host)) => !private_or_local(host),
+        None => false,
+    }
 }
 
 fn private_or_local(host: &str) -> bool {
@@ -441,9 +702,9 @@ fn private_or_local(host: &str) -> bool {
         // `is_non_global_v4` already covers 0.0.0.0/8; the explicit octet check
         // keeps that local-host range visibly blocked at this call site too.
         Ok(std::net::IpAddr::V4(ip)) => {
-            tinytools_std::url_guard::is_non_global_v4(ip) || ip.octets()[0] == 0
+            tinyagents_harness::url_guard::is_non_global_v4(ip) || ip.octets()[0] == 0
         }
-        Ok(std::net::IpAddr::V6(ip)) => tinytools_std::url_guard::is_non_global_v6(ip),
+        Ok(std::net::IpAddr::V6(ip)) => tinyagents_harness::url_guard::is_non_global_v6(ip),
         Err(_) => false,
     }
 }

@@ -7,7 +7,8 @@
  * under, and says when the host pins them.
  *
  * Numbers save on blur/Enter, one field per call, and an out-of-range entry is
- * reverted rather than sent (the core rejects it anyway).
+ * reverted rather than sent (the core rejects it anyway). The tab ends with the
+ * erase-all-memory control (`MemoryEraseAllCard`).
  *
  * debug logging: DEBUG=openhuman:memory:settings
  */
@@ -22,8 +23,10 @@ import {
   memoryPolicySet,
   type PolicyUpdate,
 } from '../../services/api/memoryApi';
-import { Alert, AlertDescription, Card, NumberField, Switch } from '../ui';
+import { Card, NumberField, Switch } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
+import MemoryEraseAllCard from './MemoryEraseAllCard';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import { parseIntInRange } from './memoryFormat';
 
 const log = debug('openhuman:memory:settings');
@@ -62,7 +65,12 @@ function draftsFrom(policy: MemoryPolicy): Record<NumericField, string> {
   return out;
 }
 
-export default function MemorySettingsTab() {
+interface MemorySettingsTabProps {
+  /** Called after all memory was erased, so the page re-reads memory state. */
+  onMemoryErased?: () => void;
+}
+
+export default function MemorySettingsTab({ onMemoryErased }: MemorySettingsTabProps = {}) {
   const { t } = useT();
   const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
   const [drafts, setDrafts] = useState<Record<NumericField, string> | null>(null);
@@ -175,9 +183,7 @@ export default function MemorySettingsTab() {
 
   if (policy === null || drafts === null) {
     return error !== null ? (
-      <Alert variant="destructive" data-testid="memory-settings-error">
-        <AlertDescription>{error}</AlertDescription>
-      </Alert>
+      <MemoryErrorAlert message={error} data-testid="memory-settings-error" />
     ) : (
       <CenteredLoadingState label={t('memoryPage.loading')} />
     );
@@ -187,11 +193,7 @@ export default function MemorySettingsTab() {
 
   return (
     <div className="space-y-4 animate-fade-up" data-testid="memory-settings-tab">
-      {error !== null && (
-        <Alert variant="destructive" data-testid="memory-settings-error">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error !== null && <MemoryErrorAlert message={error} data-testid="memory-settings-error" />}
 
       <Card
         title={t('memoryPage.settings.recallTitle')}
@@ -253,6 +255,8 @@ export default function MemorySettingsTab() {
           </p>
         )}
       </Card>
+
+      <MemoryEraseAllCard onErased={onMemoryErased} />
     </div>
   );
 }

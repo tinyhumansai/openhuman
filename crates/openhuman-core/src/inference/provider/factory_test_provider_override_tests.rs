@@ -22,6 +22,24 @@ pub fn install_model(model: Arc<dyn ChatModel<()>>) -> InstallGuard {
     *cell().lock().unwrap() = Some(model);
     InstallGuard { _serial: serial }
 }
+/// Hold the override serial lock without installing a model.
+///
+/// A test that asserts what the factory really constructs (a route's provider,
+/// the resolved model id) must not run while another test has a mock
+/// installed: the factory would answer with `mock-model` instead. Holding this
+/// guard waits out any installer and keeps new ones out until it drops.
+#[must_use]
+pub fn exclusive() -> ExclusiveGuard {
+    ExclusiveGuard {
+        _serial: OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    }
+}
+/// Proof that no test override can be installed; see [`exclusive`].
+pub struct ExclusiveGuard {
+    _serial: std::sync::MutexGuard<'static, ()>,
+}
 pub struct InstallGuard {
     _serial: std::sync::MutexGuard<'static, ()>,
 }

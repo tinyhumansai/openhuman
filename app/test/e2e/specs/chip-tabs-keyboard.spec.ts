@@ -17,6 +17,7 @@ async function expectSelectedAndFocused(selected: Tab): Promise<void> {
   }
 }
 
+// Registered by app/scripts/e2e-run-all-flows.sh in the navigation suite.
 describe('ChipTabs keyboard traversal', () => {
   before(async () => {
     await startMockServer();
@@ -36,10 +37,13 @@ describe('ChipTabs keyboard traversal', () => {
     await middle.click();
     await expectSelectedAndFocused('routing');
 
-    // Leave the row, then enter with a real Tab event. This exercises entry
-    // focus in Radix's roving group before the arrow-key assertions.
-    await browser.keys(['Shift', 'Tab']);
-    await expect(middle).not.toBeFocused();
+    // Start from the preceding control and enter with a real Tab event. This
+    // exercises entry focus in Radix's roving group before arrow-key checks.
+    // Search settings load asynchronously from the core. Wait for the switch
+    // before focusing it so this setup does not race the panel's loading state.
+    const enabledToggle = await waitForTestId('search-enabled-toggle', 15_000);
+    await browser.execute((element: HTMLElement) => element.focus(), enabledToggle);
+    await expect(enabledToggle).toBeFocused();
     await browser.keys('Tab');
     await expectSelectedAndFocused('routing');
 

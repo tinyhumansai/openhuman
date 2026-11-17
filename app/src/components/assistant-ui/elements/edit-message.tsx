@@ -60,10 +60,7 @@ export function EditMessage({
 }) {
   if (!editing) {
     return (
-      <div
-        data-slot="edit-message"
-        className={cn('flex w-full max-w-sm justify-end', className)}
-        {...props}>
+      <div data-slot="edit-message" className={cn('flex w-full justify-end', className)} {...props}>
         <button
           type="button"
           onClick={onStartEdit}
@@ -80,7 +77,7 @@ export function EditMessage({
   return (
     <div
       data-slot="edit-message"
-      className={cn(paper, 'flex w-full max-w-sm flex-col gap-3 rounded-[20px] p-3.5', className)}
+      className={cn(paper, 'flex w-full flex-col gap-3 rounded-[20px] p-3.5', className)}
       {...props}>
       <textarea
         value={value}
@@ -104,7 +101,7 @@ export function EditMessage({
         <button
           type="button"
           onClick={onCancel}
-          className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]">
+          className="text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]">
           {cancelLabel}
         </button>
         <button

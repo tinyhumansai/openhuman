@@ -1,172 +1,47 @@
-//! The in-process registry of running async sub-agents: registration,
-//! per-task metadata, and the terminal/transient [`DetachedSubagentStatus`] each entry
-//! carries.
+//! Host admission checks for asynchronous sub-agent spawns.
 //!
-//! Each running async sub-agent registers here (via [`register`]), keyed by
-//! its `task_id`, with:
-//! - an `Arc<RunQueue>` — the same steering channel the steering forwarder in
-//!   `run_turn_via_tinyagents_shared` drains mid-turn, so `steer_subagent` can
-//!   inject a message when no crate-native steering handle is registered;
-//! - a TinyAgents `SteeringHandle` in the process-local
-//!   `SteeringRegistry` while the child TinyAgents run is active, so
-//!   steer/collect controls can deliver directly to the crate queue;
-//! - a `watch::Receiver<DetachedSubagentStatus>` — so `wait_subagent` can block until the
-//!   child reaches a terminal status;
-//! - an `AbortHandle` — used by `subagent_cancel`/`close_subagent` paths to stop
-//!   detached work.
-//!
-//! TinyAgents owns the process-local watch/cancel/abort/steering mechanics.
-//! OpenHuman retains product metadata, durable task-store projection, and the
-//! legacy `RunQueue` steering fallback. Ownership is enforced by parent session;
-//! terminal entries are pruned on `wait` and swept at the registry soft cap.
+//! Live child jobs are owned by TinyAgents' `SubAgentJobRegistry`; OpenHuman
+//! keeps only the caller/workspace checks applied before it admits a spawn.
 
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use tinyagents_orchestration::subagent::WaitError;
 
-use tokio::sync::watch;
-use tokio::task::AbortHandle;
-
-use crate::agent::tinyagents::host::steering::shared_steering_registry;
-use tinyagents_graph::orchestration::DetachedTaskRegistry;
-use tinyagents_harness::ids::TaskId;
-use tinyagents_harness::run_queue::RunQueue;
-use tinyagents_harness::CancellationToken;
-
-use super::task_ledger::{record_spawned, task_store_for_workspace};
-use tinyagents_orchestration::subagent::{
-    spawn_status_watcher, DetachedSubagentStatus, SubagentIdentity,
-};
-
-#[derive(Clone)]
-pub(crate) struct RunningSubagentMetadata {
-    pub(crate) agent_id: String,
-    pub(crate) subagent_session_id: Option<String>,
-    pub(crate) workspace_dir: PathBuf,
-    /// Parent chat thread that spawned this sub-agent, captured at registration.
-    /// `None` for a headless spawn with no originating thread. Used to abort the
-    /// sub-agent when its parent thread is deleted (see [`super::cancel::cancel_for_thread`]).
-    pub(crate) parent_thread_id: Option<String>,
-    pub(crate) run_queue: Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>,
+/// A refused detached spawn cannot be reported as accepted work.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RegistrationError {
+    #[error("missing or mismatched tenant scope")]
+    Scope,
 }
 
-impl SubagentIdentity for RunningSubagentMetadata {
-    fn agent_id(&self) -> &str {
-        &self.agent_id
+/// Resolve the caller's profile without falling back to the operator in SaaS.
+fn caller_profile(ctx: &crate::core::runtime::DispatchCtx) -> Result<Option<String>, ()> {
+    let profile = ctx.tenant().map_err(|_| ())?.profile;
+    if crate::core::runtime::is_saas() && profile.is_none() {
+        return Err(());
     }
-    fn subagent_session_id(&self) -> Option<&str> {
-        self.subagent_session_id.as_deref()
+    Ok(profile)
+}
+
+/// Check the actual caller before any reusable-session or worker-thread write.
+pub(crate) fn admit_spawn(
+    ctx: &crate::core::runtime::DispatchCtx,
+    workspace: &std::path::Path,
+) -> Result<Option<String>, RegistrationError> {
+    admit_workspace(ctx, workspace).map_err(|_| RegistrationError::Scope)?;
+    caller_profile(ctx).map_err(|_| RegistrationError::Scope)
+}
+
+/// Durable fallback paths must stay in the caller's captured workspace.
+pub(super) fn admit_workspace(
+    ctx: &crate::core::runtime::DispatchCtx,
+    workspace: &std::path::Path,
+) -> Result<(), WaitError> {
+    if !crate::core::runtime::is_saas() {
+        return Ok(());
     }
-}
-
-/// Soft cap on registry size. Terminal entries are only swept when the table
-/// grows past this, so the common case (a handful of live sub-agents) never
-/// evicts a still-uncollected terminal result out from under a `wait`/`steer`.
-const REGISTRY_SOFT_CAP: usize = 256;
-static REGISTRY: OnceLock<DetachedTaskRegistry<RunningSubagentMetadata, DetachedSubagentStatus>> =
-    OnceLock::new();
-
-pub(crate) fn registry(
-) -> &'static DetachedTaskRegistry<RunningSubagentMetadata, DetachedSubagentStatus> {
-    REGISTRY.get_or_init(|| {
-        DetachedTaskRegistry::new(
-            shared_steering_registry().clone(),
-            REGISTRY_SOFT_CAP,
-            DetachedSubagentStatus::is_terminal,
-        )
-    })
-}
-
-/// Create the status channel a spawner threads into [`register`].
-///
-/// The spawner moves the [`watch::Sender`] into its detached task and `send`s a
-/// terminal [`DetachedSubagentStatus`] on completion. Dropping the sender (e.g. a
-/// panicked/aborted task) closes the channel, which `wait_subagent` surfaces as
-/// a failure rather than hanging.
-pub(crate) fn status_channel() -> (
-    watch::Sender<DetachedSubagentStatus>,
-    watch::Receiver<DetachedSubagentStatus>,
-) {
-    watch::channel(DetachedSubagentStatus::Running)
-}
-
-/// Register a running async sub-agent so it can be steered and waited on.
-///
-/// Call this *after* `tokio::spawn` so the [`AbortHandle`] is available; the
-/// task owns the matching [`watch::Sender`] from [`status_channel`]. Once the
-/// table passes [`REGISTRY_SOFT_CAP`], registration sweeps already-terminal
-/// entries so it stays bounded even if a parent never calls `wait_subagent`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn register(
-    task_id: String,
-    agent_id: String,
-    parent_session: String,
-    session_parent_prefix: Option<String>,
-    subagent_session_id: Option<String>,
-    workspace_dir: PathBuf,
-    parent_thread_id: Option<String>,
-    run_queue: Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>,
-    abort: AbortHandle,
-    status: watch::Receiver<DetachedSubagentStatus>,
-) {
-    if let Some(thread_id) = parent_thread_id.as_deref() {
-        if crate::agent::orchestration::background_completions::mark_stopped_task_if_thread_stopped(
-            thread_id, &task_id,
-        ) {
-            // Stop landed after the child was spawned but before this registry
-            // entry existed. The completion is tombstoned above; abort promptly
-            // so the detached work does not keep consuming resources either.
-            abort.abort();
-            log::debug!(
-                "[running_subagents] aborted late registration task_id={} thread_id={}",
-                task_id,
-                thread_id
-            );
-        }
+    caller_profile(ctx).map_err(|_| WaitError::NotOwned)?;
+    let context = ctx.resolved().ok_or(WaitError::NotOwned)?;
+    if context.workspace_dir().map_err(|_| WaitError::NotOwned)? != workspace {
+        return Err(WaitError::NotOwned);
     }
-
-    // Typed lifecycle ledger: record the spawn and mirror the child's terminal
-    // status into the store via a lightweight watcher (issue #4249). Done before
-    // the entry is moved into the map so the metadata is still in scope.
-    record_spawned(
-        &task_id,
-        &agent_id,
-        &parent_session,
-        session_parent_prefix.as_deref(),
-        subagent_session_id.as_deref(),
-        &workspace_dir,
-        parent_thread_id.as_deref(),
-    );
-    spawn_status_watcher(
-        task_store_for_workspace(&workspace_dir),
-        task_id.clone(),
-        status.clone(),
-    );
-
-    let metadata = RunningSubagentMetadata {
-        agent_id,
-        subagent_session_id,
-        workspace_dir,
-        parent_thread_id,
-        run_queue,
-    };
-    registry()
-        .register(
-            TaskId::new(task_id.clone()),
-            parent_session,
-            metadata,
-            status,
-            // Cooperative cancellation is flipped before the registry invokes
-            // the hard abort. The child executor can adopt this token without
-            // changing the registry/control API.
-            CancellationToken::new(),
-            abort,
-        )
-        .expect("duplicate detached sub-agent task id");
-    log::debug!(
-        "[running_subagents] registered task_id={} live_entries={}",
-        task_id,
-        registry()
-            .len()
-            .expect("detached task registry lock poisoned")
-    );
+    Ok(())
 }

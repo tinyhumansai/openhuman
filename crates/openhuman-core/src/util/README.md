@@ -1,34 +1,165 @@
 # util
 
-Kernel helper family. `pub mod util;` in `lib.rs` is unconditional, never
-feature-gated. Helpers reused across domains; nothing here may reach into a
-domain. No file in this directory has a `use crate::` line, and that is the
-rule: a helper that needs config, a `Tool`, a workspace, or security policy
-belongs in the domain that owns those, not here. New external crates are also
-off-limits: this is kernel surface under the `scripts/kernel-floor.limits`
-dependency ratchet, which is why `redact` is a
-six-line copy rather than an engine link.
+Small, self-contained helpers that several domains share: UTF-8-safe text
+truncation, retry with backoff for flaky filesystem operations, log
+redaction, URL normalization, JSON-RPC param decoding and the platform TLS choice for `reqwest`. `pub mod util;` in
+`lib.rs` is unconditional, so everything here is compiled in every build.
+
+## How it works
+
+There is no flow here, only a rule about direction. Domains depend on `util`;
+`util` depends on no domain. The one `use crate::` line is in
+[`params.rs`](./params.rs), which imports `Outcome`, `FieldSchema` and
+`TypeSchema` from `crate::core`, the kernel those types live in. A helper that needs a `Config`, a `Tool`, a workspace or security policy
+belongs in the domain that owns those things. Domains import LLM-facing text
+sanitization directly from `tinytools::sanitize`.
+
+```text
+  agent  memory  tools  inference  config  integrations  mcp  ...
+     \      |      |        |        |          |         /
+      +-----+------+--------+--------+----------+--------+
+                              |
+                              v
+                        crate::util            (only `crate::core` kernel types)
+                              |
+                              v
+        external crates: serde_json, url, reqwest, tokio,
+                         tracing, anyhow
+```
+
+`util` is kernel surface, so it also sits under the dependency-floor ratchet
+in `scripts/kernel-floor.limits` (checked by `scripts/check-kernel-floor.sh`).
+Adding an external crate here raises the floor of every build. That is why
+URL redaction stays here as a small logging helper.
 
 ## Layout
 
-| File | Purpose |
+| Path | What it does |
 | --- | --- |
-| `redact.rs` | `redact()`: SHA-256 to 8 hex chars for source ids, entity ids, and content paths in log lines. Same helper as `tinymemory_core::util::redact`, kept as a local copy so the host does not link the memory engine for a log formatter; the two copies never need to agree. |
-| `retry.rs` | `retry_with_backoff` / `retry_with_backoff_async` (`base_ms * 2^i` backoff, `warn!` per retry) and `is_transient_fs_error`, for Windows mandatory-locking errors (`ERROR_SHARING_VIOLATION`, `ERROR_ACCESS_DENIED`) on a tree another handle still holds. |
-| `sanitize.rs` | Pure re-export of `tinymcp_bus::sanitize` (`sanitize_for_llm`, `strip_control_chars`, `strip_instruction_fences`, `truncate_utf8_safe`, `MAX_DESCRIPTION_BYTES`, `MAX_TITLE_BYTES`) at the path callers already use. The rule lives in `tinymcp_bus` so MCP tool descriptions and the orchestrator prompt builder's skill descriptions get the same stripping; do not fork it back here. |
-| `text.rs` | `truncate_with_ellipsis` / `truncate_with_suffix` (char-count truncation), `truncate_at_byte_boundary` (byte-cap with `…`), `floor_char_boundary` / `ceil_char_boundary` / `utf8_safe_prefix_at_byte_boundary` (byte-index rounding). |
-| `types.rs` | `MaybeSet<T>`: `Set(T)` / `Unset` / `Null`, distinguishing "field absent" from "field explicitly null" in partial-update payloads (see `tools/impl/system/proxy_config.rs`). |
-| `tls/` | `tls_client_builder()`: platform-conditional TLS backend for `reqwest` clients. See [tls/README.md](tls/README.md). |
+| [`text.rs`](./text.rs) | Char-count truncation (`truncate_with_ellipsis`, `truncate_with_suffix`), byte-capped truncation with an ellipsis (`truncate_at_byte_boundary`), and byte-index rounding to a char boundary (`floor_char_boundary`, `ceil_char_boundary`, `utf8_safe_prefix_at_byte_boundary`). |
+| [`retry.rs`](./retry.rs) | `retry_with_backoff` (sync, `std::thread::sleep`) and `retry_with_backoff_async` (`tokio::time::sleep`), plus `is_transient_fs_error`. |
+| [`redact.rs`](./redact.rs) | `redact_url_for_log` replaces URL userinfo with `redacted`. |
+| [`url.rs`](./url.rs) | `normalize_api_base_url`, `normalize_backend_api_base_url`, `join_url`, `host_is_local`. |
+| [`params.rs`](./params.rs) | The shared controller-schema helpers: param decoders (`read_required`, `read_optional`, `read_optional_u32`, `type_name`, `opt_trimmed_str_arg`), outcome conversion (`to_json`, `value_to_json`, `outcome_value_to_json`), `new_correlation_id`, and the `FieldSchema` builders `json_output`, `required_string` and `optional_string`. |
+| [`types.rs`](./types.rs) | `MaybeSet<T>` (`Set`, `Unset`, `Null`). |
+| [`tls/`](tls/README.md) | `tls_client_builder()`, the platform-conditional TLS backend for `reqwest` clients. |
 
-`*_tests.rs` files sit beside each module.
+## Key types and entry points
 
-## Public surface
+### Text
 
-`mod.rs` re-exports `retry`, `text`, and `types` items at the module root, so
-`crate::util::truncate_with_ellipsis`, `crate::util::retry_with_backoff`, and
-`crate::util::MaybeSet` resolve without the submodule. `redact`,
-`sanitize`, and `tls` are reached through their submodule:
-`crate::util::redact::redact`,
-`crate::util::sanitize::sanitize_for_llm`, `crate::util::tls::tls_client_builder`.
-From outside the crate the lib is `openhuman_core`, which is the path the
-`truncate_with_ellipsis` doctest uses.
+`truncate_with_ellipsis(s, max_chars)` keeps at most `max_chars` characters
+and appends `...` when it cuts. It counts characters, not bytes, so emoji and
+CJK text never split. `truncate_at_byte_boundary` is the byte-capped
+variant used when a size limit is in bytes (log fields, telemetry payloads).
+`floor_char_boundary` and `ceil_char_boundary` round a byte index to the
+nearest valid char boundary below or above it.
+
+### Retry
+
+`retry_with_backoff(op_name, attempts, base_ms, f)` retries `f` only while
+the error is transient by `is_transient_fs_error`. Any other error returns at
+once. The sleep is `base_ms * 2^i`, capped at 30 seconds. Each retry logs a
+`warn!` (`[util] transient fs retry`), a success after retries logs `info!`,
+and the final error carries `<op_name> failed after <n> attempts` context.
+Use the async version on the tokio executor.
+
+`is_transient_fs_error` walks the `anyhow` chain for an `io::Error` and, on
+Windows, matches the mandatory-locking codes: 5 (`ERROR_ACCESS_DENIED`), 32
+(`ERROR_SHARING_VIOLATION`), 33 (`ERROR_LOCK_VIOLATION`), 303
+(`ERROR_DELETE_PENDING`), 665 (`ERROR_FILE_SYSTEM_LIMITATION`) and 1224
+(`ERROR_USER_MAPPED_FILE`). On other platforms it returns `false`, so the
+helpers run `f` once.
+
+### Redaction
+
+`redact_url_for_log(raw)` uses TinySecurity's `Endpoint` mode, which removes
+credentials, query parameters and fragments. If the module is unavailable, it
+returns the fixed suppression marker.
+
+### URLs
+
+`normalize_api_base_url` trims whitespace and trailing slashes without
+parsing. `normalize_backend_api_base_url` also strips any path, query and
+fragment, so an `api_url` set to a full inference endpoint
+(`.../openai/v1/chat/completions`) becomes a bare origin before backend
+paths are appended; it retries with `https://` for scheme-less values.
+`join_url(base, path)` joins with RFC 3986 rules, which means an absolute
+`path` replaces the base's path. Paths should start with `/`. `host_is_local`
+classifies loopback, unspecified, RFC 1918 IPv4 and `localhost` /
+`*.localhost` hosts using typed `url::Host` matching.
+
+### Params
+
+`read_required::<T>(params, key)` fails with `missing required param '<key>'`
+or `invalid '<key>': <serde error>`. `read_optional` treats an absent key and
+`null` the same (`Ok(None)`). `read_optional_u32` is the stricter variant
+whose errors name the JSON type (`invalid '<key>': expected number, got
+string`, or `invalid '<key>': expected u32`); `type_name` gives that type name.
+Domain `schemas.rs` files use these so the error wording stays one contract.
+
+`to_json(outcome)` is `Outcome::into_cli_compatible_json` (a bare value, or
+`{result, logs}` when there are logs), and `value_to_json(value)` does the
+same for a bare value. `outcome_value_to_json(outcome, err_prefix)` serializes
+`outcome.value` alone and drops the logs; its serde error is
+`"{err_prefix}{e}"`, so `mcp_clients` passes `""` and the voice controllers
+pass `"serialize error: "`. `json_output`, `required_string` and
+`optional_string` build the three common `FieldSchema`s. The hosted
+controllers in `openhuman-tinyhumans` reach the ones they use through
+`openhuman_embed::__host::util::params`.
+
+### Sanitization
+
+The stripping rule for untrusted text going into a model's context lives in
+`tinytools::sanitize`, which TinyMCP also applies to every remote MCP tool
+description. The orchestrator prompt builder and skill search call
+`tinytools::sanitize::sanitize_for_llm` directly, so skill descriptions get the
+same rule. Change it in `vendor/tinyagents/vendor/tinytools`, not here.
+
+### `MaybeSet`
+
+`MaybeSet<T>` tells "field absent" (`Unset`) apart from "field explicitly
+null" (`Null`) in partial-update payloads. The caller today is
+`tools/impl/system/proxy_config.rs`.
+
+### Re-exports
+
+[`mod.rs`](./mod.rs) re-exports `read_optional`, `read_required`, `redact_url_for_log`,
+the `retry` functions, the `text` functions and `MaybeSet` at the module root,
+so `crate::util::truncate_with_ellipsis` works without naming the submodule.
+`url::*` and `tls::tls_client_builder` are
+reached through their submodule path. From outside the crate the library name
+is `openhuman_core`, which is the path the `truncate_with_ellipsis` doctest
+uses.
+
+## Boundaries
+
+- The sanitization rule is owned by `tinymcp_bus` (`vendor/tinymcp`).
+- Hosted-backend URL resolution (defaults, `BACKEND_URL` overrides) belongs
+  to `crates/openhuman-tinyhumans`, which publishes the result on
+  `Config.resolved_endpoints` (`config::register_enricher`). [`url.rs`](./url.rs) only does string and URL shape work.
+- Secret scrubbing for logs and Sentry lives in `core::log_redaction` and
+  `core::observability`.
+
+## Gotchas
+
+- Do not add `use crate::` here beyond the `crate::core` kernel types in
+  `params.rs`. If a helper needs domain types, it belongs in that domain.
+- Do not add external dependencies casually. The kernel-floor ratchet only
+  goes down, and raising it needs a written justification.
+- `retry_with_backoff` blocks the thread while it sleeps. Call
+  `retry_with_backoff_async` from async code.
+- `join_url` with a relative `path` (no leading slash) drops the base's last
+  segment, which is almost never what an API client wants.
+
+## Tests
+
+Tests sit beside each file ([`text_tests.rs`](./text_tests.rs), [`retry_tests.rs`](./retry_tests.rs),
+[`url_tests.rs`](./url_tests.rs), [`params_tests.rs`](./params_tests.rs)). Run them with
+`cargo test -p openhuman util::` or `pnpm debug rust util::`. The
+`truncate_with_ellipsis` doctest runs under `cargo test -p openhuman --doc`.
+
+## Further reading
+
+- [Architecture overview](../../../../docs/gitbooks/en/developing/architecture.md)
+- [Testing strategy](../../../../docs/gitbooks/en/developing/testing-strategy.md)

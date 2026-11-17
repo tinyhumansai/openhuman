@@ -275,14 +275,6 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
           disabled={settings === null}
           onChange={v => void patch({ html_enabled: v })}
         />
-        <ToggleRow
-          id="tj-ml-enabled"
-          label={t('settings.tokenUsage.ml')}
-          description={t('settings.tokenUsage.mlDesc')}
-          checked={settings?.ml_compression_enabled ?? false}
-          disabled={settings === null}
-          onChange={v => void patch({ ml_compression_enabled: v })}
-        />
       </Card>
 
       {/* ── CCR cache ──────────────────────────────────────────────────── */}

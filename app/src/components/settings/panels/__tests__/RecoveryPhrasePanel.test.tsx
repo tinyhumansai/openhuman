@@ -9,12 +9,15 @@ import RecoveryPhrasePanel from '../RecoveryPhrasePanel';
 const {
   mockGenerateMnemonicPhrase,
   mockFetchWalletStatus,
+  mockValidateRecoveryPhrase,
   mockPersistLocalWalletFromMnemonic,
   mockRevealRecoveryPhrase,
 } = vi.hoisted(() => ({
-  mockGenerateMnemonicPhrase: vi.fn(
-    () => 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12'
-  ),
+  mockGenerateMnemonicPhrase: vi.fn<() => string | { phrase: string; wordCount: number }>(() => ({
+    phrase: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+    wordCount: 12,
+  })),
+  mockValidateRecoveryPhrase: vi.fn(async () => true),
   mockFetchWalletStatus: vi.fn(
     async (): Promise<WalletStatus> => ({
       configured: false,
@@ -36,11 +39,6 @@ const {
   })),
 }));
 
-vi.mock('../../../../utils/cryptoKeys', async importOriginal => {
-  const original = await importOriginal<typeof import('../../../../utils/cryptoKeys')>();
-  return { ...original, generateMnemonicPhrase: mockGenerateMnemonicPhrase };
-});
-
 vi.mock('../../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
     snapshot: { currentUser: { _id: 'test-user-id' } },
@@ -51,6 +49,11 @@ vi.mock('../../../../providers/CoreStateProvider', () => ({
 // Default: no existing wallet. Individual describe blocks override in beforeEach.
 vi.mock('../../../../services/walletApi', () => ({
   fetchWalletStatus: mockFetchWalletStatus,
+  generateRecoveryPhrase: async () => {
+    const generated = await mockGenerateMnemonicPhrase();
+    return typeof generated === 'string' ? { phrase: generated, wordCount: 12 } : generated;
+  },
+  validateRecoveryPhrase: mockValidateRecoveryPhrase,
   setupLocalWallet: vi.fn(async () => ({
     configured: true,
     onboardingCompleted: true,
@@ -160,7 +163,7 @@ describe('RecoveryPhrasePanel — mode-switch state reset', () => {
     expect(screen.queryByRole('checkbox')).toBeNull();
 
     fireEvent.click(screen.getByText(/Create a New Wallet/i));
-    const regeneratedCheckbox = screen.getByRole('checkbox');
+    const regeneratedCheckbox = await screen.findByRole('checkbox');
     expect(regeneratedCheckbox).not.toBeChecked();
   });
 
@@ -171,7 +174,7 @@ describe('RecoveryPhrasePanel — mode-switch state reset', () => {
     expect(screen.getByText(/Enter your recovery phrase below/i)).toBeTruthy();
 
     fireEvent.click(screen.getByText(/Create a New Wallet/i));
-    expect(screen.getByText(/can never be recovered if lost/i)).toBeTruthy();
+    expect(await screen.findByText(/can never be recovered if lost/i)).toBeTruthy();
   });
 });
 
@@ -603,6 +606,7 @@ describe('RecoveryPhrasePanel — import mode word inputs and valid/invalid styl
 
   // Covers lines 640 (importValid===false invalid border), 638, and 707 (error alert).
   it('clicking Save with an invalid phrase shows the error alert (line 707)', async () => {
+    mockValidateRecoveryPhrase.mockResolvedValueOnce(false);
     renderWithProviders(<RecoveryPhrasePanel />);
     await waitFor(() => screen.getByText(/I already have a recovery phrase/i));
 
@@ -627,6 +631,14 @@ describe('RecoveryPhrasePanel — import mode word inputs and valid/invalid styl
 
   // Covers line 650 (importValid===true banner), line 640 (sage border on valid inputs).
   it('filling a valid BIP39 phrase and saving shows the valid-phrase banner then persists', async () => {
+    let finishPersist!: () => void;
+    mockPersistLocalWalletFromMnemonic.mockImplementationOnce(
+      () =>
+        new Promise<undefined>(resolve => {
+          finishPersist = () => resolve(undefined);
+        })
+    );
+
     renderWithProviders(<RecoveryPhrasePanel />);
     await waitFor(() => screen.getByText(/I already have a recovery phrase/i));
 
@@ -651,6 +663,8 @@ describe('RecoveryPhrasePanel — import mode word inputs and valid/invalid styl
     const callArgs = mockPersistLocalWalletFromMnemonic.mock.calls[0][0];
     expect(callArgs.mnemonic).toBe(VALID_12_WORDS.join(' '));
     expect(callArgs.source).toBe('imported');
+    finishPersist();
+    await waitFor(() => expect(screen.queryByText(/Recovery phrase saved/i)).toBeTruthy());
   });
 
   // Covers line 608 (handleWordCountChange via the word-count toggle buttons).

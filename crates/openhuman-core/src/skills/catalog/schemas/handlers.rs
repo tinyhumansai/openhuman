@@ -1,15 +1,18 @@
 //! RPC handler functions for `openhuman.skill_registry_*` controllers.
 
+use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::ControllerFuture;
 use crate::core::Outcome;
 use crate::skills::catalog::ops;
+use crate::skills::ops_install::ScanAcknowledgement;
 
 use super::controller_schemas::all_skill_registry_controller_schemas;
 use super::wire_types::{
-    BrowseParams, BrowseResult, CategoriesResult, InstallParams, InstallResult, SchemasResult,
-    SearchParams, SearchResult, SourcesResult, UninstallParams, UninstallResult,
+    CatalogParams, CatalogResult, CategoriesResult, EntryParams, InstallParams, InstallResult,
+    SchemasResult, SourcesResult, UninstallParams, UninstallResult,
 };
 
 fn deserialize_params<T: serde::de::DeserializeOwned>(
@@ -18,82 +21,110 @@ fn deserialize_params<T: serde::de::DeserializeOwned>(
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
 }
 
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
+fn registry_error(error: tinyskills::RegistryError) -> String {
+    ops::registry_error_message(&error)
 }
 
-pub(super) fn handle_browse(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<BrowseParams>(params)?;
-        tracing::debug!(
-            force_refresh = p.force_refresh,
-            "[skill_registry][rpc] browse"
-        );
-        let entries = ops::browse_catalog(p.force_refresh).await?;
-        tracing::debug!(count = entries.len(), "[skill_registry][rpc] browse result");
-        to_json(Outcome::new(BrowseResult { entries }, Vec::new()))
-    })
+async fn catalog(method: &'static str, params: Map<String, Value>) -> Result<Value, String> {
+    let query = deserialize_params::<CatalogParams>(params)?.into_query();
+    tracing::debug!(
+        method,
+        text = %query.text,
+        upstreams = ?query.upstreams,
+        categories = ?query.categories,
+        page = ?query.page,
+        page_size = ?query.page_size,
+        force_refresh = query.force_refresh,
+        "[skill_registry][rpc] catalog read"
+    );
+    let page: CatalogResult = ops::catalog_page(&query).await.map_err(registry_error)?;
+    tracing::debug!(
+        method,
+        total = page.total,
+        returned = page.entries.len(),
+        freshness = ?page.freshness,
+        "[skill_registry][rpc] catalog result"
+    );
+    to_json(Outcome::new(page, Vec::new()))
 }
 
-pub(super) fn handle_search(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<SearchParams>(params)?;
-        tracing::debug!(
-            query = %p.query,
-            source = ?p.source,
-            category = ?p.category,
-            "[skill_registry][rpc] search"
-        );
-        let entries =
-            ops::search_catalog(&p.query, p.source.as_deref(), p.category.as_deref()).await?;
-        tracing::debug!(count = entries.len(), "[skill_registry][rpc] search result");
-        to_json(Outcome::new(SearchResult { entries }, Vec::new()))
-    })
+pub(super) fn handle_browse(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(catalog("browse", params))
 }
 
-pub(super) fn handle_sources(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let _ = params;
-        let sources = ops::list_sources().await?;
-        to_json(Outcome::new(SourcesResult { sources }, Vec::new()))
-    })
+pub(super) fn handle_search(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(catalog("search", params))
 }
 
-pub(super) fn handle_categories(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_sources(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let _ = params;
-        let categories = ops::list_categories().await?;
-        to_json(Outcome::new(CategoriesResult { categories }, Vec::new()))
-    })
-}
-
-pub(super) fn handle_install(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<InstallParams>(params)?;
-        tracing::info!(
-            entry_id = %p.entry_id,
-            "[skill_registry][rpc] install"
-        );
-
-        let catalog = ops::browse_catalog(false).await?;
-        let entry = ops::find_catalog_entry(&catalog, &p.entry_id)?;
-
-        let workspace = crate::skills::schemas::resolve_workspace_dir().await;
-        let outcome = ops::install_from_catalog(&workspace, entry).await?;
-
+        let facets = ops::catalog_facets().await.map_err(registry_error)?;
         to_json(Outcome::new(
-            InstallResult {
-                url: outcome.url,
-                stdout: outcome.stdout,
-                stderr: outcome.stderr,
-                new_skills: outcome.new_skills,
+            SourcesResult {
+                sources: facets.upstreams.iter().map(|f| f.value.clone()).collect(),
+                facets: facets.upstreams,
+                freshness: facets.freshness,
             },
             Vec::new(),
         ))
     })
 }
 
-pub(super) fn handle_schemas(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_categories(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let _ = params;
+        let facets = ops::catalog_facets().await.map_err(registry_error)?;
+        to_json(Outcome::new(
+            CategoriesResult {
+                categories: facets.categories.iter().map(|f| f.value.clone()).collect(),
+                facets: facets.categories,
+                freshness: facets.freshness,
+            },
+            Vec::new(),
+        ))
+    })
+}
+
+pub(super) fn handle_detail(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<EntryParams>(params)?;
+        tracing::debug!(entry_id = %p.entry_id, "[skill_registry][rpc] detail");
+        let detail = ops::catalog_detail(&p.entry_id)
+            .await
+            .map_err(registry_error)?;
+        to_json(Outcome::new(detail, Vec::new()))
+    })
+}
+
+pub(super) fn handle_install(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<InstallParams>(params)?;
+        tracing::info!(
+            entry_id = %p.entry_id,
+            acknowledged = p.acknowledged_digest.is_some(),
+            "[skill_registry][rpc] install"
+        );
+
+        let workspace = crate::skills::schemas::resolve_workspace_dir().await;
+        let outcome: InstallResult = ops::install_from_catalog(
+            &workspace,
+            &p.entry_id,
+            ScanAcknowledgement::from_user_digest(p.acknowledged_digest.clone()),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        tracing::info!(
+            entry_id = %p.entry_id,
+            status = outcome.status(),
+            "[skill_registry][rpc] install result"
+        );
+
+        to_json(Outcome::new(outcome, Vec::new()))
+    })
+}
+
+pub(super) fn handle_schemas(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let _ = params;
         to_json(Outcome::new(
@@ -105,7 +136,7 @@ pub(super) fn handle_schemas(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn handle_uninstall(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_uninstall(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<UninstallParams>(params)?;
         tracing::info!(

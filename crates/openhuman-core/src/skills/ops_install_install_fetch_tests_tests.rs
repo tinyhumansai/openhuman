@@ -38,6 +38,7 @@ async fn non_2xx_install_fetch_returns_err_for_4xx_and_5xx() {
             },
             None,
             true,
+            crate::skills::ops_install::ScanAcknowledgement::Absent,
         )
         .await
         .expect_err("a non-2xx fetch must return Err so the UI surfaces it");

@@ -11,6 +11,7 @@
 //! mutators — `add`, `update`, `remove` — change ingestion behaviour and
 //! cascade history, so they ship default-OFF via `tools/user_filter.rs`.
 
+use crate::util::params::opt_trimmed_str_arg;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -33,14 +34,6 @@ fn read_required_str(args: &serde_json::Value, key: &str) -> anyhow::Result<Stri
 
 fn opt_u64(args: &serde_json::Value, key: &str) -> Option<u64> {
     args.get(key).and_then(serde_json::Value::as_u64)
-}
-
-fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
-    args.get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
 }
 
 fn parse_provider(args: &serde_json::Value) -> anyhow::Result<ProviderSlug> {
@@ -181,9 +174,23 @@ impl Tool for TaskSourceFetchTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][task_sources] fetch invoked");
         let id = read_required_str(&args, "id")?;
-        emit!(ops::fetch(&self.config, &id).await, "task_source_fetch")
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
+        emit!(
+            ops::fetch(&ctx, &self.config, &id).await,
+            "task_source_fetch"
+        )
     }
 }
 
@@ -283,7 +290,7 @@ impl Tool for TaskSourcePreviewFilterTool {
         log::debug!("[tool][task_sources] preview_filter invoked");
         let provider = parse_provider(&args)?;
         let filter = parse_filter(&args)?;
-        let connection_id = opt_str(&args, "connection_id");
+        let connection_id = opt_trimmed_str_arg(&args, "connection_id");
         let max = opt_u64(&args, "max").map(|v| v as u32);
         emit!(
             ops::preview_filter(&self.config, provider, filter, connection_id, max).await,
@@ -390,8 +397,8 @@ impl Tool for TaskSourceAddTool {
             ops::add(
                 &self.config,
                 provider,
-                opt_str(&args, "connection_id"),
-                opt_str(&args, "name"),
+                opt_trimmed_str_arg(&args, "connection_id"),
+                opt_trimmed_str_arg(&args, "name"),
                 filter,
                 opt_u64(&args, "interval_secs"),
                 target,
@@ -499,6 +506,38 @@ impl Tool for TaskSourceRemoveTool {
         let id = read_required_str(&args, "id")?;
         emit!(ops::remove(&self.config, &id).await, "task_source_remove")
     }
+}
+
+/// Build this domain's tools in their persisted catalogue order.
+/// The domain's agent tools: none while no provider can fetch
+/// ([`super::types::any_provider_can_fetch`]).
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    registered_tools_when(config, super::types::any_provider_can_fetch())
+}
+
+/// [`registered_tools`] with the fetch gate as a parameter, so tests can flip
+/// it without a provider gaining a real fetch.
+fn registered_tools_when(
+    config: std::sync::Arc<crate::config::Config>,
+    fetchable: bool,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    if !fetchable {
+        tracing::debug!("[task_sources:tools] no provider can fetch tasks; tools not registered");
+        return Vec::new();
+    }
+    vec![
+        Box::new(TaskSourceListTool::new(config.clone())),
+        Box::new(TaskSourceGetTool::new(config.clone())),
+        Box::new(TaskSourceFetchTool::new(config.clone())),
+        Box::new(TaskSourceListTasksTool::new(config.clone())),
+        Box::new(TaskSourcePreviewFilterTool::new(config.clone())),
+        Box::new(TaskSourceStatusTool::new(config.clone())),
+        Box::new(TaskSourceAddTool::new(config.clone())),
+        Box::new(TaskSourceUpdateTool::new(config.clone())),
+        Box::new(TaskSourceRemoveTool::new(config.clone())),
+    ]
 }
 
 #[cfg(test)]

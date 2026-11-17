@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
-import { bootAuthenticatedPage, callCoreRpc, waitForAppReady } from '../helpers/core-rpc';
+import { bootRuntimeReadyGuestPage, callCoreRpc, waitForAppReady } from '../helpers/core-rpc';
 
 /**
  * The "what leaves my computer" sheet, driven in a real browser.
@@ -27,8 +27,8 @@ import { bootAuthenticatedPage, callCoreRpc, waitForAppReady } from '../helpers/
  * the description wiring alongside whatever else it drives, so that each one
  * fails if the rewrite is reverted rather than merely re-passing.
  *
- * The sheet is reachable from exactly one place — `WelcomeStep.tsx:28`, the
- * onboarding welcome step — so these boot into onboarding rather than settings.
+ * The sheet is reachable during provider setup in local onboarding, so these
+ * boot into that step rather than the managed-session chat shell.
  */
 
 const HEADLINE = 'Local by default. Cloud when you ask.';
@@ -36,14 +36,25 @@ const SUBHEAD = "For full transparency, here's exactly what does, and when.";
 const TRIGGER = 'What leaves my computer?';
 
 async function bootIntoOnboardingWelcome(page: Page, userId: string): Promise<void> {
-  await bootAuthenticatedPage(page, userId, '/home');
+  await bootRuntimeReadyGuestPage(page);
+  const payload = Buffer.from(
+    JSON.stringify({ sub: userId, userId, exp: Math.floor(Date.now() / 1000) + 3600 })
+  ).toString('base64url');
+  await callCoreRpc('openhuman.auth_store_session', {
+    token: `eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.${payload}.local`,
+    userId,
+    user: { _id: 'local', id: 'local', name: 'Local User', email: 'local@openhuman.local' },
+  });
   await callCoreRpc('openhuman.config_set_onboarding_completed', { value: false });
-  await page.goto('/#/onboarding/welcome');
+  await page.goto('/#/onboarding/custom/inference');
+  await page.reload();
   await waitForAppReady(page);
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 20_000 })
-    .toMatch(/^#\/onboarding/);
-  await expect(page.getByTestId('onboarding-welcome-step')).toBeVisible({ timeout: 20_000 });
+    .toMatch(/^#\/onboarding\/custom\/inference/);
+  await expect(page.getByTestId('onboarding-custom-inference-step')).toBeVisible({
+    timeout: 20_000,
+  });
 }
 
 const sheet = (page: Page) => page.getByRole('dialog');
@@ -90,7 +101,7 @@ test.describe('Privacy — the "what leaves my computer" sheet', () => {
     // library swap loses quietly.
     await page.keyboard.press('Escape');
     await expect(sheet(page)).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.getByTestId('onboarding-welcome-step')).toBeVisible();
+    await expect(page.getByTestId('onboarding-custom-inference-step')).toBeVisible();
   });
 
   test('clicking the overlay outside the panel closes it', async ({ page }) => {
@@ -101,6 +112,6 @@ test.describe('Privacy — the "what leaves my computer" sheet', () => {
     // and capped at `max-w-lg`.
     await page.mouse.click(5, 5);
     await expect(sheet(page)).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.getByTestId('onboarding-welcome-step')).toBeVisible();
+    await expect(page.getByTestId('onboarding-custom-inference-step')).toBeVisible();
   });
 });

@@ -1,15 +1,23 @@
 //! Agent-facing browser backed by the TinyComputer module's browser and task members.
+#[path = "browser_capture.rs"]
+mod capture;
 #[path = "browser_lifecycle.rs"]
 mod cleanup;
+#[path = "browser_keychain.rs"]
+mod keychain;
+#[path = "browser_offsite.rs"]
+mod offsite;
 #[path = "browser_pending.rs"]
 mod pending;
 #[path = "browser_session_pool.rs"]
 mod session_pool;
 #[path = "browser_task_actions.rs"]
 mod task_actions;
+#[path = "browser_unattended.rs"]
+mod unattended;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::modules::browser::BrowserClient;
 use crate::security::approval::{ApprovalGate, GateOutcome};
-use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use pending::{approval_target, needs_host_confirmation, Pending};
 use serde_json::{json, Value};
@@ -26,7 +34,9 @@ use std::{
     sync::{Arc, Mutex as StdMutex},
     time::Instant,
 };
-use task_actions::{approve_task_action, host_hint, parse_action, required, task_inputs};
+use task_actions::{
+    approve_task_action, direct_action, host_hint, required, task_inputs, task_outcome,
+};
 use tinycomputer_bus::agent::{ContinueTaskRequest, TaskId, TaskStatus, TaskView};
 use tinycomputer_bus::browser::{
     Action, DownloadState, DownloadWaitRequest, NavigateRequest, ReadRequest, SessionId,
@@ -40,8 +50,16 @@ async fn approve_browser_action(
     session: &SessionId,
     action: &Action,
     force: bool,
+    origin: Option<&AgentTurnOrigin>,
 ) -> anyhow::Result<()> {
     if !force && !needs_host_confirmation(action) {
+        return Ok(());
+    }
+    let action_json = serde_json::to_value(action)?;
+    let kind = action_json["action"].as_str().unwrap_or("action");
+    // Nobody waits on an unattended approval, so the page needs no binding.
+    let action_digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&action_json)?));
+    if unattended::allow(origin, &client.config().browser, kind, &action_digest) {
         return Ok(());
     }
     let gate = ApprovalGate::try_global().ok_or_else(|| {
@@ -56,8 +74,6 @@ async fn approve_browser_action(
             },
         )
         .await?;
-    let action_json = serde_json::to_value(action)?;
-    let kind = action_json["action"].as_str().unwrap_or("action");
     let origin = reqwest::Url::parse(&before.url)
         .ok()
         .map(|url| url.origin().ascii_serialization())
@@ -69,7 +85,7 @@ async fn approve_browser_action(
     let input_detail = match action {
         Action::Fill { value, .. } => format!(" ({} input characters)", value.chars().count()),
         Action::Type { text, .. } => format!(" ({} input characters)", text.chars().count()),
-        Action::Press { key } => format!(" ({key})"),
+        Action::Press { key, .. } => format!(" ({key})"),
         _ => String::new(),
     };
     let digest_hex = format!("{digest:x}");
@@ -101,32 +117,31 @@ async fn approve_browser_action(
 }
 
 pub struct BrowserTool {
-    security: Arc<SecurityPolicy>,
     client: Arc<BrowserClient>,
     session: Mutex<Option<SessionId>>,
     bound_origin: Mutex<Option<String>>,
     pending: Mutex<Option<Pending>>,
     thread_key: StdMutex<Option<String>>,
     max_steps: usize,
+    /// Set once this tool typed a keychain password: from then on it takes
+    /// no picture at all (`capture`), whatever the page seems to show.
+    password_typed: std::sync::atomic::AtomicBool,
 }
 
 impl BrowserTool {
-    pub fn new(
-        security: Arc<SecurityPolicy>,
-        client: Arc<BrowserClient>,
-        max_steps: usize,
-    ) -> Self {
+    pub fn new(client: Arc<BrowserClient>, max_steps: usize) -> Self {
         Self {
-            security,
             client,
             session: Mutex::new(None),
             bound_origin: Mutex::new(None),
             pending: Mutex::new(None),
             thread_key: StdMutex::new(None),
             max_steps: max_steps.clamp(1, 100),
+            password_typed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
+    #[cfg(test)]
     async fn session(&self) -> anyhow::Result<SessionId> {
         self.session_for_url(None).await
     }
@@ -161,6 +176,10 @@ impl BrowserTool {
             }
             if let Some(value) = sessions.get_mut(&key) {
                 value.last_used = now;
+                if value.password_typed {
+                    self.password_typed
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 *held = Some(value.id.clone());
                 *bound = value.bound_origin.clone();
                 return Ok(value.id.clone());
@@ -182,6 +201,7 @@ impl BrowserTool {
                     last_used: now,
                     config_fingerprint,
                     bound_origin: requested_origin.clone(),
+                    password_typed: false,
                 },
             );
             *held = Some(id.clone());
@@ -215,8 +235,54 @@ impl BrowserTool {
         })
     }
 
+    /// Marks this tool, and the pooled session it holds for its
+    /// conversation, as having typed a keychain password.
+    async fn mark_password_typed(&self) {
+        self.password_typed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let thread_key = self.thread_key.lock().ok().and_then(|key| key.clone());
+        if let Some(key) = thread_key {
+            if let Some(entry) = thread_sessions().lock().await.get_mut(&key) {
+                entry.password_typed = true;
+            }
+        }
+    }
+
+    /// A picture of the page for the host's sinks, unless this tool typed a
+    /// keychain password: such a session is never pictured again, since no
+    /// scan of a page can prove a password is not drawn somewhere in it.
+    async fn capture(&self, id: &SessionId, after: &str) {
+        if self
+            .password_typed
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tracing::debug!(
+                after,
+                "[browser-capture] skipped: this session typed a keychain password"
+            );
+            return;
+        }
+        capture::capture(&self.client, id, after).await;
+    }
+
     async fn close(&self) -> anyhow::Result<Value> {
         let thread_key = self.thread_key.lock().ok().and_then(|key| key.clone());
+        // The last picture, taken while the session is still owned here, so a
+        // call cancelled during it leaves the session to the next close.
+        let showing = match self.session.lock().await.clone() {
+            Some(id) => Some(id),
+            None => match thread_key.as_ref() {
+                Some(key) => thread_sessions()
+                    .lock()
+                    .await
+                    .get(key)
+                    .map(|entry| entry.id.clone()),
+                None => None,
+            },
+        };
+        if let Some(id) = showing {
+            self.capture(&id, "close").await;
+        }
         let mut held = self.session.lock().await;
         *self.bound_origin.lock().await = None;
         *self.pending.lock().await = None;
@@ -243,6 +309,9 @@ impl BrowserTool {
 
     async fn task(&self, args: &Value) -> anyhow::Result<Value> {
         let mut goal = required(args, "goal")?.to_owned();
+        let site = args["url"]
+            .as_str()
+            .and_then(crate::modules::site_memory_host::site_of);
         let origins = match args["url"].as_str().filter(|url| !url.trim().is_empty()) {
             Some(url) => {
                 self.client.check_url(url)?;
@@ -267,7 +336,18 @@ impl BrowserTool {
             origins,
             max_actions: u32::try_from(self.max_steps).unwrap_or(u32::MAX),
             flow,
+            site,
         };
+        // The browser this conversation keeps open holds the persistent
+        // profile, which the task's own browser needs: it is let go first.
+        if self.client.config().browser.profile_mode == "persistent" {
+            if let Err(error) = self.close().await {
+                tracing::debug!(
+                    error = %error,
+                    "[tool.browser] could not close this conversation's browser before a task"
+                );
+            }
+        }
         let view = crate::modules::browser_task::start(self.client.config(), &task)
             .await
             .map_err(anyhow::Error::msg)?;
@@ -307,11 +387,18 @@ impl BrowserTool {
         Ok(serde_json::to_value(view)?)
     }
 
-    /// Report a task view; a `needs_approval` pause is held with a one-use
-    /// token that only `confirm_pending` (through the host gate) can spend.
+    /// Report a task view as the tool's outcome ([`task_outcome`]): a task
+    /// that failed or was cancelled under the caller is an error.
     async fn report(&self, view: TaskView) -> anyhow::Result<Value> {
-        let mut output = serde_json::to_value(&view)?;
-        if let Some(hint) = host_hint(&view) {
+        let output = self.describe(&view).await?;
+        task_outcome(&view, output)
+    }
+
+    /// Render a task view; a `needs_approval` pause is held with a one-use
+    /// token that only `confirm_pending` (through the host gate) can spend.
+    async fn describe(&self, view: &TaskView) -> anyhow::Result<Value> {
+        let mut output = serde_json::to_value(view)?;
+        if let Some(hint) = host_hint(view) {
             output["host_hint"] = json!(hint);
         }
         if let TaskStatus::NeedsApproval { action, target, .. } = &view.status {
@@ -330,7 +417,11 @@ impl BrowserTool {
         Ok(output)
     }
 
-    async fn confirm_pending(&self, args: &Value) -> anyhow::Result<Value> {
+    async fn confirm_pending(
+        &self,
+        args: &Value,
+        origin: Option<&AgentTurnOrigin>,
+    ) -> anyhow::Result<Value> {
         let mut slot = self.pending.lock().await;
         let held = slot
             .as_ref()
@@ -340,7 +431,7 @@ impl BrowserTool {
         }
         let pending = slot.take().expect("pending checked above");
         drop(slot);
-        let approved = approve_task_action(&pending).await?;
+        let approved = approve_task_action(&pending, &self.client.config().browser, origin).await?;
         let view = crate::modules::browser_task::resume(
             self.client.config(),
             ContinueTaskRequest {
@@ -351,20 +442,22 @@ impl BrowserTool {
         )
         .await
         .map_err(anyhow::Error::msg)?;
-        let mut output = self.report(view).await?;
+        let mut output = self.describe(&view).await?;
         if !approved {
             output["approval"] = json!("denied by the host");
         }
-        Ok(output)
+        task_outcome(&view, output)
     }
 
-    async fn run(&self, args: &Value) -> anyhow::Result<Value> {
+    /// `origin` is the turn this call runs under; it decides only whether an
+    /// allow-listed action may skip the forced approval gate.
+    async fn run(&self, args: &Value, origin: Option<&AgentTurnOrigin>) -> anyhow::Result<Value> {
         let verb = required(args, "action")?;
         if verb == "close" {
             return self.close().await;
         }
         match verb {
-            "confirm_pending" => return self.confirm_pending(args).await,
+            "confirm_pending" => return self.confirm_pending(args, origin).await,
             "task" => return self.task(args).await,
             "task_continue" => return self.task_continue(args).await,
             "task_cancel" => return self.task_cancel(args).await,
@@ -376,11 +469,22 @@ impl BrowserTool {
         };
         let id = self.session_for_url(starting_url).await?;
         match verb {
-            "open" => Ok(serde_json::to_value(
-                self.client
+            "open" => {
+                let page = match self
+                    .client
                     .navigate(&id, NavigateRequest::new(required(args, "url")?))
-                    .await?,
-            )?),
+                    .await
+                {
+                    Ok(page) => page,
+                    // A redirect to another site: say where, never fail the turn.
+                    Err(error) => match offsite::left_for(&error) {
+                        Some(url) => return Ok(offsite::left_reply("open", &url)),
+                        None => return Err(error.into()),
+                    },
+                };
+                self.capture(&id, "open").await;
+                Ok(serde_json::to_value(page)?)
+            }
             "snapshot" => Ok(serde_json::to_value(
                 self.client
                     .snapshot(
@@ -450,15 +554,53 @@ impl BrowserTool {
                 Ok(serde_json::to_value(d)?)
             }
             _ => {
-                let action = parse_action(args)?;
-                approve_browser_action(&self.client, &id, &action, false).await?;
-                Ok(serde_json::to_value(
-                    self.client.perform(&id, action).await?,
-                )?)
+                let mut action = direct_action(args)?;
+                // The gate sees the placeholder, never the password.
+                approve_browser_action(&self.client, &id, &action, false, origin).await?;
+                let kind = serde_json::to_value(&action)?["action"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let secret = keychain::substitute(&self.client, &id, &mut action).await?;
+                if secret.is_some() {
+                    // Before the password goes out: a call cancelled while
+                    // it is being typed still leaves the session unpictured.
+                    self.mark_password_typed().await;
+                }
+                let done = self.client.perform(&id, action).await;
+                if secret.is_none() && done.is_ok() && capture::follows(&kind) {
+                    self.capture(&id, &kind).await;
+                }
+                if let Err(error) = &done {
+                    if let Some(url) = offsite::left_for(error) {
+                        let reply = offsite::left_reply(&kind, &url);
+                        return Ok(match &secret {
+                            Some(secret) => keychain::redact_value(reply, secret),
+                            None => reply,
+                        });
+                    }
+                }
+                match secret {
+                    None => Ok(serde_json::to_value(done?)?),
+                    Some(secret) => match done {
+                        Ok(outcome) => Ok(keychain::redact_value(
+                            serde_json::to_value(outcome)?,
+                            &secret,
+                        )),
+                        Err(error) => Err(anyhow::anyhow!(keychain::redact(
+                            &error.to_string(),
+                            &secret
+                        ))),
+                    },
+                }
             }
         }
     }
 }
+
+/// The browser tool's deadline: the approval gate's ten-minute park plus two
+/// minutes for the action itself. See `BrowserTool::timeout_policy`.
+pub(crate) const BROWSER_TOOL_TIMEOUT_MS: u64 = 12 * 60 * 1000;
 
 #[async_trait]
 impl Tool for BrowserTool {
@@ -479,7 +621,8 @@ impl Tool for BrowserTool {
             "input values; TinyComputer runs it in its own browser session, and a failed step is ",
             "handed to its rescue model before the task fails. The reply's status says what it needs: ",
             "running (call task_continue with task_id to keep following it), needs_input (task_continue ",
-            "with inputs), needs_human (ask the user, then task_continue with answer=done), needs_approval ",
+            "with inputs), needs_human (TinyComputer already tried any captcha it could; ask the user, ",
+            "then task_continue with answer=done), needs_approval ",
             "(returns a pending token; use confirm_pending only through the host approval mechanism), ",
             "checkpoint (always before payment), done, or failed with a hint. task_cancel stops it. ",
             "Direct consequential clicks and key presses also require host approval. For downloads, inspect list_downloads and call wait_download; ",
@@ -489,10 +632,15 @@ impl Tool for BrowserTool {
         )
     }
     fn parameters_schema(&self) -> Value {
-        json!({"type":"object","properties":{
-        "action":{"type":"string","enum":["open","snapshot","read_page","click","fill","type","get_text","get_title","get_url","wait","press","hover","scroll","is_visible","find","task","task_continue","task_cancel","confirm_pending","list_downloads","wait_download","close"]},
-        "url":{"type":"string","description":"Starting HTTPS URL for open or an optional starting URL for task"},"selector":{"type":"string"},"value":{"type":"string"},"text":{"type":"string"},"key":{"type":"string"},"direction":{"type":"string"},"pixels":{"type":"integer"},"ms":{"type":"integer"},"timeout_ms":{"type":"integer"},"interactive_only":{"type":"boolean"},"compact":{"type":"boolean"},"depth":{"type":"integer"},"by":{"type":"string"},"find_action":{"type":"string"},"fill_value":{"type":"string"},"goal":{"type":"string"},"inputs":{"type":"object","additionalProperties":{"type":"string"}},"task_id":{"type":"string","description":"Task id returned by task, for task_continue and task_cancel"},"flow":{"type":"object","description":"Optional TinyComputer flow ({app, vars, steps}) to run instead of planning one from goal, e.g. a plan saved from an earlier successful run"},"answer":{"type":"string","description":"Free-text answer for a paused task; done after a needs_human pause"},"token":{"type":"string","description":"Token returned with the exact pending action"}
-    },"required":["action"]})
+        tinycomputer_bus::browser::tool::parameters_schema()
+    }
+    /// Direct consequential actions park on the approval gate *inside*
+    /// `execute` (`intercept_forced`), which waits up to the gate's TTL. The
+    /// inherited 120s per-tool deadline would cut that park long before the
+    /// user can answer, so the browser carries its own budget: the longest
+    /// park plus time for the action itself.
+    fn timeout_policy(&self, _args: &Value) -> tinytools::ToolTimeout {
+        tinytools::ToolTimeout::Millis(BROWSER_TOOL_TIMEOUT_MS)
     }
     fn external_effect_with_args(&self, args: &Value) -> bool {
         // Gate direct mutations before perform; task steps pause for approval.
@@ -501,19 +649,10 @@ impl Tool for BrowserTool {
         false
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "[policy-blocked] Action blocked: autonomy is read-only",
-            ));
-        }
-        // A task counts once here; its own steps are bounded by max_actions.
-        if !self.security.record_action() {
-            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
-        }
-        match self.run(&args).await {
-            Ok(v) => Ok(ToolResult::success(serde_json::to_string_pretty(&v)?)),
-            Err(e) => Ok(ToolResult::error(e.to_string())),
-        }
+        // Direct dispatch has no run: the turn's origin is whatever the calling
+        // task's scope carries.
+        let origin = crate::core::runtime::DispatchCtx::ambient_turn().turn_origin();
+        self.execute_with_origin(args, origin).await
     }
 
     async fn execute_with_context(
@@ -523,18 +662,40 @@ impl Tool for BrowserTool {
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         if let Some(thread_id) = context.and_then(ToolRunContext::thread_id) {
-            let key = format!(
-                "{}:{thread_id}",
-                self.client.config().workspace_dir.display()
-            );
+            let scope = crate::core::runtime::agent_scope_dir(self.client.config());
+            let key = format!("{}:{thread_id}", scope.display());
             if let Ok(mut held) = self.thread_key.lock() {
                 *held = Some(key);
             }
         }
-        self.execute(args).await
+        let origin = crate::agent::tinyagents::host::run_context::turn_origin_for_tool(context);
+        self.execute_with_origin(args, origin).await
+    }
+}
+
+impl BrowserTool {
+    /// Runs the tool for a turn running under `origin` (cron, background job,
+    /// workflow, chat), the typed authority its entry point supplied.
+    async fn execute_with_origin(
+        &self,
+        args: Value,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+    ) -> anyhow::Result<ToolResult> {
+        // Whatever the browser read back, a password the keychain typed
+        // into a page never reaches the model.
+        match self.run(&args, origin.as_ref()).await {
+            Ok(v) => Ok(ToolResult::success(keychain::redact_filled(
+                &serde_json::to_string_pretty(&v)?,
+            ))),
+            Err(e) => Ok(ToolResult::error(keychain::redact_filled(&e.to_string()))),
+        }
     }
 }
 
 #[cfg(test)]
 #[path = "browser_computer_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "browser_task_outcome_tests.rs"]
+mod task_outcome_tests;

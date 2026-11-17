@@ -82,17 +82,22 @@ describe('SecurityBanner', () => {
   });
 
   it('auto-dismisses the override-ignored info banner after 10 seconds', async () => {
-    renderBanner({
-      installed: true,
-      disabledByEnv: false,
-      overrideIgnored: true,
-      host: 'tauri-shell',
-    });
-
-    await screen.findByTestId('security-banner-override-ignored');
-
+    vi.useFakeTimers();
     await act(async () => {
-      vi.advanceTimersByTime(10_000);
+      renderBanner({
+        installed: true,
+        disabledByEnv: false,
+        overrideIgnored: true,
+        host: 'tauri-shell',
+      });
+    });
+    expect(screen.getByTestId('security-banner-override-ignored')).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_999);
+    });
+    expect(screen.getByTestId('security-banner-override-ignored')).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
     });
 
     expect(screen.queryByTestId('security-banner-override-ignored')).toBeNull();

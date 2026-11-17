@@ -72,7 +72,7 @@ describe('Service connectivity flow (UI ↔ Rust service)', () => {
   before(async function beforeSuite() {
     this.timeout(90_000);
     if (process.env.OPENHUMAN_SERVICE_MOCK !== '1' || process.platform === 'linux') {
-      this.skip();
+      this.skip(); // https://github.com/senamakel/openhuman/issues/434 — mock gate auto-dismiss currently cascades Linux UI assertions.
     }
 
     stepLog('Starting suite with service mock mode enabled', {

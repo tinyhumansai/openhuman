@@ -77,10 +77,10 @@ export function SettingsPanel({
   return (
     <div
       data-slot="settings-panel"
-      className={cn(paper, 'flex w-full max-w-sm flex-col gap-4 rounded-[20px] p-4', className)}
+      className={cn(paper, 'flex w-full flex-col gap-4 rounded-[20px] p-4', className)}
       {...props}>
       <div className="flex flex-col gap-1.5">
-        <span className={cn(mono, 'text-foreground/30')}>{modelLabel}</span>
+        <span className={cn(mono, 'text-muted-foreground')}>{modelLabel}</span>
         <div className={cn(field, 'flex gap-0.5 rounded-full p-0.5')}>
           {models.map(option => {
             const className = cn(
@@ -89,8 +89,8 @@ export function SettingsPanel({
               option === model
                 ? 'bg-background text-foreground/90'
                 : onModelChange
-                  ? 'text-foreground/45 hover:text-foreground/70'
-                  : 'text-foreground/45'
+                  ? 'text-muted-foreground hover:text-muted-foreground'
+                  : 'text-muted-foreground'
             );
 
             return onModelChange ? (
@@ -116,7 +116,7 @@ export function SettingsPanel({
 
       {systemPrompt !== undefined && (
         <div className="flex flex-col gap-1.5">
-          <span className={cn(mono, 'text-foreground/30')}>{systemPromptLabel}</span>
+          <span className={cn(mono, 'text-muted-foreground')}>{systemPromptLabel}</span>
           <textarea
             value={systemPrompt}
             onChange={event => onSystemPromptChange?.(event.target.value)}
@@ -133,8 +133,8 @@ export function SettingsPanel({
       {temperature !== undefined && (
         <div className="flex flex-col gap-1.5">
           <span className="flex items-baseline justify-between">
-            <span className={cn(mono, 'text-foreground/30')}>{temperatureLabel}</span>
-            <span className={cn(mono, 'text-foreground/55 tabular-nums')}>
+            <span className={cn(mono, 'text-muted-foreground')}>{temperatureLabel}</span>
+            <span className={cn(mono, 'text-muted-foreground tabular-nums')}>
               {clamp(temperature, 0, 2).toFixed(1)}
             </span>
           </span>
@@ -157,7 +157,7 @@ export function SettingsPanel({
             <div key={toggle.key} className="flex items-center gap-3">
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-[13px]">{toggle.label}</span>
-                <span className="text-foreground/35 truncate text-xs">{toggle.detail}</span>
+                <span className="text-muted-foreground truncate text-xs">{toggle.detail}</span>
               </span>
               {onToggle ? (
                 <button

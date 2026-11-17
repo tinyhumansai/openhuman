@@ -8,20 +8,18 @@ Unified, read-only tool registry for OpenHuman. It builds a single discovery vie
 - Normalize controller `ControllerSchema` inputs/outputs into JSON Schema; attach transport (`json_rpc` / `mcp_stdio`), route metadata, tags, `allowed_agents` (`*` in this MVP), `enabled`, and `health`.
 - Serve `list` / `get` (by `tool_id`) RPC lookups over the registry.
 - Produce redacted `diagnostics`: tool counts by transport, heuristic write-capable surfaces, policy surfaces, autonomy posture, MCP allowlist summaries, MCP write-audit row counts (last 24h), the 25 most recent denials, and capability-provider counts.
-- Maintain a bounded, secret-redacting in-memory log of recent policy denials (`denials.rs`).
-- Normalize and validate configured external capability providers (id slugging, dedupe, trust/enabled state) for policy and diagnostics callers (`providers.rs`).
+- Maintain a bounded, secret-redacting in-memory log of recent policy denials (`tinytools::registry::denials`).
+- Normalize and validate configured external capability providers (id slugging, dedupe, trust/enabled state) for policy and diagnostics callers ([`providers.rs`](./providers.rs)).
 
 ## Key files
 
 | File | Role |
 | --- | --- |
-| `crates/openhuman-core/src/tools/registry/mod.rs` | Export-focused. `pub mod denials` and `pub mod ops`; re-exports ops entry points, providers, schemas (as `all_tool_registry_*`), and types. |
+| `crates/openhuman-core/src/tools/registry/mod.rs` | Export-focused. `pub mod ops`; re-exports ops entry points, providers, schemas (as `all_tool_registry_*`), and types. |
 | `crates/openhuman-core/src/tools/registry/ops.rs` | Core logic: `registry_entries()` / `registry_entries_for_config()`, `list_tools()`, `get_tool()`, `diagnostics()` / `diagnostics_for_config()`, plus schema→JSON-Schema conversion, tagging, write-capability heuristics, MCP write-audit health query. |
-| `crates/openhuman-core/src/tools/registry/types.rs` | Serde response types: `ToolRegistryEntry`, `ToolRegistryList`, `ToolRegistryTransport`, `ToolRegistryHealth`, `ToolPolicyDiagnostics` + sub-structs, `RecentPolicyDenial`, `CapabilityProviderDiagnostics`. |
-| `crates/openhuman-core/src/tools/registry/schemas.rs` | Controller schemas + `handle_list` / `handle_get` / `handle_diagnostics` handlers delegating to `ops.rs`. |
+| `crates/openhuman-core/src/tools/registry/schemas.rs` | Controller schemas + `handle_list` / `handle_get` / `handle_diagnostics` handlers delegating to [`ops.rs`](./ops.rs). |
 | `crates/openhuman-core/src/tools/registry/providers.rs` | `CapabilityProviderRegistry` over config: id normalization, dedupe, trust checks, redacted diagnostics. |
-| `crates/openhuman-core/src/tools/registry/denials.rs` | Static `Mutex<VecDeque>` ring buffer (max 50) of recent policy denials; `record()` / `list()`; redacts secret markers, truncates reasons. |
-| `crates/openhuman-core/src/tools/registry/{ops,schemas,providers,denials}_tests.rs` | Sibling `#[path]`-included test modules for each file above. |
+| `crates/openhuman-core/src/tools/registry/{ops,schemas,providers}_tests.rs` | Sibling `#[path]`-included test modules for each file above. |
 
 ## Public surface
 
@@ -29,7 +27,7 @@ Unified, read-only tool registry for OpenHuman. It builds a single discovery vie
 - From `providers`: `CapabilityProviderMetadata`, `CapabilityProviderRegistry`, `CapabilityProviderRegistryError`, `capability_provider_by_id`, `capability_provider_diagnostics`, `capability_provider_registry`, `is_capability_provider_trusted_enabled`, `list_capability_providers`, `normalize_capability_provider_id`.
 - From `schemas`: `all_tool_registry_controller_schemas`, `all_tool_registry_registered_controllers`.
 - From `types`: `ToolRegistryEntry`, `ToolRegistryList`, `ToolRegistryTransport`, `ToolRegistryHealth`, `ToolPolicyDiagnostics`, `ToolPolicyPosture`, `McpAllowlistDiagnostics`, `McpServerAllowlistSummary`, `McpWriteAuditHealth`, `RecentPolicyDenial`, `CapabilityProviderDiagnostics`.
-- `denials` is `pub mod`: consumers call `tools::registry::denials::record(...)` directly.
+- Policy vocabulary and the denial ring buffer live in `tinytools::registry`; the host only re-exports the types.
 
 ## RPC / controllers
 
@@ -45,7 +43,7 @@ All handlers return `Outcome<T>` serialized via `into_cli_compatible_json()`.
 
 ## Persistence
 
-No owned persistence. `diagnostics()` reads the MCP write-audit log through `crate::mcp::audit::list_writes` (with a `McpWriteListQuery` whose `since_ms` is now minus 24h, capped at `tinymcp_bus::MAX_LIST_LIMIT` rows) to fill `McpWriteAuditHealth`; a query error lands in `last_error` rather than failing diagnostics. Recent denials live in a process-global, in-memory `Mutex<VecDeque>` in `denials.rs` (not durable; max 50 entries).
+No owned persistence. `diagnostics()` reads the MCP write-audit log through `crate::mcp::audit::list_writes` (with a `McpWriteListQuery` whose `since_ms` is now minus 24h, capped at `tinymcp_bus::MAX_LIST_LIMIT` rows) to fill `McpWriteAuditHealth`; a query error lands in `last_error` rather than failing diagnostics. Recent denials live in a process-global, in-memory `Mutex<VecDeque>` in `tinytools::registry::denials` (not durable; max 50 entries).
 
 ## Dependencies
 
@@ -60,9 +58,9 @@ No owned persistence. `diagnostics()` reads the MCP write-audit log through `cra
 ## Used by
 
 - `crates/openhuman-core/src/core/all.rs`: registers controllers/schemas and routes the `tool_registry` namespace.
-- `crates/openhuman-core/src/agent/tinyagents/middleware/tool_policy.rs`: calls `tools::registry::denials::record(...)` when a tool call is denied or requires approval.
+- `crates/openhuman-core/src/agent/tinyagents/middleware/tool_policy.rs`: calls `tinytools::registry::denials::record(...)` when a tool call is denied or requires approval.
 - `crates/openhuman-core/src/platform/about_app/catalog_conversation_intelligence.rs`: the `intelligence.tool_registry` capability entry points users at `openhuman.tool_registry_list` / `openhuman.tool_registry_get`.
-- `tests/raw_coverage/tool_registry_approval_raw_coverage_e2e.rs` and siblings: exercise `denials`, `ops::diagnostics_for_config`, and the provider registry directly.
+- `tests/raw_coverage/tool_registry_approval_e2e.rs` and siblings: exercise `denials`, `ops::diagnostics_for_config`, and the provider registry directly.
 
 ## Notes / gotchas
 
@@ -75,3 +73,11 @@ No owned persistence. `diagnostics()` reads the MCP write-audit log through `cra
 - Denial reasons containing any of `Bearer `, `sk-`, `ghp_`, `-----BEGIN` are replaced wholesale with `[redacted: sensitive content]`, then truncated to 240 chars; entries are bounded to 50, and blank tool names are dropped.
 - Capability-provider ids are slugged to lowercase alphanumerics with `-`/`_`/`.` separators (max 96 chars); invalid or post-normalization-duplicate ids return `CapabilityProviderRegistryError`.
 - `version` on every entry is the core crate version (`CARGO_PKG_VERSION`), used as the registry schema/version marker.
+
+## Further reading
+
+- [Parent module (`tools`)](../README.md)
+- [Native tools overview](../../../../../docs/gitbooks/en/features/native-tools/README.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Approval gate](../../../../../docs/gitbooks/en/features/approval-gate.md)
+- [tinyagents submodule](../../../../../vendor/tinyagents/README.md)

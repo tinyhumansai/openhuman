@@ -4,12 +4,12 @@
 //! `"http_cred:<name>"`. This module is the host-side store those names resolve
 //! against: each record is an **injection template** (bearer token, HTTP basic
 //! user:pass, or a raw custom header) whose secret material is encrypted at
-//! rest with the same [`SecretStore`](crate::security::keyring::SecretStore)
+//! rest with the same [`SecretStore`](crate::security::secret_storage::SecretStore)
 //! (ChaCha20-Poly1305) the auth-profile store uses.
 //!
 //! **Security contract:** the secret value NEVER leaves this module except as
 //! the header it is injected into, server-side, inside
-//! `tinyflows::caps::OpenHumanHttp::request`. It is never returned to the UI,
+//! `flows::caps_host::OpenHumanHttp::request`. It is never returned to the UI,
 //! handed to the flow engine/graph, or logged. List/summary shapes carry only
 //! the name + scheme + non-secret template fields ([`HttpCredentialSummary`]).
 
@@ -23,9 +23,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::security::keyring::SecretStore;
+use crate::security::secret_storage::SecretStore;
 
-const STORE_FILENAME: &str = "http-credentials.json";
+pub(crate) const STORE_FILENAME: &str = "http-credentials.json";
+/// The HTTP credentials file a store over `state_dir` keeps.
+pub(crate) fn store_file(state_dir: &Path) -> PathBuf {
+    state_dir.join(STORE_FILENAME)
+}
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 /// How a credential is presented on the outbound request.
@@ -188,6 +192,11 @@ struct PersistedHttpCredential {
     updated_at: String,
 }
 
+/// Whether `bytes` parse as the persisted HTTP-credentials document.
+pub(crate) fn is_persisted_document(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<PersistedHttpCredentials>(bytes).is_ok()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedHttpCredentials {
     schema_version: u32,
@@ -215,12 +224,15 @@ pub struct HttpCredentialsStore {
 impl HttpCredentialsStore {
     pub fn from_config(config: &Config) -> Self {
         let state_dir = super::state_dir_from_config(config);
-        Self::new(&state_dir, config.secrets.encrypt)
+        Self {
+            path: store_file(&state_dir),
+            secret_store: SecretStore::new_with_config(&state_dir, config.secrets.encrypt, config),
+        }
     }
 
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         Self {
-            path: state_dir.join(STORE_FILENAME),
+            path: store_file(state_dir),
             secret_store: SecretStore::new(state_dir, encrypt_secrets),
         }
     }
@@ -250,7 +262,7 @@ impl HttpCredentialsStore {
 
     /// Resolve a credential name to its secret-bearing record, decrypting the
     /// secret. Returns `Ok(None)` when no such credential exists.
-    pub fn get(&self, name: &str) -> Result<Option<HttpCredential>> {
+    pub async fn get(&self, name: &str) -> Result<Option<HttpCredential>> {
         let key = Self::normalize_name(name);
         let persisted = self.read_persisted()?;
         let Some(rec) = persisted.credentials.get(&key) else {
@@ -263,7 +275,8 @@ impl HttpCredentialsStore {
         })?;
         let secret = self
             .secret_store
-            .decrypt(&rec.secret)
+            .decrypt_via_security(&rec.secret)
+            .await
             .with_context(|| format!("failed to decrypt http_cred '{key}' secret"))?;
 
         log::debug!(
@@ -283,14 +296,15 @@ impl HttpCredentialsStore {
     }
 
     /// Insert or replace a credential, encrypting its secret at rest.
-    pub fn upsert(&self, cred: &HttpCredential) -> Result<()> {
+    pub async fn upsert(&self, cred: &HttpCredential) -> Result<()> {
         let key = Self::normalize_name(&cred.name);
         anyhow::ensure!(!key.is_empty(), "http_cred name cannot be empty");
 
         let mut persisted = self.read_persisted()?;
         let encrypted = self
             .secret_store
-            .encrypt(&cred.secret)
+            .encrypt_via_security(&cred.secret)
+            .await
             .context("failed to encrypt http_cred secret")?;
 
         let created_at = persisted
@@ -334,6 +348,44 @@ impl HttpCredentialsStore {
     }
 
     fn read_persisted(&self) -> Result<PersistedHttpCredentials> {
+        if let Some(secrets) = crate::storage::secrets::current()? {
+            return match crate::storage::secrets::get_blocking(&secrets, STORAGE_SECRET_NAME)? {
+                Some(bytes) => serde_json::from_slice(&bytes)
+                    .context("http-credentials record on the storage backend is not valid JSON"),
+                None => {
+                    // First use of the backend: adopt the on-disk store so
+                    // existing credentials stay visible and the next upsert
+                    // cannot replace them. The file is left in place.
+                    let legacy = self.read_file()?;
+                    if self.path.exists() && !legacy.credentials.is_empty() {
+                        let json = serde_json::to_vec(&legacy)
+                            .context("failed to serialize migrated http-credentials store")?;
+                        // A failed adoption keeps the legacy credentials
+                        // readable; the next read retries it.
+                        match crate::storage::secrets::set_blocking(
+                            &secrets,
+                            STORAGE_SECRET_NAME,
+                            &json,
+                        ) {
+                            Ok(()) => log::info!(
+                                target: "credentials",
+                                "[credentials] migrated http-credentials file to storage secret"
+                            ),
+                            Err(_) => log::warn!(
+                                target: "credentials",
+                                "[credentials] http-credentials migration to storage failed; will retry"
+                            ),
+                        }
+                    }
+                    Ok(legacy)
+                }
+            };
+        }
+        self.read_file()
+    }
+
+    /// Reads the on-disk `http-credentials.json` store (empty when absent).
+    fn read_file(&self) -> Result<PersistedHttpCredentials> {
         if !self.path.exists() {
             return Ok(PersistedHttpCredentials::default());
         }
@@ -355,6 +407,12 @@ impl HttpCredentialsStore {
     }
 
     fn write_persisted(&self, persisted: &PersistedHttpCredentials) -> Result<()> {
+        if let Some(secrets) = crate::storage::secrets::current()? {
+            let json = serde_json::to_vec(persisted)
+                .context("failed to serialize http-credentials store")?;
+            crate::storage::secrets::set_blocking(&secrets, STORAGE_SECRET_NAME, &json)?;
+            return Ok(());
+        }
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -387,6 +445,11 @@ impl HttpCredentialsStore {
         Ok(())
     }
 }
+
+/// The secret the store lives in on a storage backend
+/// ([`crate::storage::secrets`]): the same JSON as the file, encrypted as one
+/// secret in the acting agent's scope.
+pub(crate) const STORAGE_SECRET_NAME: &str = "file:http-credentials.json";
 
 fn parse_scheme(raw: &str) -> Option<HttpCredentialScheme> {
     match raw.trim().to_ascii_lowercase().as_str() {

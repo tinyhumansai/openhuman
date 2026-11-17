@@ -425,7 +425,7 @@ function ModelSelectorList({ className, children, ...props }: ModelSelectorListP
     <CommandList
       data-slot="model-selector-list"
       className={cn(
-        '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
         className
       )}
       {...props}>
@@ -582,7 +582,7 @@ function ModelSelectorEffort({
             key={option.id}
             value={option.id}
             className={cn(
-              'focus-visible:ring-ring/50 text-muted-foreground hover:text-foreground rounded-md px-2 py-1 text-xs transition-colors outline-none focus-visible:ring-1',
+              'focus-visible:ring-ring/50 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer rounded-md px-2 py-1 text-xs transition-colors outline-none focus-visible:ring-1',
               'data-checked:bg-accent data-checked:text-accent-foreground data-checked:font-medium'
             )}>
             {option.name}

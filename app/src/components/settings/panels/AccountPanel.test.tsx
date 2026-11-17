@@ -12,6 +12,13 @@ vi.mock('../../../utils/openUrl', () => ({
 const useCoreStateMock = vi.fn();
 vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => useCoreStateMock() }));
 
+vi.mock('../../../utils/tauriCommands', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../utils/tauriCommands')>()),
+  openhumanGetUserTimezone: () =>
+    Promise.resolve({ result: { timezone: null, device: 'UTC', effective: 'UTC' }, logs: [] }),
+  openhumanUpdateUserTimezone: () => Promise.resolve({ result: {}, logs: [] }),
+}));
+
 const useUsageStateMock = vi.fn();
 vi.mock('../../../hooks/useUsageState', () => ({ useUsageState: () => useUsageStateMock() }));
 

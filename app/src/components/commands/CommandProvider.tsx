@@ -5,8 +5,9 @@ import { type GlobalActionHandlers, registerGlobalActions } from '../../lib/comm
 import { hotkeyManager } from '../../lib/commands/hotkeyManager';
 import { registry } from '../../lib/commands/registry';
 import { ScopeContext } from '../../lib/commands/ScopeContext';
-import { useAppDispatch } from '../../store/hooks';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { toggleSidebar } from '../../store/layoutSlice';
+import { chatThreadPath } from '../../utils/chatRoutes';
 import { APP_SHELL_LAYOUT_ID } from '../layout/shell/RootShellLayout';
 import { useNewChat } from '../layout/shell/useNewChat';
 import KeyboardShortcutsModal from '../shortcuts/KeyboardShortcutsModal';
@@ -22,6 +23,7 @@ export default function CommandProvider({ children }: Props) {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const newChat = useNewChat();
+  const threads = useAppSelector(state => state.thread.threads);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [globalFrame, setGlobalFrame] = useState<symbol | null>(null);
@@ -90,7 +92,12 @@ export default function CommandProvider({ children }: Props) {
   return (
     <ScopeContext.Provider value={value}>
       {children}
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        threads={threads}
+        onOpenThread={threadId => navigate(chatThreadPath(threadId))}
+      />
       <KeyboardShortcutsModal open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </ScopeContext.Provider>
   );

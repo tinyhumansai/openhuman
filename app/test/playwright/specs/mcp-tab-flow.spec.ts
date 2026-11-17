@@ -3,8 +3,9 @@
  *
  * Covers: the server rows → manage detail view → connect → run a tool →
  * uninstall; the mcp.json editor → declare a server → it appears in the rows;
- * the browse-only registry → a row opens the server's page. All RPC calls are
- * mocked via page.route so no running core is required.
+ * the registry → a hosted server is added in one click, any other row opens
+ * the server's page. All RPC calls are mocked via page.route so no running
+ * core is required.
  */
 import { expect, type Page, test } from '@playwright/test';
 
@@ -48,7 +49,38 @@ const REGISTRY_SERVERS = [
     is_deployed: false,
     source: 'mcp_official',
   },
+  {
+    qualified_name: 'io.github.test/open-hosted',
+    display_name: 'Open Hosted',
+    description: 'A hosted MCP server that needs no setup',
+    icon_url: null,
+    use_count: 300,
+    is_deployed: true,
+    source: 'mcp_official',
+  },
+  {
+    qualified_name: 'io.github.test/tenant-hosted',
+    display_name: 'Tenant Hosted',
+    description: 'A hosted MCP server with a per-tenant endpoint',
+    icon_url: null,
+    use_count: 120,
+    is_deployed: true,
+    source: 'mcp_official',
+  },
 ];
+
+const OPEN_HOSTED = 'io.github.test/open-hosted';
+
+/** What `registry_get` answers for the hosted directory rows. */
+const REGISTRY_DETAILS: Record<string, { type: string; deployment_url: string }[]> = {
+  [OPEN_HOSTED]: [{ type: 'http', deployment_url: 'https://open-hosted.test/mcp' }],
+  'io.github.test/github-tools': [
+    { type: 'http', deployment_url: 'https://github-tools.test/mcp' },
+  ],
+  'io.github.test/tenant-hosted': [
+    { type: 'http', deployment_url: 'https://{tenant}.tenant-hosted.test/mcp' },
+  ],
+};
 
 function makeInstalledServer(overrides: Partial<typeof INSTALLED_DEFAULT> = {}) {
   return { ...INSTALLED_DEFAULT, ...overrides };
@@ -101,7 +133,7 @@ function renderDoc(state: MockState) {
     a.qualified_name.localeCompare(b.qualified_name)
   )) {
     out[s.qualified_name] = {
-      command: s.command,
+      ...(s.transport?.kind === 'http_remote' ? { url: s.transport.url } : { command: s.command }),
       ...(s.args.length ? { args: s.args } : {}),
       ...(s.env_keys.length ? { envKeys: s.env_keys } : {}),
       authConfigured: s.env_keys.length > 0,
@@ -181,21 +213,26 @@ async function setupMockRpc(page: Page, state: MockState) {
       // ---- MCP registry ----
       case 'openhuman.mcp_clients_registry_search': {
         const query = (params.query ?? '').toLowerCase();
-        const installedNames = new Set(state.installed.map(s => s.qualified_name));
-        const queryFiltered = query
+        const filtered = query
           ? REGISTRY_SERVERS.filter(
               s =>
                 s.display_name.toLowerCase().includes(query) ||
                 s.qualified_name.toLowerCase().includes(query)
             )
           : REGISTRY_SERVERS;
-        // Exclude servers that are already installed — mirrors real backend behaviour
-        const filtered = queryFiltered.filter(s => !installedNames.has(s.qualified_name));
         return route.fulfill(rpcOk(id, { servers: filtered, page: 1, total_pages: 1 }));
       }
 
-      case 'openhuman.mcp_clients_registry_get':
-        return route.fulfill(rpcError(id, `server not found: ${params.qualified_name}`));
+      case 'openhuman.mcp_clients_registry_get': {
+        const server = REGISTRY_SERVERS.find(s => s.qualified_name === params.qualified_name);
+        const connections = REGISTRY_DETAILS[params.qualified_name];
+        if (!server || !connections) {
+          return route.fulfill(rpcError(id, `server not found: ${params.qualified_name}`));
+        }
+        return route.fulfill(
+          rpcOk(id, { server: { ...server, connections, required_env_keys: [] } })
+        );
+      }
 
       // ---- Installed servers (mutable) ----
       case 'openhuman.mcp_clients_installed_list':
@@ -261,10 +298,13 @@ async function setupMockRpc(page: Page, state: MockState) {
       // Auth probe for the upfront connect modal — these test servers need no
       // credentials, so report `none` and the modal shows a single Connect button.
       case 'openhuman.mcp_clients_detect_auth': {
-        // A hosted server with nothing stored asks for browser sign-in; the
-        // rest need no credentials.
+        // A hosted server with nothing stored asks for browser sign-in, except
+        // the open directory server; the rest need no credentials.
         const inst = state.installed.find(s => s.server_id === params.server_id);
-        const oauth = inst?.transport?.kind === 'http_remote' && inst.env_keys.length === 0;
+        const oauth =
+          inst?.transport?.kind === 'http_remote' &&
+          inst.env_keys.length === 0 &&
+          inst.qualified_name !== OPEN_HOSTED;
         return route.fulfill(
           rpcOk(
             id,
@@ -578,32 +618,82 @@ test.describe('MCP page — Registry tab', () => {
     await expect(page.getByTestId('mcp-registry-browser')).toBeVisible({ timeout: 10_000 });
   });
 
-  test('lists directory servers as rows that open a page, never install', async ({ page }) => {
-    const rows = page.getByTestId('mcp-registry-row');
-    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
-    for (let i = 0; i < count; i++) {
-      await expect(rows.nth(i).getByRole('button', { name: /^Open the page for/ })).toBeVisible();
-    }
+  function registryRow(page: Page, name: string) {
+    return page.getByTestId('mcp-registry-row').filter({ hasText: name });
+  }
+
+  test('a hosted server with nothing to fill in is added in one click', async ({ page }) => {
+    await page.getByRole('button', { name: 'Add Open Hosted' }).click();
+    await expect(
+      registryRow(page, 'Open Hosted').getByRole('button', { name: 'Added' })
+    ).toBeDisabled({ timeout: 5_000 });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(state.installed.map(s => s.qualified_name)).toContain(OPEN_HOSTED);
+    expect(state.statuses.find(s => s.qualified_name === OPEN_HOSTED)?.status).toBe('connected');
+
+    await page.getByRole('tab', { name: 'Servers' }).click();
+    const row = installedRow(page, OPEN_HOSTED);
+    await expect(row).toBeVisible({ timeout: 5_000 });
+    await expect(row).toContainText('https://open-hosted.test/mcp');
+  });
+
+  test('adding a server that signs in with OAuth opens the sign-in dialog', async ({ page }) => {
+    await page.getByRole('button', { name: 'Add GitHub Tools' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 5_000 });
+    await expect(dialog.getByRole('button', { name: 'Sign in with browser' })).toBeVisible();
+    expect(state.installed.map(s => s.qualified_name)).toContain('io.github.test/github-tools');
+  });
+
+  test('a declared server is listed as added', async ({ page }) => {
+    const row = registryRow(page, 'Memory Server');
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row.getByRole('button', { name: 'Added' })).toBeDisabled();
     await expect(page.getByRole('button', { name: /^Install$/ })).toHaveCount(0);
   });
 
-  test('already-declared servers are excluded from the directory', async ({ page }) => {
-    const rows = page.getByTestId('mcp-registry-row');
-    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+  test('a server that needs setup writes nothing and falls back to its page', async ({ page }) => {
+    await page.getByRole('button', { name: 'Add Tenant Hosted' }).click();
+    const row = registryRow(page, 'Tenant Hosted');
+    await expect(row.getByTestId('mcp-registry-needs-setup')).toBeVisible({ timeout: 5_000 });
     await expect(
-      page.getByTestId('mcp-registry-row').filter({ hasText: 'Memory Server' })
-    ).toHaveCount(0);
+      row.getByRole('button', { name: 'Open the page for Tenant Hosted' })
+    ).toBeVisible();
+    expect(state.installed).toHaveLength(1);
   });
 
-  test("a row opens the server's own page in a new tab", async ({ page, context }) => {
+  test('a refused write shows an inline error with Retry and leaves mcp.json alone', async ({
+    page,
+  }) => {
+    let refused = false;
+    await page.route('**/rpc', async (route, request) => {
+      const body = JSON.parse(request.postData() || '{}');
+      if (body.method === 'openhuman.mcp_clients_config_set' && !refused) {
+        refused = true;
+        return route.fulfill(rpcError(body.id, 'mcp.json is locked by another save'));
+      }
+      await route.fallback();
+    });
+    await page.getByRole('button', { name: 'Add Open Hosted' }).click();
+    const error = registryRow(page, 'Open Hosted').getByTestId('mcp-registry-row-error');
+    await expect(error).toContainText("Couldn't add this server.", { timeout: 5_000 });
+    await expect(error).toContainText('mcp.json is locked by another save');
+    expect(state.installed.map(s => s.qualified_name)).toEqual(['io.github.test/memory-server']);
+
+    await error.getByRole('button', { name: 'Try again' }).click();
+    await expect(
+      registryRow(page, 'Open Hosted').getByRole('button', { name: 'Added' })
+    ).toBeDisabled({ timeout: 5_000 });
+    expect(state.installed.map(s => s.qualified_name)).toContain(OPEN_HOSTED);
+  });
+
+  test("a local server row still opens the server's own page", async ({ page, context }) => {
     // The browser shell is not Tauri here, so `openUrl` falls back to
     // `window.open`; the page it opens is the row's target.
     const popup = context.waitForEvent('page');
-    await page.getByRole('button', { name: 'Open the page for GitHub Tools' }).click();
+    await page.getByRole('button', { name: 'Open the page for Notion Connector' }).click();
     const opened = await popup;
-    await expect.poll(() => opened.url()).toBe('https://github.com/test/github-tools');
+    await expect.poll(() => opened.url()).toBe('https://github.com/test/notion-connector');
     await opened.close();
   });
 

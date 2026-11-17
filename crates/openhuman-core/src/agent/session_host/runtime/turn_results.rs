@@ -4,6 +4,16 @@
 use super::super::types::OpenHumanSessionHost;
 
 impl OpenHumanSessionHost {
+    /// Iterations from the latest durable receipt, used by the legacy
+    /// `AgentTurnCompleted` projection after the session turn returns.
+    pub(crate) fn last_turn_iterations(&self) -> u32 {
+        self.runtime_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .last_turn_iterations
+            .max(1)
+    }
+
     /// Borrow the holistic token/cost/context totals for the latest completed
     /// turn (parent + sub-agents) **without consuming them**. `None` until a
     /// turn has run.

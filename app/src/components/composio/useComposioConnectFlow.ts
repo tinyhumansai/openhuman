@@ -109,7 +109,6 @@ export function useComposioConnectFlow({
   );
   const [error, setError] = useState<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
-  const [clearMemoryOnDisconnect, setClearMemoryOnDisconnect] = useState(false);
 
   // Provider-specific required fields are sourced from the declarative
   // registry rather than per-toolkit booleans (#2127). New providers
@@ -554,16 +553,14 @@ export function useComposioConnectFlow({
       setPhase('disconnecting');
       setError(null);
       try {
-        await deleteConnection(conn.id, { clearMemory: clearMemoryOnDisconnect });
+        await deleteConnection(conn.id);
         const remaining = activeConnections.filter(c => c.id !== conn.id);
         setActiveConnections(remaining);
         if (remaining.length > 0) {
           setActiveConnection(remaining[0]);
-          setClearMemoryOnDisconnect(false);
           setPhase('connected');
         } else {
           setActiveConnection(undefined);
-          setClearMemoryOnDisconnect(false);
           setPhase('idle');
         }
         onChanged?.();
@@ -571,10 +568,9 @@ export function useComposioConnectFlow({
         const msg = err instanceof Error ? err.message : String(err);
         setPhase('error');
         setError(t('composio.connect.disconnectFailed').replace('{msg}', msg));
-        setClearMemoryOnDisconnect(false);
       }
     },
-    [activeConnection, activeConnections, clearMemoryOnDisconnect, onChanged, t]
+    [activeConnection, activeConnections, onChanged, t]
   );
 
   return {
@@ -584,8 +580,6 @@ export function useComposioConnectFlow({
     error,
     setError,
     connectUrl,
-    clearMemoryOnDisconnect,
-    setClearMemoryOnDisconnect,
     requiredFields,
     fieldValues,
     setFieldValues,

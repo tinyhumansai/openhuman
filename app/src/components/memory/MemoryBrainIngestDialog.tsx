@@ -7,7 +7,7 @@
 import { useId, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import type { BrainIngestRequest } from '../../services/api/memoryApi';
+import { type BrainIngestRequest, isOutOfCreditsMessage } from '../../services/api/memoryApi';
 import {
   Button,
   Label,
@@ -17,6 +17,7 @@ import {
   ToggleGroupItem,
   ToggleGroupRoot,
 } from '../ui';
+import { MemoryCreditsPrompt } from './MemoryErrorAlert';
 
 type IngestFrom = 'text' | 'path';
 
@@ -157,14 +158,17 @@ export default function MemoryBrainIngestDialog({
             onChange={e => setSource(e.target.value)}
           />
         </div>
-        {error !== null && (
-          <p
-            className="text-xs text-coral-600"
-            role="alert"
-            data-testid="memory-brain-ingest-error">
-            {error}
-          </p>
-        )}
+        {error !== null &&
+          (isOutOfCreditsMessage(error, t) ? (
+            <MemoryCreditsPrompt message={error} data-testid="memory-brain-ingest-error" />
+          ) : (
+            <p
+              className="text-xs text-coral-600"
+              role="alert"
+              data-testid="memory-brain-ingest-error">
+              {error}
+            </p>
+          ))}
       </form>
     </ModalShell>
   );

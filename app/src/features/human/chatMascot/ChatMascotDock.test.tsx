@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 
 import { selectChatMascotDismissed, selectChatMascotExpanded } from '../../../store/mascotSlice';
 import { renderWithProviders } from '../../../test/test-utils';
-import { ChatMascotProvider } from './ChatMascotContext';
+import {
+  type ChatMascotContextValue,
+  ChatMascotProvider,
+  useChatMascot,
+} from './ChatMascotContext';
 import ChatMascotDock from './ChatMascotDock';
 
 const renderDock = (expanded = false, dismissed = false) =>
@@ -37,6 +41,28 @@ describe('ChatMascotDock', () => {
     fireEvent.click(screen.getByTestId('chat-mascot-dock'));
 
     expect(selectChatMascotExpanded(store.getState())).toBe(true);
+  });
+
+  it('asks the stage to start a live voice session on click', () => {
+    let ctx: ChatMascotContextValue | null = null;
+    const Probe = () => {
+      ctx = useChatMascot();
+      return null;
+    };
+    renderWithProviders(
+      <ChatMascotProvider>
+        <Probe />
+        <ChatMascotDock />
+      </ChatMascotProvider>,
+      { preloadedState: { mascot: { chatMascotExpanded: false } } }
+    );
+    expect(ctx!.consumeVoiceStart()).toBe(false);
+
+    fireEvent.click(screen.getByTestId('chat-mascot-dock'));
+
+    expect(ctx!.consumeVoiceStart()).toBe(true);
+    // Consumed once: a later stage mount must not reopen the mic on its own.
+    expect(ctx!.consumeVoiceStart()).toBe(false);
   });
 
   it('draws nothing itself — the shared overlay paints over this slot', () => {

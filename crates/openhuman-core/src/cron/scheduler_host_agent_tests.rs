@@ -1,0 +1,297 @@
+//! A cron agent job whose `agent_id` names a host-registered agent
+//! (`agent::host_agents`) runs as that agent: its definition, its host tools,
+//! its context. Any other id still resolves through the registries.
+
+use super::*;
+use crate::agent::host_agents::{self, HostAgent, HostAgentResolver};
+use crate::core::runtime::{CoreContext, DomainSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tempfile::TempDir;
+
+struct Marker;
+
+#[async_trait::async_trait]
+impl tinytools::Tool for Marker {
+    fn name(&self) -> &str {
+        "cron_host_marker"
+    }
+    fn description(&self) -> &str {
+        "a host tool only the host agent has"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<tinytools::ToolResult> {
+        Ok(tinytools::ToolResult::success("ok"))
+    }
+}
+
+struct Host {
+    config: Config,
+    belt_builds: Arc<AtomicUsize>,
+}
+
+impl HostAgentResolver for Host {
+    fn resolve(&self, agent_id: &str) -> Option<HostAgent> {
+        if agent_id != "cron-host-agent" {
+            return None;
+        }
+        let mut definition =
+            crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()
+                .get("orchestrator")
+                .cloned()
+                .unwrap();
+        definition.id = agent_id.to_string();
+        let builds = Arc::clone(&self.belt_builds);
+        let context =
+            CoreContext::for_test(DomainSet::full(), Some(self.config.workspace_dir.clone()));
+        crate::agent::session_host::test_support::install_model_fixture_in(context.extensions());
+        Some(HostAgent {
+            definition,
+            config: self.config.clone(),
+            host_tools: Some(Arc::new(move |turn| {
+                assert_eq!(turn.agent_id(), "cron-host-agent");
+                builds.fetch_add(1, Ordering::SeqCst);
+                Box::pin(
+                    async move { crate::agent::HostTurnTools::advertised(vec![Box::new(Marker)]) },
+                )
+            })),
+            hooks: Default::default(),
+            context,
+        })
+    }
+}
+
+async fn config(tmp: &TempDir) -> Config {
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    crate::storage::local::use_persistent_default_for_test(&workspace);
+    let mut config = Config {
+        workspace_dir: workspace.clone(),
+        action_dir: workspace,
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+    config.secrets.encrypt = false;
+    config.modules.source = crate::config::schema::ModuleSourceMode::Source;
+    #[cfg(feature = "security-module")]
+    crate::modules::security::ensure_loaded(&config)
+        .await
+        .expect("the staged TinySecurity module should load for scheduler host tests");
+    crate::credentials::api_key::store_api_key(&config, "cron-host-test-key")
+        .await
+        .expect("store the managed inference fixture credential");
+    config
+}
+
+fn agent_job(agent_id: &str) -> CronJob {
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.agent_id = Some(agent_id.to_string());
+    job.prompt = Some("check in".into());
+    job
+}
+
+#[tokio::test]
+async fn a_cron_job_for_a_host_agent_builds_with_its_host_tools_and_context() {
+    let _slot = crate::agent::host_agents::tests::lock();
+    let tmp = TempDir::new().unwrap();
+    let config = config(&tmp).await;
+    let belt_builds = Arc::new(AtomicUsize::new(0));
+    let installed: Arc<dyn HostAgentResolver> = Arc::new(Host {
+        config: config.clone(),
+        belt_builds: Arc::clone(&belt_builds),
+    });
+    host_agents::install(Arc::clone(&installed));
+
+    let built = build_agent_for_cron_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &agent_job("cron-host-agent"),
+    )
+    .await;
+    host_agents::clear_if(&installed);
+    let built = built.expect("the host agent builds");
+
+    assert!(
+        built.context.is_some(),
+        "the turn runs in the host agent's context"
+    );
+    assert!(
+        belt_builds.load(Ordering::SeqCst) > 0,
+        "the host belt was built"
+    );
+    assert!(built
+        .agent
+        .visible_tool_specs_arc()
+        .iter()
+        .any(|spec| spec.name == "cron_host_marker"));
+}
+
+#[tokio::test]
+async fn an_id_the_host_does_not_know_falls_back_to_the_registries() {
+    let _slot = crate::agent::host_agents::tests::lock();
+    let tmp = TempDir::new().unwrap();
+    let config = config(&tmp).await;
+    crate::agent::session_host::test_support::install_model_fixture();
+    let installed: Arc<dyn HostAgentResolver> = Arc::new(Host {
+        config: config.clone(),
+        belt_builds: Arc::new(AtomicUsize::new(0)),
+    });
+    host_agents::install(Arc::clone(&installed));
+    let built = build_agent_for_cron_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &agent_job("orchestrator"),
+    )
+    .await;
+    host_agents::clear_if(&installed);
+    let built = built.expect("the orchestrator builds from the registries");
+    assert!(built.context.is_none());
+    assert!(!built
+        .agent
+        .visible_tool_specs_arc()
+        .iter()
+        .any(|spec| spec.name == "cron_host_marker"));
+}
+
+/// A resolver with no live agents that opens `cron-host-agent` on demand when
+/// `opens` is set, and counts how often it was asked to.
+struct Opener {
+    host: Host,
+    opens: bool,
+    asked: Arc<AtomicUsize>,
+}
+
+impl HostAgentResolver for Opener {
+    fn resolve(&self, _agent_id: &str) -> Option<HostAgent> {
+        None
+    }
+
+    fn open<'a>(
+        &'a self,
+        agent_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<host_agents::OpenedHostAgent>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            self.asked.fetch_add(1, Ordering::SeqCst);
+            if !self.opens {
+                return None;
+            }
+            self.host
+                .resolve(agent_id)
+                .map(host_agents::OpenedHostAgent::new)
+        })
+    }
+}
+
+fn opener(config: &Config, opens: bool) -> (Arc<dyn HostAgentResolver>, Arc<AtomicUsize>) {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let resolver: Arc<dyn HostAgentResolver> = Arc::new(Opener {
+        host: Host {
+            config: config.clone(),
+            belt_builds: Arc::new(AtomicUsize::new(0)),
+        },
+        opens,
+        asked: Arc::clone(&asked),
+    });
+    (resolver, asked)
+}
+
+#[tokio::test]
+async fn a_job_for_an_agent_that_is_not_live_runs_as_the_agent_the_host_opens() {
+    let _slot = crate::agent::host_agents::tests::lock();
+    let tmp = TempDir::new().unwrap();
+    let config = config(&tmp).await;
+    let (installed, asked) = opener(&config, true);
+    host_agents::install(Arc::clone(&installed));
+
+    let built = build_agent_for_cron_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &agent_job("cron-host-agent"),
+    )
+    .await;
+    host_agents::clear_if(&installed);
+    let built = built.expect("the opened agent builds");
+
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert!(
+        built.context.is_some(),
+        "the turn runs in the opened agent's context"
+    );
+    assert!(built
+        .agent
+        .visible_tool_specs_arc()
+        .iter()
+        .any(|spec| spec.name == "cron_host_marker"));
+}
+
+#[tokio::test]
+async fn a_job_for_an_agent_the_host_declines_to_open_fails_instead_of_running_as_the_orchestrator()
+{
+    let _slot = crate::agent::host_agents::tests::lock();
+    let tmp = TempDir::new().unwrap();
+    let config = config(&tmp).await;
+    crate::agent::session_host::test_support::install_model_fixture();
+    let (installed, asked) = opener(&config, false);
+    host_agents::install(Arc::clone(&installed));
+
+    let built = build_agent_for_cron_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &agent_job("cron-host-agent"),
+    )
+    .await;
+    host_agents::clear_if(&installed);
+
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert!(
+        built.is_err(),
+        "a job for a missing agent must not run as the canonical orchestrator"
+    );
+}
+
+#[tokio::test]
+async fn a_job_for_an_unknown_agent_with_no_host_installed_fails_instead_of_running_as_the_orchestrator(
+) {
+    let _slot = crate::agent::host_agents::tests::lock();
+    let tmp = TempDir::new().unwrap();
+    let config = config(&tmp).await;
+    crate::agent::session_host::test_support::install_model_fixture();
+
+    let built = build_agent_for_cron_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &agent_job("no-such-agent"),
+    )
+    .await;
+
+    assert!(built.is_err());
+}
+
+#[tokio::test]
+async fn a_job_for_a_registry_agent_never_asks_the_host_to_open_it() {
+    let _slot = crate::agent::host_agents::tests::lock();
+    let tmp = TempDir::new().unwrap();
+    let config = config(&tmp).await;
+    crate::agent::session_host::test_support::install_model_fixture();
+    let (installed, asked) = opener(&config, true);
+    host_agents::install(Arc::clone(&installed));
+
+    let built = build_agent_for_cron_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &agent_job("orchestrator"),
+    )
+    .await;
+    host_agents::clear_if(&installed);
+
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "a built-in agent id is not the host's to open"
+    );
+    assert!(built.expect("the orchestrator builds").context.is_none());
+}

@@ -1,10 +1,8 @@
 import debug from 'debug';
-import { ArrowRight, AudioLines } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowRight } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { cn } from '../../../lib/cn';
 import { useT } from '../../../lib/i18n/I18nContext';
-import PttSettingsPanel from '../../../pages/settings/voice/PttSettingsPanel';
 import {
   clearVoiceProviderKey,
   loadVoiceSettings,
@@ -14,17 +12,13 @@ import {
   type VoiceSettings,
 } from '../../../services/api/voiceSettingsApi';
 import {
-  openhumanGetVoiceServerSettings,
-  openhumanUpdateVoiceServerSettings,
   openhumanVoiceSetProviders,
   openhumanVoiceStatus,
-  syncNotchVisibility,
   type VoiceProvidersSnapshot,
-  type VoiceServerSettings,
   type VoiceStatus,
 } from '../../../utils/tauriCommands';
 import PanelPage from '../../layout/PanelPage';
-import { Button, Card, Field, StatusLine, Switch } from '../../ui';
+import { Button, Card, Field, StatusLine } from '../../ui';
 import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import VoicePanelKeyModal from './VoicePanelKeyModal';
@@ -61,8 +55,6 @@ interface VoicePanelProps {
 const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, navigateToSettings } = useSettingsNavigation();
-  const [settings, setSettings] = useState<VoiceServerSettings | null>(null);
-  const [savedSettings, setSavedSettings] = useState<VoiceServerSettings | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   // Local provider selectors — initialised from voice_status, persisted via
   // openhumanVoiceSetProviders on change. Empty string until first load.
@@ -71,7 +63,6 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
   const [savedSttProvider, setSavedSttProvider] = useState<string>('');
   const [savedTtsProvider, setSavedTtsProvider] = useState<string>('');
   const [isSavingRouting, setIsSavingRouting] = useState(false);
-  const [isUpdatingAlwaysOn, setIsUpdatingAlwaysOn] = useState(false);
   const [ttsVoice, setTtsVoice] = useState<string>('');
   const [elevenlabsVoiceId, setElevenlabsVoiceId] = useState<string>('JBFqnCBsd6RMkjVDRZzb');
   const [isSavingProviders, setIsSavingProviders] = useState(false);
@@ -85,8 +76,6 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
   const [pendingKeySlug, setPendingKeySlug] = useState<string | null>(null);
   const [pendingKeyValue, setPendingKeyValue] = useState('');
   const [isSavingPendingKey, setIsSavingPendingKey] = useState(false);
-  const settingsRef = useRef<VoiceServerSettings | null>(null);
-  const savedSettingsRef = useRef<VoiceServerSettings | null>(null);
   const piperVoicePresets: ReadonlyArray<{ id: string; label: string }> = [
     { id: 'en_US-lessac-medium', label: t('voice.providers.piperPreset.lessacMedium') },
     { id: 'en_US-lessac-high', label: t('voice.providers.piperPreset.lessacHigh') },
@@ -101,30 +90,9 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
     },
   ];
 
-  useEffect(() => {
-    settingsRef.current = settings;
-  }, [settings]);
-
-  useEffect(() => {
-    savedSettingsRef.current = savedSettings;
-  }, [savedSettings]);
-
-  const loadData = async (forceSettings = false) => {
+  const loadData = async () => {
     try {
-      const [settingsResponse, voiceResponse] = await Promise.all([
-        openhumanGetVoiceServerSettings(),
-        openhumanVoiceStatus(),
-      ]);
-      const currentSettings = settingsRef.current;
-      const currentSavedSettings = savedSettingsRef.current;
-      if (
-        forceSettings ||
-        !currentSettings ||
-        JSON.stringify(currentSettings) === JSON.stringify(currentSavedSettings)
-      ) {
-        setSettings(settingsResponse.result);
-      }
-      setSavedSettings(settingsResponse.result);
+      const voiceResponse = await openhumanVoiceStatus();
       setVoiceStatus(voiceResponse);
       // Seed the voice id from voice_status on first load only. There is no
       // STT counterpart: the model id belongs to whichever hosted engine is
@@ -189,7 +157,7 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
   };
 
   useEffect(() => {
-    void loadData(true);
+    void loadData();
   }, []);
 
   const persistProviders = async (
@@ -212,7 +180,7 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
       log('[VoicePanel:providers] saved %o', snapshot);
       setNotice(t('voice.providers.saved'));
       // Force a reload so the rest of the panel reflects the new state.
-      await loadData(true);
+      await loadData();
     } catch (err) {
       const message = err instanceof Error ? err.message : t('voice.providers.failedToSave');
       setError(message);
@@ -245,47 +213,13 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
       setSavedSttProvider(sttProvider);
       setSavedTtsProvider(ttsProvider);
       setNotice(t('voice.providers.saved'));
-      void loadData(true);
+      void loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : t('voice.providers.failedToSave'));
     } finally {
       setIsSavingRouting(false);
     }
   }, [sttProvider, ttsProvider, persistProviders, t]);
-
-  const toggleAlwaysOn = useCallback(
-    async (next: boolean) => {
-      if (!settings || isUpdatingAlwaysOn) return;
-
-      const previous = settings.always_on_enabled;
-      setIsUpdatingAlwaysOn(true);
-      setError(null);
-      setNotice(null);
-      setSettings(current => (current ? { ...current, always_on_enabled: next } : current));
-
-      try {
-        await openhumanUpdateVoiceServerSettings({ always_on_enabled: next });
-        setSavedSettings(current => (current ? { ...current, always_on_enabled: next } : current));
-        setNotice(t('voice.settingsSaved'));
-      } catch (err) {
-        setSettings(current => (current ? { ...current, always_on_enabled: previous } : current));
-        setError(err instanceof Error ? err.message : t('voice.failedToSaveSettings'));
-        setIsUpdatingAlwaysOn(false);
-        return;
-      }
-
-      try {
-        // The notch is the always-on listening HUD. Persistence has already
-        // succeeded, so a window-sync error must not roll the setting back.
-        await syncNotchVisibility(next);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t('voice.failedToSaveSettings'));
-      } finally {
-        setIsUpdatingAlwaysOn(false);
-      }
-    },
-    [isUpdatingAlwaysOn, settings, t]
-  );
 
   /**
    * Enable an external voice provider chip using the inline key form.
@@ -389,7 +323,7 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
     setNotice(null);
     log('[voice:piper] re-checking user-supplied piper binary and voice');
     try {
-      await loadData(false);
+      await loadData();
     } finally {
       setIsCheckingPiper(false);
     }
@@ -412,38 +346,6 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
       leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}
       scrollable={scrollable}>
       <div className={embedded ? 'space-y-5' : 'p-4 space-y-5'}>
-        {/* Always-on listening: the one switch that changes how you talk to it. */}
-        <Card data-testid="voice-always-on-card">
-          <div className="flex items-center gap-3 p-4">
-            <span
-              className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
-                settings?.always_on_enabled
-                  ? 'bg-primary-500 text-content-inverted'
-                  : 'bg-surface-muted text-content-secondary'
-              )}>
-              <AudioLines className="h-5 w-5" aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1">
-              <label htmlFor="voice-always-on" className="block text-sm font-semibold text-content">
-                {t('voice.debug.alwaysOn')}
-              </label>
-              <p className="mt-0.5 text-xs text-content-muted">{t('voice.debug.alwaysOnDesc')}</p>
-            </div>
-            <Switch
-              id="voice-always-on"
-              data-testid="voice-always-on-toggle"
-              checked={settings?.always_on_enabled ?? false}
-              disabled={!settings || isUpdatingAlwaysOn}
-              onCheckedChange={next => void toggleAlwaysOn(next)}
-              aria-label={t('voice.debug.alwaysOn')}
-            />
-          </div>
-        </Card>
-
-        {/* Realtime voice is always on now — its controls live on the Human tab,
-            so the former flag-gated toggle here was removed. */}
-
         {/* ─── Section 1: Voice Provider Chips ─────────────────────────── */}
         <VoicePanelProviderChips
           t={t}
@@ -509,14 +411,6 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
           saveRouting={saveRouting}
         />
 
-        {/* ─── Section 3: Push-to-talk ─────────────────────────────────
-            Global PTT hotkey + session preferences. The panel is
-            self-contained — it only mutates the `ptt` slice, and
-            `usePttHotkey` (T11) reacts to slice changes to (re)register
-            the binding with the Tauri shell. Mounted here so users hunt
-            for it under Voice settings alongside dictation. */}
-        <PttSettingsPanel />
-
         {/* Mascot voice picker now lives in Mascot settings. Link
             kept here so users hunting in Voice settings can find it. */}
         {ttsProvider !== 'piper' && (
@@ -540,7 +434,7 @@ const VoicePanel = ({ embedded = false, scrollable = true }: VoicePanelProps = {
 
         {/* Status line */}
         <StatusLine
-          saving={isSavingProviders || isSavingRouting || isUpdatingAlwaysOn}
+          saving={isSavingProviders || isSavingRouting}
           savedNote={notice}
           error={error}
           savingLabel={t('common.loading')}

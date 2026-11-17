@@ -128,4 +128,36 @@ describe('a parked approval in the runtime projection', () => {
     expect(ids).toEqual([...new Set(ids)]);
     expect(ids).toContain('call-parked');
   });
+
+  it('shows a detached approval on its own after the parent turn settled', () => {
+    // An async sub-agent asked for approval and the parent turn has since
+    // finished. The card must still render (its gate is parked) — and only the
+    // card: the parent's trail belongs to its settled message, not the tail.
+    const detached: PendingApproval = {
+      requestId: 'appr-sub',
+      toolName: 'media_generate_image',
+      message: 'Run media_generate_image — a red fox',
+      toolCallId: 'sub-call-1',
+      detached: true,
+    };
+    const messages = buildRuntimeMessages([msg({ id: 'a1', sender: 'agent' })], null, {
+      isRunning: false,
+      pendingApproval: detached,
+      liveTimeline: [tool({ id: 'call-parent', name: 'spawn_subagent', status: 'success' })],
+    });
+
+    const tail = messages.find(
+      message => message.id === `${STREAMING_TAIL_ID}:approval:${detached.requestId}`
+    );
+    expect(tail).toBeDefined();
+    expect(tail?.status).toEqual({ type: 'requires-action', reason: 'interrupt' });
+    const tailParts = toolParts(tail!);
+    expect(tailParts).toHaveLength(1);
+    expect(tailParts[0].approval?.id).toBe('appr-sub');
+    expect(tailParts[0].toolName).toBe('media_generate_image');
+
+    const ids = allToolCallIds(messages);
+    expect(ids).toEqual([...new Set(ids)]);
+    expect(ids).toContain('call-parent');
+  });
 });

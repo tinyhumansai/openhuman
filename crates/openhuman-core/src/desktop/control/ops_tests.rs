@@ -74,14 +74,17 @@ async fn disabled_status_reports_local_setting_without_contacting_module() {
         .contains("loopback core listener"));
 }
 
-#[cfg(target_os = "linux")]
+// Windows included: its desktop backend has no surfaces yet (#7164).
+#[cfg(not(target_os = "macos"))]
 #[tokio::test]
 async fn enable_request_fails_closed_on_unsupported_platform_without_persisting() {
+    let _loopback = test_loopback_guard();
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.workspace_dir = dir.path().to_path_buf();
     let error = set_enabled(&config, true).await.unwrap_err();
-    assert!(error.contains("macOS or Windows"));
+    assert!(error.contains("requires macOS"));
+    assert!(!error.contains("Windows"));
     assert!(!enabled(&config));
 }
 
@@ -331,4 +334,27 @@ fn approval_bypass_requires_a_registered_desktop_tool_and_disabled_setting() {
     assert!(!approval_bypass_decision(&config, &raw_action));
     config.desktop.approvals_enabled = true;
     assert!(!approval_bypass_decision(&config, &goal));
+}
+
+#[test]
+fn component_off_overrides_local_consent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = dir.path().to_path_buf();
+    save(&config, true).unwrap();
+    assert!(enabled(&config));
+    config.components.computer = false;
+    assert!(
+        !enabled(&config),
+        "component off must disable despite consent"
+    );
+}
+
+#[test]
+fn component_on_without_local_consent_stays_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = dir.path().to_path_buf();
+    assert!(config.components.computer);
+    assert!(!enabled(&config));
 }

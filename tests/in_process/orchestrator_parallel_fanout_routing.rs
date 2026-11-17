@@ -11,7 +11,7 @@
 //! #5757 (`02d81f6cf`) retired `spawn_parallel_agents` along with five other
 //! sub-agent tools, cutting the surface from 11 tools to 3. A dedicated fan-out
 //! tool was judged "a second way to say spawn again" now that
-//! `spawn_async_subagent` is always async: it returns a task id immediately, so
+//! `spawn_subagent` is always async: it returns a task id immediately, so
 //! N spawns issued together are already N workers running concurrently. The
 //! retirement is pinned both ways in `agents/loader.rs` — three tools required,
 //! six asserted absent — so it is deliberate and enforced, not drift.
@@ -22,19 +22,19 @@
 //! asserting against a prompt that no longer mentions it.
 
 const ORCHESTRATOR_PROMPT: &str =
-    include_str!("../../crates/openhuman-core/src/agent/registry/agents/orchestrator/prompt.md");
+    include_str!("../../crates/openhuman-core/src/agent_registry/agents/orchestrator/prompt.md");
 
 #[test]
 fn prompt_routes_fanout_to_concurrent_async_spawns() {
     let prompt = ORCHESTRATOR_PROMPT.to_lowercase();
 
     // The fan-out guidance must exist and name the primitive that actually
-    // runs concurrently. Post-#5757 that is `spawn_async_subagent`; the
+    // runs concurrently. Post-#5757 that is `spawn_subagent`; the
     // assertion is deliberately on the *current* tool rather than on whichever
     // name happened to be right in 2026, because a prompt naming a retired
     // tool is the failure this file is meant to catch.
     assert!(
-        ORCHESTRATOR_PROMPT.contains("spawn_async_subagent"),
+        ORCHESTRATOR_PROMPT.contains("spawn_subagent"),
         "orchestrator prompt must name the concurrent spawn primitive (#4754, #5757)"
     );
 
@@ -80,23 +80,6 @@ fn prompt_does_not_teach_a_retired_subagent_tool() {
     }
 }
 
-// `spawn_subagent_description_redirects_fanout_to_parallel` was removed here.
-//
-// It required `spawn_subagent`'s description to redirect fan-out to
-// `spawn_parallel_agents` — a tool #5757 retired. It still passed, because the
-// description still says it, which made it the same orphan as the two above:
-// a test pinning guidance for a tool nothing can call.
-//
-// It is deleted rather than re-anchored because there is no correct name to
-// re-anchor it to. `spawn_subagent` survives in exactly one agent —
-// `trigger_reactor/agent.toml` — and that agent's tool list is
-// `spawn_subagent` alone: no `spawn_parallel_agents`, and no
-// `spawn_async_subagent` either. So the redirect is dangling for its only
-// caller, and pointing it at the new tool would leave it just as dangling.
-//
-// The underlying defect is in `src/`, not in a test: `spawn_subagent`'s
-// description sends its only caller to a tool that caller does not have.
-// Deciding what it should say instead — give `trigger_reactor` a fan-out
-// affordance, or drop the redirect — is a product call for #5757's author, so
-// it is reported rather than guessed at here. Encoding a guess as an assertion
-// is what left this file asserting against a retired tool in the first place.
+// The former blocking redirect test was retired with
+// `spawn_parallel_agents`. Fan-out now uses several concurrent async
+// `spawn_subagent` calls, which the prompt assertions above pin directly.

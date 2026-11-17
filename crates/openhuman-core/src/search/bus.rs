@@ -5,6 +5,7 @@
 //! Without this subscriber a login would only reach it on the next search
 //! call, and a logout would leave the old credential in the module until then.
 
+use crate::core::runtime::DispatchCtx;
 use async_trait::async_trait;
 use tinybus::EventHandler;
 
@@ -25,17 +26,21 @@ impl EventHandler<DomainEvent> for CredentialRefreshSubscriber {
     }
 
     async fn handle(&self, event: &DomainEvent) {
-        let DomainEvent::CredentialChanged { kind } = event else {
+        let DomainEvent::CredentialChanged { kind, tenant } = event else {
             return;
         };
-        let config = match crate::config::rpc::load_config_with_timeout().await {
+        let Some(ctx) = DispatchCtx::for_event(tenant.as_ref()) else {
+            tracing::debug!(kind = %kind, "[search][bus] credential change has no tenant; skipping refresh");
+            return;
+        };
+        let config = match ctx.load_config().await {
             Ok(config) => config,
             Err(error) => {
                 tracing::warn!(kind = %kind, %error, "[search][bus] config unavailable; skipping refresh");
                 return;
             }
         };
-        match crate::modules::search::refresh_loaded(&config).await {
+        match crate::modules::search::refresh_loaded(&ctx, &config).await {
             Ok(()) => {
                 tracing::debug!(kind = %kind, "[search][bus] module refreshed after credential change")
             }

@@ -4,7 +4,7 @@
 //! [`super`]). Mirrors only what always-on code reaches: the boot catalog
 //! refresh kicked off by `core::runtime::services`, the controller aggregators
 //! (`crates/openhuman-core/src/core/all.rs`), and the `tools` module glob
-//! (`crates/openhuman-core/src/tools/mod.rs`). Everything else — the catalog store, wire
+//! (`crates/openhuman-core/src/tools/mod.rs`). Everything else — the registry handle, wire
 //! types, and the `skill_setup` agent — is only referenced from code gated by
 //! the same feature, so it vanishes alongside.
 //!

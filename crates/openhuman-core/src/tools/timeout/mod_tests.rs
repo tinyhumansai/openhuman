@@ -1,186 +1,48 @@
 use super::*;
 
-#[test]
-fn default_when_env_missing() {
-    assert_eq!(parse_tool_timeout_secs(None), DEFAULT_TIMEOUT_SECS);
-}
+/// The timeout settings are process-global; tests that push values serialize here.
+static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
-fn default_when_value_not_numeric() {
-    assert_eq!(
-        parse_tool_timeout_secs(Some("not-a-number")),
-        DEFAULT_TIMEOUT_SECS
-    );
-    assert_eq!(parse_tool_timeout_secs(Some("")), DEFAULT_TIMEOUT_SECS);
-    assert_eq!(parse_tool_timeout_secs(Some("12x")), DEFAULT_TIMEOUT_SECS);
-}
-
-#[test]
-fn default_when_value_zero() {
-    // 0 seconds would disable the timeout — reject and fall back.
-    assert_eq!(parse_tool_timeout_secs(Some("0")), DEFAULT_TIMEOUT_SECS);
-}
-
-#[test]
-fn default_when_value_above_max() {
-    assert_eq!(parse_tool_timeout_secs(Some("3601")), DEFAULT_TIMEOUT_SECS);
-    assert_eq!(
-        parse_tool_timeout_secs(Some("99999999999")),
-        DEFAULT_TIMEOUT_SECS
-    );
-}
-
-#[test]
-fn default_when_value_negative_or_signed() {
-    // Negative values fail u64 parse and fall back to default.
-    assert_eq!(parse_tool_timeout_secs(Some("-5")), DEFAULT_TIMEOUT_SECS);
-}
-
-#[test]
-fn accepts_valid_values_at_boundaries() {
-    assert_eq!(parse_tool_timeout_secs(Some("1")), MIN_TIMEOUT_SECS);
-    assert_eq!(parse_tool_timeout_secs(Some("3600")), MAX_TIMEOUT_SECS);
-}
-
-#[test]
-fn accepts_valid_midrange_value() {
-    assert_eq!(parse_tool_timeout_secs(Some("300")), 300);
-}
-
-#[test]
-fn env_override_takes_precedence_over_config() {
-    // When the env var holds a valid value it wins over the config value.
-    assert_eq!(resolve_effective(300, Some("600")), 600);
-}
-
-#[test]
-fn config_value_used_when_env_absent_or_invalid() {
-    // No env → config drives the effective value (bounded).
-    assert_eq!(resolve_effective(300, None), 300);
-    // Present-but-invalid env (non-numeric / 0 / out of range) is ignored,
-    // so the config value still applies.
-    assert_eq!(resolve_effective(300, Some("nonsense")), 300);
-    assert_eq!(resolve_effective(300, Some("0")), 300);
-    assert_eq!(resolve_effective(300, Some("4000")), 300);
-}
-
-#[test]
-fn config_value_is_bounded() {
-    // An out-of-range config value falls back to the default rather than
-    // being applied verbatim.
-    assert_eq!(resolve_effective(0, None), DEFAULT_TIMEOUT_SECS);
-    assert_eq!(resolve_effective(99_999, None), DEFAULT_TIMEOUT_SECS);
-}
-
-#[test]
-fn explicit_call_timeout_unbounded_when_absent_or_disabled() {
-    // No request, or an explicit 0, means "run unbounded" (None).
-    assert_eq!(explicit_call_timeout_secs(None, MAX_TIMEOUT_SECS), None);
-    assert_eq!(explicit_call_timeout_secs(Some(0), MAX_TIMEOUT_SECS), None);
-}
-
-#[test]
-fn explicit_call_timeout_enforces_and_clamps_request() {
-    // An in-range request is enforced verbatim.
-    assert_eq!(
-        explicit_call_timeout_secs(Some(900), MAX_TIMEOUT_SECS),
-        Some(900)
-    );
-    // Below the floor clamps up to MIN.
-    assert_eq!(
-        explicit_call_timeout_secs(Some(0), MAX_TIMEOUT_SECS),
-        None,
-        "0 disables rather than clamping to MIN"
-    );
-    // Above the cap clamps down to the cap.
-    assert_eq!(
-        explicit_call_timeout_secs(Some(99_999), MAX_TIMEOUT_SECS),
-        Some(MAX_TIMEOUT_SECS)
-    );
-    // A tool with a tighter own ceiling (node/npm at 1800) clamps to it.
-    assert_eq!(explicit_call_timeout_secs(Some(99_999), 1800), Some(1800));
-    assert_eq!(explicit_call_timeout_secs(Some(600), 1800), Some(600));
-}
-
-#[test]
-fn explicit_call_timeout_duration_matches_secs() {
-    assert_eq!(
-        explicit_call_timeout_duration(Some(900), MAX_TIMEOUT_SECS),
-        Some(Duration::from_secs(900))
-    );
-    assert_eq!(explicit_call_timeout_duration(None, MAX_TIMEOUT_SECS), None);
-}
-
-#[test]
-fn env_override_from_rejects_invalid() {
-    assert_eq!(env_override_from(None), None);
-    assert_eq!(env_override_from(Some("")), None);
-    assert_eq!(env_override_from(Some("0")), None);
-    assert_eq!(env_override_from(Some("abc")), None);
-    assert_eq!(env_override_from(Some("3601")), None);
-    assert_eq!(env_override_from(Some("120")), Some(120));
-}
-
-/// Table of `(policy, inherited config secs, expected (deadline_ms, budget_secs))`.
-/// Pins `resolve_tool_deadline` so its behaviour is identical whether it is
-/// implemented locally or delegated to the vendored `ToolTimeoutSettings`.
-#[test]
-fn resolve_tool_deadline_table() {
-    use tinytools::ToolTimeout;
-    let ms = |m: u64| Some(Duration::from_millis(m));
-    let cases: Vec<(ToolTimeout, u64, (Option<Duration>, u64))> = vec![
-        // Inherit: the global config value, no grace.
-        (ToolTimeout::Inherit, 120, (ms(120_000), 120)),
-        (ToolTimeout::Inherit, 1, (ms(1_000), 1)),
-        (ToolTimeout::Inherit, 3600, (ms(3_600_000), 3600)),
-        // Unbounded: no deadline, zero budget.
-        (ToolTimeout::Unbounded, 120, (None, 0)),
-        // Millis: rounded UP to whole seconds, clamped, +5s grace on deadline.
-        (ToolTimeout::Millis(0), 120, (ms(6_000), 1)),
-        (ToolTimeout::Millis(1), 120, (ms(6_000), 1)),
-        (ToolTimeout::Millis(1_000), 120, (ms(6_000), 1)),
-        (ToolTimeout::Millis(1_001), 120, (ms(7_000), 2)),
-        (ToolTimeout::Millis(1_500), 120, (ms(7_000), 2)),
-        (ToolTimeout::Millis(30_000), 120, (ms(35_000), 30)),
-        (ToolTimeout::Millis(3_600_000), 120, (ms(3_605_000), 3600)),
-        (ToolTimeout::Millis(3_600_001), 120, (ms(3_605_000), 3600)),
-        (ToolTimeout::Millis(u64::MAX), 120, (ms(3_605_000), 3600)),
-    ];
-    for (policy, inherited_secs, expected) in cases {
-        // Resolve against the pure helper so the process-global stays untouched.
-        let got = resolve_tool_deadline_with(policy, inherited_secs);
-        assert_eq!(
-            got, expected,
-            "policy {policy:?} inherited {inherited_secs}s"
-        );
+fn config_push_reaches_module_and_harness_settings() {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Skip when an operator override would legitimately win.
+    if env_override_active() {
+        return;
     }
+    let effective = set_tool_timeout_secs(321);
+    assert_eq!(effective, 321);
+    assert_eq!(tool_execution_timeout_secs(), 321);
+    assert_eq!(
+        harness_settings().inherited_timeout().map(|d| d.as_secs()),
+        Some(321)
+    );
+    set_tool_timeout_secs(module::DEFAULT_TIMEOUT_SECS);
 }
 
-/// Env / config precedence table for the effective inherited timeout.
 #[test]
-fn resolve_effective_table() {
-    let cases: &[(u64, Option<&str>, u64)] = &[
-        (300, None, 300),
-        (300, Some("600"), 600),
-        (300, Some("1"), 1),
-        (300, Some("3600"), 3600),
-        (300, Some("3601"), 300),
-        (300, Some("0"), 300),
-        (300, Some("-1"), 300),
-        (300, Some(""), 300),
-        (300, Some("abc"), 300),
-        (0, None, DEFAULT_TIMEOUT_SECS),
-        (0, Some("45"), 45),
-        (3601, None, DEFAULT_TIMEOUT_SECS),
-        (u64::MAX, None, DEFAULT_TIMEOUT_SECS),
-        (1, None, 1),
-        (3600, None, 3600),
-    ];
-    for &(config, env, expected) in cases {
-        assert_eq!(
-            resolve_effective(config, env),
-            expected,
-            "config {config} env {env:?}"
-        );
+fn out_of_range_config_push_falls_back_to_default() {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if env_override_active() {
+        return;
     }
+    assert_eq!(set_tool_timeout_secs(0), module::DEFAULT_TIMEOUT_SECS);
+    assert_eq!(set_tool_timeout_secs(99_999), module::DEFAULT_TIMEOUT_SECS);
+}
+
+#[test]
+fn env_var_name_is_the_documented_wire_name() {
+    assert_eq!(ENV_VAR, "OPENHUMAN_TOOL_TIMEOUT_SECS");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn adapter_wrapped_waiter_reaps_a_timed_out_group() {
+    ensure_configured();
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.args(["-c", "sleep 30 & wait"]);
+    let started = std::time::Instant::now();
+    let out = module::output_or_kill(&mut cmd, std::time::Duration::from_millis(200)).await;
+    assert!(out.is_err(), "deadline should elapse");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }

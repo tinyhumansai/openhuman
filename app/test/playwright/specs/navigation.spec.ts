@@ -6,6 +6,7 @@ interface RouteEntry {
   route: string;
   /** Expected hash after any redirect. Defaults to the route itself. */
   expectedHash?: string;
+  readyTestId?: string;
 }
 
 // Phase 2/3/6 IA revamp routes.
@@ -20,12 +21,13 @@ const ROUTES: RouteEntry[] = [
   { route: '/human' }, // first-class route (dedicated mascot stage)
   { route: '/chat' },
   { route: '/connections' },
+  { route: '/flows' },
+  { route: '/connections?tab=brain', readyTestId: 'memory-page' },
+  { route: '/brain', expectedHash: '/connections?tab=brain', readyTestId: 'memory-page' },
   { route: '/skills', expectedHash: '/connections' }, // back-compat redirect
   { route: '/activity', expectedHash: '/settings/account' }, // back-compat redirect
   { route: '/intelligence', expectedHash: '/settings/account' }, // back-compat redirect
-  // Desktop Settings is a modal overlay (the backgroundLocation pattern): the
-  // /settings index redirects to the first panel and the modal renders on top
-  // of the /chat fallback backdrop.
+  // Settings is a routed page and the /settings index resolves to Account.
   { route: '/settings', expectedHash: '/settings/account' },
 ];
 
@@ -34,25 +36,30 @@ test.describe('Navigation', () => {
     await bootAuthenticatedPage(page, 'pw-navigation-user');
   });
 
-  for (const { route, expectedHash } of ROUTES) {
+  for (const { route, expectedHash, readyTestId } of ROUTES) {
     const landing = expectedHash ?? route;
     test(`renders ${route}`, async ({ page }) => {
       await page.goto(`/#${route}`);
       await waitForAppReady(page);
 
       // After redirects the hash should begin with the final landing path.
+      const escapedLanding = landing.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const minimumTextLength = route === '/human' ? 20 : 50;
       await expect
         .poll(async () => page.evaluate(() => window.location.hash))
-        .toMatch(new RegExp(`^#${landing.replace('/', '\\/')}`));
+        .toMatch(new RegExp(`^#${escapedLanding}`));
+      if (expectedHash?.includes('?')) {
+        await expect.poll(() => page.evaluate(() => window.location.hash)).toBe(`#${expectedHash}`);
+      }
+      if (readyTestId) await expect(page.getByTestId(readyTestId)).toBeVisible();
       await expect
         .poll(async () => {
           const text = await page.locator('#root').innerText();
           return text.trim().length;
         })
-        // `/human` intentionally keeps the mascot stage sparse; its complete
-        // navigation chrome is shorter than the old generic 50-character
-        // heuristic while still proving the application rendered.
-        .toBeGreaterThan(20);
+        // Human is intentionally sparse; native-equivalent app routes must
+        // retain the broader nonblank-content threshold.
+        .toBeGreaterThan(minimumTextLength);
     });
   }
 });

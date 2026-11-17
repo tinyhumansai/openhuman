@@ -1,4 +1,5 @@
 use super::*;
+use crate::{ReasoningEffort, Route};
 
 #[test]
 fn openai_compatible_carries_both_halves() {
@@ -7,6 +8,19 @@ fn openai_compatible_carries_both_halves() {
     assert_eq!(route.base_url, "https://api.example/v1");
     assert_eq!(route.api_key, "sk-test");
     assert!(provider.is_routed());
+}
+
+#[test]
+fn openai_compatible_route_accepts_provider_options_and_reasoning_effort() {
+    let route = Route::openai_compatible("https://api.example/v1", "sk-test")
+        .provider_options(serde_json::json!({"provider": {"order": ["fast"]}}))
+        .reasoning_effort(ReasoningEffort::High);
+
+    assert_eq!(
+        route.provider_options,
+        Some(serde_json::json!({"provider": {"order": ["fast"]}}))
+    );
+    assert_eq!(route.reasoning_effort, Some(ReasoningEffort::High));
 }
 
 #[test]

@@ -1,12 +1,15 @@
 use crate::config::Config;
-use crate::cron::{self, DeliveryConfig, Schedule, SessionTarget};
+use crate::cron::job_builder::{create_agent_job, AgentJobInput};
+use crate::cron::origin::{current_job_origin, current_turn_may_skip_approval};
 use crate::security::SecurityPolicy;
+use crate::tools::schema_cache::static_schema;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::sync::Arc;
 use tinytools::{PermissionLevel, Tool, ToolResult};
+use {crate::cron, tinyflows_bus::schedule::types::Schedule};
 
 /// Tool that lets the agent manage recurring and one-shot scheduled tasks.
 pub struct ScheduleTool {
@@ -27,49 +30,16 @@ impl Tool for ScheduleTool {
     }
 
     fn description(&self) -> &str {
-        "Manage scheduled tasks. Actions: create/add/once/list/get/cancel/remove/pause/resume"
+        "Manage scheduled tasks. Actions: create/add/once/list/get/cancel/remove/pause/resume. \
+         A task with a `prompt` created inside a conversation replies back into that same \
+         conversation automatically on every run; no delivery target is needed. In the \
+         scheduled run your final reply is what gets delivered. Reminders and recurring \
+         messages always deliver. A conditional check must put its condition and \
+         \"otherwise reply NO_REPLY\" in its `prompt`; only such a task can skip a run."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "add", "once", "list", "get", "cancel", "remove", "pause", "resume"],
-                    "description": "Action to perform"
-                },
-                "expression": {
-                    "type": "string",
-                    "description": "Cron expression for recurring tasks (e.g. '*/5 * * * *')."
-                },
-                "delay": {
-                    "type": "string",
-                    "description": "Delay for one-shot tasks (e.g. '30m', '2h', '1d')."
-                },
-                "run_at": {
-                    "type": "string",
-                    "description": "Absolute RFC3339 time for one-shot tasks (e.g. '2030-01-01T00:00:00Z')."
-                },
-                "command": {
-                    "type": "string",
-                    "description": "Shell command to execute. Use 'command' for shell jobs OR 'prompt' for agent jobs."
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "Agent prompt for recurring agent tasks (e.g. reminders, briefings). Use this instead of 'command' for user-facing notifications."
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Short human-readable name for the job (e.g. 'drink_water_reminder'). Always provide a name."
-                },
-                "id": {
-                    "type": "string",
-                    "description": "Task ID. Required for get/cancel/remove/pause/resume."
-                }
-            },
-            "required": ["action"]
-        })
+        static_schema!(include_str!("parameters/schedule.json"))
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -90,13 +60,37 @@ impl Tool for ScheduleTool {
         // (create/add/once/cancel/remove/pause/resume) persist or remove a
         // scheduled job and must go through the ApprovalGate
         // (GHSA-f46p-6vf9-64mm).
-        !matches!(
-            args.get("action").and_then(|v| v.as_str()),
-            Some("list") | Some("get")
-        )
+        //
+        // Exception: an agent task (`prompt`, no shell `command`) created from a
+        // channel conversation replies only into that conversation and runs as
+        // that channel's turn, so it skips the gate (see `cron::origin`).
+        match args.get("action").and_then(|v| v.as_str()) {
+            Some("list") | Some("get") => false,
+            Some("create") | Some("add") | Some("once") => {
+                // The trait predicate carries no run context, so it reads the
+                // calling task's turn scope.
+                !current_turn_may_skip_approval(
+                    &schedule_args_as_cron_add(args),
+                    crate::core::runtime::DispatchCtx::ambient_turn()
+                        .turn_origin()
+                        .as_ref(),
+                )
+            }
+            _ => true,
+        }
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        tool_context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> Result<ToolResult> {
         let action = args
             .get("action")
             .and_then(|value| value.as_str())
@@ -112,15 +106,12 @@ impl Tool for ScheduleTool {
                 self.handle_get(id)
             }
             "create" | "add" | "once" => {
-                if let Some(blocked) = self.enforce_mutation_allowed(action) {
-                    return Ok(blocked);
-                }
-                self.handle_create_like(action, &args)
+                let origin =
+                    crate::agent::tinyagents::host::run_context::turn_origin_for_tool(tool_context);
+                self.handle_create_like(action, &args, origin.as_ref())
+                    .await
             }
             "cancel" | "remove" => {
-                if let Some(blocked) = self.enforce_mutation_allowed(action) {
-                    return Ok(blocked);
-                }
                 let id = args
                     .get("id")
                     .and_then(|value| value.as_str())
@@ -128,9 +119,6 @@ impl Tool for ScheduleTool {
                 Ok(self.handle_cancel(id))
             }
             "pause" => {
-                if let Some(blocked) = self.enforce_mutation_allowed(action) {
-                    return Ok(blocked);
-                }
                 let id = args
                     .get("id")
                     .and_then(|value| value.as_str())
@@ -138,9 +126,6 @@ impl Tool for ScheduleTool {
                 Ok(self.handle_pause_resume(id, true))
             }
             "resume" => {
-                if let Some(blocked) = self.enforce_mutation_allowed(action) {
-                    return Ok(blocked);
-                }
                 let id = args
                     .get("id")
                     .and_then(|value| value.as_str())
@@ -148,29 +133,34 @@ impl Tool for ScheduleTool {
                 Ok(self.handle_pause_resume(id, false))
             }
             other => Ok(ToolResult::error(format!(
-                    "Unknown action '{other}'. Use create/add/once/list/get/cancel/remove/pause/resume."
-                ))),
+                "Unknown action '{other}'. Use create/add/once/list/get/cancel/remove/pause/resume."
+            ))),
         }
     }
 }
 
-impl ScheduleTool {
-    fn enforce_mutation_allowed(&self, action: &str) -> Option<ToolResult> {
-        if !self.security.can_act() {
-            return Some(ToolResult::error(format!(
-                "[policy-blocked] Security policy: read-only mode, cannot perform '{action}'"
-            )));
+/// The `cron` add-shaped view of a `schedule` create call, for the shared
+/// approval-exemption check: an agent task has a `prompt` and no real shell
+/// `command`; anything else is treated as a shell job.
+fn schedule_args_as_cron_add(args: &serde_json::Value) -> serde_json::Value {
+    let non_empty = |key: &str| {
+        args.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    match (non_empty("command"), non_empty("prompt")) {
+        // `execute` re-reads a non-shell-looking `command` as the prompt.
+        (Some(cmd), None) if !looks_like_shell_command(&cmd) => {
+            json!({ "job_type": "agent", "prompt": cmd })
         }
-
-        if !self.security.record_action() {
-            return Some(ToolResult::error(
-                "Rate limit exceeded: action budget exhausted".to_string(),
-            ));
-        }
-
-        None
+        (None, Some(prompt)) => json!({ "job_type": "agent", "prompt": prompt }),
+        _ => json!({ "job_type": "shell" }),
     }
+}
 
+impl ScheduleTool {
     fn handle_list(&self) -> Result<ToolResult> {
         let jobs = cron::list_jobs(&self.config)?;
         if jobs.is_empty() {
@@ -229,7 +219,12 @@ impl ScheduleTool {
         }
     }
 
-    fn handle_create_like(&self, action: &str, args: &serde_json::Value) -> Result<ToolResult> {
+    async fn handle_create_like(
+        &self,
+        action: &str,
+        args: &serde_json::Value,
+        origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
+    ) -> Result<ToolResult> {
         let command = args
             .get("command")
             .and_then(|value| value.as_str())
@@ -305,7 +300,8 @@ impl ScheduleTool {
                     active_hours: None,
                 }
             } else if let Some(delay_str) = delay {
-                let at = Utc::now() + cron::parse_human_delay(delay_str)?;
+                let at = Utc::now()
+                    + crate::cron::client::parse_human_delay(&self.config, delay_str).await?;
                 Schedule::At { at }
             } else if let Some(at_str) = run_at {
                 let at: DateTime<Utc> = DateTime::parse_from_rfc3339(at_str)
@@ -341,23 +337,20 @@ impl ScheduleTool {
                 });
 
             let delete_after_run = matches!(schedule, Schedule::At { .. });
-            let delivery = Some(DeliveryConfig {
-                mode: "proactive".to_string(),
-                channel: None,
-                to: None,
-                best_effort: true,
-            });
-
-            let job = cron::add_agent_job(
+            let job = create_agent_job(
                 &self.config,
-                name,
-                schedule,
-                prompt_text,
-                SessionTarget::Isolated,
-                None,
-                delivery,
-                delete_after_run,
-            )?;
+                AgentJobInput {
+                    name,
+                    schedule,
+                    prompt: prompt_text.to_string(),
+                    session_target: None,
+                    model: None,
+                    delivery: None,
+                    delete_after_run,
+                },
+                current_job_origin(origin),
+            )
+            .map_err(anyhow::Error::msg)?;
 
             let job_name = job.name.as_deref().unwrap_or("(unnamed)");
             tracing::debug!(
@@ -374,6 +367,15 @@ impl ScheduleTool {
 
         // ── Shell job (command provided) ─────────────────────────────
         let command = command.unwrap();
+        if let Err(reason) = crate::cron::scheduler::shell_job::authorize_shell_command(
+            &self.config,
+            &self.security,
+            command,
+        )
+        .await
+        {
+            return Ok(ToolResult::error(reason));
+        }
 
         if let Some(value) = expression {
             let job = cron::add_job(&self.config, value, command)?;
@@ -466,3 +468,7 @@ fn looks_like_shell_command(input: &str) -> bool {
 #[cfg(test)]
 #[path = "schedule_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "schedule_schema_tests.rs"]
+mod schema_tests;

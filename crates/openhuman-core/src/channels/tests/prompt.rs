@@ -1,5 +1,5 @@
 use super::common::make_workspace;
-use crate::agent::context::channels_prompt::{build_system_prompt, BOOTSTRAP_MAX_CHARS};
+use crate::channels::prompt::{build_system_prompt, BOOTSTRAP_MAX_CHARS};
 use tempfile::TempDir;
 
 #[test]
@@ -142,7 +142,7 @@ fn prompt_runtime_metadata() {
 #[test]
 fn prompt_skills_compact_list() {
     let ws = make_workspace();
-    let skills = vec![crate::skills::Workflow {
+    let skills = vec![tinyskills::Skill {
         name: "code-review".into(),
         description: "Review code for bugs".into(),
         version: "1.0.0".into(),

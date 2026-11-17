@@ -7,10 +7,12 @@
 //! external-transfer disclosure, applied once before the call.
 
 use crate::config::Config;
+use crate::security::approval::ApprovalChatContext;
 use crate::security::egress::{emit_external_transfer, enforce_egress, EgressDescriptor};
 
-use super::module_client::{self, methods};
+use super::module_client::{self};
 use super::types::{ComposioExecuteRequest, ComposioExecuteResponse};
+use tinyconnectors_bus::names::methods;
 
 /// Run `tool` against the ambient (or `connection_id`-pinned) account.
 ///
@@ -21,6 +23,7 @@ use super::types::{ComposioExecuteRequest, ComposioExecuteResponse};
 /// refusal is `Ok` with `successful: false`.
 pub async fn execute_composio_action(
     config: &Config,
+    chat: Option<&ApprovalChatContext>,
     tool: &str,
     arguments: Option<serde_json::Value>,
     connection_id: Option<&str>,
@@ -29,23 +32,23 @@ pub async fn execute_composio_action(
     if tool.is_empty() {
         return Err("composio: tool slug must not be empty".to_string());
     }
-    // Privacy epic S2/S7 (#4436, #4441): refuse under LocalOnly, otherwise
-    // disclose the transfer, before the arguments leave the device.
-    let egress = EgressDescriptor::composio(tool);
-    if let Err(e) = enforce_egress(&egress) {
-        tracing::debug!(tool = %tool, "[composio][dispatch] local-only egress block");
-        return Err(e.to_string());
-    }
-    emit_external_transfer(egress);
-
     // Resolve the mode-aware route on the host first: a module configured
     // without a route answers with an opaque "no connector route" error, so a
     // missing direct-mode key or backend session must fail here with the
     // actionable message (#1710).
-    if let Err(e) = super::client::resolve_composio_route(config) {
+    if let Err(e) = super::client::resolve_composio_route(config).await {
         tracing::debug!(tool = %tool, "[composio][dispatch] route unavailable");
         return Err(format!("{e:#}"));
     }
+
+    // Privacy epic S2/S7 (#4436, #4441): refuse under LocalOnly, otherwise
+    // disclose the transfer, before the arguments leave the device.
+    let egress = EgressDescriptor::composio(tool);
+    if let Err(e) = enforce_egress(&egress).await {
+        tracing::debug!(tool = %tool, "[composio][dispatch] local-only egress block");
+        return Err(e.to_string());
+    }
+    emit_external_transfer(chat, egress);
 
     tracing::debug!(
         tool = %tool,

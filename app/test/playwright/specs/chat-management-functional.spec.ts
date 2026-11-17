@@ -90,7 +90,7 @@ async function startFreshConversation(page: Page): Promise<void> {
           return (
             thread?.selectedThreadId === threadId &&
             thread.isLoadingMessages === false &&
-            Object.hasOwn(thread.messagesByThreadId ?? {}, threadId)
+            Object.prototype.hasOwnProperty.call(thread.messagesByThreadId ?? {}, threadId)
           );
         }, previousId)
       )
@@ -205,19 +205,23 @@ test.describe('Chat management functional coverage', () => {
     const threadRow = page.getByTestId(`thread-row-${threadId}`);
     await expect(threadRow).toBeVisible({ timeout: 10_000 });
 
-    // Inline rename now lives on each sidebar thread row (moved off the
-    // conversation header). Every row has its own "Edit thread title" button, so
-    // scope to this thread's row to avoid a strict-mode multi-match.
+    // The registry row owns its menu beside the selection trigger.
+    const rowActions = threadRow.locator('..');
     await threadRow.hover();
-    await threadRow.getByRole('button', { name: 'Edit thread title' }).click();
-    await page.getByRole('textbox', { name: 'Edit thread title' }).fill(title);
+    await rowActions.getByRole('button', { name: 'More options' }).click();
+    await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+    const titleInput = page.getByTestId(`thread-title-input-${threadId}`);
+    await titleInput.fill(title);
     await page.keyboard.press('Enter');
+    await expect(titleInput).toBeHidden();
     await expect(page.getByText(title).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('[data-slot="aui_thread-list-item-more-content"]')).toHaveCount(0);
 
     // Deletion remains available from the thread row in the chat sidebar, which
     // is visible by default on the /chat surface.
     await threadRow.hover();
-    await threadRow.getByTitle('Delete thread').click();
+    await rowActions.getByRole('button', { name: 'More options' }).click();
+    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     await expect(page.getByText(/delete/i).last()).toBeVisible();
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(page.getByTestId(`thread-row-${threadId}`)).toHaveCount(0);

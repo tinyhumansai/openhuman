@@ -106,6 +106,39 @@ describe('OAuthProviderButton', () => {
     expect(screen.getByRole('button', { name: /Connecting/ })).toBeDisabled();
   });
 
+  it('warns before switching away from a local profile and continues only after confirmation', async () => {
+    render(<OAuthProviderButton provider={stubProvider} localProfileId="local-device" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Google' }));
+
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(screen.getByText(/users\/local-device/)).toBeInTheDocument();
+    expect(screen.getByText(/sign out and choose the local session/i)).toBeInTheDocument();
+    expect(checkBackendHealthy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /continue to sign in/i }));
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+
+    expect(checkBackendHealthy).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/backend\.test\/auth\/google\/login/)
+    );
+  });
+
+  it('does not show the local-profile warning for a cloud profile', async () => {
+    render(<OAuthProviderButton provider={stubProvider} localProfileId="cloud-user" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Google' }));
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(checkBackendHealthy).toHaveBeenCalledTimes(1);
+  });
+
   it('resets isLoading when the window regains focus', async () => {
     render(<OAuthProviderButton provider={stubProvider} />);
 

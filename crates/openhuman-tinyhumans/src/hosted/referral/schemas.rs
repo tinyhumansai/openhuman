@@ -1,11 +1,11 @@
+use openhuman_embed::__host::core::runtime::DispatchCtx;
+use openhuman_embed::__host::util::params::{json_output, to_json};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use openhuman_core::config::rpc as config_rpc;
-use openhuman_core::core::all::{ControllerFuture, RegisteredController};
-use openhuman_core::core::Outcome;
-use openhuman_core::core::{ControllerSchema, FieldSchema, TypeSchema};
+use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
+use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,16 +87,16 @@ pub fn referral_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_referral_get_stats(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_referral_get_stats(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::referral::get_stats(&config).await?)
     })
 }
 
-fn handle_referral_claim(params: Map<String, Value>) -> ControllerFuture {
+fn handle_referral_claim(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<ReferralClaimParams>(params)?;
         let fp = payload
             .device_fingerprint
@@ -107,21 +107,8 @@ fn handle_referral_claim(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn to_json(outcome: Outcome<Value>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
 }
 
 #[cfg(test)]

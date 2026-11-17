@@ -80,6 +80,15 @@ const BACKGROUND_PARK: PendingApproval = {
   expires_at: '2026-09-23T04:22:00.000Z',
 };
 
+const NATIVE_SECRET_GRANT: PendingApproval = {
+  request_id: 'req-secret-grant-1',
+  tool_name: 'native_secret_grant',
+  action_summary: 'Unlock configuration secrets',
+  args_redacted: null,
+  created_at: '2026-10-26T10:00:00.000Z',
+  expires_at: '2026-10-26T10:00:30.000Z',
+};
+
 async function renderChatRoute() {
   const store = configureStore({
     reducer: combineReducers({
@@ -140,6 +149,21 @@ describe('a background approval on /chat', () => {
 
     await waitFor(() =>
       expect(vi.mocked(decideApproval)).toHaveBeenCalledWith('req-triage-1', 'approve_once')
+    );
+  });
+
+  it('surfaces and approves a native secret grant through the unrouted queue', async () => {
+    vi.mocked(fetchPendingApprovals).mockResolvedValue([NATIVE_SECRET_GRANT]);
+    await renderChatRoute();
+
+    const card = await screen.findByTestId('unrouted-approval-card', undefined, { timeout: 5000 });
+    expect(card).toHaveTextContent('native_secret_grant');
+    expect(card).toHaveTextContent('Unlock configuration secrets');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(decideApproval)).toHaveBeenCalledWith('req-secret-grant-1', 'approve_once')
     );
   });
 

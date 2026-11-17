@@ -1,16 +1,17 @@
 //! Controller schema and registered-controller lists for the `threads`
 //! namespace.
 
-use crate::core::all::RegisteredController;
+use crate::core::all::{BoundRegisteredController, ControllerEntry, RegisteredController};
 use crate::core::ControllerSchema;
 
 use super::handlers::{
     handle_create_new, handle_delete, handle_edit_message, handle_generate_title, handle_goal_get,
     handle_list, handle_message_append, handle_message_update, handle_messages_list, handle_purge,
-    handle_regenerate, handle_todos_get, handle_token_usage, handle_transcript_get,
-    handle_turn_state_clear, handle_turn_state_get, handle_turn_state_get_turn,
-    handle_turn_state_history, handle_turn_state_list, handle_update_labels, handle_update_title,
-    handle_upsert,
+    handle_regenerate, handle_search, handle_state_get, handle_todos_get, handle_token_usage,
+    handle_transcript_get, handle_turn_state_clear, handle_turn_state_get,
+    handle_turn_state_get_turn, handle_turn_state_history, handle_turn_state_list,
+    handle_update_labels, handle_update_title, handle_update_working_dir, handle_upsert,
+    parse_upsert, run_upsert,
 };
 use super::schema_defs::schemas;
 
@@ -24,6 +25,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("generate_title"),
         schemas("update_labels"),
         schemas("update_title"),
+        schemas("update_working_dir"),
         schemas("message_update"),
         schemas("delete"),
         schemas("purge"),
@@ -36,8 +38,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("transcript_get"),
         schemas("goal_get"),
         schemas("todos_get"),
+        schemas("state_get"),
         schemas("edit_message"),
         schemas("regenerate"),
+        schemas("search"),
     ]
 }
 
@@ -74,6 +78,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_title"),
             handler: handle_update_title,
+        },
+        RegisteredController {
+            schema: schemas("update_working_dir"),
+            handler: handle_update_working_dir,
         },
         RegisteredController {
             schema: schemas("message_update"),
@@ -124,6 +132,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_todos_get,
         },
         RegisteredController {
+            schema: schemas("state_get"),
+            handler: handle_state_get,
+        },
+        RegisteredController {
             schema: schemas("edit_message"),
             handler: handle_edit_message,
         },
@@ -131,5 +143,26 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("regenerate"),
             handler: handle_regenerate,
         },
+        RegisteredController {
+            schema: schemas("search"),
+            handler: handle_search,
+        },
     ]
+}
+
+pub(crate) fn all_controller_entries() -> Vec<ControllerEntry> {
+    all_registered_controllers()
+        .into_iter()
+        .map(|controller| {
+            if controller.schema.function == "upsert" {
+                ControllerEntry::bound(BoundRegisteredController::typed(
+                    controller.schema,
+                    parse_upsert,
+                    run_upsert,
+                ))
+            } else {
+                ControllerEntry::legacy(controller)
+            }
+        })
+        .collect::<Vec<_>>()
 }

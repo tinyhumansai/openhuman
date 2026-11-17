@@ -1,7 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 
@@ -14,6 +13,9 @@ vi.mock('../../components/settings/panels/LlmConnectionsPanel', () => ({
 }));
 vi.mock('../../components/settings/panels/VoicePanel', () => ({
   default: () => <div data-testid="skills-voice-panel" />,
+}));
+vi.mock('../../components/settings/panels/LiveVoicePanel', () => ({
+  default: () => <div data-testid="skills-live-voice-panel" />,
 }));
 vi.mock('../../components/settings/panels/EmbeddingsPanel', () => ({
   default: () => <div data-testid="skills-embeddings-panel" />,
@@ -101,6 +103,10 @@ describe('Skills page — API keys (intelligence) tabs', () => {
   it.each([
     ['llm', 'skills-llm-panel'],
     ['voice', 'skills-voice-panel'],
+    ['voice-agents', 'skills-live-voice-panel'],
+    // Aliases for the live voice agents tab.
+    ['voice-agent', 'skills-live-voice-panel'],
+    ['live-voice', 'skills-live-voice-panel'],
     ['embeddings', 'skills-embeddings-panel'],
     ['search', 'skills-search-panel'],
     ['computer', 'skills-computer-panel'],
@@ -112,5 +118,13 @@ describe('Skills page — API keys (intelligence) tabs', () => {
     await waitFor(() => {
       expect(screen.getByTestId(testId)).toBeInTheDocument();
     });
+  });
+
+  it('lists Voice agents in the API keys group and marks it selected via its alias', async () => {
+    renderWithProviders(<Skills />, { initialEntries: ['/connections?tab=live-voice'] });
+    const row = await screen.findByTestId('two-pane-nav-voice-agents');
+    expect(row).toHaveAttribute('aria-current', 'page');
+    const group = screen.getByText('API keys').parentElement?.parentElement;
+    expect(within(group!).getByTestId('two-pane-nav-voice-agents')).toBeInTheDocument();
   });
 });

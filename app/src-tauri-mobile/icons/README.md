@@ -6,12 +6,14 @@ placeholder Tauri ships.
 
 | Path | Used by |
 | --- | --- |
-| `icon.png` (1024×1024) | `tauri.conf.json#bundle.icon` — Tauri build pipeline |
-| `ios/AppIcon.appiconset/*` | Copied by `scripts/ios-init.sh` into `gen/apple/<bundle>_iOS/Assets.xcassets/AppIcon.appiconset/` after init |
-| `android/mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher.png` | Copied by `scripts/android-init.sh` into `gen/android/app/src/main/res/mipmap-*/` after init |
+| `icon.png` (1024×1024) | [`tauri.conf.json`](../tauri.conf.json) `bundle.icon`, the Tauri build pipeline |
+| `ios/AppIcon.appiconset/*` | Copied by [`scripts/ios-init.sh`](../../../scripts/ios-init.sh) into `gen/apple/<bundle>_iOS/Assets.xcassets/AppIcon.appiconset/` after init |
+| `android/mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher.png` | Copied by [`scripts/android-init.sh`](../../../scripts/android-init.sh) into `gen/android/app/src/main/res/mipmap-*/` after init |
 | `store/appstore.png` (1024×1024) | App Store Connect upload |
 | `store/playstore.png` (512×512) | Google Play Console upload |
 
 The `gen/` directory is `.gitignore`d (Tauri regenerates it from
-`tauri.conf.json` on every `init`), so the canonical source for icons
+[`tauri.conf.json`](../tauri.conf.json) on every `init`), so the canonical source for icons
 must live here, not under `gen/`.
+
+See also the [iOS companion](../../../docs/gitbooks/en/features/ios-companion.md) page and [`app/README.md`](../../README.md).

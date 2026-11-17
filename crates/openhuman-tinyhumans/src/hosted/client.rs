@@ -30,19 +30,17 @@
 //! phrases, budget exhaustion) keep matching them.
 
 use crate::backend::url::effective_backend_api_url;
-use openhuman_core::backend::transport::{
-    resolve_backend_transport, BackendTransport, BackendTransportError, TransportProfile,
+use crate::errors::API_KEY_REJECTED_PREFIX;
+use crate::transport::{BackendTransport, TransportProfile};
+use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::core::events::DomainEvent;
+use openhuman_embed::__host::core::observability::{
+    contains_transient_transport_phrase, is_transient_http_status_code, BACKEND_UNAVAILABLE_PREFIX,
 };
-use openhuman_core::config::Config;
-use openhuman_core::core::observability::{
-    contains_transient_transport_phrase, is_transient_http_status_code, API_KEY_REJECTED_PREFIX,
-    BACKEND_UNAVAILABLE_PREFIX,
-};
-use openhuman_core::security::credentials::session_support::{
-    resolve_backend_credential, BackendCredential,
+use openhuman_embed::__host::credentials::backend_credential::{
+    credential_fingerprint, resolve_backend_credential, BackendCredential,
 };
 use serde_json::Value;
-use std::sync::Arc;
 use tinyhumans_sdk::{Error as SdkError, TinyHumansClient};
 
 const LOG_PREFIX: &str = "[hosted][client]";
@@ -59,6 +57,7 @@ pub enum CredentialKind {
 pub struct HostedClient {
     sdk: TinyHumansClient,
     kind: CredentialKind,
+    credential_fingerprint: Option<String>,
 }
 
 impl HostedClient {
@@ -66,33 +65,50 @@ impl HostedClient {
     ///
     /// Errors without network I/O when there is no usable credential or
     /// installed backend transport, with the appropriate core sentinel.
-    pub fn from_config(config: &Config) -> Result<Self, String> {
-        let credential = resolve_backend_credential(config).inspect_err(|err| {
-            log::debug!("{LOG_PREFIX} no usable backend credential; skipping request: {err}");
-        })?;
-        require_transport(resolve_backend_transport())?;
+    pub async fn from_config(config: &Config) -> Result<Self, String> {
+        let credential = resolve_backend_credential(config)
+            .await
+            .inspect_err(|err| {
+                log::debug!("{LOG_PREFIX} no usable backend credential; skipping request: {err}");
+            })?;
+        require_transport()?;
         let base_url = backend_origin(&effective_backend_api_url(&config.api_url))?;
-        Ok(Self::with_credential(&base_url, credential))
+        Self::with_credential(&base_url, credential)
     }
 
     /// Build the client against `base_url` for an already-resolved credential.
-    pub fn with_credential(base_url: &str, credential: BackendCredential) -> Self {
+    ///
+    /// Refuses, without network I/O, an endpoint the credential may not be
+    /// sent to: an API key only to the managed hosts or loopback, and any
+    /// credential only over HTTPS or loopback HTTP — the guard `BackendClient`
+    /// and `IntegrationsHttp` already apply.
+    pub fn with_credential(base_url: &str, credential: BackendCredential) -> Result<Self, String> {
+        crate::client::endpoint::validate_credential_endpoint(
+            base_url,
+            matches!(credential, BackendCredential::ApiKey(_)),
+        )
+        .map_err(|err| err.to_string())?;
         let sdk = TinyHumansClient::new(base_url)
             .with_http_client(http_client())
             // The product identity (`x-sdk-name`) also rides the SDK's own
             // default headers, exactly as the SDK transport does, so it holds
             // even for a client this crate did not build.
             .with_default_headers(crate::backend::product::product_identity_headers());
-        match credential {
-            BackendCredential::Session(secret) => Self {
-                sdk: sdk.with_token(Some(secret.trim().to_string())),
-                kind: CredentialKind::Session,
-            },
+        Ok(match credential {
+            BackendCredential::Session(secret) => {
+                let token = secret.trim().to_string();
+                Self {
+                    sdk: sdk.with_token(Some(token.clone())),
+                    kind: CredentialKind::Session,
+                    credential_fingerprint: Some(credential_fingerprint(&token)),
+                }
+            }
             BackendCredential::ApiKey(secret) => Self {
                 sdk: sdk.with_api_key(Some(secret.trim().to_string())),
                 kind: CredentialKind::ApiKey,
+                credential_fingerprint: None,
             },
-        }
+        })
     }
 
     /// The typed SDK client.
@@ -108,6 +124,18 @@ impl HostedClient {
     /// Map an SDK result onto the RPC `String` error channel. `op` names the
     /// route as `"METHOD /template"` (no ids) for logs and error text.
     pub fn finish<T>(&self, op: &str, result: Result<T, SdkError>) -> Result<T, String> {
+        if matches!(&result, Err(SdkError::Status { status: 401, .. }))
+            && self.kind == CredentialKind::Session
+        {
+            if let Some(credential_fingerprint) = &self.credential_fingerprint {
+                openhuman_embed::__host::core::bus::BUS.publish(DomainEvent::SessionExpired {
+                    source: format!("tinyhumans.hosted:{op}"),
+                    reason: "backend rejected the session credential used by this hosted request"
+                        .to_string(),
+                    credential_fingerprint: Some(credential_fingerprint.clone()),
+                });
+            }
+        }
         result.map_err(|err| map_error(self.kind, op, err))
     }
 
@@ -121,14 +149,14 @@ impl HostedClient {
     }
 }
 
-/// Reject hosted calls when the runtime has no backend transport.
-fn require_transport(
-    result: Result<Arc<dyn BackendTransport>, BackendTransportError>,
-) -> Result<(), String> {
-    result.map(|_| ()).map_err(|_| {
-        log::debug!("{LOG_PREFIX} no backend transport installed; skipping request");
-        format!("{BACKEND_UNAVAILABLE_PREFIX} no backend transport installed")
-    })
+/// Reject hosted calls when this crate's transport cannot be built.
+fn require_transport() -> Result<(), String> {
+    crate::client::shared_transport()
+        .map(|_| ())
+        .map_err(|err| {
+            log::debug!("{LOG_PREFIX} backend transport unavailable; skipping request: {err:#}");
+            format!("{BACKEND_UNAVAILABLE_PREFIX} no backend transport installed")
+        })
 }
 
 /// The backend origin with any path, query and fragment stripped — the same
@@ -146,11 +174,11 @@ fn backend_origin(api_url: &str) -> Result<String, String> {
     Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
-/// The `reqwest::Client` hosted calls ride: the active backend transport's
-/// (TLS backend, timeouts and attribution headers the core specifies), or a
-/// freshly built one with the same settings when none resolves.
+/// The `reqwest::Client` hosted calls ride: the shared transport's (TLS
+/// backend, timeouts and attribution headers), or a freshly built one with
+/// the same settings when it cannot be built.
 fn http_client() -> reqwest::Client {
-    if let Ok(transport) = resolve_backend_transport() {
+    if let Ok(transport) = crate::client::shared_transport() {
         return transport.http_client(TransportProfile::Api);
     }
     crate::backend::headers::build_backend_client(TransportProfile::Api).unwrap_or_else(|err| {

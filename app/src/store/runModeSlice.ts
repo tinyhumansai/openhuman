@@ -6,7 +6,9 @@
  */
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-export type RunMode = 'plan' | 'build';
+import type { RunMode } from '../types/threadWire.generated';
+
+export type { RunMode };
 
 export interface RunModeState {
   byThread: Record<string, RunMode>;

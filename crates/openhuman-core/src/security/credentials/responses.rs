@@ -19,6 +19,9 @@ pub struct AuthStateResponse {
     /// Absent for API keys, local sessions and `exp`-less tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// Backend that issued this session. Legacy sessions have no association.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuing_backend: Option<String>,
 }
 
 /// `AuthStateResponse::credential` value for an app-session JWT.

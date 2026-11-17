@@ -8,8 +8,7 @@
  * Only artifacts with NO owning tool call (`ArtifactSnapshot.toolCallId`
  * absent) reach this deck — `Conversations.tsx`'s `liveArtifactDeck` filters
  * those out; an artifact with a `toolCallId` renders inline through its own
- * tool-call card instead (`MediaAndDocumentCalls.tsx`). A `ready` artifact
- * never reaches either: it moves to `ChatFilesChip` (unchanged).
+ * tool-call card instead (`MediaAndDocumentCalls.tsx`).
  *
  * The vendored card has no built-in failed/retry state (it only knows
  * "writing" vs. "settled"), so the failed case renders the settled meta line
@@ -37,18 +36,37 @@ export interface ArtifactCardAdapterProps {
   artifact: ArtifactSnapshot;
   /** When provided, render a Retry affordance on the `failed` state. */
   onRetry?: (artifactId: string) => void;
+  /** When provided, clicking a ready artifact opens the preview panel. */
+  onOpenPreview?: (artifactId: string) => void;
 }
 
-export function ArtifactCardAdapter({ artifact, onRetry }: ArtifactCardAdapterProps) {
+/** The core's prefix for a version saved but not shown (`production::SAVED_NOT_SHOWN`). */
+export const SAVED_NOT_SHOWN = 'saved-not-shown:';
+
+export function ArtifactCardAdapter({
+  artifact,
+  onRetry,
+  onOpenPreview,
+}: ArtifactCardAdapterProps) {
   const { t } = useT();
   const generating = artifact.status === 'in_progress';
+  const isReady = artifact.status === 'ready';
+  // The version was saved, but its file in the files folder was not updated:
+  // the artifact opens (the preview reads the saved version) and there is
+  // nothing to retry.
+  const savedNotShown =
+    artifact.status === 'failed' && (artifact.error ?? '').startsWith(SAVED_NOT_SHOWN);
   const meta =
-    artifact.status === 'ready' && artifact.sizeBytes != null
+    isReady && artifact.sizeBytes != null
       ? `${t('chat.artifact.ready')} · ${formatFileSize(artifact.sizeBytes)}`
-      : artifact.status === 'failed'
-        ? t('chat.artifact.failed')
-        : '';
+      : savedNotShown
+        ? t('chat.artifact.savedNotShown')
+        : artifact.status === 'failed'
+          ? t('chat.artifact.failed')
+          : '';
+  const canOpen = isReady || savedNotShown;
 
+  // The card's own button is the one control that opens the preview.
   return (
     <div className="flex flex-col items-start gap-1.5" data-testid="artifact-card-adapter">
       <ArtifactCard
@@ -58,8 +76,9 @@ export function ArtifactCardAdapter({ artifact, onRetry }: ArtifactCardAdapterPr
         words={0}
         writingLabel={t('conversations.tools.working')}
         icon={KIND_ICONS[artifact.kind]}
+        onOpen={canOpen && onOpenPreview ? () => onOpenPreview(artifact.artifactId) : undefined}
       />
-      {artifact.status === 'failed' && onRetry ? (
+      {artifact.status === 'failed' && !savedNotShown && onRetry ? (
         <Button
           variant="secondary"
           size="xs"

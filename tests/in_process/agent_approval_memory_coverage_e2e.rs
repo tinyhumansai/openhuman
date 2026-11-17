@@ -6,7 +6,7 @@
 //! The eight controllers here span three families whose existing raw-coverage
 //! files are already 2–4k lines each, and several of these tests need a
 //! *clean* process-global approval gate. Sharing a file with
-//! `tool_registry_approval_raw_coverage_e2e.rs` would make them order-dependent
+//! `tool_registry_approval_e2e.rs` would make them order-dependent
 //! on whether a sibling test already installed the gate — the exact reason that
 //! file documents for skipping `preauthorize_flow`'s success path
 //! (see its `approval_schema_handlers_validate_params_and_surface_empty_gate_state`).
@@ -23,7 +23,7 @@
 use crate::env_guard::env_lock_async;
 use crate::env_guard::EnvVarGuard;
 use crate::rpc_auth::{ensure_rpc_auth, rpc_token};
-use crate::rpc_harness::{error_message, payload};
+use crate::rpc_harness::{error_message, ok, payload};
 use std::path::Path;
 use std::time::Duration;
 
@@ -235,9 +235,9 @@ async fn approval_get_gate_state_returns_a_consistent_boot_snapshot() {
 /// installs a **process-global** `OnceLock`. Doing that here would change what
 /// `approval_get_gate_state_returns_a_consistent_boot_snapshot` observes in the
 /// same binary, making the pair order-dependent — the identical reason
-/// `tool_registry_approval_raw_coverage_e2e.rs` gives for skipping this path.
+/// `tool_registry_approval_e2e.rs` gives for skipping this path.
 /// Grant idempotency ("already-trusted tools are reported, not re-granted") is
-/// covered by the unit tests in `approval::rpc` / `approval::store`, which own
+/// covered by the unit tests in `approval::rpc` / `approval::gate`, which own
 /// the gate lifecycle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn approval_preauthorize_flow_succeeds_without_a_gate_installed() {
@@ -555,10 +555,10 @@ async fn agent_run_status_returns_null_for_an_unknown_run() {
     );
 }
 
-/// `agent_runs_active` takes two optional filters and must accept the
-/// unfiltered call, both filters, and either alone — always returning a `runs`
-/// array. A filter that was wired as required would break the UI's default
-/// unfiltered poll.
+/// The `agent_runs` controller domain's `agent_runs_active` takes two optional
+/// filters and must accept the unfiltered call, both filters, and either alone —
+/// always returning a `runs` array. A filter that was wired as required would
+/// break the UI's default unfiltered poll.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_runs_active_accepts_every_filter_combination() {
     let _lock = env_lock_async().await;
@@ -584,45 +584,8 @@ async fn agent_runs_active_accepts_every_filter_combination() {
 }
 
 // ---------------------------------------------------------------------------
-// agent.graph_topologies / agent.registry_snapshot
+// agent.registry_snapshot
 // ---------------------------------------------------------------------------
-
-/// `agent_graph_topologies` exports structure only. The contract in its own
-/// schema is explicit — "never closure bodies or run state" — so this asserts
-/// the negative as well as the positive: a topology export that started leaking
-/// prompt text or run state would be a privacy regression that a
-/// shape-only check would not catch.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn agent_graph_topologies_exports_structure_without_run_state() {
-    let _lock = env_lock_async().await;
-    let harness = setup().await;
-
-    let response = rpc(
-        &harness.rpc_base,
-        18,
-        "openhuman.agent_graph_topologies",
-        json!({}),
-    )
-    .await;
-    let body = payload(&response, "agent_graph_topologies");
-
-    // `is_some()` would accept `null` or a scalar, so a schema regression that
-    // dropped the field could still pass. Require the array itself — the handler
-    // builds `graphs` as a `Vec<Value>` and returns
-    // `json!({ "graphs": graphs, "agents": agents })`
-    // (`crates/openhuman-core/src/agent/schemas.rs:486`), so it is an array, not an object.
-    body.get("graphs")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("graph_topologies must return a `graphs` array: {body}"));
-
-    let serialized = body.to_string();
-    for leaked in ["system_prompt", "prompt_text", "api_key", "tool_arguments"] {
-        assert!(
-            !serialized.contains(leaked),
-            "graph topology export is structure-only but contained {leaked:?}"
-        );
-    }
-}
 
 /// `agent_registry_snapshot` projects the capability registry as metadata only.
 /// `counts` must agree with the length of `components` — they are derived from
@@ -734,7 +697,10 @@ async fn memory_engine_status_explains_why_memory_is_off_when_signed_out() {
         "an off engine must say why: {status}"
     );
     assert_eq!(
-        status.get("fetch_modes").and_then(Value::as_array).map(Vec::len),
+        status
+            .get("fetch_modes")
+            .and_then(Value::as_array)
+            .map(Vec::len),
         Some(0),
         "an off engine offers no fetch modes: {status}"
     );
@@ -758,5 +724,110 @@ async fn memory_engine_status_explains_why_memory_is_off_when_signed_out() {
         .iter()
         .filter_map(|engine| engine.get("id").and_then(Value::as_str))
         .collect();
-    assert!(ids.contains(&"tinyhumans") && ids.contains(&"cortexdb"), "{ids:?}");
+    assert!(
+        ids.contains(&"tinyhumans") && ids.contains(&"cortexdb"),
+        "{ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn agent_definitions_and_validation_are_exposed_over_rpc() {
+    let _lock = env_lock_async().await;
+    let harness = setup().await;
+
+    let definitions = rpc(
+        &harness.rpc_base,
+        20_001,
+        "openhuman.agent_list_definitions",
+        json!({}),
+    )
+    .await;
+    let defs = ok(&definitions, "agent_list_definitions")
+        .get("definitions")
+        .and_then(Value::as_array)
+        .expect("definitions array");
+    assert!(
+        defs.iter()
+            .any(|definition| definition.get("id").and_then(Value::as_str) == Some("orchestrator")),
+        "built-in orchestrator definition should be listed: {definitions}"
+    );
+
+    let orchestrator = rpc(
+        &harness.rpc_base,
+        20_002,
+        "openhuman.agent_get_definition",
+        json!({ "id": "orchestrator" }),
+    )
+    .await;
+    assert_eq!(
+        ok(&orchestrator, "agent_get_definition")
+            .pointer("/definition/id")
+            .and_then(Value::as_str),
+        Some("orchestrator")
+    );
+
+    let reload = rpc(
+        &harness.rpc_base,
+        20_003,
+        "openhuman.agent_reload_definitions",
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        ok(&reload, "agent_reload_definitions")
+            .get("status")
+            .and_then(Value::as_str),
+        Some("noop")
+    );
+
+    for (idx, (method, params, expected)) in [
+        (
+            "openhuman.agent_get_definition",
+            json!({ "id": "missing-worker-b-agent" }),
+            "not found",
+        ),
+        (
+            "openhuman.agent_chat",
+            json!({}),
+            "missing required param 'message'",
+        ),
+        (
+            "openhuman.agent_chat_simple",
+            json!({}),
+            "missing required param 'message'",
+        ),
+        (
+            "openhuman.agent_triage_evaluate",
+            json!({
+                "source": "unsupported",
+                "display_label": "Unsupported trigger",
+                "payload": {}
+            }),
+            "unsupported trigger source",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let response = rpc(&harness.rpc_base, 20_100 + idx as i64, method, params).await;
+        let message = error_message(&response, method);
+        assert!(
+            message.to_ascii_lowercase().contains(expected),
+            "{method} should fail deterministically with '{expected}', got {response}"
+        );
+    }
+
+    let status = rpc(
+        &harness.rpc_base,
+        20_201,
+        "openhuman.agent_server_status",
+        json!({}),
+    )
+    .await;
+    assert!(
+        ok(&status, "agent_server_status").is_object(),
+        "agent_server_status should return an object: {status}"
+    );
+
+    harness._rpc_join.abort();
 }

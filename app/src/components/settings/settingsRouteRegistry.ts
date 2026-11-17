@@ -357,7 +357,7 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     titleKey: 'pages.settings.ai.voice',
     descriptionKey: 'pages.settings.ai.voiceDesc',
     section: 'ai',
-    searchKeywords: ['tts', 'stt', 'speech', 'dictation', 'audio'],
+    searchKeywords: ['tts', 'stt', 'speech', 'audio'],
     // Surfaced on the Connections page (Intelligence group); route kept for
     // deep-link compatibility but no longer in the settings sidebar.
   },

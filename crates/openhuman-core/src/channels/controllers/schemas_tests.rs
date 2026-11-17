@@ -2,6 +2,41 @@ use super::*;
 use crate::core::TypeSchema;
 use serde_json::json;
 
+#[tokio::test]
+async fn channel_test_handler_requires_module_before_provider_field_validation() {
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    let error = test_with_config(
+        &config,
+        TestParams {
+            channel: " telegram ".into(),
+            auth_mode: ChannelAuthMode::BotToken,
+            credentials: Value::Null,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("module unavailable"), "{error}");
+}
+
+#[tokio::test]
+async fn rich_channel_send_requires_module_before_normalization_or_backend_delivery() {
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    let error = send_with_config(
+        &config,
+        SendMessageParams {
+            channel: " telegram ".into(),
+            message: json!({"text":"fixture-content", "thread_ts":"fixture-thread"}),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("module unavailable"), "{error}");
+    assert!(!error.contains("fixture-content"));
+    assert!(!error.contains("fixture-thread"));
+}
+
 #[test]
 fn schema_handler_parity() {
     let schemas = all_controller_schemas();
@@ -26,7 +61,7 @@ fn deserialize_connect_params() {
     }))
     .unwrap();
     assert_eq!(params.channel, "telegram");
-    assert_eq!(params.auth_mode, "bot_token");
+    assert_eq!(params.auth_mode, ChannelAuthMode::BotToken);
     assert!(params.credentials.is_none());
 }
 
@@ -72,12 +107,6 @@ fn deserialize_send_message_params() {
     }))
     .unwrap();
     assert_eq!(params.channel, "telegram");
-}
-
-#[test]
-fn to_json_helper() {
-    let outcome = Outcome::single_log(json!({"ok": true}), "log");
-    assert!(to_json(outcome).is_ok());
 }
 
 #[test]
@@ -134,4 +163,26 @@ fn hosted_link_functions_are_not_served_by_the_core() {
         assert!(!registered.contains(f), "core still registers `{f}`");
     }
     assert!(names.contains(&"send_message"));
+}
+
+#[tokio::test]
+async fn channel_connect_handler_requires_module_before_provider_field_validation() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    config.workspace_dir = directory.path().join("workspace");
+    config.config_path = directory.path().join("config.toml");
+    let error = connect_with_config(
+        &config,
+        ConnectParams {
+            channel: " telegram ".into(),
+            auth_mode: ChannelAuthMode::BotToken,
+            credentials: Some(Value::Null),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("module unavailable"), "{error}");
+    assert!(!config.config_path.exists());
+    assert!(!config.workspace_dir.exists());
 }

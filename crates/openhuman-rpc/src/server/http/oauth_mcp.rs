@@ -63,7 +63,7 @@ pub(super) async fn oauth_mcp_callback_handler(
 
     log::info!("[oauth:mcp] callback received (state present); completing exchange");
 
-    let config = match openhuman_core::config::Config::load_or_init().await {
+    let config = match crate::core_host::config::Config::load_or_init().await {
         Ok(c) => c,
         Err(e) => {
             log::warn!("[oauth:mcp] config load failed: {e}");
@@ -74,7 +74,7 @@ pub(super) async fn oauth_mcp_callback_handler(
         }
     };
 
-    match openhuman_core::mcp::registry::oauth::complete(&config, &state, &code).await {
+    match crate::core_host::mcp::registry::oauth::complete(&config, &state, &code).await {
         Ok(server_id) => {
             log::info!("[oauth:mcp] completed sign-in for server_id={server_id}");
             html(

@@ -1,6 +1,6 @@
 //! Bearer-token authentication for the core's HTTP API.
 //!
-//! The token itself is owned by [`openhuman_core::core::auth`]; this module is
+//! The token itself is owned by `openhuman::core::auth`; this module is
 //! the route policy on top of it.
 //!
 //! Endpoints exempt from auth (checked by [`rpc_auth_middleware`]):
@@ -10,9 +10,6 @@
 //! - `GET /dev/connect`   — dev-only core handoff; see `server::dev_connect`
 //! - `GET /events`        — SSE stream; browser `EventSource` cannot set
 //!   headers, so the handler enforces a bind-token / bearer credential itself
-//! - `GET /ws/dictation`  — WebSocket upgrade; browser WS API cannot set
-//!   headers, so the handler enforces the bearer (header or `?token=`) +
-//!   origin itself before the upgrade (C4 / issue #1924)
 //! - `OPTIONS *`          — CORS preflight (handled by outer CORS middleware)
 //!
 //! Endpoints that accept the bearer either via header **or** `?token=…` query
@@ -32,10 +29,106 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
-use openhuman_core::config::Config;
-use openhuman_core::inference::http::EXTERNAL_OPENAI_COMPAT_PROVIDER;
-use openhuman_core::security::credentials::AuthService;
+/// Request gate shared with the two-phase desktop boot. While active, only the
+/// preflight HTTP/RPC surface is admitted; the same bound server opens its
+/// normal router after config secrets are decrypted.
+#[derive(Clone, Debug)]
+pub(crate) struct PreflightGate(Arc<AtomicBool>);
+
+impl PreflightGate {
+    pub(crate) fn new_active() -> Self {
+        Self(Arc::new(AtomicBool::new(true)))
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn open(&self) {
+        self.0.store(false, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_for_test(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+const PREFLIGHT_RPC_METHODS: &[&str] = &[
+    "core.ping",
+    "core.version",
+    "openhuman.service_status",
+    "openhuman.update_version",
+    "openhuman.approval_list_pending",
+    "openhuman.approval_decide",
+    // Reading a keyring-held session token at startup asks the user to
+    // approve the read; the socket that would carry the prompt is not up yet.
+    "openhuman.keyring_consent_list_pending_operations",
+    "openhuman.keyring_consent_respond_operation",
+];
+
+pub(crate) fn preflight_rpc_method_allowed(method: &str) -> bool {
+    PREFLIGHT_RPC_METHODS.contains(&method)
+}
+
+pub(crate) fn preflight_http_path_allowed(method: &Method, path: &str) -> bool {
+    *method == Method::OPTIONS
+        || (*method == Method::GET && path == "/health")
+        || (*method == Method::POST && path == "/rpc")
+}
+
+/// While the desktop has only loaded sealed config, keep every route except
+/// health and JSON-RPC behind a closed gate. JSON-RPC has its own method
+/// allowlist in `preflight_rpc_handler`.
+pub(crate) async fn preflight_surface_middleware(
+    gate: axum::extract::State<PreflightGate>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    if !gate.is_active() || preflight_http_path_allowed(req.method(), req.uri().path()) {
+        return next.run(req).await;
+    }
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "ok": false,
+            "error": "startup_preflight",
+            "message": "Core startup approval preflight is active"
+        })),
+    )
+        .into_response()
+}
+
+/// Stop Engine.IO polling before its own layer can allocate a session. CORS is
+/// kept outside this middleware by the router builder.
+pub(crate) async fn preflight_socketio_middleware(
+    gate: axum::extract::State<PreflightGate>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let path = req.uri().path();
+    if gate.is_active() && (path == "/socket.io" || path.starts_with("/socket.io/")) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "ok": false,
+                "error": "startup_preflight",
+                "message": "Core startup approval preflight is active"
+            })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
+use crate::core_host::config::Config;
+use crate::core_host::credentials::AuthService;
+use crate::core_host::inference::http::EXTERNAL_OPENAI_COMPAT_PROVIDER;
 
 /// Paths that bypass bearer-token authentication.
 ///
@@ -44,10 +137,7 @@ use openhuman_core::security::credentials::AuthService;
 /// clients (browser `EventSource`, browser `WebSocket`) cannot set
 /// `Authorization` headers via standard APIs. `/events` is not unauthenticated
 /// — it is exempt from the *middleware* header check but enforces its own
-/// bind-token credential inside the handler. `/ws/dictation` is NOT public: it
-/// is bearer-gated by this middleware via [`QUERY_TOKEN_PATHS`] (header or
-/// `?token=`) so an unauthenticated upgrade is rejected with 401 before the
-/// WebSocket handshake; the handler adds an origin check on top (finding C4).
+/// bind-token credential inside the handler.
 const PUBLIC_PATHS: &[&str] = &[
     "/",
     "/health",
@@ -97,7 +187,7 @@ fn is_public_path(path: &str) -> bool {
 /// Add new entries here only for SSE / WebSocket routes whose clients cannot
 /// send headers and that carry per-user data. The follow-up approvals stream
 /// (#1339) is the next planned addition.
-const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks", "/ws/dictation"];
+const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks", "/ws/live-voice"];
 
 /// Axum middleware: enforce `Authorization: Bearer <token>` on all protected
 /// endpoints.
@@ -114,7 +204,7 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
         return next.run(req).await;
     }
 
-    let Some(expected) = openhuman_core::core::auth::get_rpc_token() else {
+    let Some(expected) = crate::core_host::core::auth::get_rpc_token() else {
         // Shouldn't happen in production — token is always initialized before
         // the router starts serving. Deny to be safe.
         log::error!("[auth] RPC token not initialized — denying request to {path}");
@@ -136,7 +226,7 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
 
-    if openhuman_core::core::auth::bearer_matches(header_token, expected) {
+    if crate::core_host::core::auth::bearer_matches(header_token, expected) {
         log::trace!("[auth] authorized request to {path} (header)");
         return next.run(req).await;
     }
@@ -152,7 +242,7 @@ pub async fn rpc_auth_middleware(req: axum::extract::Request, next: Next) -> Res
     // this is not a separate credential — only a transport workaround.
     if QUERY_TOKEN_PATHS.contains(&path.as_str()) {
         if let Some(query_token) = extract_query_token(req.uri().query()) {
-            if openhuman_core::core::auth::bearer_matches(&query_token, expected) {
+            if crate::core_host::core::auth::bearer_matches(&query_token, expected) {
                 log::trace!("[auth] authorized request to {path} (query token)");
                 return next.run(req).await;
             }
@@ -175,20 +265,32 @@ fn is_external_inference_path(path: &str) -> bool {
     path == "/v1" || path.starts_with("/v1/")
 }
 
-fn verify_external_inference_bearer_for_config(config: &Config, supplied: &str) -> bool {
+async fn verify_external_inference_bearer_for_config(config: &Config, supplied: &str) -> bool {
     if supplied.trim().is_empty() {
         return false;
     }
 
     let auth = AuthService::from_config(config);
-    match auth.get_provider_bearer_token(EXTERNAL_OPENAI_COMPAT_PROVIDER, None) {
-        Ok(Some(expected)) => openhuman_core::core::auth::bearer_matches(supplied, expected.trim()),
-        Ok(None) => false,
+    match auth
+        .get_provider_bearer_token(EXTERNAL_OPENAI_COMPAT_PROVIDER, None)
+        .await
+    {
+        Ok(expected) => external_inference_bearer_matches(supplied, expected.as_deref()),
         Err(err) => {
             log::warn!("[auth] failed to read external inference bearer: {err}");
             false
         }
     }
+}
+
+fn external_inference_bearer_matches(supplied: &str, expected: Option<&str>) -> bool {
+    let Some(expected) = expected
+        .map(str::trim)
+        .filter(|expected| !expected.is_empty())
+    else {
+        return false;
+    };
+    crate::core_host::core::auth::bearer_matches(supplied, expected)
 }
 
 async fn verify_external_inference_bearer(supplied: &str) -> bool {
@@ -204,7 +306,7 @@ async fn verify_external_inference_bearer(supplied: &str) -> bool {
         }
     };
 
-    verify_external_inference_bearer_for_config(&config, supplied)
+    verify_external_inference_bearer_for_config(&config, supplied).await
 }
 
 /// Pull the first `token` query parameter out of a URL query string.

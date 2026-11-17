@@ -1,26 +1,10 @@
-/**
- * Opening a thread must land on the newest message.
- *
- * This is driven through the REAL Redux cache rather than a hand-fed message
- * array, because the cache is the whole reason the defect is intermittent.
- * `useOpenHumanExternalStore` reads
- * `state.thread.messagesByThreadId[threadId]`, so a thread visited earlier in
- * the session hands its messages over on the very render the id changes — it
- * never passes through the empty state that re-arms assistant-ui's
- * `scrollToBottomOnInitialize` latch. A thread NOT yet cached does briefly
- * empty, so it scrolls correctly even unfixed. A fix checked only against a
- * fresh thread therefore looks right and fixes nothing, which is why the
- * cached switch below is the load-bearing case.
- *
- * jsdom performs no layout and stubs `scrollTo` to a no-op, so the observable
- * here is the imperative call and its argument, not a resulting `scrollTop`.
- */
+/** Native assistant-ui initialization and cached-thread switching over Redux. */
 import { AssistantUiRuntimeProvider } from '@/providers/AssistantUiRuntimeProvider';
 import chatRuntimeReducer from '@/store/chatRuntimeSlice';
 import threadReducer, { loadThreadMessages } from '@/store/threadSlice';
 import type { ThreadMessage } from '@/types/thread';
 import { configureStore } from '@reduxjs/toolkit';
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { act } from 'react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
@@ -94,7 +78,7 @@ function scrolledToBottom(viewport: HTMLElement): boolean {
 }
 
 describe('opening a thread scrolls to the newest message', () => {
-  it('scrolls to the bottom when the last message is from the assistant', () => {
+  it('scrolls to the bottom when the last message is from the assistant', async () => {
     const store = makeStore();
     cacheThread(store, 't-assistant', [
       msg('1', 'user', 'question'),
@@ -109,10 +93,10 @@ describe('opening a thread scrolls to the newest message', () => {
       </Provider>
     );
 
-    expect(scrolledToBottom(viewportOf(container))).toBe(true);
+    await waitFor(() => expect(scrolledToBottom(viewportOf(container))).toBe(true));
   });
 
-  it('scrolls when switching to an ALREADY-CACHED thread, which never empties', () => {
+  it('scrolls when switching to an ALREADY-CACHED thread, which never empties', async () => {
     const store = makeStore();
     cacheThread(store, 't-a', [msg('1', 'user', 'first thread')]);
     cacheThread(store, 't-b', [msg('2', 'user', 'hi'), msg('3', 'agent', 'second thread')]);
@@ -126,6 +110,7 @@ describe('opening a thread scrolls to the newest message', () => {
     );
 
     const viewport = viewportOf(container);
+    await waitFor(() => expect(scrolledToBottom(viewport)).toBe(true));
     // The opening scroll for t-a is not what this test is about.
     scrollToSpy.mockClear();
 
@@ -140,12 +125,11 @@ describe('opening a thread scrolls to the newest message', () => {
     // Same viewport element across the switch — no remount laundered the state.
     expect(viewportOf(container)).toBe(viewport);
     // Both threads are cached, so t-b's messages were present on the render the
-    // id flipped: assistant-ui's latch never re-armed and only our own
-    // thread-keyed scroll can have fired.
-    expect(scrolledToBottom(viewport)).toBe(true);
+    // id flipped: the adapter supplies it to the native thread-switch event.
+    await waitFor(() => expect(scrolledToBottom(viewport)).toBe(true));
   });
 
-  it('does not yank a reader who has scrolled up when a new turn arrives', () => {
+  it('does not yank a reader who has scrolled up when a new turn arrives', async () => {
     const store = makeStore();
     cacheThread(store, 't-reader', [msg('1', 'user', 'q'), msg('2', 'agent', 'a')]);
 
@@ -158,12 +142,15 @@ describe('opening a thread scrolls to the newest message', () => {
     );
 
     // Put the reader far up the transcript: 1000px of content, 200px tall
-    // viewport, parked at the top — 800px from the bottom, well past the 80px
-    // follow threshold.
+    // viewport, parked at the top — 800px from the bottom.
     const viewport = viewportOf(container);
+    await waitFor(() => expect(scrolledToBottom(viewport)).toBe(true));
     Object.defineProperty(viewport, 'scrollHeight', { value: 1000, configurable: true });
     Object.defineProperty(viewport, 'clientHeight', { value: 200, configurable: true });
+    viewport.scrollTop = 800;
+    act(() => viewport.dispatchEvent(new Event('scroll')));
     viewport.scrollTop = 0;
+    act(() => viewport.dispatchEvent(new Event('scroll')));
     scrollToSpy.mockClear();
     scrollIntoViewSpy.mockClear();
 
@@ -178,7 +165,7 @@ describe('opening a thread scrolls to the newest message', () => {
     expect(scrolledToBottom(viewport)).toBe(false);
   });
 
-  it('still aligns a new turn for a reader who is already at the bottom', () => {
+  it('follows a new turn at the bottom without a custom top alignment', async () => {
     const store = makeStore();
     cacheThread(store, 't-bottom', [msg('1', 'user', 'q'), msg('2', 'agent', 'a')]);
 
@@ -191,9 +178,12 @@ describe('opening a thread scrolls to the newest message', () => {
     );
 
     const viewport = viewportOf(container);
+    await waitFor(() => expect(scrolledToBottom(viewport)).toBe(true));
     Object.defineProperty(viewport, 'scrollHeight', { value: 1000, configurable: true });
     Object.defineProperty(viewport, 'clientHeight', { value: 200, configurable: true });
     viewport.scrollTop = 800; // pinned to the bottom
+    act(() => viewport.dispatchEvent(new Event('scroll')));
+    scrollToSpy.mockClear();
     scrollIntoViewSpy.mockClear();
 
     cacheThread(store, 't-bottom', [
@@ -202,6 +192,8 @@ describe('opening a thread scrolls to the newest message', () => {
       msg('4', 'user', 'follow-up'),
     ]);
 
-    expect(scrollIntoViewSpy).toHaveBeenCalled();
+    Object.defineProperty(viewport, 'scrollHeight', { value: 1200, configurable: true });
+    await waitFor(() => expect(scrolledToBottom(viewport)).toBe(true));
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
   });
 });

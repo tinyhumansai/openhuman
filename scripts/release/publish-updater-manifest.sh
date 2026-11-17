@@ -89,6 +89,14 @@ read_sig() {
 #   linux-x86_64     — Linux glibc x64 (AppImage)
 #   linux-aarch64    — Linux glibc arm64 (AppImage)
 #   windows-x86_64   — Windows x64 (NSIS setup)
+#   windows-x86_64-msi — Windows x64 (WiX MSI, per-machine install)
+#
+# The updater plugin resolves `<os>-<arch>-<installer>` first (installer =
+# the bundle type the running copy was installed from: nsis or msi) and only
+# then falls back to plain `<os>-<arch>`. Without a `-msi` entry, an MSI
+# install is "updated" by running the per-user NSIS setup, which lays down a
+# second copy under %LOCALAPPDATA% while the Program Files copy stays on the
+# old version: the app updates, then restarts back on the old build (#6662).
 #
 # Naming conventions emitted by tauri-bundler with createUpdaterArtifacts:
 #   darwin  : <AppName>_<version>_<arch>.app.tar.gz
@@ -99,6 +107,7 @@ MAC_X86_64=$(find_asset  "^OpenHuman(_| ).*(x64|x86_64)(-apple-darwin)?\.app\.ta
 LIN_X86_64=$(find_asset  "^OpenHuman(_| ).*amd64\.AppImage$")
 LIN_AARCH64=$(find_asset "^OpenHuman(_| ).*(arm64|aarch64)\.AppImage$")
 WIN_X86_64=$(find_asset "^OpenHuman(_| ).*x64-setup\.exe$")
+WIN_X86_64_MSI=$(find_asset "^OpenHuman(_| ).*x64.*\.msi$")
 
 echo "[updater] Resolved updater bundles:"
 echo "  darwin-aarch64  = ${MAC_AARCH64:-<missing>}"
@@ -106,6 +115,7 @@ echo "  darwin-x86_64   = ${MAC_X86_64:-<missing>}"
 echo "  linux-x86_64    = ${LIN_X86_64:-<missing>}"
 echo "  linux-aarch64   = ${LIN_AARCH64:-<missing>}"
 echo "  windows-x86_64  = ${WIN_X86_64:-<missing>}"
+echo "  windows-x86_64-msi = ${WIN_X86_64_MSI:-<missing>}"
 
 PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -137,11 +147,12 @@ add_platform "darwin-x86_64"  "$MAC_X86_64"
 add_platform "linux-x86_64"   "$LIN_X86_64"
 add_platform "linux-aarch64"  "$LIN_AARCH64"
 add_platform "windows-x86_64" "$WIN_X86_64"
+add_platform "windows-x86_64-msi" "$WIN_X86_64_MSI"
 
 # Require every platform advertised by the public installers. A partial
 # latest.json leaves install.sh resolving a documented platform to nothing.
 missing_platforms=$(jq -r '
-  ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "linux-aarch64", "windows-x86_64"]
+  ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "linux-aarch64", "windows-x86_64", "windows-x86_64-msi"]
   - (.platforms | keys)
   | join(", ")
 ' "$MANIFEST")

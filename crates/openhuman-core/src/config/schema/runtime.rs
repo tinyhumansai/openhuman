@@ -3,7 +3,7 @@
 use super::defaults;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -15,6 +15,12 @@ pub struct RuntimeConfig {
     /// Filesystem grants for the local OS jail (`[runtime.local_jail]`).
     #[serde(default)]
     pub local_jail: super::LocalJailConfig,
+    /// Boxes for the OpenShell sandbox backend (`[runtime.openshell]`).
+    #[serde(default)]
+    pub openshell: super::OpenShellRuntimeConfig,
+    /// Boxes for the agent37 sandbox backend (`[runtime.agent37]`).
+    #[serde(default)]
+    pub agent37: super::Agent37RuntimeConfig,
     #[serde(default)]
     pub reasoning_enabled: Option<bool>,
     /// Reasoning ("thinking") effort for agent turns: `none`, `minimal`,
@@ -24,6 +30,12 @@ pub struct RuntimeConfig {
     /// `reasoning_enabled = false`, turns ask for no reasoning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    /// Per-model thinking level, keyed by the model id the turn runs on
+    /// (`default_model` after a chat's `model_override`). Same values as
+    /// [`Self::reasoning_effort`], which it outranks for that model; a model
+    /// with no entry falls back to the global level.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reasoning_effort_by_model: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -45,8 +57,7 @@ pub struct DockerRuntimeConfig {
     pub allowed_workspace_roots: Vec<String>,
 }
 
-/// `[shell]` — behaviour of the shell-family tools (`shell`, `node_exec`,
-/// `npm_exec`, monitor) when they spawn child processes.
+/// `[shell]` — behaviour of the shell-family tools (`shell`, monitor) when they spawn child processes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ShellConfig {
@@ -102,8 +113,11 @@ impl Default for RuntimeConfig {
             kind: default_runtime_kind(),
             docker: DockerRuntimeConfig::default(),
             local_jail: super::LocalJailConfig::default(),
+            openshell: super::OpenShellRuntimeConfig::default(),
+            agent37: super::Agent37RuntimeConfig::default(),
             reasoning_enabled: None,
             reasoning_effort: None,
+            reasoning_effort_by_model: BTreeMap::new(),
         }
     }
 }
@@ -111,14 +125,10 @@ impl Default for RuntimeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ReliabilityConfig {
-    #[serde(default = "default_provider_retries")]
-    pub provider_retries: u32,
     #[serde(default = "default_provider_backoff_ms")]
     pub provider_backoff_ms: u64,
     #[serde(default)]
     pub fallback_providers: Vec<String>,
-    #[serde(default)]
-    pub model_fallbacks: HashMap<String, Vec<String>>,
     #[serde(default = "default_channel_backoff_secs")]
     pub channel_initial_backoff_secs: u64,
     #[serde(default = "default_channel_backoff_max_secs")]
@@ -127,10 +137,6 @@ pub struct ReliabilityConfig {
     pub scheduler_poll_secs: u64,
     #[serde(default = "default_scheduler_retries")]
     pub scheduler_retries: u32,
-}
-
-fn default_provider_retries() -> u32 {
-    2
 }
 
 fn default_provider_backoff_ms() -> u64 {
@@ -156,10 +162,8 @@ fn default_scheduler_retries() -> u32 {
 impl Default for ReliabilityConfig {
     fn default() -> Self {
         Self {
-            provider_retries: default_provider_retries(),
             provider_backoff_ms: default_provider_backoff_ms(),
             fallback_providers: Vec::new(),
-            model_fallbacks: HashMap::new(),
             channel_initial_backoff_secs: default_channel_backoff_secs(),
             channel_max_backoff_secs: default_channel_backoff_max_secs(),
             scheduler_poll_secs: default_scheduler_poll_secs(),

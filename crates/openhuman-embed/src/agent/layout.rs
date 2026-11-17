@@ -7,11 +7,17 @@
 //! <root>/
 //!   config.toml, auth-profiles.json, core.token      runtime-wide
 //!   workspace/
-//!     session_db/sessions.db                         runtime-wide run ledger
-//!     agents/<id>/{SOUL.md, skills/}                     the agent's home
-//!     session_raw/<ts>_<id>.jsonl                    its transcripts
+//!     agents/<id>/{SOUL.md, skills/, workflows/}     the agent's home
+//!     agents/<id>/session_raw/<stem>.jsonl           legacy transcript import
+//!     agents/<id>/cron/jobs.db                       its cron jobs
 //!   agents/<id>/action/                              its default action_dir
 //! ```
+//!
+//! Its MCP host keeps its store in the agent home too.
+//!
+//! New transcripts use the runtime's `SessionStoreProvider`, backed by the
+//! configured storage ports. Classic `session_raw/*.jsonl` transcripts remain
+//! a read-only import source; they are not copied back to this layout.
 
 use std::path::{Path, PathBuf};
 
@@ -22,7 +28,7 @@ pub struct AgentLayout {
     pub home: PathBuf,
     /// `<workspace>/agents/<id>/skills/`.
     pub skills: PathBuf,
-    /// The transcript directory the harness writes for this agent.
+    /// The legacy JSONL import directory associated with this agent.
     pub transcripts: PathBuf,
     /// The agent's read/write root.
     pub action_dir: PathBuf,
@@ -36,7 +42,7 @@ impl AgentLayout {
         Self {
             home: workspace_dir.join("agents").join(id),
             skills: workspace_dir.join("agents").join(id).join("skills"),
-            transcripts: workspace_dir.join("session_raw"),
+            transcripts: workspace_dir.join("agents").join(id).join("session_raw"),
             action_dir,
         }
     }

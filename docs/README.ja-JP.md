@@ -1,177 +1,347 @@
 <h1 align="center">OpenHuman</h1>
 
 <p align="center">
- <img src="../gitbooks/.gitbook/assets/demo.png" alt="The Tet" />
-</p>
-
-<p align="center" style="display: inline-block">
-	<a href="https://trendshift.io/repositories/23680" target="_blank" style="display: inline-block">
-		<img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-	</a>
-	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-		<img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
-		</a>
-		<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-			<img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;t=1779351403565">
-		</a>
-</p>
-<p align="center" style="display: inline-block">
- <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-topic-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-  <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-topic-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;topic_id=268&amp;t=1779351808756">
-  </a>
-  <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-topic-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-   <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-topic-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;topic_id=46&amp;t=1779351808756">
-   </a>
- </p>
-
-<p align="center">
- <strong>OpenHuman はあなたのパーソナル AI スーパーインテリジェンスです：すべてを記憶する脳、素晴らしいオーケストレーター、ディープリサーチャー。ローカルファーストで、シンプルで、強力。</strong>
-</p>
-
-<p align="center">
- <a href="https://guild.tinyhumans.ai/">Discord</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
- <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
- <a href="https://tinyhumans.gitbook.io/openhuman/">ドキュメント</a> •
- <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel（作者）をフォロー</a>
-</p>
-
-<p align="center">
-  🇺🇸 <a href="../README.md">English</a> | 🇸🇦 <a href="./README.ar.md">العربية</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
+ <strong>最速、最安、最も効率的なオープンソースのエージェントハーネス。月10ドルのVPS1台で500以上のエージェントを動かせます。</strong><br/>
+ 一般の方にはデスクトップアプリ。開発者にはRustライブラリ。
 </p>
 
 <p align="center">
  <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="Early Beta" />
  <a href="https://github.com/tinyhumansai/openhuman/releases/latest"><img src="https://img.shields.io/github/v/release/tinyhumansai/openhuman?label=latest" alt="最新リリース" /></a>
- <a href="https://github.com/tinyhumansai/openhuman"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="GitHub Stars" /></a>
+ <a href="https://github.com/tinyhumansai/openhuman/stargazers"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="GitHub Stars" /></a>
  <a href="../LICENSE"><img src="https://img.shields.io/github/license/tinyhumansai/openhuman" alt="ライセンス" /></a>
+ <a href="https://github.com/tinyhumansai/openhuman-benchmarks"><img src="https://img.shields.io/badge/benchmarks-public-brightgreen" alt="公開ベンチマーク" /></a>
 </p>
-
-> **早期ベータ版**: 現在も活発に開発中です。荒削りな部分があることをご了承ください。
-
-> 🎉 ローンチから 1 週間以内に、OpenHuman は GitHub のトレンドリポジトリ第 1 位を 9 日間連続で獲得しました。
-
-# インストール
-
-インストーラーは [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) または [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) ページからダウンロードできます。
-
-ターミナルからのインストール（Homebrew、Debian/Ubuntu の `.deb`、AUR、インストールスクリプト、プラットフォーム別の注意点）については **[INSTALL.md](../INSTALL.md)** を参照してください。
-
-# OpenHuman とは?
-
-OpenHuman は、ほとんどのアシスタントが持っていない 3 つのものです: あなたの世界の永続的なローカルメモリを構築する**脳**、永続的なグラフ上でエージェントの艦隊を動かす**素晴らしいオーケストレーター**、そしてあなたが質問し終える前にあなたのデータとウェブを走査する**ディープリサーチャー**。各項目は[ドキュメント](https://tinyhumans.gitbook.io/openhuman/)内の詳細な解説にリンクしています。
-
-### 🧠 脳
-
-- **[Memory](../gitbooks/features/memory.md)**: 差し替え可能なエンジン(TinyHumans ホスト版、または自前の CortexDB)上の Recall・Fetch・Store。ドキュメント、会話、学びを保存し、引用付きで回答し、毎ターンの前に関連するメモリパックを呼び出します。
-- **[100+ の OAuth 統合、5,000+ の MCP サーバー、90,000+ の Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: Gmail、Notion、GitHub、Slack などのスタックにワンクリックで接続。[自動取得](https://tinyhumans.gitbook.io/openhuman/features/memory)が 20 分ごとに脳に栄養を与えるので、今朝の時点で明日のコンテキストを持っています。
-- **[Goals & Todos](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: スレッドごとの永続ゴールと、チャットに表示されるエージェントのToDoリスト。
-- **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: ツール出力はモデルに届く前に圧縮され、同じ情報を最大 80% 少ないトークンで扱えます。これがなければ、これほど大きな脳は維持できません。
-
-### 🕸️ オーケストレーター
-
-- **[Workflows](https://tinyhumans.gitbook.io/openhuman/features/workflows)**: エージェントが自動化を提案し、あなたはキャンバス上でレビューして保存します。オープンソースの [tinyflows](https://github.com/tinyhumansai/tinyflows) 上で、永続的・トリガー駆動・承認ゲート付きの実行が行われます。
-- **[仕事をやり遂げるハーネス](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**: オープンソースの [tinyagents](https://github.com/tinyhumansai/tinyagents) 上でのチェックポイント付きグラフ実行です。行き詰まったエージェントは軌道修正され、停止したエージェントは根本原因を返し、すべての実行は呼び出しごとの実コスト付きでリプレイできます。
-- **[常時稼働のスプリットブレイン](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**: 高速な反射エージェントが受信トラフィックをトリアージし、深い推論コアがワーカー艦隊に委任します。サブコンシャスがそれを操縦します。
-
-### 🔬 ディープリサーチャー & 実行者
-
-- **電池同梱（Batteries included）**: ウェブ検索、スクレイパー、コーダーツールセット、本物の[ブラウザ](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)、バックエンド経由の音声認識と、ホスト型またはローカルの Piper による音声合成を備えた[ネイティブ音声](../gitbooks/features/native-tools/voice.md)、さらにワークロードごとに適切な LLM を選ぶ[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)。1 つのサブスクリプションで、[ローカル AI はオプション](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)です。
-- **[画像・動画生成](https://tinyhumans.gitbook.io/openhuman/features/native-tools)**: Seedream/SeedEdit の画像と Seedance/Veo の動画を、同じサブスクリプションでワークスペースに直接生成します。
-- **[15 のメッセージングチャネル](https://tinyhumans.gitbook.io/openhuman/features/channels)**: Telegram、Discord、Slack、WhatsApp、Signal、iMessage… さらに**ネイティブメール**（IMAP IDLE + SMTP）。エージェントはあなたが既にいる場所であなたに届きます。
-
-### 🧍 ヒューマンで、プライベートで、あなたのもの
-
-- **シンプル、UI ファースト、そしてヒューマン**: インストールから動作するエージェントまで数クリックで、設定ファイルもターミナルも不要です。そして[顔があります](https://tinyhumans.gitbook.io/openhuman/features/mascot): 喋り、反応し、あなたを覚えているマスコットです。
-- **[プライバシー & セキュリティ](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)**: デバイス上で暗号化されたデータ、承認ゲート、OS キーリングによるシークレット管理、オプトインのサンドボックス、そして **[Privacy Mode](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)**: スイッチひとつで推論が一切マシンの外に出なくなり、Rust コアで強制されます。
-- **[テーマ & Theme Studio](https://tinyhumans.gitbook.io/openhuman/features/theming)**: 5 つのテーマファミリーとフル機能のビジュアルエディター、JSON としてエクスポート可能。
-
-## コンテキストを数週間ではなく数分で
-
-OpenHuman は、数分であなたのことを理解する初めてのエージェントハーネスです。[Karpathy 氏の LLM ナレッジベース](https://x.com/karpathy/status/2039805659525644595)にインスパイアされました。ほとんどのエージェントは冷えた状態から始まります。Hermes はあなたの作業を見て学習し、OpenClaw はプラグインがコンテキストを運び込むのを待ちます。いずれにせよ、エージェントがあなたのスタックを十分理解して本当に役立つようになるまで、数日から数週間を費やすことになります。
-
-> OpenHuman はあなたのすべてのドキュメント、メール、チャットを要約・圧縮し、エージェントがあなたについてすべてを覚えていられるメモリーグラフを作成します。
-
-OpenHuman はその待ち時間をスキップします。ソース(フォルダ、ファイル、リンク、GitHub、RSS、接続済みアプリ)を追加すれば、スケジュールで同期され、エージェントは [Memory](../gitbooks/features/memory.md) からすぐに答えられます。
-
-たった 1 回の同期パスで、エージェントはあなたの受信箱、カレンダー、リポジトリ、ドキュメント、メッセージの完全な(圧縮された)コンテキストを得ます。トレーニング期間も「数週間お待ちください」もありません。エージェントはあなたになり、あなたによって制御されます。
-
-## チャットボットではなく、オーケストレーター
-
-ほとんどのエージェントハーネスは 1 つのループで 1 つのエージェントを動かします。OpenHuman は**[オーケストレーター](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**です:
 
 <p align="center">
- <img src="../gitbooks/.gitbook/assets/orchestration.png" alt="OpenHuman のオーケストレーション図">
+ <a href="https://tinyhumans.gitbook.io/openhuman/">ドキュメント</a> ·
+ <a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust クイックスタート</a> ·
+ <a href="https://tinyhumansai.github.io/openhuman-benchmarks/">ベンチマーク</a> ·
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">ディスカッション</a> ·
+ <a href="https://guild.tinyhumans.ai/">Discord</a> ·
+ <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> ·
+ <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X</a> ·
+ <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel（作者）</a>
 </p>
-
-> エージェント間メッセージングは Signal プロトコルのエンドツーエンド暗号化の上で動作するため、Claude Code、Codex、OpenClaw、Hermes など何でも接続でき、OpenHuman ですべてのエージェントとツールをオーケストレーションできます。
-
-- **ループではなくグラフ**: ターンは [tinyagents](https://github.com/tinyhumansai/tinyagents) 上のチェックポイント付きグラフとして実行され、人間のために一時停止し、再起動を生き延び、実行の途中から再開します。
-- **サブエージェントの艦隊**: スペシャリストは 3 階層の深さまで起動され、行き詰まったエージェントは根本原因レポートになります。
-- **エージェント間、暗号化済み**: インスタンス同士は、x402 決済を備えた Signal プロトコルの E2E セッション上で互いをオーケストレーションします。サーバーが平文を目にすることは決してありません。
-
-## 目に見えるワークフロー
-
-n8n と Zapier に強くインスパイアされた[ワークフロー](https://tinyhumans.gitbook.io/openhuman/features/workflows)は、同じビジュアルでトリガー駆動の自動化をあなたのエージェントにもたらします。ただし、それを構築するのはエージェント自身です。自動化を依頼すると、エージェントが提案してくれます: 保存する前にビジュアルキャンバス上でレビューできる [tinyflows](https://github.com/tinyhumansai/tinyflows) グラフです。
 
 <p align="center">
- <img src="../gitbooks/.gitbook/assets/workflows.png" alt="OpenHuman のワークフローキャンバス">
+ <img src="./demo.gif" alt="OpenHuman デスクトップアプリの紹介" />
 </p>
 
-> エージェントがワークフローを提案し、あなたはキャンバス上でレビューして保存します。
+<p align="center">
+	<a href="https://trendshift.io/repositories/23680" target="_blank">
+		<img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" width="250" height="55"/>
+	</a>
+	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
+		<img alt="OpenHuman on Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
+	</a>
+	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
+		<img alt="OpenHuman on Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;t=1779351403565">
+	</a>
+</p>
 
-保存されたワークフローは永続的でトリガー駆動です。スケジュール、Webhook、チャネルイベントで発火し、再起動を生き延び、副作用は承認ゲートで守られます。
+<p align="center">
+  🇺🇸 <a href="../README.md">English</a> | 🇸🇦 <a href="./README.ar.md">العربية</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇹🇷 <a href="./README.tr.md">Türkçe</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
+</p>
 
-## OpenHuman と他のエージェントハーネスの比較
+> [!NOTE]
+> 🎉 公開から1週間以内に、OpenHuman は9日連続で **GitHub のトレンド1位のリポジトリ** になりました。
 
-ハイレベルな比較です(製品は進化するため、各ベンダーで確認してください)。OpenHuman は **ベンダーの乱立を最小限に抑え**、**ワークフロー知識をデバイス上に保ち**、チャットだけでなくあなたのデータに対する **永続的なメモリ** をエージェントに与えるよう構築されています。
+> **早期ベータ版。** OpenHuman は活発に開発中のため、荒削りな部分があります。
 
-|                            | Claude Cowork          | OpenClaw            | Hermes Agent        | OpenHuman                                                                                                          |
-| -------------------------- | ---------------------- | ------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **オープンソース**         | 🚫 プロプライエタリ    | ✅ MIT              | ✅ MIT              | ✅ GNU                                                                                                             |
-| **開始が簡単**             | ✅ デスクトップ + CLI  | ⚠️ ターミナル中心   | ⚠️ ターミナル中心   | ✅ クリーンな UI、数分                                                                                             |
-| **コスト**                 | ⚠️ サブスク + アドオン | ⚠️ モデル持ち込み   | ⚠️ モデル持ち込み   | ✅ 1 つのサブスク + TokenJuice                                                                                     |
-| **メモリ**                 | ✅ チャット範囲のみ    | ⚠️ プラグイン依存   | ✅ 自己学習         | 🚀 差し替え可能なエンジン(TinyHumans / 自前 CortexDB)、引用、ターンごとのメモリパック |
-| **統合**                   | ⚠️ 少数のコネクター    | ⚠️ 持ち込み         | ⚠️ 持ち込み         | 🚀 100+ OAuth · 5k+ MCP · 90k+ Skills                                                                              |
-| **ソース同期**             | 🚫 なし                | 🚫 なし             | 🚫 なし             | ✅ スケジュール同期でメモリに取り込み |
-| **オーケストレーション**   | ⚠️ サブタスク          | ⚠️ 単一ループ       | ⚠️ 単一ループ       | 🚀 エージェントグラフ + チェックポイント + E2E 暗号化 A2A                                                          |
-| **ワークフロー**           | 🚫 なし                | ⚠️ スクリプト       | ⚠️ スクリプト       | 🚀 ビジュアル、永続、エージェント提案、承認ゲート付き                                                              |
-| **会議**                   | 🚫 なし                | 🚫 なし             | 🚫 なし             | 🚀 Meet/Zoom/Teams/Webex に参加、発話、ライブ文字起こし                                                            |
-| **メッセージングチャネル** | 🚫 なし                | ⚠️ 少数             | ⚠️ 少数             | ✅ ネイティブメール（IMAP/SMTP）を含む 15 チャネル                                                                 |
-| **ローカル専用モード**     | 🚫 クラウドのみ        | ⚠️ ローカル持ち込み | ⚠️ ローカル持ち込み | ✅ スイッチひとつで強制される Privacy Mode                                                                         |
-| **可観測性**               | 🚫 不透明              | ⚠️ ログ             | ⚠️ ログ             | ✅ リプレイ可能な実行ジャーナル + 呼び出しごとのコスト計上                                                         |
-| **API の乱立**             | 🚫 追加キー            | 🚫 BYOK             | 🚫 マルチベンダー   | ✅ 1 アカウント                                                                                                    |
-| **モデルルーティング**     | 🚫 単一モデル          | ⚠️ 手動             | ⚠️ 手動             | ✅ ビルトイン                                                                                                      |
-| **ネイティブツール**       | ✅ コードのみ          | ✅ コードのみ       | ✅ コードのみ       | ✅ コード + 検索 + スクレイパー + ブラウザ + 音声 + メディア生成                                                   |
+---
 
-## ソースからのコントリビュート
+## インストール
 
-新しいコントリビューターの方は、まず [`CONTRIBUTING.md`](../CONTRIBUTING.md) で fork/PR ワークフローとローカル検証コマンドを確認するか、[`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) のコピー&ペーストできる AI エージェント向けプロンプトを使ってください。最短経路は以下のとおりです:
+一番簡単なのは、[tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) または[最新リリース](https://github.com/tinyhumansai/openhuman/releases/latest)からデスクトップアプリをダウンロードする方法です。macOS 用は `.dmg`、Windows 用は `.msi` または `.exe`、Linux 用は `.deb` または `.AppImage` です。
 
-1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep、プラットフォーム向けデスクトップビルドの前提条件をインストールします。
-2. リポジトリを fork してクローンし、`pnpm install` の前に `git submodule update --init --recursive` を実行して、ベンダー化された Tauri/CEF のソースを取得します。
-3. ウェブのみの UI 作業には `pnpm dev` を、デスクトップシェルには `pnpm --filter openhuman-app dev:app` (macOS) または `pnpm dev:app:win` (Windows) を使用し、PR を出す前に `pnpm typecheck`、`pnpm format:check`、`cargo check -p openhuman --lib` などの集中チェックを実行してください。
+ターミナルを使いたい方へ。インストールスクリプトが環境に合ったパッケージを選び、チェックサムを確認してからインストールします。
 
-詳細なドキュメント: [アーキテクチャ](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [セットアップガイド](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [クラウドデプロイ](../gitbooks/features/cloud-deploy.md)。
+```bash
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+```
 
-# GitHub でスターをお願いします
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
+```
 
-_AGI と人工意識への道を進んでいますか? リポジトリにスターをつけて、他の人にも道筋を見つけてもらいましょう。_
+macOS と Linux のスクリプトが何を行うかを事前に確認するには、コマンドの末尾に `bash -s -- --dry-run` を付けます。その他のオプションとトラブルシューティングは [INSTALL.md](../INSTALL.md) にあります。
+
+---
+
+## なぜ OpenHuman なのか
+
+多くのエージェントハーネスは、エージェントごとに重いプロセスを1つ動かし、呼び出しのたびに大きなプロンプトを送り直します。OpenHuman は同じ仕事をはるかに少ない資源でこなします。機能が豊富で、大規模なエージェント群のために作られた唯一のオープンソースハーネスです。月10ドルのサーバー1台に500のエージェントが収まります。
+
+<table>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>速い</h3>
+
+<p><a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md">ベンチマーク結果</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">コールドスタートの数値</a></p>
+
+<p>コーディングタスクを約20秒で終えます。テストした7つの AI エージェントツールの中で最速です。起動は0.1秒です。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>安い</h3>
+
+<p><a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md">コストとトークンのデータ</a> · <a href="https://tinyhumans.gitbook.io/openhuman/features/token-compression">圧縮のしくみ</a></p>
+
+<p>一般的なエージェントツールよりトークン使用量が2.6分の1で、テストでの合計費用も最も低くなりました。</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>大規模でも効率的</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">エージェント群の計測</a> · <a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/profile/docs/library-benchmarking.md">測定方法</a></p>
+
+<p>一般的なエージェントツールに比べ、メモリと CPU の使用量は約8分の1です。月10ドルのサーバーで500以上のエージェントを動かせます。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>開発者のために</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust クイックスタート</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">組み込みガイド</a> · <a href="../crates/openhuman-embed/examples">サンプル</a></p>
+
+<p>Rust ライブラリとして使えます。エージェントを普通の関数のように呼び出すことも、小さなサーバー1台でエージェント群をまるごと動かすこともできます。</p>
+
+</td>
+
+</tr>
+
+</table>
+
+
+<p align="center">
+ <img src="./oh-v-hermes.gif" alt="Hermes と OpenHuman の比較" />
+</p>
+
+<p align="center"><em>同じプロンプトを並べて比較: 「エージェントハーネスについての物語をアニメ風に書いて、HTML ページにして開いてください。」<br/>OpenHuman は20秒で完了し、15kトークン、$0.0054でした。Hermes は9分40秒かかり、37kトークン、$0.0082でした。</em></p>
+
+---
+
+## 主なイノベーション
+
+多くのエージェントハーネスは単純なループです。すべてをモデルに送り、待ち、これを繰り返します。エージェントが1つならこれで動きますが、すぐに遅く高くなり、数百を動かすと破綻します。
+
+OpenHuman は、最もコストのかかる部分を見直しました。AI が読むテキストの量、適切なツールの見つけ方、機能の読み込み方、全体に必要なマシンの大きさです。以下の6つの工夫が、上で紹介した速さと節約の源です。詳しく知りたい場合は、各カードからドキュメントに進めます。
+
+<table>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>RLM によるトークン圧縮</h3>
+
+<p><a href="https://arxiv.org/abs/2512.24601">RLM の論文</a> · <a href="https://tinyhumans.gitbook.io/openhuman/features/token-compression">しくみ</a></p>
+
+<p><a href="https://arxiv.org/abs/2512.24601">Recursive Language Models</a> に基づいています。大きなツールの結果は、AI が読む前に圧縮されます。非常に大きいものは、AI が全部を読む代わりに検索できるハンドルを受け取ります。捨てられる情報はありません。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>Jev: 即座で正確なツール検索</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/jev">Jev</a> · <a href="./plans/jev-tool-search-baseline.md">計測結果</a></p>
+
+<p>Jev は、1,215個の中から適切なツールを見つける小さなモデルです。正解が上位候補に入る割合は86.8%で、キーワード検索の70.5%を上回ります。</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>統一された Rust バス</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">プラグインのしくみ</a></p>
+
+<p>検索、ドキュメント、音声などの機能はすべて、1本の Rust バスにつながります。これは <a href="https://packages.debian.org/stable/dbus">Linux のシステムバス</a>から借りた考え方です。機能は必要なときだけ読み込まれ、1つが止まっても他は動き続けます。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>深く統合されたメモリ</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/features/memory">メモリのしくみ</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/engines">メモリエンジン</a></p>
+
+<p>メモリは最初から組み込まれています。毎ターンの前に、OpenHuman はトークンの予算内で重要なものだけを選び、出典付きで AI に渡します。そのまま使え、設定を変えるだけで別のメモリエンジンに切り替えられます。</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>ブラウザとデスクトップの即時操作</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer">ブラウザとコンピューターの操作</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/jev">Jev</a></p>
+
+<p>エージェントは実際のブラウザとデスクトップアプリを使います。Jev は画面上のボタンから次のクリックを選ぶので、スクリーンショットは不要です。支払いの前には必ず止まります。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>プログラムできる Rust コア</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust クイックスタート</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">パフォーマンス</a></p>
+
+<p>ハーネス全体が1つのプロセスで動くコンパイル済みの Rust なので、0.1秒で起動し、軽いままです。コーディングタスクでのピークは68 MBでした。同じコアがライブラリにもなります。自分の Rust コードからエージェントを呼び出すことも、小さなサーバー1台で数百のエージェントを並べて動かすこともできます。</p>
+
+</td>
+
+</tr>
+
+</table>
+
+---
+
+## ベンチマーク
+
+<p align="center">
+ <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified の実行 swe-x86-1: OpenHuman と他の6つのハーネスを10のパネルで比較" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+ </picture>
+</p>
+
+7つのハーネスを、同じモデル、同じ API キー、同じコンテナで同じ SWE-bench のタスクに対して実行し、すべての呼び出しを計測しました。セットアップと結果は [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks) で公開しているので、誰でも再実行できます。最新の実行は [`swe-x86-1`](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md) で、タスク数は10です。
+
+OpenHuman は、中央値の半分未満の時間でタスクを終え、トークンは2.6分の1、メモリと CPU は8分の1でした。モデル呼び出しは114回で、他は134回から212回でした。実行全体の費用は$0.05で、他は$0.08から$0.35でした。
+
+勝因は、1ステップあたりの仕事が少ないことです。コアは Node や Python ではなく、1つのプロセスで動くコンパイル済みの Rust なので、メモリ使用量が小さく、モデル呼び出しの合間の CPU 使用もほぼありません。20個のツールを含めても4.6kトークンと、7つの中で最小のプロンプトを送るので、1回の呼び出しが安く、応答も速くなります（中央値1.65秒で、これも最速です）。答えにたどり着くまでの呼び出し回数も少なく、節約の大部分はここから生まれます。
+
+| 解決したタスクあたり | OpenHuman（中央値との比較） | 他の6つの中央値 | 他の6つの最良値 |
+| --- | --- | --- | --- |
+| 所要時間（p50） | **19.8 s**（2.3倍速い） | 46.5 s | 28.4 s (OpenCode) |
+| トークン | **167k**（2.6分の1） | 435k | 370k (Codex) |
+| コスト | **$0.0077**（-36%） | $0.012 | $0.0077（OpenCode、同値） |
+| ピークメモリ | **68 MB**（7.7分の1） | 523 MB | 123 MB (Codex) |
+| CPU 時間 | **1.3 s**（8分の1） | 10.4 s | 2.9 s (DeepSeek Harness) |
+| システムプロンプト | **4.6k トークン**（-40%） | 7.7k | 6.2k (DeepSeek Harness) |
+
+---
+
+## 利用者向け
+
+Claude Code、Codex、OpenClaw、Hermes を使ったことがあれば、基本の考え方はご存じのはずです。ツールを使うエージェントループ、MCP、スキル、BYOK モデル、メモリです。OpenHuman はそのすべてを、デスクトップアプリ、ターミナルアプリ、ヘッドレスサーバーで提供します。
+
+| 機能 | OpenHuman が提供するもの |
+| --- | --- |
+| 設定できるメモリ | [ファイル、リポジトリ、フィード、アプリにわたる組み込みメモリ](https://tinyhumans.gitbook.io/openhuman/features/memory)。選んだメモリエンジン上で、毎ターンの前に出典付きで呼び出されます |
+| 音声エージェント | 話の途中で割り込める[ライブ音声エージェント](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice)、音声入力、音声での返答 |
+| コンピューターとブラウザの操作 | [実際の Chrome ブラウザとデスクトップアプリを操作](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)します。元に戻せない操作の前には確認します |
+| 検索 | [検索エンジンと検索エージェント](https://tinyhumans.gitbook.io/openhuman/features/native-tools/web-search): Exa と Gemini は標準搭載、Brave、Tavily、Parallel などは自分のキーで利用できます。出典付きの根拠ある回答と Deep Research にも対応 |
+| ツール | [ネイティブツール](https://tinyhumans.gitbook.io/openhuman/features/native-tools): シェルとコーダー、スクレイパー、ドキュメント、画像・動画の生成、cron |
+| MCP とスキル | [MCP サーバーとスキルバンドル](https://tinyhumans.gitbook.io/openhuman/features/integrations/mcp-and-skills) |
+| OAuth 連携 | [Composio 経由の119個のアプリ](https://tinyhumans.gitbook.io/openhuman/features/integrations)。何かが起きたときにエージェントを起動する[トリガー](https://tinyhumans.gitbook.io/openhuman/features/integrations/triggers)に対応 |
+| モデル | [ローカルモデル（Ollama、LM Studio、MLX）と26プロバイダーの BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models)、さらに[自動モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
+| チャネル | エージェントの窓口となる[14のメッセージングチャネル](https://tinyhumans.gitbook.io/openhuman/features/channels): Telegram、Discord、iMessage、メールなど |
+| ワークフロー | [永続的なワークフローグラフ](https://tinyhumans.gitbook.io/openhuman/features/workflows): cron、イベント、手動のトリガー、承認ステップ、一時停止後の再開 |
+| 安全性 | [承認ゲート](https://tinyhumans.gitbook.io/openhuman/features/approval-gate)、[サンドボックス実行](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)（OS のジェイルまたは Docker）、ローカルのみで動かす[プライバシーモード](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)、秘密情報は [OS のキーリング](https://tinyhumans.gitbook.io/openhuman/features/os-keyring-and-secret-storage)に保存 |
+| 使用量の追跡 | [呼び出しごとのコストとトークン使用量](https://tinyhumans.gitbook.io/openhuman/features/billing-and-usage)、再生できる実行ジャーナル |
+
+まずは[はじめに](https://tinyhumans.gitbook.io/openhuman/overview/getting-started)か[ガイド](https://tinyhumans.gitbook.io/openhuman/guides)をご覧ください。
+
+---
+
+## 開発者向け
+
+OpenHuman はライブラリ優先のハーネスです。Rust プロジェクトに追加するだけで、エージェントを普通の関数のように呼び出せます。サイドカーやデーモンを動かす必要はありません。1つのランタイムに数百のエージェントを持たせることができ、それぞれが独自のモデル、ツール、メモリ、サンドボックスを持ちます。月10ドルの VPS に500のエージェントが収まるので、顧客ごとに1エージェントを割り当てるプロダクトも、クラスターなしで始められます。
+
+```rust
+use openhuman_embed::{Access, Harness, Provider, Workspace};
+
+let agent = Harness::builder()
+    .provider(Provider::openai_compatible("https://api.openai.com/v1", "sk-...").model("gpt-5"))
+    .workspace(Workspace::Ephemeral)
+    .access(Access::readonly())
+    .build()
+    .await?;
+
+let reply = agent.run("Summarize what you can see in this directory.").await?;
+println!("{}", reply.reply);
+```
+
+次は、[Rust クイックスタート](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)、[組み込みガイド](../docs/gitbooks/en/developing/embed/README.md)、[開発者向けドキュメント](https://tinyhumans.gitbook.io/openhuman/developing)をご覧ください。
+
+---
+
+## 他との比較
+
+多くの人がすでに使っているハーネスと OpenHuman を並べてみます。上の4行は[公開ベンチマーク](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md)の結果で、10個の SWE-bench コーディングタスクを、どのハーネスも同じモデルと同じコンテナで実行したものです。数値はすべて解決したタスクあたりです。残りは機能の比較です。
+
+要するに、他のツールは1人が1つのエージェントと作業する用途にとても向いています。OpenHuman もそれに対応し、さらにライブラリとして組み込み、エージェント群へ拡大できるオープンソースの選択肢でもあります。製品は変化が速いので、決める前に各プロジェクトを確認してください。
+
+|                         | Claude Code          | Codex                | OpenClaw             | Hermes Agent         | OpenHuman                                |
+| ----------------------- | -------------------- | -------------------- | -------------------- | -------------------- | ---------------------------------------- |
+| **タスク所要時間（中央値）**    | 37.8 s               | 36.1 s               | 62 s                 | 58.5 s               | 🚀 19.8 s                                 |
+| **タスクあたり平均トークン** | 428k                 | 370k                 | 442k                 | 482k                 | 🚀 167k                                   |
+| **タスクあたりピークメモリ** | 231 MB               | 123 MB               | 1.57 GB              | 816 MB               | 🚀 68 MB                                  |
+| **タスクあたり平均コスト**   | $0.04                | $0.02                | $0.01                | $0.0082              | 🚀 $0.0077                                |
+| **オープンソース**         | 🚫 プロプライエタリ       | ✅ Apache-2.0        | ✅ MIT               | ✅ MIT               | ✅ GPL-3.0                               |
+| **エージェント群**        | ⚠️ エージェントごとにプロセス | ⚠️ エージェントごとにプロセス | ⚠️ エージェントごとにプロセス | ⚠️ エージェントごとにプロセス | 🚀 月10ドルの VPS に500エージェント               |
+| **組み込めるライブラリ**  | ⚠️ CLI の SDK    | ⚠️ CLI の SDK    | 🚫 なし              | ⚠️ Python パッケージ    | 🚀 型付き Rust API                        |
+| **メモリ**              | ⚠️ メモリファイル      | ⚠️ メモリファイル      | ⚠️ プラグイン頼み    | ✅ 自己学習     | 🚀 毎ターン出典付きで呼び出し   |
+| **連携**        | ✅ MCP               | ✅ MCP               | ⚠️ 自前で用意               | ⚠️ 自前で用意               | 🚀 119個の OAuth アプリ、MCP、スキル           |
+| **メッセージングチャネル**  | 🚫 なし              | 🚫 なし              | ✅ 多数              | ✅ いくつか           | ✅ 14（メール含む）                   |
+| **ブラウザとデスクトップ** | ⚠️ MCP 経由のブラウザ   | ⚠️ MCP 経由のブラウザ   | ✅ ブラウザ           | ✅ ブラウザ           | ✅ ブラウザとデスクトップアプリ              |
+| **ワークフロー**           | 🚫 なし              | 🚫 なし              | ⚠️ スクリプト           | ⚠️ スクリプト           | 🚀 ビジュアル、エージェントが下書き                 |
+| **モデルの選択**        | ⚠️ Anthropic のモデル  | ⚠️ OpenAI 優先      | ✅ 任意               | ✅ 任意               | ✅ 任意、ルーティング内蔵            |
+
+---
+
+## コントリビュート
+
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) をお読みください。または、[このプロンプト](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you)を使って AI コーディングエージェントに案内してもらうこともできます。
+
+1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.99.1（`rustfmt` と `clippy` を含む）、CMake、Ninja、ripgrep、そしてお使いのプラットフォームのデスクトップビルドに必要なものをインストールします。
+2. リポジトリをフォークしてクローンします。`git submodule update --init --recursive` を実行し、続けて `pnpm install` を実行します。
+3. UI の作業には `pnpm dev`、デスクトップアプリには `pnpm dev:app` を実行します。PR を開く前に、`pnpm typecheck`、`pnpm format:check`、`cargo check --manifest-path Cargo.toml` を実行してください。
+
+詳しくは[環境構築](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up)、[`AGENTS.md`](../AGENTS.md)、[crates の概要](../crates/README.md)をご覧ください。OpenHuman の多くの部分は [`vendor/`](../vendor) 配下の独立したリポジトリにあり、そちらへの貢献も歓迎します。
+
+コントリビューターには、無料のグッズと [Discord](https://guild.tinyhumans.ai/) での特別なアクセスを提供します。
+
+## スター履歴
 
 <p align="center">
  <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
  <picture>
  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
- <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
+ <img alt="スター履歴のチャート" src="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
  </picture>
  </a>
 </p>
 
-# コントリビューター・ホール・オブ・フェイム
-
-愛を示して、殿堂入りしましょう。コントリビューターには無料グッズと [Discord](https://guild.tinyhumans.ai/) への特別アクセスが提供されます。
+## コントリビューター
 
 <a href="https://github.com/tinyhumansai/openhuman/graphs/contributors">
- <img src="https://contrib.rocks/image?repo=tinyhumansai/openhuman" alt="OpenHuman contributors" />
+ <img src="https://contrib.rocks/image?repo=tinyhumansai/openhuman" alt="OpenHuman のコントリビューター" />
 </a>

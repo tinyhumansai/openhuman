@@ -9,8 +9,8 @@
  * its own; OpenHuman's own `task` toolkit entry
  * (`features/conversations/aui/toolkit.tsx`) renders sub-agent delegations
  * through `features/conversations/aui/SubagentTaskCard.tsx` instead, which
- * needs OpenHuman-specific affordances (the awaiting-user reply box, worktree
- * actions) this generic card has no slot for.
+ * needs OpenHuman-specific affordances (the awaiting-user reply box) this
+ * generic card has no slot for.
  *
  * Changes from upstream:
  * - `cn` import path (`@/components/assistant-ui/lib/utils`).
@@ -90,7 +90,7 @@ const NestedMessage: FC<{ roleLabels: TaskTranscriptRoleLabels }> = ({ roleLabel
       data-slot="aui_task-transcript-message"
       data-role={role}
       className="flex flex-col gap-1 text-xs leading-relaxed">
-      <span className={cn(mono, 'text-foreground/35')}>{roleLabels[role]}</span>
+      <span className={cn(mono, 'text-muted-foreground')}>{roleLabels[role]}</span>
       <MessagePrimitive.Parts
         components={{ Text: MarkdownText, tools: { Fallback: NestedToolCall } }}
       />

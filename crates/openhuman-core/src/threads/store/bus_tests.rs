@@ -19,18 +19,30 @@ fn subscriber_reads_rebound_workspace_from_shared_handle() {
 async fn persists_inbound_and_processed_turns_into_workspace_thread() {
     let temp = TempDir::new().expect("tempdir");
     let subscriber = ConversationPersistenceSubscriber::new(temp.path().to_path_buf());
-    let mut inbound_envelope =
-        tinychannels_bus::inbound_envelope_from_legacy_message(&ChannelMessage {
+    let mut inbound_envelope = tinychannels_runtime::channel::inbound_envelope_from_legacy_message(
+        &tinychannels_bus::ChannelMessage {
             channel: "slack".into(),
             id: "m1".into(),
             sender: "alice".into(),
             reply_target: "general".into(),
             content: "hello".into(),
             thread_ts: Some("thread-1".into()),
+            topic_id: None,
+            reply_to_id: None,
             timestamp: 0,
-        });
+            sender_name: None,
+        },
+    );
     inbound_envelope.conversation.kind = tinychannels_bus::channel::ConversationKind::Channel;
     inbound_envelope.conversation.scope_id = Some("T123".into());
+    // The module owns the session-key format, so the expectation is built by the
+    // same builder rather than spelled out.
+    let expected_session_key =
+        tinychannels_runtime::channel::build_session_key_for_inbound_envelope(
+            "main",
+            &inbound_envelope,
+            Default::default(),
+        );
 
     subscriber
         .handle(&DomainEvent::ChannelMessageReceived {
@@ -61,18 +73,26 @@ async fn persists_inbound_and_processed_turns_into_workspace_thread() {
         })
         .await;
 
-    let threads = crate::threads::store::list_threads(temp.path().to_path_buf()).expect("threads");
+    let threads = crate::threads::store::list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+    )
+    .expect("threads");
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].id, "channel:slack_alice_general_thread:thread-1");
 
-    let messages = crate::threads::store::get_messages(temp.path().to_path_buf(), &threads[0].id)
-        .expect("messages");
+    let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+        &threads[0].id,
+    )
+    .expect("messages");
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].id, "user:m1");
     assert_eq!(messages[0].sender, "user");
     assert_eq!(
         messages[0].extra_metadata["tinychannelsSessionKey"],
-        "main:slack:default:channel:T123:general:thread-1"
+        expected_session_key
     );
     assert_eq!(messages[1].id, "assistant:m1");
     assert_eq!(messages[1].sender, "assistant");
@@ -112,7 +132,11 @@ async fn telegram_thread_ts_does_not_split_persisted_thread() {
         })
         .await;
 
-    let threads = crate::threads::store::list_threads(temp.path().to_path_buf()).expect("threads");
+    let threads = crate::threads::store::list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+    )
+    .expect("threads");
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].id, "channel:telegram_alice_chat-1");
 }
@@ -137,6 +161,7 @@ async fn duplicate_events_do_not_append_duplicate_messages() {
     subscriber.handle(&event).await;
 
     let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path().to_path_buf(),
         "channel:discord_alice_room-1",
     )
@@ -155,11 +180,11 @@ fn persisted_channel_thread_id_ignores_blank_thread_ts() {
 #[test]
 fn channel_thread_title_uses_thread_suffix_only_for_non_telegram_threads() {
     assert_eq!(
-        channel_thread_title("slack", "alice", "general", Some(" 123 ")),
+        channel_thread_title("slack", "alice", "general", Some(" 123 "), false),
         "slack · alice · general · thread 123"
     );
     assert_eq!(
-        channel_thread_title("telegram", "alice", "chat-1", Some("123")),
+        channel_thread_title("telegram", "alice", "chat-1", Some("123"), true),
         "telegram · alice · chat-1"
     );
 }
@@ -193,9 +218,12 @@ async fn received_matching_workspace_is_persisted() {
         })
         .await;
 
-    let messages =
-        crate::threads::store::get_messages(temp.path().to_path_buf(), "channel:slack_bob_dev")
-            .expect("messages");
+    let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+        "channel:slack_bob_dev",
+    )
+    .expect("messages");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].id, "user:m1");
 }
@@ -222,7 +250,11 @@ async fn received_stale_workspace_is_dropped() {
         .await;
 
     // No thread should have been created in temp (the subscriber's workspace).
-    let threads = crate::threads::store::list_threads(temp.path().to_path_buf()).expect("threads");
+    let threads = crate::threads::store::list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+    )
+    .expect("threads");
     assert!(
         threads.is_empty(),
         "stale-workspace event must not create a thread"
@@ -268,6 +300,7 @@ async fn processed_matching_workspace_is_appended() {
         .await;
 
     let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path().to_path_buf(),
         "channel:slack_alice_general",
     )
@@ -318,6 +351,7 @@ async fn processed_stale_workspace_is_dropped() {
         .await;
 
     let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path().to_path_buf(),
         "channel:slack_alice_general",
     )
@@ -390,6 +424,7 @@ async fn workspace_switch_mid_conversation() {
         .await;
 
     let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
         workspace_a.path().to_path_buf(),
         "channel:telegram_alice_chat-1",
     )
@@ -429,7 +464,11 @@ async fn multiple_stale_workspaces_all_dropped() {
             .await;
     }
 
-    let threads = crate::threads::store::list_threads(temp.path().to_path_buf()).expect("threads");
+    let threads = crate::threads::store::list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+    )
+    .expect("threads");
     assert!(
         threads.is_empty(),
         "no events from wrong workspaces should create a thread"
@@ -473,6 +512,7 @@ async fn correct_workspace_after_stale_events() {
         .await;
 
     let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path().to_path_buf(),
         "channel:slack_alice_general",
     )
@@ -484,4 +524,85 @@ async fn correct_workspace_after_stale_events() {
     );
     assert_eq!(messages[0].id, "user:m1");
     assert_eq!(messages[0].content, "valid");
+}
+
+#[tokio::test]
+async fn claimed_channel_turns_are_left_to_their_caller() {
+    let temp = TempDir::new().expect("tempdir");
+    let subscriber = ConversationPersistenceSubscriber::new(temp.path().to_path_buf());
+    claim_channel_turn("relay-test-channel", "claimed-1");
+    assert!(is_claimed_channel_turn("relay-test-channel", "claimed-1"));
+    assert!(!is_claimed_channel_turn("relay-test-channel", "other"));
+
+    for event in [
+        DomainEvent::ChannelMessageReceived {
+            channel: "relay-test-channel".into(),
+            message_id: "claimed-1".into(),
+            sender: "alice".into(),
+            reply_target: "room-1".into(),
+            content: "hello".into(),
+            thread_ts: None,
+            inbound_envelope: None,
+            workspace_dir: temp.path().to_path_buf(),
+        },
+        DomainEvent::ChannelMessageProcessed {
+            channel: "relay-test-channel".into(),
+            message_id: "claimed-1".into(),
+            sender: "alice".into(),
+            reply_target: "room-1".into(),
+            content: "hello".into(),
+            thread_ts: None,
+            response: "hi".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            elapsed_ms: 1,
+            success: true,
+            workspace_dir: temp.path().to_path_buf(),
+        },
+    ] {
+        subscriber.handle(&event).await;
+    }
+
+    let threads = crate::threads::store::list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+    )
+    .expect("threads");
+    assert!(
+        threads.is_empty(),
+        "a claimed turn is not mirrored: {threads:?}"
+    );
+}
+
+#[test]
+fn saas_claims_nothing() {
+    claim_channel_turn_in(true, "relay-saas-channel", "saas-claim-1");
+    assert!(
+        !is_claimed_channel_turn("relay-saas-channel", "saas-claim-1"),
+        "no subscriber reads a claim in SaaS, so none is kept to collide across profiles"
+    );
+    claim_channel_turn_in(false, "relay-saas-channel", "saas-claim-2");
+    assert!(is_claimed_channel_turn(
+        "relay-saas-channel",
+        "saas-claim-2"
+    ));
+}
+
+#[test]
+fn the_claim_list_is_bounded() {
+    let mut claimed = ClaimedTurns::new(3);
+    for i in 0..5 {
+        claimed.claim("telegram", &format!("m{i}"));
+    }
+    claimed.claim("telegram", "m4");
+    assert!(!claimed.contains("telegram", "m0"), "oldest evicted");
+    assert!(!claimed.contains("telegram", "m1"), "oldest evicted");
+    assert!(claimed.contains("telegram", "m2"));
+    assert!(claimed.contains("telegram", "m4"));
+    assert!(!claimed.contains("discord", "m4"), "keyed by channel too");
+    assert_eq!(
+        claimed.keys.len(),
+        3,
+        "a repeated claim is not stored twice"
+    );
 }

@@ -19,15 +19,15 @@ Client-side webhook **tunnel routing** for OpenHuman. The backend provisions and
 | --- | --- |
 | `crates/openhuman-core/src/skills/webhooks/mod.rs` | Export-only: module docstring, `pub mod` decls, re-exports of `WebhookRouter`, types, and the `all_webhooks_*` controller pair. |
 | `crates/openhuman-core/src/skills/webhooks/types.rs` | Serde domain types: `WebhookRequest`, `WebhookResponseData`, `TunnelRegistration`, `WebhookActivityEntry`, `WebhookDebugLogEntry`, debug result wrappers, `WebhookDebugEvent`. |
-| `crates/openhuman-core/src/skills/webhooks/router.rs` | `WebhookRouter` — route map + ownership rules, disk persistence (generation-counter, spawn_blocking offload), bounded debug log ring (`MAX_DEBUG_LOG_ENTRIES = 250`), debug-event broadcast channel. |
+| `crates/openhuman-core/src/skills/webhooks/router.rs` | `WebhookRouter`: route map + ownership rules, disk persistence (generation-counter, spawn_blocking offload), bounded debug log ring (`MAX_DEBUG_LOG_ENTRIES = 250`), debug-event broadcast channel. |
 | `crates/openhuman-core/src/skills/webhooks/ops.rs` | RPC handler logic returning `RpcOutcome<T>`: local routing ops (`list_registrations`, `list_logs`, `clear_logs`, `register_echo`, `unregister_echo`, `register_agent`, `trigger_agent`), and `build_echo_response`. |
-| `crates/openhuman-core/src/skills/webhooks/schemas.rs` | Controller schemas + `handle_*` fns + `all_controller_schemas` / `all_registered_controllers`; deserializes params, delegates to `ops.rs`. |
+| `crates/openhuman-core/src/skills/webhooks/schemas.rs` | Controller schemas + `handle_*` fns + `all_controller_schemas` / `all_registered_controllers`; deserializes params, delegates to [`ops.rs`](./ops.rs). |
 | `crates/openhuman-core/src/skills/webhooks/bus.rs` | `WebhookRequestSubscriber` (`EventHandler`): the incoming-request routing flow; helpers `decode_webhook_body`, `run_agent_trigger`, `build_agent_response`. |
 | `crates/openhuman-core/src/skills/webhooks/{webhooks_tests,bus_tests,ops_tests,router_tests,schemas_tests,types_tests}.rs` | Test suites, each pulled into its sibling source file via `#[cfg(test)] #[path = "..."] mod tests;` (no inline test modules). |
 
 ## Public surface
 
-Re-exported from `mod.rs`:
+Re-exported from [`mod.rs`](./mod.rs):
 
 - `WebhookRouter` (from `router`).
 - `all_webhooks_controller_schemas`, `all_webhooks_registered_controllers` (from `schemas`).
@@ -57,7 +57,7 @@ None. This domain owns no `tools.rs` agent tools.
 
 ## Events
 
-Subscriber (in `bus.rs`): `WebhookRequestSubscriber`, with `name() = "webhook::request_handler"` and `domains() = ["webhook"]`. Registered in `register_domain_subscribers()` (`crates/openhuman-core/src/core/runtime/subscribers.rs`, called from `bootstrap_core_runtime()`), gated on the `Skills` domain group being enabled (`plan.skills`) and installed at most once per process; `channels/runtime/startup/start_channels.rs` deliberately does not register it, to avoid double-registration when both startup paths run in the same process.
+Subscriber (in [`bus.rs`](./bus.rs)): `WebhookRequestSubscriber`, with `name() = "webhook::request_handler"` and `domains() = ["webhook"]`. Registered in `register_domain_subscribers()` (`crates/openhuman-core/src/core/runtime/subscribers.rs`, called from `bootstrap_core_runtime()`), gated on the `Skills` domain group being enabled (`plan.skills`) and installed at most once per process; `channels/runtime/startup/start_channels.rs` deliberately does not register it, to avoid double-registration when both startup paths run in the same process.
 
 - Subscribes: `DomainEvent::WebhookIncomingRequest` (published by the socket transport in `socket/event_handlers.rs`).
 - Publishes: `DomainEvent::WebhookRegistered` / `WebhookUnregistered` (from the router on registration changes; `WebhookUnregistered`, the `registration_changed` debug event and the route re-persist all fire only when a registration was actually removed. Unregistering an absent tunnel is a silent no-op that returns `Ok(false)`, see #6091), `DomainEvent::WebhookReceived` (when routed to a target), `DomainEvent::WebhookProcessed` (always, with status/elapsed/error).
@@ -74,14 +74,14 @@ Note that nothing in the production startup path currently constructs a `Webhook
 
 ## Dependencies
 
-- `crate::core::bus::BUS` and `crate::core::events::DomainEvent` — publishing and subscribing; the `EventHandler` trait comes from `tinybus`.
-- `crate::core::all` — `ControllerFuture`, `RegisteredController` for controller registration.
-- `crate::core::{ControllerSchema, FieldSchema, TypeSchema}` — RPC schema types.
-- `crate::core::observability::report_error` — error reporting for body-decode / agent-trigger failures.
-- `crate::platform::socket::global_socket_manager` — obtain the `WebhookRouter` (stored on the socket manager) and `emit` responses over the socket.
-- `crate::agent::triage` — `TriggerEnvelope`, `run_triage`, `apply_decision`, `TriageOutcome` for agent-tunnel routing and `trigger_agent`.
-- `crate::config::{Config, rpc::load_config_with_timeout}` — config for local webhook routing operations.
-- `crate::rpc::RpcOutcome` — handler return contract.
+- `crate::core::bus::BUS` and `crate::core::events::DomainEvent`: publishing and subscribing; the `EventHandler` trait comes from `tinybus`.
+- `crate::core::all`: `ControllerFuture`, `RegisteredController` for controller registration.
+- `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`: RPC schema types.
+- `crate::core::observability::report_error`: error reporting for body-decode / agent-trigger failures.
+- `crate::platform::socket::global_socket_manager`: obtain the `WebhookRouter` (stored on the socket manager) and `emit` responses over the socket.
+- `crate::triage`: `TriggerEnvelope`, `run_triage`, `apply_decision`, `TriageOutcome` for agent-tunnel routing and `trigger_agent`.
+- `crate::config::{Config, rpc::load_config_with_timeout}`: config for local webhook routing operations.
+- `crate::rpc::RpcOutcome`: handler return contract.
 
 ## Used by
 
@@ -93,10 +93,17 @@ Note that nothing in the production startup path currently constructs a `Webhook
 
 ## Notes / gotchas
 
-- Direct skill dispatch is not implemented: a `skill`-kind tunnel returns `501`. Real handling exists only for `echo` and `agent` kinds (the QuickJS skill runtime was removed; see `gitbooks/developing/architecture.md`).
+- Direct skill dispatch is not implemented: a `skill`-kind tunnel returns `501`. Real handling exists only for `echo` and `agent` kinds (the QuickJS skill runtime was removed; see `docs/gitbooks/en/developing/architecture.md`).
 - `route()` deliberately resolves only `target_kind == "skill"` registrations; echo/agent registrations are matched via `registration()` in the bus, not `route()`.
 - Agent tunnels respond `202` immediately and complete asynchronously: the spawned task emits the final `webhook:response` itself to avoid blocking the broadcast dispatch task during LLM calls.
 - `register_agent` stores `agent_id` for observability and rebind validation only; per the docstring the triage evaluator selects the target agent dynamically regardless of the pinned value.
 - Persistence is fire-and-forget and may not flush before process exit; a lost write only replays the most recent registration change on next startup.
 - `decode_webhook_body` returns `{}` for empty bodies and wraps non-JSON-but-valid-UTF-8 bodies under a `"raw"` key; invalid base64 is a hard error (→ 400).
 - All request/response bodies are base64-encoded over the wire (`WebhookRequest.body` / `WebhookResponseData.body`).
+
+## Further reading
+
+- [Parent module (`skills`)](../README.md)
+- [MCP servers and skills](../../../../../docs/gitbooks/en/features/integrations/mcp-and-skills.md)
+- [tinyskills submodule](../../../../../vendor/tinyskills/README.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)

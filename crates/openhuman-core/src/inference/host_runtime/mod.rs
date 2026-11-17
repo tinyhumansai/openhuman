@@ -25,15 +25,14 @@ pub mod ops;
 mod schemas;
 
 // `pub(crate)` so the shared `apply_no_window` helper can be reused from the
-// agent shell runtime (`agent::host_runtime`) — single source of truth for the
+// agent shell runtime (`modules::tinybox::host_runtime`) — single source of truth for the
 // Windows `CREATE_NO_WINDOW` flag (#3727/#3728).
 pub mod service;
 
 pub use core::*;
-pub use ops as rpc;
+
 pub use ops::*;
 pub use schemas::{
     all_controller_schemas as all_local_inference_controller_schemas,
     all_registered_controllers as all_local_inference_registered_controllers,
 };
-pub use service::LocalAiService;

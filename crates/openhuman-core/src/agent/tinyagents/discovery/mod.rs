@@ -9,7 +9,7 @@
 //! to use it. [`discovery_policy`] turns the two into the
 //! [`ToolDiscoveryPolicy`] every turn harness runs with.
 //!
-//! Process-wide, like the backend transport, because the credential a
+//! Process-wide, like the other host registrations, because the credential a
 //! decision-model ranker needs is a property of the process's signed-in
 //! user, and the harness is assembled per turn without a config in hand.
 
@@ -108,7 +108,14 @@ pub(crate) fn discovery_policy() -> ToolDiscoveryPolicy {
     // prompt's Connected Integrations / MCP sections already name what can be
     // searched for; the description keeps only the count.
     policy.manifest_token_budget = 0;
+    policy.max_limit = settings.max_limit.max(1);
     policy.default_limit = settings.top_k.clamp(1, policy.max_limit);
+    // The process-wide defaults for a run that has no session behind it. A
+    // session turn overrides all four per run with what its thread recorded.
+    policy.promote_found_tools = settings.promote_found_tools;
+    policy.compact_search_results = settings.compact_search_results;
+    policy.collapse_search_results = settings.collapse_search_results;
+    policy.repair_tool_call_wrapper = settings.repair_tool_call_wrapper;
     let mode = match settings.ranker.trim().to_ascii_lowercase().as_str() {
         "auto" | "jev" | "ranker" => DiscoveryRankMode::Ranker,
         "bm25" | "lexical" => DiscoveryRankMode::Bm25,
@@ -127,6 +134,23 @@ pub(crate) fn discovery_policy() -> ToolDiscoveryPolicy {
         "[tool-search] discovery policy for turn"
     );
     policy
+}
+
+/// What a turn's `tool_search` tells its ranker about the search: the chat the
+/// turn runs in, so a ranker that discloses the query off the machine (a cloud
+/// embedder) can show the disclosure in that chat. A turn with no chat behind
+/// it (CLI, cron, a detached sub-agent) gets an empty context.
+pub(crate) fn rank_context_for(
+    chat: Option<&crate::security::approval::ApprovalChatContext>,
+) -> tinytools::RankContext {
+    let Some(chat) = chat else {
+        return tinytools::RankContext::empty();
+    };
+    let mut routed = tinytools::RankChat::new(chat.thread_id.clone(), chat.client_id.clone());
+    if let Some(request_id) = &chat.request_id {
+        routed = routed.with_request_id(request_id.clone());
+    }
+    tinytools::RankContext::empty().with_chat(routed)
 }
 
 /// The `tool_search` bridge, rendered for a TEXT dialect's prompt catalogue.
@@ -217,8 +241,16 @@ impl ToolRanker for OverlapRanker {
 }
 
 mod embedding_ranker;
+mod pin;
 
-pub use embedding_ranker::{embedding_provider_is_usable, embedding_tool_ranker};
+pub use pin::{
+    carry_forward, resolve, DiscoveryOptions, ResolvedDiscovery, DISCOVERY_METADATA_KEY,
+};
+pub(crate) use pin::{record_metadata, recorded_metadata};
+
+pub use embedding_ranker::{
+    embedding_provider_is_usable, embedding_tool_ranker, embedding_tool_ranker_in,
+};
 
 #[cfg(test)]
 #[path = "discovery_tests.rs"]

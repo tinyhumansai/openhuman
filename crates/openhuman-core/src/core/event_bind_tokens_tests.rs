@@ -1,58 +1,42 @@
 use super::*;
 
-#[test]
-fn issued_token_validates_for_matching_client_id() {
-    let issued = issue("cli-test-1", None).expect("issue");
-    assert!(consume("cli-test-1", &issued.token));
+/// Stands in for the server's store: full for one client id.
+fn fake_minter(client_id: String, ttl: Option<Duration>) -> Option<BindToken> {
+    (client_id != "full").then(|| BindToken {
+        token: format!("token-for-{client_id}"),
+        valid_until: Instant::now() + ttl.unwrap_or(Duration::from_secs(60)),
+    })
 }
 
 #[test]
-fn issued_token_rejects_wrong_client_id() {
-    let issued = issue("cli-test-2", None).expect("issue");
-    assert!(!consume("attacker-id", &issued.token));
-}
-
-#[test]
-fn wrong_client_id_does_not_consume_token() {
-    // Mismatched consume must leave the token intact so the legitimate
-    // subscriber can still validate after the failed probe — otherwise
-    // a wrong-id request becomes a one-shot DoS.
-    let issued = issue("cli-test-mismatch", None).expect("issue");
-    assert!(!consume("attacker-id", &issued.token));
-    assert!(
-        consume("cli-test-mismatch", &issued.token),
-        "legitimate consume must still succeed after a mismatched probe"
+fn the_installed_minter_mints_and_reports_a_full_store() {
+    install_minter(fake_minter);
+    let issued = mint("ui".to_string(), Some(Duration::from_secs(5))).expect("mint");
+    assert_eq!(issued.token, "token-for-ui");
+    assert!(issued.valid_until <= Instant::now() + Duration::from_secs(5));
+    assert_eq!(
+        mint("full".to_string(), None).unwrap_err(),
+        MintError::AtCapacity
     );
 }
 
 #[test]
-fn consumed_token_cannot_be_reused() {
-    let issued = issue("cli-test-3", None).expect("issue");
-    assert!(consume("cli-test-3", &issued.token));
-    assert!(
-        !consume("cli-test-3", &issued.token),
-        "tokens must be single-shot"
+fn the_subscribe_token_rpc_returns_the_minted_token() {
+    install_minter(fake_minter);
+    let result = crate::core::dispatch::handle_events_subscribe_token(
+        serde_json::json!({ "client_id": " ui ", "ttl_secs": 30 }),
+    )
+    .expect("mint rpc");
+    let value = result.value;
+    assert_eq!(value["token"], "token-for-ui");
+    assert!(value["ttl_secs"].as_u64().unwrap() <= 30);
+
+    let full = crate::core::dispatch::handle_events_subscribe_token(
+        serde_json::json!({ "client_id": "full" }),
+    )
+    .unwrap_err();
+    assert_eq!(
+        full,
+        "events bind-token store at capacity; try again shortly"
     );
-}
-
-#[test]
-fn expired_token_is_rejected() {
-    let issued = issue("cli-test-4", Some(Duration::from_millis(1))).expect("issue");
-    std::thread::sleep(Duration::from_millis(20));
-    assert!(!consume("cli-test-4", &issued.token));
-}
-
-#[test]
-fn unknown_token_is_rejected() {
-    assert!(!consume("any-id", "f00ba1"));
-}
-
-#[test]
-fn ttl_override_is_clamped_to_max() {
-    // Any caller asking for more than `MAX_TTL` collapses to the cap;
-    // confirm the issue path does not panic and the resulting token
-    // still validates.
-    let issued = issue("cli-test-clamp", Some(Duration::from_secs(60 * 60 * 24))).expect("issue");
-    assert!(issued.valid_until <= Instant::now() + MAX_TTL + Duration::from_secs(1));
-    assert!(consume("cli-test-clamp", &issued.token));
 }

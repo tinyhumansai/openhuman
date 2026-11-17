@@ -1,4 +1,5 @@
 use super::*;
+use tinytools_agent::dialect::ToolCallFormat;
 
 #[test]
 fn rendered_subagent_system_prompt_is_byte_stable_across_repeat_calls() {
@@ -137,6 +138,7 @@ fn deferred_browser_prompt_has_only_discovery_hint_in_native_and_text_modes() {
             personality_roster: vec![],
             agents_md_global: None,
             agents_md_local: None,
+            flow_archetype_text: None,
         };
         let rendered = ToolsSection.build(&ctx).unwrap();
         assert!(rendered.contains("For website tasks, use tool_search to find browser tools."));
@@ -167,6 +169,7 @@ fn tools_section_empty_for_native() {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -196,6 +199,7 @@ fn tools_section_nonempty_for_pformat() {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -227,6 +231,7 @@ fn tools_section_native_with_dispatcher_instructions_returns_instructions() {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(

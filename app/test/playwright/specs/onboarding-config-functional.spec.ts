@@ -1,35 +1,31 @@
 import { expect, type Page, test } from '@playwright/test';
 
 import {
+  bootRuntimeReadyGuestPage,
   callCoreRpc,
   dismissWalkthroughIfPresent,
-  seedBrowserCoreMode,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
-async function resetOnboarding(userId: string): Promise<void> {
-  await callCoreRpc('openhuman.auth_clear_session', {});
-  await callCoreRpc('openhuman.config_set_onboarding_completed', { value: false });
+async function bootIntoOnboarding(page: Page, userId: string): Promise<void> {
+  await bootRuntimeReadyGuestPage(page);
   await callCoreRpc('openhuman.auth_store_session', {
     token: `eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.${Buffer.from(
       JSON.stringify({ sub: userId, userId, exp: Math.floor(Date.now() / 1000) + 3600 })
-    ).toString('base64url')}.sig`,
+    ).toString('base64url')}.local`,
+    userId,
+    user: { _id: 'local', id: 'local', name: 'Local User', email: 'local@openhuman.local' },
   });
+  await callCoreRpc('openhuman.config_set_onboarding_completed', { value: false });
+  await page.goto('/#/onboarding/custom/inference');
+  await page.reload();
+  await waitForAppReady(page);
+  await dismissWalkthroughIfPresent(page);
 }
 
 test.describe('Onboarding custom configuration flow', () => {
   test('advanced path supports back navigation through final setup', async ({ page }) => {
-    await resetOnboarding('pw-onboarding-config');
-    await seedBrowserCoreMode(page);
-    await page.goto('/#/onboarding/welcome');
-    await waitForAppReady(page);
-    await dismissWalkthroughIfPresent(page);
-
-    await expect(page.getByTestId('onboarding-welcome-step')).toBeVisible();
-    await page.getByRole('button', { name: 'Get Started' }).click();
-    await expect(page.getByTestId('onboarding-runtime-choice-step')).toBeVisible();
-    await page.getByTestId('onboarding-runtime-choice-custom').click();
-    await page.getByTestId('onboarding-next-button').click();
+    await bootIntoOnboarding(page, 'pw-onboarding-config');
 
     await expect(page.getByTestId('onboarding-custom-inference-step')).toBeVisible();
     await page.getByTestId('onboarding-next-button').click();

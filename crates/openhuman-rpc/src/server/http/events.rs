@@ -1,11 +1,12 @@
 //! Server-Sent Event streams: `/events`, `/events/webhooks`, `/events/domain`.
 
+use crate::core_host::core::events::DomainEvent;
+use crate::core_host::core::runtime::DispatchCtx;
 use axum::extract::Query;
 use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use openhuman_core::core::events::DomainEvent;
+use axum::{Extension, Json};
 use serde_json::json;
 use tokio_stream::StreamExt;
 
@@ -39,8 +40,12 @@ pub(super) struct EventsQuery {
 /// `client_id`.
 pub(super) async fn events_handler(
     headers: axum::http::HeaderMap,
+    ctx: Option<Extension<DispatchCtx>>,
     Query(query): Query<EventsQuery>,
 ) -> Response {
+    // The context the serving middleware attached; a request that carries none
+    // has no tenant, which fails closed in SaaS.
+    let ctx = ctx.map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx);
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -48,8 +53,26 @@ pub(super) async fn events_handler(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let bearer_ok = bearer
-        .map(openhuman_core::core::auth::verify_bearer_token)
+        .map(crate::core_host::core::auth::verify_bearer_token)
         .unwrap_or(false);
+
+    // SaaS: the stream belongs to the user the gateway scoped this request to,
+    // and carries only that user's events. No user scope, or a browser bind
+    // token instead of the gateway's bearer, is refused outright.
+    // The stream keys on the tenant (profile) of the request's own context.
+    let saas_profile = if crate::core_host::core::runtime::is_saas() {
+        let profile = ctx.tenant().ok().and_then(|tenant| tenant.profile);
+        match profile {
+            Some(profile) if bearer_ok => Some(profile),
+            _ => {
+                log::warn!("[events] reject subscribe: SaaS streams need a gateway user scope");
+                return (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" })))
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
 
     if !bearer_ok {
         let supplied_token = query
@@ -73,7 +96,7 @@ pub(super) async fn events_handler(
             )
                 .into_response();
         };
-        if !openhuman_core::core::event_bind_tokens::consume(&query.client_id, supplied_token) {
+        if !super::events_bind_tokens::consume(&query.client_id, supplied_token) {
             let client_id_len = query.client_id.len();
             log::warn!(
                 "[events] reject subscribe: bind token invalid or expired (client_id_len={})",
@@ -92,15 +115,20 @@ pub(super) async fn events_handler(
     }
 
     let client_id = query.client_id;
-    let rx = openhuman_core::web_chat::subscribe_web_channel_events();
+    let rx = crate::core_host::web_chat::subscribe_web_channel_events();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
         move |item| -> Option<Result<Event, std::convert::Infallible>> {
             let event = item.ok()?;
-            if event.client_id != client_id {
+            if event.context().client_id != client_id {
                 return None;
             }
+            if let Some(profile) = saas_profile.as_deref() {
+                if !event.belongs_to_profile(profile) {
+                    return None;
+                }
+            }
             let data = serde_json::to_string(&event).ok()?;
-            Some(Ok(Event::default().event(event.event).data(data)))
+            Some(Ok(Event::default().event(event.event_name()).data(data)))
         },
     );
 
@@ -125,7 +153,11 @@ pub(super) async fn webhook_events_handler() -> Response {
 ///
 /// Requires bearer auth. Streams all domain events as JSON with event type
 /// set to the domain name (agent, tool, memory, etc.).
-pub(super) async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
+pub(super) async fn domain_events_handler(
+    headers: axum::http::HeaderMap,
+    ctx: Option<Extension<DispatchCtx>>,
+) -> Response {
+    let ctx = ctx.map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx);
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -133,7 +165,7 @@ pub(super) async fn domain_events_handler(headers: axum::http::HeaderMap) -> Res
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let bearer_ok = bearer
-        .map(openhuman_core::core::auth::verify_bearer_token)
+        .map(crate::core_host::core::auth::verify_bearer_token)
         .unwrap_or(false);
 
     if !bearer_ok {
@@ -150,12 +182,13 @@ pub(super) async fn domain_events_handler(headers: axum::http::HeaderMap) -> Res
     }
 
     // Read dashboard config for event stream settings.
-    let es_cfg = openhuman_core::config::rpc::load_config_with_timeout()
+    let es_cfg = ctx
+        .load_config()
         .await
         .map(|c| c.dashboard.event_stream)
         .unwrap_or_default();
 
-    let bus = openhuman_core::core::bus::BUS.get();
+    let bus = crate::core_host::core::bus::BUS.get();
     if let Some(response) = domain_event_stream_unavailable(es_cfg.enabled, bus.is_some()) {
         return response;
     }
@@ -170,7 +203,7 @@ pub(super) async fn domain_events_handler(headers: axum::http::HeaderMap) -> Res
     // per connection, not per event — and it refills the cache the row
     // stamping below relies on.
     let active_workspace =
-        active_workspace_handle(openhuman_core::config::active_workspace_dir().await);
+        active_workspace_handle(crate::core_host::config::active_workspace_dir().await);
 
     // Send config as first SSE event so frontend can apply settings.
     let config_event = Event::default().event("config").data(
@@ -220,7 +253,7 @@ fn domain_event_stream_unavailable(enabled: bool, bus_initialized: bool) -> Opti
 
 fn active_workspace_handle(result: anyhow::Result<std::path::PathBuf>) -> Option<String> {
     result
-        .map(|dir| openhuman_core::config::workspace_handle(&dir))
+        .map(|dir| crate::core_host::config::workspace_handle(&dir))
         .map_err(|error| {
             log::warn!(
                 "[events/domain] could not resolve the active workspace ({error}); \
@@ -239,9 +272,9 @@ fn domain_event_payload(event: &DomainEvent) -> Option<(String, String)> {
         // Only already-redacted failure details enter the event log.
         "detail": event.log_detail(),
         // Public event rows expose workspace handles, never raw home paths.
-        "workspace": event.workspace_dir().map(openhuman_core::config::workspace_handle),
-        "active_workspace": openhuman_core::config::active_workspace_dir_cached()
-            .map(|dir| openhuman_core::config::workspace_handle(&dir)),
+        "workspace": event.workspace_dir().map(crate::core_host::config::workspace_handle),
+        "active_workspace": crate::core_host::config::active_workspace_dir_cached()
+            .map(|dir| crate::core_host::config::workspace_handle(&dir)),
         "timestamp": chrono::Utc::now().format("%H:%M:%S").to_string(),
     });
     serde_json::to_string(&data).ok().map(|data| (domain, data))

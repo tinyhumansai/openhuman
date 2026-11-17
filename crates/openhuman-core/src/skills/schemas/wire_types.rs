@@ -6,9 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::skills::ops::{
-    CreateWorkflowParams, InstallWorkflowFromUrlParams, Workflow, WorkflowCreateInputDef,
-    WorkflowScope,
+use crate::skills::ops_install::{ScanBlockedOutcome, SkillInstallOutcome};
+use {
+    crate::skills::ops::CreateWorkflowParams, crate::skills::ops::InstallWorkflowFromUrlParams,
+    crate::skills::ops::WorkflowCreateInputDef, tinyskills::Skill as Workflow,
+    tinyskills::SkillScope as WorkflowScope,
 };
 
 // ── Params ────────────────────────────────────────────────────────────────────
@@ -82,6 +84,10 @@ pub(super) struct WorkflowsInstallFromUrlParamsWire {
     pub(super) url: String,
     #[serde(default)]
     pub(super) timeout_secs: Option<u64>,
+    /// Set only by the Skills UI, to the `digest` of the blocked document the
+    /// user chose to install anyway.
+    #[serde(default)]
+    pub(super) acknowledged_digest: Option<String>,
 }
 
 impl From<WorkflowsInstallFromUrlParamsWire> for InstallWorkflowFromUrlParams {
@@ -210,11 +216,29 @@ pub(super) struct WorkflowsCreateResult {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct WorkflowsInstallFromUrlResult {
-    pub(super) url: String,
-    pub(super) stdout: String,
-    pub(super) stderr: String,
-    pub(super) new_workflows: Vec<String>,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(super) enum WorkflowsInstallFromUrlResult {
+    Installed {
+        url: String,
+        stdout: String,
+        stderr: String,
+        new_workflows: Vec<String>,
+    },
+    ScanBlocked(ScanBlockedOutcome),
+}
+
+impl From<SkillInstallOutcome> for WorkflowsInstallFromUrlResult {
+    fn from(outcome: SkillInstallOutcome) -> Self {
+        match outcome {
+            SkillInstallOutcome::Installed(installed) => Self::Installed {
+                url: installed.url,
+                stdout: installed.stdout,
+                stderr: installed.stderr,
+                new_workflows: installed.new_skills,
+            },
+            SkillInstallOutcome::ScanBlocked(blocked) => Self::ScanBlocked(blocked),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

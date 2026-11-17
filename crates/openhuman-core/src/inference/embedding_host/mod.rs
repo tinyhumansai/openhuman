@@ -3,8 +3,8 @@
 //! Converts text into numerical vectors for semantic search (tool discovery,
 //! voice, the `embeddings` RPC). Providers:
 //!
-//! - **Managed** (default): Routes through the OpenHuman backend's
-//!   `POST /openai/v1/embeddings` (Voyage-backed). The recommended path —
+//! - **Managed** (default): Routes through the managed
+//!   backend's OpenAI-compatible embeddings endpoint (Voyage-backed). The recommended path —
 //!   works on a fresh install without requiring a local Ollama daemon.
 //! - **Voyage**: Direct Voyage AI API with the user's own key.
 //! - **OpenAI**: Cloud-based embeddings via the OpenAI API.
@@ -13,25 +13,21 @@
 //! - **Custom**: Any OpenAI-compatible endpoint.
 //! - **Noop**: A fallback provider for keyword-only search.
 
-#[path = "cloud_adapter.rs"]
-pub mod cloud;
-mod embedding_trait;
+mod embedding_scope;
 mod factory;
-mod provider_trait;
 mod rpc;
 mod schemas;
 
-pub use cloud::{
-    OpenHumanCloudEmbeddingModel, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,
-};
 pub use factory::{
+    create_embedding_provider_for_chat, create_embedding_provider_for_inspection,
     create_embedding_provider_with_config, create_embedding_provider_with_credentials,
-    default_embedding_provider_with_config,
-};
-pub use provider_trait::{
-    format_embedding_signature, EmbeddingProvider, TinyInferenceEmbeddingProvider,
+    default_embedding_provider_for_chat, default_embedding_provider_with_config,
 };
 pub use rpc::provider_from_config;
+pub(crate) use rpc::{probe_dimensions_for_inspection, InspectionEmbeddingError};
+/// A shared embedding provider as this module's factories return it, nameable
+/// by hosts that hold one without depending on the embeddings crate.
+pub type SharedEmbeddingModel = std::sync::Arc<dyn tinyinference_embeddings::EmbeddingModel>;
 pub use schemas::{
     all_controller_schemas as all_embeddings_controller_schemas,
     all_registered_controllers as all_embeddings_registered_controllers,

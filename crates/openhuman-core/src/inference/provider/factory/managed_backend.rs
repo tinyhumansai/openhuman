@@ -1,136 +1,220 @@
-//! The managed OpenHuman backend as a crate-native `ChatModel`: tier pinning per
-//! workload role, `hint:*` translation, and the single managed egress emission.
+//! The managed backend as a crate-native `ChatModel`: tier pinning per
+//! workload role, `hint:*` translation, the privacy gate and the single managed
+//! egress emission. The model itself is built by the chat-model provider
+//! registered under [`PROVIDER_OPENHUMAN`]
+//! ([`crate::inference::registry::register_chat_model`]); with none registered
+//! the managed provider is unavailable and construction answers with the
+//! `BACKEND_UNAVAILABLE:` sentinel.
 
 use super::*;
 
-/// Resolve the managed OpenHuman backend for `role` — the model id (tier /
-/// summarization / default, with `hint:<tier>` translation) plus a configured
-/// [`OpenHumanBackendModel`]. Shared by both the `Provider` path
-/// ([`make_openhuman_backend`]) and the crate `ChatModel` path
-/// ([`make_openhuman_backend_model`], issue #4727 Motion B).
-pub(super) fn resolve_managed_backend(
-    role: &str,
-    config: &Config,
-) -> anyhow::Result<(OpenHumanBackendModel, String)> {
-    resolve_managed_backend_with_model_override(role, config, None)
-}
-
-/// Construct a managed turn model with the explicit OpenHuman thread attached.
-/// This intentionally exposes no generic backend resolver outside the factory.
-pub(crate) fn make_openhuman_backend_model_for_thread(
-    role: &str,
-    config: &Config,
-    model: &str,
-    native_tool_calling: bool,
-    thread_id: Option<&str>,
-) -> anyhow::Result<(
+type ManagedChatModel = (
     std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>>,
     String,
-)> {
-    // `model` may be a role alias (`hint:reasoning`) the registry keys the
-    // route by; the backend only ever sees the concrete id it resolves to.
-    let (backend, resolved_model) =
-        resolve_managed_backend_with_model_override(role, config, Some(model))?;
-    Ok((
-        std::sync::Arc::new(
-            backend
-                .with_native_tool_calling(native_tool_calling)
-                .with_thread_id(thread_id),
-        ),
-        resolved_model,
-    ))
+);
+
+/// The error the managed provider answers with when no chat-model provider is
+/// registered for it.
+pub(crate) fn managed_unavailable_error() -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} managed inference needs a hosted provider; none is registered",
+        crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+    )
 }
 
-pub(super) fn resolve_managed_backend_with_model_override(
+/// Build the managed model for `role` through the registered chat-model
+/// provider. The privacy gate runs first (before a client is constructed or any
+/// egress announced), then the model id is resolved and the egress disclosed
+/// once: managed resolution is the universal chokepoint for every managed
+/// inference construction (privacy epic S2, #4436).
+pub(super) fn managed_chat_model(
     role: &str,
     config: &Config,
     model_override: Option<&str>,
-) -> anyhow::Result<(OpenHumanBackendModel, String)> {
-    // Every managed role runs on one concrete model: the pinned default, else
-    // `MODEL_MANAGED_DEFAULT`. Roles still matter — they picked the *route*
-    // that led here — but there are no per-role tier endpoints any more.
-    let model = managed_default_model(config);
-    log::debug!(
-        "[providers][chat-factory] role={} managed resolves to model={}",
+    default_model: Option<&str>,
+    native_tool_calling: bool,
+    thread_id: Option<&str>,
+    egress: &EgressLedger,
+) -> anyhow::Result<ManagedChatModel> {
+    let extensions = crate::core::runtime::CoreContext::current_extensions();
+    managed_chat_model_for(
+        extensions.as_ref(),
         role,
-        model
-    );
-    // Critical: pass the *config's* workspace directory through so the
-    // provider's `AuthService` reads `auth-profiles.json` from the
-    // same dir login wrote to. Without this, `ProviderRuntimeOptions::default()`
-    // leaves `openhuman_dir = None`, the provider falls back to
-    // `~/.openhuman`, and reads an unrelated (or empty)
-    // profile store — surfacing as "No backend session: store a JWT
-    // via auth (app-session)" even though login just succeeded in the
-    // user's actual workspace (e.g. test workspaces under OPENHUMAN_WORKSPACE).
-    let options = ProviderRuntimeOptions {
-        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-        secrets_encrypt: config.secrets.encrypt,
-        ..ProviderRuntimeOptions::default()
-    };
-    log::debug!(
-        "[providers][chat-factory] building openhuman backend provider model={} state_dir={:?} secrets_encrypt={}",
-        model,
-        options.openhuman_dir,
-        options.secrets_encrypt
-    );
-    // `model` is the managed default here, never a hint or a retired tier
-    // slug; a caller's own `hint:*` / tier value only ever arrives through
-    // `model_override`, translated below.
-    // An override that is itself a managed alias (`hint:coding`, `hint:chat`)
-    // means "this role on the managed backend" — the default model. A concrete
-    // id (`openrouter/deepseek/deepseek-v4-pro`) is forwarded verbatim; the
-    // backend is authoritative over its validity (issue #4598).
-    let model = match model_override.map(str::trim).filter(|m| !m.is_empty()) {
-        Some(raw) if is_known_openhuman_tier(raw) => {
-            log::debug!(
-                "[providers][chat-factory] role={} override '{}' is a managed alias; using model={}",
-                role,
-                raw,
-                model
-            );
-            model
-        }
-        Some(raw) => {
-            log::debug!(
-                "[providers][chat-factory] role={} forwarding pinned model '{}' verbatim to the managed backend",
-                role,
-                raw
-            );
-            raw.to_string()
-        }
-        None => model,
-    };
-
-    // Egress spine (privacy epic S2, #4436): managed backend resolution is the
-    // universal chokepoint for EVERY managed-backend inference construction —
-    // the direct ChatModel path and both turn paths
-    // (`create_turn_chat_model[_from_string]_with_native_tools`) resolve here.
-    // Emitting once here guarantees the default managed chat turn discloses
-    // egress exactly once (see `emit_inference_egress`).
-    crate::security::egress::emit_external_transfer(
-        crate::security::egress::EgressDescriptor::inference("openhuman", &model, true),
-    );
-    Ok((
-        OpenHumanBackendModel::new(config.api_url.as_deref(), &options, model.clone()),
-        model,
-    ))
+        config,
+        model_override,
+        default_model,
+        native_tool_calling,
+        thread_id,
+        egress,
+    )
 }
 
-/// The managed OpenHuman backend as a crate-native host `ChatModel`
-/// ([`OpenHumanBackendModel`], issue #4727 Motion B) — the cutover replacement
-/// for the `Provider` path. Same resolution; wraps the backend so the harness
-/// holds a crate `ChatModel` and the dynamic JWT + `thread_id` + billing envelope
-/// are bridged onto the crate wire client per call.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn managed_chat_model_for(
+    extensions: Option<&crate::core::slots::Extensions>,
+    role: &str,
+    config: &Config,
+    model_override: Option<&str>,
+    default_model: Option<&str>,
+    native_tool_calling: bool,
+    thread_id: Option<&str>,
+    egress: &EgressLedger,
+) -> anyhow::Result<ManagedChatModel> {
+    enforce_local_only_inference(role, PROVIDER_OPENHUMAN)?;
+    let overrides = crate::inference::registry::provider_overrides(extensions.cloned());
+    let Some(entry) = overrides.chat_entry(PROVIDER_OPENHUMAN) else {
+        log::debug!("[providers][chat-factory] role={role} managed provider is not registered");
+        return Err(managed_unavailable_error());
+    };
+    let model = match entry.models.as_ref() {
+        Some(models) => (models.resolve_model)(
+            role,
+            &crate::inference::registry::ProviderContext::new(config, egress),
+            model_override,
+        ),
+        None => model_override
+            .or(config.default_model.as_deref())
+            .map(str::trim)
+            .filter(|model| !model.is_empty() && !model.starts_with("hint:"))
+            .map(str::to_string),
+    }
+    .ok_or_else(managed_unavailable_error)?;
+    log::debug!(
+        "[providers][chat-factory] role={role} managed provider served by a registered chat model model={model}"
+    );
+    crate::security::egress::emit_external_transfer_in(
+        egress,
+        crate::security::egress::EgressDescriptor::inference("openhuman", &model, true),
+    );
+    let context = crate::inference::registry::ProviderContext::new(config, egress);
+    let request = tinyinference_llm::providers::overrides::ChatModelRequest {
+        role,
+        model_override: Some(&model),
+        default_model,
+        native_tool_calling,
+        thread_id,
+        context: &context,
+    };
+    Ok((entry.build)(&request)?)
+}
+
+/// Build a managed model only through the host's explicitly inspection-safe
+/// callback. This path never falls back to the runtime factory: doing so could
+/// defer mutable credential access until invoke/stream.
+pub(super) async fn managed_chat_model_for_inspection(
+    role: &str,
+    config: &Config,
+    model_override: Option<&str>,
+) -> anyhow::Result<ManagedChatModel> {
+    let build = managed_chat_model_build_for_inspection(None, role, config, model_override).await?;
+    Ok((build.model, build.model_id))
+}
+
+pub(super) async fn managed_chat_model_build_for_inspection(
+    extensions: Option<&crate::core::slots::Extensions>,
+    role: &str,
+    config: &Config,
+    model_override: Option<&str>,
+) -> anyhow::Result<crate::inference::registry::InspectionChatModelBuild> {
+    enforce_local_only_inference(role, PROVIDER_OPENHUMAN)?;
+    let Some(factory) =
+        crate::inference::registry::inspection_chat_model_for(extensions, PROVIDER_OPENHUMAN)
+    else {
+        return Err(managed_unavailable_error());
+    };
+    let overrides = crate::inference::registry::provider_overrides(extensions.cloned());
+    let Some(entry) = overrides.chat_entry(PROVIDER_OPENHUMAN) else {
+        return Err(managed_unavailable_error());
+    };
+    let context = crate::inference::registry::ProviderContext::new(config, &EgressLedger::none());
+    let model = match entry.models.as_ref() {
+        Some(models) => (models.resolve_model)(role, &context, model_override),
+        None => model_override
+            .or(config.default_model.as_deref())
+            .map(str::trim)
+            .filter(|model| !model.is_empty() && !model.starts_with("hint:"))
+            .map(str::to_string),
+    }
+    .ok_or_else(managed_unavailable_error)?;
+    let context = crate::inference::registry::ProviderContext::new(config, &EgressLedger::none());
+    let request = tinyinference_llm::providers::overrides::ChatModelRequest {
+        role,
+        model_override: Some(&model),
+        default_model: None,
+        native_tool_calling: true,
+        thread_id: None,
+        context: &context,
+    };
+    (factory)(&request).await
+}
+
+/// Construct a managed turn model with the explicit OpenHuman thread attached.
+#[cfg(test)]
+pub(crate) fn make_openhuman_backend_model_for_thread(
+    role: &str,
+    config: &Config,
+    model: Option<&str>,
+    native_tool_calling: bool,
+    thread_id: Option<&str>,
+    egress: &EgressLedger,
+) -> anyhow::Result<ManagedChatModel> {
+    // `model` may be a role alias (`hint:reasoning`) the registry keys the
+    // route by; the provider only ever sees the concrete id it resolves to.
+    managed_chat_model(
+        role,
+        config,
+        model,
+        None,
+        native_tool_calling,
+        thread_id,
+        egress,
+    )
+}
+
+/// Explicit-context counterpart for turn construction.
+pub(crate) fn make_openhuman_backend_model_for_thread_in(
+    extensions: Option<&crate::core::slots::Extensions>,
+    role: &str,
+    config: &Config,
+    model: Option<&str>,
+    native_tool_calling: bool,
+    thread_id: Option<&str>,
+    egress: &EgressLedger,
+) -> anyhow::Result<ManagedChatModel> {
+    managed_chat_model_for(
+        extensions,
+        role,
+        config,
+        model,
+        None,
+        native_tool_calling,
+        thread_id,
+        egress,
+    )
+}
+
+/// The managed backend as a crate-native host `ChatModel`.
 pub(crate) fn make_openhuman_backend_model(
     role: &str,
     config: &Config,
-) -> anyhow::Result<(
-    std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>>,
-    String,
-)> {
-    let (model_client, model) = resolve_managed_backend(role, config)?;
-    let chat: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>> =
-        std::sync::Arc::new(model_client);
-    Ok((chat, model))
+) -> anyhow::Result<ManagedChatModel> {
+    managed_chat_model(role, config, None, None, true, None, &EgressLedger::none())
+}
+
+/// One-shot managed construction selected by an explicit dispatch context.
+pub(crate) fn make_openhuman_backend_model_in(
+    extensions: Option<&crate::core::slots::Extensions>,
+    role: &str,
+    config: &Config,
+) -> anyhow::Result<ManagedChatModel> {
+    managed_chat_model_for(
+        extensions,
+        role,
+        config,
+        None,
+        None,
+        true,
+        None,
+        &EgressLedger::none(),
+    )
 }

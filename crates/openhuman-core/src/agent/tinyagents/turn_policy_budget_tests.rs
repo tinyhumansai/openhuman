@@ -1,14 +1,28 @@
 use super::*;
 
+#[test]
+fn model_call_timeout_environment_override_reaches_run_limits() {
+    let overrides = env_overrides_from(|name| {
+        (name == "OPENHUMAN_MODEL_CALL_TIMEOUT_SECS").then(|| "2".to_owned())
+    });
+    let policy = run_policy_for_provider_with_overrides(10, false, false, None, overrides);
+
+    assert_eq!(policy.limits.max_model_call_ms, Some(2_000));
+}
+
 #[tokio::test]
 async fn per_turn_tool_limit_reaches_the_execution_policy() {
-    crate::agent::stop_hooks::with_tool_call_limit(Some(2), async {
-        let policy = run_policy_for(10, false);
-        assert_eq!(policy.limits.max_tool_calls, 2);
-        assert_eq!(policy.limits.max_model_calls, 10);
-    })
-    .await;
+    let policy = run_policy_for_provider(10, false, false, Some(2));
+    assert_eq!(policy.limits.max_tool_calls, 2);
+    assert_eq!(policy.limits.max_model_calls, 10);
     assert_eq!(run_policy_for(10, false).limits.max_tool_calls, 80);
+    // A host cap can only narrow the product default, never widen it.
+    assert_eq!(
+        run_policy_for_provider(10, false, false, Some(1_000))
+            .limits
+            .max_tool_calls,
+        80
+    );
 }
 
 /// #6953: the model reads how long each tool call took, so it can budget the
@@ -16,4 +30,179 @@ async fn per_turn_tool_limit_reaches_the_execution_policy() {
 #[test]
 fn tool_results_carry_their_duration() {
     assert!(run_policy_for(10, false).tool_result_durations);
+}
+
+#[test]
+fn local_providers_get_longer_ceilings_than_hosted_ones() {
+    let hosted = run_policy_for_provider(10, false, false, None);
+    let local = run_policy_for_provider(10, false, true, None);
+    // Env overrides win over both defaults, so compare only without one.
+    if std::env::var_os("OPENHUMAN_MODEL_CALL_TIMEOUT_SECS").is_none()
+        && std::env::var_os("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS").is_none()
+    {
+        assert_eq!(hosted.limits.max_model_call_ms, Some(900_000));
+        assert_eq!(local.limits.max_model_call_ms, Some(3_600_000));
+        assert_eq!(hosted.limits.max_wall_clock_ms, Some(3_600_000));
+        assert_eq!(local.limits.max_wall_clock_ms, Some(14_400_000));
+    }
+    assert!(local.limits.max_model_call_ms < local.limits.max_wall_clock_ms);
+    // Stream-silence hang detection is identical for both.
+    assert_eq!(
+        hosted.limits.stream_idle_timeout_ms,
+        local.limits.stream_idle_timeout_ms
+    );
+}
+
+#[test]
+fn local_web_backstop_sits_above_the_local_turn_ceiling() {
+    let turn_secs = agent_turn_wall_clock_ms_for(true).map(|ms| ms / 1_000);
+    let backstop = local_web_turn_backstop_secs();
+    assert_eq!(
+        backstop,
+        turn_secs.map(|s| s + tinyagents_harness::turn_policy::LOCAL_WEB_TURN_BACKSTOP_GRACE_SECS)
+    );
+}
+
+#[test]
+fn hosted_openai_is_not_treated_as_self_hosted() {
+    // The bare `openai` name maps onto the generic local OpenAI kind in
+    // `tinyinference_local`; the endpoint must decide, not the name.
+    assert!(!provider_is_self_hosted(
+        "openai",
+        Some("https://api.openai.com/v1")
+    ));
+    assert!(!provider_is_self_hosted("openai", None));
+    assert!(!provider_is_self_hosted(
+        "openai:gpt-4o",
+        Some("https://api.openai.com/v1")
+    ));
+    assert!(!provider_is_self_hosted("openrouter:x", None));
+    assert!(!provider_is_self_hosted("cloud", None));
+    assert!(!provider_is_self_hosted(
+        "local-openai:m",
+        Some("https://gpu.example.com/v1")
+    ));
+}
+
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
+#[test]
+fn local_runtimes_are_self_hosted_and_endpoint_classification_fails_closed() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
+    assert!(provider_is_self_hosted("ollama:llama3", None));
+    assert!(provider_is_self_hosted("lmstudio:m", None));
+    assert!(provider_is_self_hosted("mlx:m", None));
+    assert!(!provider_is_self_hosted(
+        "llamacpp:m",
+        Some("http://127.0.0.1:8080/v1")
+    ));
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://192.168.1.20:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://0.0.0.0:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
+        "openai",
+        Some("http://localhost:8080/v1")
+    ));
+}
+
+#[test]
+fn hosted_openai_keeps_the_hosted_ceilings_in_the_policy() {
+    if std::env::var_os("OPENHUMAN_MODEL_CALL_TIMEOUT_SECS").is_some()
+        || std::env::var_os("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS").is_some()
+    {
+        return;
+    }
+    let local = provider_is_self_hosted("openai", Some("https://api.openai.com/v1"));
+    let policy = run_policy_for_provider(10, false, local, None);
+    assert_eq!(policy.limits.max_model_call_ms, Some(900_000));
+    assert_eq!(policy.limits.max_wall_clock_ms, Some(3_600_000));
+}
+
+#[test]
+fn retry_backoff_override_shrinks_the_schedule_and_ignores_junk() {
+    let production = run_policy_for_provider_with_backoff(8, false, false, None, None).retry;
+    for raw in [
+        None,
+        Some(""),
+        Some("0"),
+        Some("abc"),
+        Some("-5"),
+        Some("60000"),
+    ] {
+        let mut policy = run_policy_for_provider_with_backoff(8, false, false, None, None);
+        apply_retry_backoff_override(&mut policy, raw);
+        assert_eq!(
+            policy.retry.initial_backoff_ms, production.initial_backoff_ms,
+            "{raw:?}"
+        );
+        assert_eq!(
+            policy.retry.max_backoff_ms, production.max_backoff_ms,
+            "{raw:?}"
+        );
+    }
+    let mut policy = run_policy_for_provider_with_backoff(8, false, false, None, None);
+    apply_retry_backoff_override(&mut policy, Some(" 20 "));
+    assert_eq!(policy.retry.initial_backoff_ms, 20);
+    assert_eq!(policy.retry.max_backoff_ms, 200);
+    assert_eq!(policy.retry.max_attempts, production.max_attempts);
+}
+
+#[test]
+fn a_dead_call_is_retried_at_the_same_cap_without_reasoning_and_new_calls_keep_it() {
+    for local_provider in [false, true] {
+        let policy = run_policy_for_provider(50, false, local_provider, None);
+        assert!(
+            policy.truncated_empty_constant_cap,
+            "no doubling past the cap"
+        );
+        assert!(
+            policy.truncated_empty_reasoning_off,
+            "the retry after a dead one runs without reasoning"
+        );
+        assert_eq!(
+            policy.truncated_empty_reasoning_off_sticky_after, 0,
+            "new calls keep their reasoning"
+        );
+    }
+}
+
+/// With security disabled the endpoint is classified on the host: a loopback
+/// endpoint is self-hosted, a LAN one is not.
+fn assert_endpoints_classified_by_loopback() {
+    assert!(provider_is_self_hosted(
+        "llamacpp:m",
+        Some("http://127.0.0.1:8080/v1")
+    ));
+    assert!(provider_is_self_hosted(
+        "vllm:m",
+        Some("http://0.0.0.0:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://192.168.1.20:8000/v1")
+    ));
+    assert!(provider_is_self_hosted(
+        "openai",
+        Some("http://localhost:8080/v1")
+    ));
+}
+
+#[cfg(not(feature = "security-module"))]
+#[test]
+fn a_build_without_the_module_classifies_local_endpoints_by_loopback() {
+    assert_endpoints_classified_by_loopback();
+}
+
+#[cfg(feature = "security-module")]
+#[test]
+fn security_configured_off_classifies_local_endpoints_by_loopback() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_endpoints_classified_by_loopback();
 }

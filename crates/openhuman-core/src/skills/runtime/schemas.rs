@@ -5,6 +5,8 @@
 //! `skills_read_run_log` controllers in `skills/schemas/` wrap the same run
 //! machinery; new scripts should call `skill_runtime_*` directly.
 
+use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -56,10 +58,6 @@ fn deserialize_params<T: serde::de::DeserializeOwned>(
     params: Map<String, Value>,
 ) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 pub fn all_skill_runtime_controller_schemas() -> Vec<ControllerSchema> {
@@ -263,11 +261,18 @@ pub fn skill_runtime_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_run(params: Map<String, Value>) -> ControllerFuture {
+fn handle_run(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<RunParams>(params)?;
         tracing::info!(skill_id = %payload.skill_id, "[skill_runtime][rpc] run");
-        let started = spawn_workflow_run_background(payload.skill_id, payload.inputs).await?;
+        let origin = ctx
+            .turn_origin_or_scoped()
+            .unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::Cli);
+        let started = crate::core::runtime::turn_origin::with_origin(
+            origin.clone(),
+            spawn_workflow_run_background(&ctx, payload.skill_id, payload.inputs, Some(origin)),
+        )
+        .await?;
         to_json(Outcome::new(
             serde_json::json!({
                 "run_id": started.run_id,
@@ -280,7 +285,7 @@ fn handle_run(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_cancel(params: Map<String, Value>) -> ControllerFuture {
+fn handle_cancel(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<CancelParams>(params)?;
         let cancelled = run_log::cancel_run(&payload.run_id);
@@ -292,7 +297,7 @@ fn handle_cancel(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_recent_runs(params: Map<String, Value>) -> ControllerFuture {
+fn handle_recent_runs(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<RecentRunsParams>(params)?;
         let limit = payload.limit.unwrap_or(20).min(100) as usize;
@@ -311,7 +316,7 @@ fn handle_recent_runs(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_read_run_log(params: Map<String, Value>) -> ControllerFuture {
+fn handle_read_run_log(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<ReadRunLogParams>(params)?;
         let workspace = resolve_workspace_dir().await;
@@ -323,13 +328,13 @@ fn handle_read_run_log(params: Map<String, Value>) -> ControllerFuture {
         })?;
         let offset = payload.offset.unwrap_or(0);
         let max_bytes = payload.max_bytes.unwrap_or(64 * 1024).min(256 * 1024) as usize;
-        let slice = run_log::read_run_log_slice(&path, offset, max_bytes)
+        let slice = run_log::read_run_log_slice(&workspace, &path, offset, max_bytes)
             .map_err(|e| format!("skill_runtime_read_run_log: read failed: {e}"))?;
         to_json(Outcome::new(slice, Vec::new()))
     })
 }
 
-fn handle_resolve_runtimes(params: Map<String, Value>) -> ControllerFuture {
+fn handle_resolve_runtimes(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<ResolveRuntimesParams>(params)?;
         let requirement = RuntimeRequirement::from_optional(payload.runtime.as_deref())?;
@@ -341,7 +346,7 @@ fn handle_resolve_runtimes(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_schemas(params: Map<String, Value>) -> ControllerFuture {
+fn handle_schemas(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let _ = params;
         to_json(Outcome::new(

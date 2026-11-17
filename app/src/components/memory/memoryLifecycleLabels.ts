@@ -11,6 +11,8 @@ type Translate = (key: string, fallback?: string) => string;
 /** A brain source type's label: the well-known ones translated, any other id verbatim. */
 export function brainSourceLabel(source: string, t: Translate): string {
   switch (source) {
+    case 'files':
+      return t('memoryPage.brain.source.files');
     case 'pdf':
       return t('memoryPage.brain.source.pdf');
     case 'markdown':

@@ -20,6 +20,9 @@ pub(super) struct ThreadSession {
     pub(super) last_used: Instant,
     pub(super) config_fingerprint: String,
     pub(super) bound_origin: Option<String>,
+    /// A keychain password was typed in this session: it is never pictured
+    /// again, whichever tool picks it up next (`BrowserTool::capture`).
+    pub(super) password_typed: bool,
 }
 
 static THREAD_SESSIONS: OnceLock<Mutex<HashMap<String, ThreadSession>>> = OnceLock::new();

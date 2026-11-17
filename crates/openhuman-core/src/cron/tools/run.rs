@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 
 pub struct CronRunTool {
     config: Arc<Config>,
@@ -18,14 +18,6 @@ impl CronRunTool {
 
 #[async_trait]
 impl Tool for CronRunTool {
-    /// Superseded by the `cron` tool, which dispatches every scheduler
-    /// operation on one `action` field. Kept registered and dispatchable so a
-    /// replayed transcript or a saved skill naming `cron_*` keeps working;
-    /// hidden from the wire so six schemas do not ship where one does.
-    fn exposure(&self) -> ToolExposure {
-        ToolExposure::Hidden
-    }
-
     fn name(&self) -> &str {
         "cron_run"
     }
@@ -59,14 +51,15 @@ impl Tool for CronRunTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        self.execute_with_options(args, ToolCallOptions::default())
+        self.execute_with_context(args, ToolCallOptions::default(), None)
             .await
     }
 
-    async fn execute_with_options(
+    async fn execute_with_context(
         &self,
         args: serde_json::Value,
         options: ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
             return Ok(ToolResult::error(
@@ -74,6 +67,7 @@ impl Tool for CronRunTool {
             ));
         }
 
+        let dispatch = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
         let job_id = match args.get("job_id").and_then(serde_json::Value::as_str) {
             Some(v) if !v.trim().is_empty() => v,
             _ => {
@@ -81,29 +75,49 @@ impl Tool for CronRunTool {
             }
         };
 
-        let job = match cron::get_job(&self.config, job_id) {
+        let job = match cron::ops::load_job_for_run(&self.config, job_id) {
             Ok(job) => job,
             Err(e) => {
                 return Ok(ToolResult::error(e.to_string()));
             }
         };
 
+        if let Err(e) = cron::limits::check_run(&self.config, &job) {
+            return Ok(ToolResult::error(e.to_string()));
+        }
         let started_at = Utc::now();
-        let (success, output) = cron::scheduler::execute_job_now(&self.config, &job).await;
-        let finished_at = Utc::now();
-        let duration_ms = (finished_at - started_at).num_milliseconds();
-        let status = if success { "ok" } else { "error" };
-
-        let _ = cron::record_run(
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let reply = match cron::scheduler::run_job_now(
+            &dispatch,
             &self.config,
-            &job.id,
-            started_at,
-            finished_at,
-            status,
-            Some(&output),
-            duration_ms,
-        );
-        let _ = cron::record_last_run(&self.config, &job.id, finished_at, success, &output);
+            job.clone(),
+            run_id,
+            true,
+            tinyflows_bus::schedule::ManualDelivery::NotRequested,
+        )
+        .await
+        {
+            Ok(reply) => reply,
+            Err(error) => return Ok(ToolResult::error(error.to_string())),
+        };
+        let (success, output) = match reply {
+            tinyflows_bus::schedule::RunJobReply::Completed {
+                success, attempt, ..
+            } => (success, attempt.output),
+            tinyflows_bus::schedule::RunJobReply::Refused { reason } => {
+                return Ok(ToolResult::error(format!(
+                    "cron job '{}' was not admitted: {reason:?}",
+                    job.id
+                )));
+            }
+            tinyflows_bus::schedule::RunJobReply::Accepted { .. } => {
+                return Ok(ToolResult::error(
+                    "cron module accepted a synchronous run without completing it".to_string(),
+                ));
+            }
+        };
+        let duration_ms = (Utc::now() - started_at).num_milliseconds();
+        let status = if success { "ok" } else { "error" };
 
         let payload = json!({
             "job_id": job.id,

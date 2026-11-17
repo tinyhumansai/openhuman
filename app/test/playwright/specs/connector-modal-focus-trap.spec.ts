@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { bootRuntimeReadyGuestPage, callCoreRpc, seedBrowserCoreMode } from '../helpers/core-rpc';
+import { bootAuthenticatedPage, callCoreRpc, seedBrowserCoreMode } from '../helpers/core-rpc';
 
 /**
  * Modal keyboard and focus behaviour, driven in a real browser.
@@ -56,7 +56,7 @@ async function openConnectDialog(
   opts: { keyName?: string } = {}
 ) {
   const keyName = opts.keyName ?? 'NOTION_API_KEY';
-  await bootRuntimeReadyGuestPage(page);
+  await bootAuthenticatedPage(page, `pw-focus-trap-${keyName.toLowerCase()}`);
   await declareVehicleServer(keyName);
   await seedBrowserCoreMode(page);
   await page.goto('/#/connections?tab=tools');
@@ -68,8 +68,7 @@ async function openConnectDialog(
     has: page.locator(`td:first-child:has-text("${SERVER_NAME}")`),
   });
   await expect(row).toBeVisible({ timeout: 20_000 });
-  await row.click();
-  const connect = page.getByRole('button', { name: 'Connect', exact: true });
+  const connect = page.getByRole('button', { name: `Connect ${SERVER_NAME}` });
   await expect(connect).toBeVisible({ timeout: 10_000 });
 
   // A focusable element outside the dialog, so focus restore has somewhere
@@ -89,12 +88,7 @@ async function openConnectDialog(
   // focused before the dialog took over: `Enter` on the anchor does nothing,
   // so drive the click through the DOM instead of a pointer, which would move
   // focus first.
-  await page.evaluate(() => {
-    const button = Array.from(document.querySelectorAll('button')).find(
-      candidate => candidate.textContent?.trim() === 'Connect'
-    );
-    button?.click();
-  });
+  await connect.evaluate(button => (button as HTMLButtonElement).click());
 
   const dialog = page.locator(DIALOG);
   await expect(dialog).toBeVisible({ timeout: 10_000 });
@@ -149,7 +143,7 @@ test.afterEach(async () => {
 // `page.route('**/rpc', ...)` and fulfils the RPCs itself, with zero
 // `callCoreRpc`. This suite is therefore the only spec exercising this surface
 // against a live core.
-test.describe.skip('Connector modal — focus containment', () => {
+test.describe('Connector modal — focus containment', () => {
   // Precondition assertion, not mutation-proven: this survived BOTH the
   // trap-deletion mutation and removing the input's `autoFocus`, because Radix
   // moves focus in on open independently of either. Kept because a dialog that
@@ -188,7 +182,7 @@ test.describe.skip('Connector modal — focus containment', () => {
   });
 });
 
-test.describe.skip('Connector modal — Escape', () => {
+test.describe('Connector modal — Escape', () => {
   test('Escape closes the dialog', async ({ page }) => {
     const dialog = await openConnectDialog(page);
     await page.keyboard.press('Escape');
@@ -235,7 +229,7 @@ test.describe.skip('Connector modal — Escape', () => {
   });
 });
 
-test.describe.skip('Connector modal — accessible shape', () => {
+test.describe('Connector modal — accessible shape', () => {
   test('is a labelled modal dialog, not a bare overlay', async ({ page }) => {
     const dialog = await openConnectDialog(page);
     // A screen reader needs both of these to announce it as a dialog and read

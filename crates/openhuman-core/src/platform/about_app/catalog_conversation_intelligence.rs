@@ -48,7 +48,7 @@ Capability {
         name: "Send Voice Messages",
         domain: "conversation",
         category: CapabilityCategory::Conversation,
-        description: "Dictate into the message composer, edit the transcript, and send when ready. Voice mode records and sends a voice message.",
+        description: "Record and replay voice messages with transcripts, or play spoken assistant replies. Composer dictation adds text to a draft you can edit before sending.",
         how_to: "Conversations > Dictate or Voice mode",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
@@ -68,18 +68,18 @@ Capability {
         privacy: DERIVED_TO_BACKEND,
     },
 Capability {
-        id: "voice.ptt",
-        name: "Global push-to-talk",
+        id: "voice.live_agent",
+        name: "Live voice agent",
         domain: "voice",
         category: CapabilityCategory::Conversation,
-        description: "Hold a global hotkey from anywhere on the desktop to dictate into the \
-                      active chat thread. Press opens the mic, release commits the transcript, \
-                      and an always-on-top overlay shows listening/idle state without stealing \
-                      focus. Cross-platform via tauri-plugin-global-shortcut (macOS, Windows, \
-                      Linux/X11); requires microphone access and a global shortcut binding. \
-                      Optional speak_reply plays the agent's response through local TTS.",
-        how_to: "Settings → Voice → Push-to-Talk: pick a shortcut, grant microphone access, \
-                 then hold the configured hotkey from any window.",
+        description: "Talk with Tiny out loud in real time: click the mascot in the composer and \
+                      speak. Tiny answers by voice, can be interrupted mid-sentence, and uses \
+                      the same tools, tool policy and approval prompts as typed chat. What both \
+                      sides say is saved to the open conversation. Providers: Gemini Live \
+                      through TinyHumans (default, no key), the TinyHumans ElevenLabs agent, \
+                      Gemini Live with your own Google key, or Sarvam AI with your own key.",
+        how_to: "Click Tiny in the chat composer to start; choose the provider, voice and \
+                 language under Connections → Voice agents.",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
     },
@@ -192,8 +192,18 @@ Capability {
         name: "Thinking Level",
         domain: "conversation",
         category: CapabilityCategory::Conversation,
-        description: "Choose how hard the model thinks before answering: Auto (the provider's default), Off, Low, Medium, High or Max. The choice applies to the conversation's own turns, is remembered as the default for new ones, and is translated into each provider's reasoning setting; delegated sub-agents keep their provider default.",
+        description: "Choose how hard the model thinks before answering: Auto (the provider's default), Off, Minimal, Low, Medium, High or Max. Every model remembers its own level, so switching models brings back the level last used with that one; a model with no level of its own uses the global default. The choice applies to the conversation's own turns and is translated into each provider's reasoning setting; delegated sub-agents keep their provider default.",
         how_to: "Conversations > pick a thinking level beside the model selector in the composer",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+Capability {
+        id: "conversation.working_folder",
+        name: "Conversation Working Folder",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "Start a conversation in a folder of your choice: the agent's shell, file and git tools act there instead of the default projects folder. The folder is picked before the first message and stays fixed for the conversation; credential stores and system folders cannot be chosen.",
+        how_to: "Conversations > New conversation > pick a folder in the chip above the composer",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -292,7 +302,7 @@ Capability {
         name: "Per-Agent Memory",
         domain: "memory",
         category: CapabilityCategory::Intelligence,
-        description: "Every agent keeps its own conversations (one memory id per agent, by default its definition id) while learnings and the brain are shared by every agent under the same memory root. An agent team gets a root of its own, and a host that runs OpenHuman agents (an embedder, a coordinating product) can bind each agent to its own memory id and root.",
+        description: "Every agent keeps its own conversations (one memory id per agent, by default its definition id) while learnings and the brain are shared by every agent under the same memory root. A host that runs OpenHuman agents (an embedder, a coordinating product) can bind each agent to its own memory id and root.",
         how_to: "Automatic for every agent turn. Configure with [memory] agent_id / root (host binding), [memory.agents.<id>] agent_id / root / recall, or AgentSpec::memory(MemoryBinding) when embedding. Programmatic: openhuman.memory_agents_list (RPC).",
         status: CapabilityStatus::Beta,
         privacy: MEMORY_TO_REMOTE_ENGINE,
@@ -322,7 +332,7 @@ Capability {
         name: "Brain",
         domain: "memory",
         category: CapabilityCategory::Intelligence,
-        description: "Documents every agent shares, filed by source type (pdf, markdown, notion, github, web, and one per other source). Add a document from text or a file, search it, forget a whole source, or keep it synced from a folder, a single file, a link, a GitHub repository, an RSS feed or a connected Composio toolkit, on demand and on a schedule.",
+        description: "Documents every agent shares, filed by source type (pdf, markdown, notion, github, web, and one per other source). Add a document from text or a file (text, markdown, HTML, code, PDF, Word, PowerPoint or Excel; images are not read yet), search it, forget a whole source, or keep it synced from a folder, a single file, a link, a GitHub repository or an RSS feed, on demand and on a schedule.",
         how_to: "Connections > Memory > Brain (/connections?tab=brain&brain=brain). Programmatic: openhuman.memory_brain_sources, memory_brain_search, memory_brain_ingest, memory_brain_forget, memory_sources_add, memory_sources_sync (RPC).",
         status: CapabilityStatus::Beta,
         privacy: MEMORY_TO_REMOTE_ENGINE,
@@ -343,9 +353,19 @@ Capability {
         domain: "memory",
         category: CapabilityCategory::Intelligence,
         description: "Bring memory kept by an earlier OpenHuman version (documents, conversations and learnings) into the selected engine. The scan is local and read-only; the import uploads that data to the engine and only starts after explicit consent.",
-        how_to: "Connections > Memory: the import banner appears when earlier memory is found. Programmatic: openhuman.memory_import_scan, memory_import_start (requires consent: true), memory_import_status (RPC).",
+        how_to: "Connections > Memory: the import banner appears when earlier memory is found. Programmatic: openhuman.memory_import_scan, memory_import_start (requires consent: true), memory_import_status, memory_import_retry_failed (RPC).",
         status: CapabilityStatus::Beta,
         privacy: MEMORY_TO_REMOTE_ENGINE,
+    },
+Capability {
+        id: "intelligence.tool_output_recovery",
+        name: "Tool Output Recovery",
+        domain: "tokenjuice",
+        category: CapabilityCategory::Intelligence,
+        description: "Large tool outputs stay recoverable by their saved handles. The assistant can search, extract or summarize selected parts without retrieving the entire original. Recovery and web-page extraction require the TinyJuice module; if it is unavailable, the affected operation reports an error.",
+        how_to: "The assistant uses juice_find, juice_extract, juice_summarize and juice_retrieve when a tool result includes a recovery handle.",
+        status: CapabilityStatus::Beta,
+        privacy: RAW_TO_INFERENCE_PROVIDER,
     },
 Capability {
         id: "intelligence.context_breakdown",
@@ -446,7 +466,7 @@ Capability {
             system prompt — OpenHuman's analog of Claude Code's CLAUDE.md / Codex's AGENTS.md. Two \
             layers are read once at session start: a global layer from the OpenHuman workspace \
             (<workspace_dir>/AGENTS.md) and a project layer from the folder the agent is operating \
-            in (<action_dir>/AGENTS.md, or a sub-agent's isolated worktree). The global layer is \
+            in <action_dir>/AGENTS.md). The global layer is \
             injected first, the project layer second (project instructions take precedence). \
             Missing or empty files are silently skipped, and each layer is capped so a large file \
             can't crowd out the rest of the prompt. On by default; disable via \
@@ -463,7 +483,7 @@ Capability {
         category: CapabilityCategory::Intelligence,
         description:
             "Pick which embedding provider drives semantic search across your memory: \
-             managed cloud (default, Voyage-backed via api.tinyhumans.ai), OpenAI, \
+             managed cloud (default, Voyage-backed), OpenAI, \
              Cohere, local Ollama, or a custom OpenAI-compatible endpoint. API keys \
              are stored encrypted via the local keyring under `embeddings:<slug>`; \
              model name and embedding dimensions are tunable per provider. A \
@@ -531,22 +551,22 @@ Capability {
         privacy: LOCAL_RAW,
     },
 Capability {
+        id: "intelligence.doctor_health",
+        name: "Health Diagnostics",
+        domain: "doctor",
+        category: CapabilityCategory::Intelligence,
+        description: "Inspect OpenHuman configuration and runtime health with a structured diagnostic report of checks and repair hints. The default tier uses local and bounded read-only checks; live probes that can spend inference tokens require an explicit request.",
+        how_to: "Ask the assistant to run doctor_health when diagnosing a configuration or runtime problem",
+        status: CapabilityStatus::Beta,
+        privacy: DIAGNOSTICS_TO_BACKEND,
+    },
+Capability {
         id: "intelligence.orchestrator_worker_thread",
         name: "Worker Thread Delegation",
         domain: "intelligence",
         category: CapabilityCategory::Intelligence,
         description: "When a delegated sub-task is long or complex, the orchestrator can route it into a fresh worker-labeled conversation thread instead of flooding the parent thread. The user opens the worker thread from the thread list (or via the reference card in the parent) to read the sub-agent's full transcript.",
         how_to: "Conversations > tap the worker reference card in the parent thread, or open the worker-labeled thread from the thread list",
-        status: CapabilityStatus::Beta,
-        privacy: DERIVED_TO_BACKEND,
-    },
-Capability {
-        id: "intelligence.workflow_orchestration",
-        name: "Workflow Orchestration",
-        domain: "workflow_runs",
-        category: CapabilityCategory::Intelligence,
-        description: "Run declarative multi-agent workflows such as parallel research with cross-checking: a question is decomposed into angles, researched in parallel, adversarially cross-checked, and synthesized into one cited report. Watch each phase progress with its child agent results, stop or resume a run, and read the final synthesis. High-cost / high-concurrency runs require explicit approval before starting.",
-        how_to: "Intelligence > Orchestration > pick a workflow and Start",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
     },
@@ -559,16 +579,6 @@ Capability {
         how_to: "Intelligence > Agent Tasks > Agents Library",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
-    },
-Capability {
-        id: "intelligence.worktree_manager",
-        name: "Agent Worktrees",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Inspect and clean up the isolated git worktrees that parallel sub-agents check out under <repo>/.claude/worktrees. Each row shows the worktree's branch, dirty state, and changed files, plus a cross-worktree overlap warning when two workers touched the same file. Open, diff, or remove a worktree (a dirty worktree requires an explicit discard confirmation; the worker branch is preserved).",
-        how_to: "Intelligence > Worktrees",
-        status: CapabilityStatus::Beta,
-        privacy: None,
     },
 Capability {
         id: "intelligence.notifications_dismiss",

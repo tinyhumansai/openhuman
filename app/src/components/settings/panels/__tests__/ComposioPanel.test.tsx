@@ -124,6 +124,28 @@ describe('ComposioPanel', () => {
     expect(screen.getByText(/Managed Composio auth is unavailable here/i)).toBeInTheDocument();
   });
 
+  test('renders the direct-only explanation in Japanese for a local session', async () => {
+    coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });
+    const Panel = await importPanel();
+    const { I18nProvider } = await import('../../../../lib/i18n/I18nContext');
+    renderWithProviders(
+      <I18nProvider>
+        <Panel embedded />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'ja' } } }
+    );
+
+    expect(
+      await screen.findByText(
+        'この環境ではComposioのマネージド認証を利用できません。独自のComposio APIキーを入力するか、設定を後回しにしてください。'
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText('直接接続（独自のAPIキーを使用）')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Managed Composio auth is unavailable here/i)
+    ).not.toBeInTheDocument();
+  });
+
   test('saving Direct mode with a key calls setApiKey and masks the field', async () => {
     const Panel = await importPanel();
     renderWithProviders(<Panel />);

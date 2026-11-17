@@ -6,8 +6,8 @@
  * that drifts from the real configuration: it is the configuration, in the
  * spelling a user already knows from `claude_desktop_config.json`. Pasting a
  * block of servers copied off a server's install page is one action here,
- * which is the whole reason a text surface earns its place — and the only way
- * a server is added, since the registry is browse-only.
+ * which is the whole reason a text surface earns its place. The registry's
+ * one-step add for hosted servers writes into this same document.
  *
  * Three things this deliberately does *not* do:
  *

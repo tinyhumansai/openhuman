@@ -64,15 +64,15 @@ fn normalize_persisted_token_set(mut token_set: TokenSet) -> Result<TokenSet, St
     Ok(token_set)
 }
 
-pub fn persist_openai_oauth_token(
+pub async fn persist_openai_oauth_token(
     config: &Config,
     token: &OAuthTokenSet,
 ) -> Result<AuthProfile, String> {
     let account_id = openai_account_id_from_access_token(token.access_token.trim());
-    persist_openai_oauth_token_set(config, token_set_from_oauth(token), account_id)
+    persist_openai_oauth_token_set(config, token_set_from_oauth(token), account_id).await
 }
 
-pub(super) fn persist_openai_oauth_token_set(
+pub(super) async fn persist_openai_oauth_token_set(
     config: &Config,
     token_set: TokenSet,
     account_id: Option<String>,
@@ -92,6 +92,7 @@ pub(super) fn persist_openai_oauth_token_set(
     let store = auth_profiles_store(config);
     store
         .upsert_profile(profile.clone(), true)
+        .await
         .map_err(|e| e.to_string())?;
     Ok(profile)
 }
@@ -129,7 +130,7 @@ fn home_dir_from_env() -> Option<PathBuf> {
     }
 }
 
-pub(super) fn import_codex_cli_auth_from_path(
+pub(super) async fn import_codex_cli_auth_from_path(
     config: &Config,
     path: &Path,
 ) -> Result<AuthProfile, String> {
@@ -177,7 +178,8 @@ pub(super) fn import_codex_cli_auth_from_path(
             scope: None,
         },
         account_id,
-    )?;
+    )
+    .await?;
     log::info!(
         "{LOG_PREFIX} codex_cli_import:ok path={} profile_id={}",
         path.display(),
@@ -186,28 +188,61 @@ pub(super) fn import_codex_cli_auth_from_path(
     Ok(profile)
 }
 
-pub fn import_codex_cli_auth(config: &Config) -> Result<AuthProfile, String> {
+pub async fn import_codex_cli_auth(config: &Config) -> Result<AuthProfile, String> {
     let path = codex_cli_auth_path()?;
-    import_codex_cli_auth_from_path(config, &path)
+    import_codex_cli_auth_from_path(config, &path).await
 }
 
 fn auth_profiles_store(config: &Config) -> AuthProfilesStore {
-    AuthProfilesStore::new(&state_dir_from_config(config), config.secrets.encrypt)
+    AuthProfilesStore::new_with_config(&state_dir_from_config(config), config)
 }
 
 fn try_refresh_oauth_token(refresh: &str) -> Result<OAuthTokenSet, String> {
     let cfg = openai_codex_config("http://127.0.0.1:1455/auth/callback");
+    #[cfg(test)]
+    let cfg = if let Some(token_url) = local_refresh_url_override() {
+        let mut cfg = cfg;
+        cfg.token_url = token_url;
+        cfg
+    } else {
+        cfg
+    };
     let refresh = refresh.to_string();
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // `block_in_place` panics on a current-thread runtime, and a refresh
+        // that would have to block the only worker could never finish. Refuse
+        // instead, as the no-runtime case does, so the caller reports an
+        // expired session rather than aborting its task.
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+            return Err(
+                "a multi-thread tokio runtime is required to refresh openai oauth token"
+                    .to_string(),
+            );
+        }
         // `block_in_place` lets the multi-thread runtime move other tasks off this
         // worker before we synchronously drive the refresh future, avoiding a
         // deadlock when this lookup is reached from inside an async caller.
-        return tokio::task::block_in_place(|| {
-            handle.block_on(refresh_access_token(&cfg, &refresh))
-        })
-        .map_err(|e| e.to_string());
+        let refreshed =
+            tokio::task::block_in_place(|| handle.block_on(refresh_access_token(&cfg, &refresh)))
+                .map_err(|e| e.to_string())?;
+        if refreshed.access_token.trim().is_empty() {
+            return Err("OAuth refresh response contained an empty access token".to_owned());
+        }
+        return Ok(refreshed);
     }
     Err("tokio runtime required to refresh openai oauth token".to_string())
+}
+
+/// Local-only endpoint override for OAuth refresh tests. Production builds do
+/// not read this variable, and tests cannot redirect refresh credentials away
+/// from loopback.
+#[cfg(test)]
+fn local_refresh_url_override() -> Option<String> {
+    let endpoint = std::env::var("OPENAI_CODEX_OAUTH_TOKEN_URL").ok()?;
+    let parsed = reqwest::Url::parse(&endpoint).ok()?;
+    let host = parsed.host_str()?;
+    (parsed.scheme() == "http" && matches!(host, "localhost" | "127.0.0.1" | "::1"))
+        .then(|| endpoint.clone())
 }
 
 /// Look up the OpenAI bearer token sourced from the OAuth (ChatGPT
@@ -215,17 +250,20 @@ fn try_refresh_oauth_token(refresh: &str) -> Result<OAuthTokenSet, String> {
 /// when the access token is empty. API-key fallback for the `openai` slug is
 /// handled by the standard `lookup_key_for_slug` path — this function is
 /// OAuth-only so the standard path's env/audit/metrics logic still runs.
-pub fn lookup_openai_bearer_token(config: &Config) -> Result<Option<String>, String> {
-    Ok(lookup_openai_oauth_credentials(config)?.map(|credentials| credentials.access_token))
+pub async fn lookup_openai_bearer_token(config: &Config) -> Result<Option<String>, String> {
+    Ok(lookup_openai_oauth_credentials(config)
+        .await?
+        .map(|credentials| credentials.access_token))
 }
 
-pub fn lookup_openai_oauth_credentials(
+pub async fn lookup_openai_oauth_credentials(
     config: &Config,
 ) -> Result<Option<OpenAiOAuthCredentials>, String> {
     let auth = AuthService::from_config(config);
 
     let profile = auth
         .get_profile(OPENAI_PROVIDER_KEY, Some(OPENAI_OAUTH_PROFILE_NAME))
+        .await
         .map_err(|e| e.to_string())?;
     let Some(mut profile) = profile else {
         return Ok(None);
@@ -243,8 +281,9 @@ pub fn lookup_openai_oauth_credentials(
                 Ok(fresh) => {
                     token_set = token_set_from_oauth(&fresh);
                     profile.token_set = Some(token_set.clone());
-                    if let Err(e) =
-                        auth_profiles_store(config).upsert_profile(profile.clone(), true)
+                    if let Err(e) = auth_profiles_store(config)
+                        .upsert_profile(profile.clone(), true)
+                        .await
                     {
                         log::warn!(
                             "{LOG_PREFIX} failed to persist refreshed token: {e}; \

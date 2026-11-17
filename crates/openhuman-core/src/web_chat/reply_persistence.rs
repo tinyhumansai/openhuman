@@ -18,12 +18,13 @@
 //! what makes the second write a no-op rather than a duplicate bubble: the
 //! conversation store is idempotent for exactly this id shape.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::Path;
 
 use serde_json::json;
 
-use crate::memory::types::TurnCitation;
 use crate::threads::store::{self as conversations, run_reply_message_id, ConversationMessage};
+use crate::web_chat::TurnCitation;
 
 /// Metadata scope stamped on a reply persisted by the web-channel delivery path.
 ///
@@ -50,6 +51,7 @@ const REPLY_SCOPE: &str = "web_chat_reply";
 /// shape `chatDoneExtraMetadata` builds, and any field added to that helper
 /// belongs here too.
 pub(crate) fn persist_delivered_reply(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
     thread_id: &str,
     request_id: &str,
@@ -69,7 +71,12 @@ pub(crate) fn persist_delivered_reply(
         // renders identical chips to one the client had appended itself.
         extra_metadata["citations"] = json!(citations);
     }
+    // The audio a spoken reply was synthesized into, if the turn stored any.
+    if let Some(note) = super::voice_notes::reply_note_metadata(ctx, workspace_dir, request_id) {
+        extra_metadata["voiceNote"] = note;
+    }
     conversations::append_message(
+        ctx,
         workspace_dir.to_path_buf(),
         thread_id,
         ConversationMessage {

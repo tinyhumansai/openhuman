@@ -4,10 +4,11 @@
  *
  * **Servers** is the rows (`McpServerRows`) and, once a row is opened, that
  * server's detail with the credential form and its tools. **mcp.json** is the
- * same configuration as one document. **Registry** is the browse-only
- * directories. The rows and their statuses are read here rather than in the
- * rows component so a save in the document tab can re-read them, and so the
- * directory can hide what is already declared.
+ * same configuration as one document. **Registry** is the directories, where a
+ * hosted server can be added in one step. The rows and their statuses are read
+ * here rather than in the rows component so a save in the document tab or an
+ * add from the directory can re-read them, and so the directory can mark what
+ * is already declared.
  */
 import debug from 'debug';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -169,7 +170,7 @@ const McpServersTab = ({ tab, onTabChange }: McpServersTabProps) => {
   }
 
   if (tab === 'registry') {
-    return <McpRegistryBrowser installedNames={installedNames} />;
+    return <McpRegistryBrowser installedNames={installedNames} onDeclared={handleDocumentSaved} />;
   }
 
   if (loading) {

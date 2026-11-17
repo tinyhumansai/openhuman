@@ -7,7 +7,6 @@
 use crate::core::all::RegisteredController;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::apify::handle_apify_linkedin_scrape;
 use super::composio::handle_composio_execute;
 use super::web_search::{
     handle_searxng_search, handle_web_answer, handle_web_contents, handle_web_search,
@@ -20,7 +19,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         tools_schemas("tools_web_answer"),
         tools_schemas("tools_web_contents"),
         tools_schemas("tools_searxng_search"),
-        tools_schemas("tools_apify_linkedin_scrape"),
     ]
 }
 
@@ -45,10 +43,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: tools_schemas("tools_searxng_search"),
             handler: handle_searxng_search,
-        },
-        RegisteredController {
-            schema: tools_schemas("tools_apify_linkedin_scrape"),
-            handler: handle_apify_linkedin_scrape,
         },
     ]
 }
@@ -202,33 +196,6 @@ pub fn tools_schemas(function: &str) -> ControllerSchema {
                 },
             ],
             outputs: search_outputs("Each item: {title, url, snippet?, published?}."),
-        },
-        "tools_apify_linkedin_scrape" => ControllerSchema {
-            namespace: "tools",
-            function: "apify_linkedin_scrape",
-            description: "Run the Apify LinkedIn profile scraper actor on a single profile \
-                          URL and return both the raw scraped item and a pre-rendered \
-                          markdown view of it (same layout as the legacy enrichment pipeline).",
-            inputs: vec![FieldSchema {
-                name: "profile_url",
-                ty: TypeSchema::String,
-                comment: "Canonical LinkedIn profile URL (`https://www.linkedin.com/in/<slug>`).",
-                required: true,
-            }],
-            outputs: vec![
-                FieldSchema {
-                    name: "data",
-                    ty: TypeSchema::Json,
-                    comment: "Raw scraped profile JSON from Apify.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "markdown",
-                    ty: TypeSchema::String,
-                    comment: "Markdown rendering of the scraped profile (full, pre-summary).",
-                    required: true,
-                },
-            ],
         },
         _ => ControllerSchema {
             namespace: "tools",

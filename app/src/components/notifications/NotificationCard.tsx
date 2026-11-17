@@ -30,7 +30,7 @@ function relativeTime(isoString: string): string {
  * Restoring a per-provider tint means adding brand tokens (the same product
  * decision the Telegram / Discord / iMessage plates in `skills/skillIcons.tsx`
  * are parked on), not reaching back for a stock Tailwind ramp.
- * See `gitbooks/developing/theming.md`.
+ * See `docs/gitbooks/en/developing/theming.md`.
  */
 /** Importance badge tone: high / medium / low on coral / amber / sage. */
 function scoreBadgeVariant(score: number): 'danger' | 'warning' | 'success' {

@@ -1,21 +1,19 @@
-//! Types shared between the `ApprovalGate`, the SQLite store, and the
-//! RPC layer. Kept narrow so the gate, the store, and the RPC ops can
-//! evolve independently without circular imports through `mod.rs`.
+//! Approval values shared by the gate, TinySecurity adapter, and RPC layer.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// A tool call that has been intercepted and is awaiting a user
-/// decision. Persisted in `pending_approvals` and surfaced to the UI
+/// decision. Persisted by TinySecurity and surfaced to the UI
 /// via `approval_list_pending`.
 ///
 /// Note: this type intentionally does not expose a `session_id`. Session
 /// provenance is an internal correlation token owned by `ApprovalGate`
-/// and the persistence layer; surfacing it on the public type made it
+/// and the persistence callback; surfacing it on the public type made it
 /// too easy for callers to log or serialize a value that historically
 /// derived from credential material (the JSON-RPC bearer token). The
-/// underlying column is retained in SQLite for downgrade safety but no
-/// longer carries any credential-shaped value.
+/// legacy migration data may retain its historical column, but new records
+/// never carry a credential-shaped value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PendingApproval {
@@ -42,6 +40,10 @@ pub struct PendingApproval {
     /// workflows) and for rows persisted before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// The embedded agent whose turn parked this call. `None` for the
+    /// process's own sessions and for rows persisted before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 impl PendingApproval {
@@ -63,6 +65,7 @@ impl PendingApproval {
             expires_at,
             source_context: None,
             tool_call_id: None,
+            agent_id: None,
         }
     }
 
@@ -73,6 +76,12 @@ impl PendingApproval {
     pub fn with_source_context(mut self, ctx: ApprovalSourceContext) -> Self {
         self.source_context = Some(ctx);
         self
+    }
+
+    /// Whether this row is visible to `agent`: `None` sees the process's own
+    /// rows, `Some(id)` sees only that agent's.
+    pub fn belongs_to(&self, agent: Option<&str>) -> bool {
+        self.agent_id.as_deref() == agent
     }
 }
 
@@ -119,6 +128,34 @@ pub struct ApprovalAuditEntry {
     pub expires_at: Option<DateTime<Utc>>,
     pub decided_at: DateTime<Utc>,
     pub decision: ApprovalDecision,
+    /// Who decided: `auto:jev`, `auto:host-policy`, or absent for a human.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    /// The judge's nonsensitive verdict when `decided_by` is `auto:jev`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<JudgeVerdict>,
+}
+
+/// A live durable whole-tool grant in one approval scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ToolTrustEntry {
+    /// Redacted display label returned by TinySecurity.
+    pub tool: String,
+    /// Opaque identity to pass back when revoking this grant.
+    pub request_id: String,
+    /// When the grant was recorded, in epoch milliseconds.
+    pub granted_at_ms: u64,
+}
+
+/// Nonsensitive judge evidence shown in approval history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JudgeVerdict {
+    pub outcome: String,
+    pub intent_millis: Option<u16>,
+    pub reversible_millis: Option<u16>,
+    pub exfiltrate_millis: Option<u16>,
+    pub cached: bool,
 }
 
 /// Result of `approval_preauthorize_flow`: which trust grants were newly
@@ -155,7 +192,7 @@ pub enum ApprovalDecision {
     /// workflow: subsequent runs of *that* flow (including scheduled/
     /// triggered ones) auto-allow *that* tool without prompting, but a new
     /// tool the flow starts calling still parks. Persisted via
-    /// `approval::store::insert_flow_trust`, not `autonomy.auto_approve`.
+    /// TinySecurity's durable flow trust, not `autonomy.auto_approve`.
     /// Only meaningful when `source_context` is `Some(Flow { .. })` — the
     /// `approval_decide` RPC handler logs and no-ops the persistence step
     /// otherwise (the decision itself still resolves the parked call).
@@ -217,8 +254,8 @@ pub enum ExecutionOutcome {
     Success,
     /// Tool ran and returned an error [`ToolResult`] (or panicked).
     Failure,
-    /// Tool did not run because the runtime aborted (timeout,
-    /// cancellation, supervisor shutdown).
+    /// Execution ended without reporting a result (timeout, cancellation,
+    /// supervisor shutdown); the tool may already have had side effects.
     Aborted,
 }
 

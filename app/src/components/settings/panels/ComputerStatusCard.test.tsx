@@ -36,6 +36,15 @@ describe('ComputerStatusCard', () => {
     );
   });
 
+  it('shows a module switched off by [components] as disabled', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      ...base,
+      module: { ...base.module, state: 'disabled', detail: 'Switched off by [components]' },
+    });
+    renderWithProviders(<ComputerStatusCard />);
+    expect(await screen.findByText('computer.status.state.disabled')).toBeInTheDocument();
+  });
+
   it('checks the module and shows what it reports', async () => {
     renderWithProviders(<ComputerStatusCard />);
     await screen.findByText('computer.status.state.available');

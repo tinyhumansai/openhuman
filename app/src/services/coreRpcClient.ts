@@ -175,6 +175,12 @@ export function classifyRpcError(
   // feature build), never a transient fault. Classified before the generic
   // arms so polling callers can stop instead of retrying forever (#5157).
   if (message.startsWith(UNKNOWN_METHOD_PREFIX)) return 'method_not_found';
+  // #8081: TinyMemory words a hosted 403, including `[MEMORY_PLAN_REQUIRED]`
+  // (memory not in the account's plan), as "the session expired or the API
+  // key was rejected (HTTP 403 …)". A refusal is never an expired session;
+  // matching it below signed a valid user out on opening a Memory tab.
+  // Mirrors Rust `is_session_expired_message`.
+  if (/\[[A-Z0-9_]*_PLAN_REQUIRED\] memory API |\(HTTP 403/.test(message)) return 'unknown';
   // Confirmed OpenHuman session expiry — explicit markers from the backend/core.
   if (/Session expired|SESSION_EXPIRED/i.test(message)) return 'auth_expired';
   // Core-side "no backend session token" → the auth profile is gone but the
@@ -191,14 +197,10 @@ export function classifyRpcError(
   // Fix for issue #2286: only match when the message starts with an HTTP verb
   // followed by a path — this excludes "Discord API error:", "OpenAI API error:", etc.
   // HEAD and OPTIONS intentionally excluded — authed_json only uses these five verbs.
-  // Aligned with Rust is_session_expired_error: starts-with-verb check + separate
-  // contains checks for "401" and "unauthorized" (case-insensitive).
-  if (
-    /^(GET|POST|PUT|DELETE|PATCH)\s+\//.test(message) &&
-    /401/.test(message) &&
-    /unauthorized/i.test(message)
-  )
-    return 'auth_expired';
+  // Aligned with Rust is_session_expired_error: anchored on the status in the
+  // `{METHOD} /path failed ({status}` header, so a 500 whose body mentions a 401
+  // is not an expired session.
+  if (/^(GET|POST|PUT|DELETE|PATCH) \/\S* failed \(401/.test(message)) return 'auth_expired';
   // Everything above matched an explicit backend marker in the message. What
   // is left, if the transport gave us a 401, is the LOCAL core's bearer gate
   // (`crates/openhuman-core/src/core/auth.rs` — "Missing or invalid Authorization header"), never the
@@ -516,18 +518,6 @@ export async function getCoreRpcUrl(): Promise<string> {
  *      stored token is set so existing tests remain unaffected.
  */
 export async function getCoreRpcToken(): Promise<string | null> {
-  // Non-Tauri first-party webviews (the notch / overlay NSPanel WKWebViews have
-  // no Tauri IPC) receive the per-process bearer injected as a global by the
-  // Rust host. Honour it first — and not behind the resolution cache, so a late
-  // injection (the host injects on a timer once the core URL is ready) still wins.
-  const injected = (globalThis as { __OPENHUMAN_NOTCH_CORE_TOKEN__?: string })
-    .__OPENHUMAN_NOTCH_CORE_TOKEN__;
-  if (typeof injected === 'string' && injected) {
-    resolvedCoreRpcToken = injected;
-    didResolveCoreRpcToken = true;
-    return injected;
-  }
-
   if (didResolveCoreRpcToken) return resolvedCoreRpcToken;
 
   const storedToken = getStoredCoreToken();
@@ -545,13 +535,14 @@ export async function getCoreRpcToken(): Promise<string | null> {
     try {
       const endpoint = await resolveShellEndpoint();
       resolvedCoreRpcToken = endpoint?.token?.trim() || null;
-      didResolveCoreRpcToken = true;
+      // Only a real token is cached: a missing one (core still starting, or a
+      // failed lookup) is looked up again on the next call.
+      didResolveCoreRpcToken = resolvedCoreRpcToken !== null;
       coreRpcLog('core RPC token loaded');
       return resolvedCoreRpcToken;
     } catch (err) {
       coreRpcError('failed to load core RPC token', err);
       resolvedCoreRpcToken = null;
-      didResolveCoreRpcToken = true;
       return null;
     } finally {
       resolvingCoreRpcToken = null;
@@ -592,6 +583,25 @@ export function rpcUrlNeedsShellRelay(rpcUrl: string): boolean {
   }
   if (parsed.protocol !== 'http:') return false;
   return !isPotentiallyTrustworthyHost(parsed.hostname);
+}
+
+export interface CoreSocketEndpoint {
+  baseUrl: string;
+  path: string;
+  liveVoicePath?: string;
+  transports?: Array<'websocket' | 'polling'>;
+}
+
+/** Resolve a Socket.IO endpoint, relaying private-LAN plain HTTP through Rust. */
+export async function resolveCoreSocketEndpoint(baseUrl: string): Promise<CoreSocketEndpoint> {
+  const rpcUrl = new URL(baseUrl);
+  rpcUrl.pathname = '/rpc';
+  rpcUrl.search = '';
+  rpcUrl.hash = '';
+  if (!isTauri() || !rpcUrlNeedsShellRelay(rpcUrl.toString())) {
+    return { baseUrl, path: '/socket.io/' };
+  }
+  return invoke<CoreSocketEndpoint>('relay_remote_socket', { url: rpcUrl.toString() });
 }
 
 /**
@@ -672,6 +682,41 @@ export async function testCoreRpcConnection(
     headers.Authorization = `Bearer ${token}`;
   }
   return fetch(rpcUrl, { method: 'POST', headers, body, signal: init?.signal });
+}
+
+/** Outcome of [`probeCoreRealtime`]. */
+export type CoreRealtimeProbe = 'ok' | 'disabled' | 'unknown';
+
+/**
+ * Checks whether the core's realtime (Socket.IO) endpoint is on, without
+ * opening a socket: a Socket.IO-disabled core (`--jsonrpc-only`) answers
+ * `/socket.io/` with HTTP 503 and `{ error: "socketio_disabled" }` (#5656).
+ *
+ * Only that exact response yields `'disabled'`. Any network error, relay-only
+ * runtime or unexpected status is `'unknown'`, so a flaky probe never blocks or
+ * misreports an otherwise working RPC connection.
+ */
+export async function probeCoreRealtime(
+  url: string,
+  init?: { signal?: AbortSignal }
+): Promise<CoreRealtimeProbe> {
+  try {
+    const target = new URL(normalizeRpcUrl(url));
+    target.pathname = '/socket.io/';
+    target.search = 'EIO=4&transport=polling';
+    target.hash = '';
+    // The mixed-content shell relay is POST-only; skip rather than guess.
+    if (isTauri() && rpcUrlNeedsShellRelay(target.toString())) return 'unknown';
+    const response = await fetch(target.toString(), { method: 'GET', signal: init?.signal });
+    if (response.status === 503) {
+      const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+      return body?.error === 'socketio_disabled' ? 'disabled' : 'unknown';
+    }
+    return response.status === 200 ? 'ok' : 'unknown';
+  } catch (err) {
+    coreRpcLog('[rpc] realtime probe inconclusive: %o', err);
+    return 'unknown';
+  }
 }
 
 export async function getCoreHttpBaseUrl(): Promise<string> {
@@ -779,6 +824,7 @@ export async function callCoreRpc<T>({
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     let response: Response;
+    let responseBody: JsonRpcResponse<T> | string;
     try {
       if (isTauri() && rpcUrlNeedsShellRelay(rpcUrl)) {
         // Self-hosted runtime on a LAN IP — the secure `tauri://localhost`
@@ -803,6 +849,9 @@ export async function callCoreRpc<T>({
           signal: controller.signal,
         });
       }
+      responseBody = response.ok
+        ? ((await response.json()) as JsonRpcResponse<T>)
+        : await response.text();
     } catch (fetchErr) {
       if (controller.signal.aborted) {
         // Throw a fully-classified `CoreRpcError` here so the outer catch
@@ -821,7 +870,7 @@ export async function callCoreRpc<T>({
     }
 
     if (!response.ok) {
-      const text = await response.text();
+      const text = responseBody as string;
       const httpMessage = `Core RPC HTTP ${response.status}: ${text || response.statusText}`;
       const kind = classifyRpcError(text || response.statusText, response.status);
       // The local core rejected our bearer. `getCoreRpcToken` caches the
@@ -855,7 +904,7 @@ export async function callCoreRpc<T>({
       throw new CoreRpcError(httpMessage, kind, response.status);
     }
 
-    const json = (await response.json()) as JsonRpcResponse<T>;
+    const json = responseBody as JsonRpcResponse<T>;
 
     if (json.error) {
       coreRpcError('HTTP error response', {

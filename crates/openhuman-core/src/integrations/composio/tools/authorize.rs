@@ -7,12 +7,15 @@ use serde_json::{json, Value};
 
 use super::live_config::live_composio_config;
 use super::redact::redact_composio_outcome;
+use crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool;
 use crate::config::Config;
-use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
+use crate::core::runtime::DispatchCtx;
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult, ToolRunContext};
 
 use super::super::client::{resolve_composio_route, ComposioRoute};
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::{ComposioAuthorizeRequest, ComposioAuthorizeResponse};
+use tinyconnectors_bus::names::methods;
 
 pub struct ComposioAuthorizeTool {
     /// Held instead of a pre-resolved route so the
@@ -57,13 +60,27 @@ impl Tool for ComposioAuthorizeTool {
         ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&self.config, outcome)
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+        context: Option<&dyn ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = dispatch_ctx_for_tool(context);
+        let outcome = Box::pin(self.execute_unredacted(&ctx, args)).await;
+        redact_composio_outcome(&self.config, outcome).await
     }
 }
 
 impl ComposioAuthorizeTool {
-    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
+    async fn execute_unredacted(
+        &self,
+        ctx: &DispatchCtx,
+        args: Value,
+    ) -> anyhow::Result<ToolResult> {
         let toolkit = args
             .get("toolkit")
             .and_then(|v| v.as_str())
@@ -79,7 +96,7 @@ impl ComposioAuthorizeTool {
         // Resolve per call so a live mode toggle is honoured. In
         // direct mode the OAuth handoff is performed by the user's
         // personal Composio tenant via app.composio.dev rather than
-        // the backend's `/agent-integrations/composio/authorize`
+        // the backend's composio authorize
         // route, so we refuse this verb explicitly instead of
         // silently routing through the wrong tenant.
         let live_config = match live_composio_config(self.config.as_ref()).await {
@@ -91,7 +108,7 @@ impl ComposioAuthorizeTool {
                 )));
             }
         };
-        match resolve_composio_route(&live_config) {
+        match resolve_composio_route(&live_config).await {
             Ok(ComposioRoute::Backend) => {
                 tracing::debug!("[composio] authorize.execute: backend variant");
             }
@@ -129,6 +146,7 @@ impl ComposioAuthorizeTool {
                         toolkit: toolkit.clone(),
                         connection_id: resp.connection_id.clone(),
                         connect_url: resp.connect_url.clone(),
+                        tenant: ctx.event_tenant(),
                     },
                 );
                 Ok(ToolResult::success(format!(

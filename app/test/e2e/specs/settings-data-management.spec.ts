@@ -2,17 +2,25 @@
 /**
  * Settings → Data Management (capability 13.5).
  *
- * Rewritten to follow the cron-jobs-flow pattern. The "Full State Reset"
- * test intentionally runs LAST — it logs the user out, so anything that
- * follows would need its own resetApp() pass. We keep this spec
- * self-contained so the suite ordering doesn't matter.
+ * The "Full State Reset" test intentionally runs LAST — it logs the user
+ * out, so anything that follows would need its own resetApp() pass. We keep
+ * this spec self-contained so the suite ordering doesn't matter.
  *
- * Covers:
- *   - 13.5.1 Clear App Data confirmation dialog + Cancel
- *   - 13.5.3 Full State Reset → back to Welcome screen
+ * Covers the native-only 13.5.3 reset lifecycle. The browser-owned test covers
+ * the confirmation dialog and Cancel action.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { waitForApp } from '../helpers/app-helpers';
-import { clickTestId, clickText, textExists, waitForText } from '../helpers/element-helpers';
+import { callOpenhumanRpc } from '../helpers/core-rpc';
+import {
+  clickSelector,
+  clickTestId,
+  textExists,
+  waitForTestId,
+  waitForText,
+} from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
@@ -32,57 +40,70 @@ describe('Settings - Data Management', function () {
     await stopMockServer();
   });
 
-  it('shows Clear App Data confirmation dialog and handles Cancel (13.5.1)', async () => {
-    await navigateViaHash('/settings/account');
-    await clickTestId('settings-nav-logout-and-clear', 15_000);
-
-    await waitForText('This will sign you out and permanently delete local app data', 5_000);
-
-    await clickText('Cancel');
-    expect(await textExists('This will sign you out and permanently delete local app data')).toBe(
-      false
-    );
-    expect(await textExists('Clear app data')).toBe(true);
-  });
-
   it('performs Full State Reset (13.5.3)', async function () {
-    this.timeout(60_000);
+    this.timeout(90_000);
+    const workspace = await callOpenhumanRpc('openhuman.test_support_workspace_root', {});
+    expect(workspace.ok).toBe(true);
+    const workspacePath = workspace.result?.result?.path;
+    expect(typeof workspacePath).toBe('string');
+    expect(workspace.result?.result?.exists).toBe(true);
+    const authBeforeReset = await callOpenhumanRpc('openhuman.auth_get_state', {});
+    expect(authBeforeReset.ok).toBe(true);
+    const currentUserId = authBeforeReset.result?.result?.userId;
+    expect(typeof currentUserId).toBe('string');
+    expect(currentUserId.length).toBeGreaterThan(0);
+    const frontendUserId = await browser.execute(() => {
+      const readState = (
+        window as unknown as {
+          __OPENHUMAN_CORE_STATE__?: () => { snapshot?: { auth?: { userId?: string | null } } };
+        }
+      ).__OPENHUMAN_CORE_STATE__;
+      return readState?.()?.snapshot?.auth?.userId ?? null;
+    });
+    expect(frontendUserId).toBe(currentUserId);
+    expect(process.env.OPENHUMAN_WORKSPACE).toBeTruthy();
+    expect(process.env.HOME).toBeTruthy();
+    const resetPaths = await callOpenhumanRpc('openhuman.config_get_data_paths', {
+      user_id: currentUserId,
+    });
+    expect(resetPaths.ok).toBe(true);
+    const currentUserDir = resetPaths.result?.result?.current_openhuman_dir;
+    const defaultOpenHumanDir = resetPaths.result?.result?.default_openhuman_dir;
+    const privateDefaultDir = path.join(process.env.HOME, '.openhuman');
+    expect(defaultOpenHumanDir).toBe(privateDefaultDir);
+    expect(currentUserDir).toBe(path.join(privateDefaultDir, 'users', currentUserId));
+    const sentinelPath = path.join(currentUserDir, 'settings-data-management-sentinel.txt');
+    fs.mkdirSync(currentUserDir, { recursive: true });
+    fs.writeFileSync(sentinelPath, 'user-scoped clear-data sentinel', { flag: 'wx' });
+    expect(fs.readFileSync(sentinelPath, 'utf8')).toBe('user-scoped clear-data sentinel');
+
     await navigateViaHash('/settings/account');
     await clickTestId('settings-nav-logout-and-clear', 15_000);
 
     await waitForText('This will sign you out', 5_000);
-    // The confirm button in the modal has the same label as the trigger.
-    // Use browser.execute to click the amber-colored confirm button which
-    // is the last "Clear App Data" button in the DOM (inside the modal).
-    await browser.execute(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
-      const confirmBtn = buttons
-        .filter(b => b.textContent?.trim().toLowerCase() === 'clear app data')
-        .pop(); // last match = the modal confirm button
-      confirmBtn?.click();
+    await clickSelector('[data-slot="alert-dialog-action"]');
+    await browser.waitUntil(async () => !fs.existsSync(sentinelPath), {
+      timeout: 60_000,
+      interval: 250,
+      timeoutMsg: 'reset_local_data did not delete the current user directory sentinel',
     });
+    await browser.waitUntil(async () => await textExists('Welcome to OpenHuman'), {
+      timeout: 30_000,
+      interval: 250,
+      timeoutMsg: 'clear-data reset did not reload the signed-out Welcome screen',
+    });
+    await waitForTestId('welcome-cta-tinyhumans');
 
-    // clearAllAppData calls restartApp() which restarts the entire Tauri
-    // process. On desktop, this kills the CEF runtime and the WDIO session
-    // becomes stale. We verify the clear happened by checking that the
-    // confirmation modal is no longer visible (it was just clicked) and
-    // wait a moment to confirm the app begins its restart sequence.
-    // Post-restart UI verification is not possible through the same WDIO
-    // session on desktop.
-    await browser.pause(3_000);
-    // If the session is still alive, the modal should be gone and the app
-    // is in the process of restarting. Either the session throws (restart
-    // happened) or we're still on the settings page (restart pending).
-    let restarted = false;
-    try {
-      await textExists('Settings');
-      // If we can still read the DOM and the modal is gone, the clear
-      // was triggered successfully (restartApp may be async).
-      restarted = !(await textExists('This will sign you out'));
-    } catch {
-      // Session broke — the app restarted as expected.
-      restarted = true;
-    }
-    expect(restarted).toBe(true);
+    await browser.waitUntil(async () => (await callOpenhumanRpc('core.ping', {})).ok, {
+      timeout: 30_000,
+      interval: 250,
+      timeoutMsg: 'the core did not become healthy after the clear-data restart',
+    });
+    const auth = await callOpenhumanRpc('openhuman.auth_get_state', {});
+    expect(auth.ok).toBe(true);
+    expect(auth.result?.result?.isAuthenticated).toBe(false);
+    expect(auth.result?.result?.credential).toBeUndefined();
+    const ping = await callOpenhumanRpc('core.ping', {});
+    expect(ping.ok).toBe(true);
   });
 });

@@ -99,7 +99,12 @@ export interface DerivedToolCall {
 }
 
 /** Terminal state of a projected sub-agent run (Rust `SubagentStatus`). */
-export type DerivedSubagentStatus = 'completed' | 'failed' | 'interrupted' | 'running';
+export type DerivedSubagentStatus =
+  | 'completed'
+  | 'failed'
+  | 'incomplete'
+  | 'interrupted'
+  | 'running';
 
 /**
  * A delegated sub-agent run, with its own nested projected items. The core

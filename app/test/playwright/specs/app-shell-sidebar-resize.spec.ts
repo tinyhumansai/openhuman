@@ -113,6 +113,7 @@ test.describe('App shell — sidebar resize (#5676 AC-4)', () => {
     const before = await widthOf(page);
 
     await rail(page).focus();
+    await expect(rail(page)).toBeFocused();
     await page.keyboard.press('ArrowRight');
     await expect.poll(() => widthOf(page)).toBe(before + SIDEBAR_KEYBOARD_STEP);
 
@@ -256,6 +257,7 @@ test.describe('App shell — the resize seam paints on interaction (#5676 AC-3)'
     const restColour = await seam(page).evaluate(el => getComputedStyle(el).backgroundColor);
 
     await rail(page).focus();
+    await expect(rail(page)).toBeFocused();
 
     await expect
       .poll(async () => seam(page).evaluate(el => getComputedStyle(el).backgroundColor))

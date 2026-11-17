@@ -3,15 +3,15 @@
 //! This initial cut keeps state in-memory so the RPC contract and UI wiring
 //! can land before the SQLite-backed store arrives.
 
-use crate::core::envelope::{ApiEnvelope, EmptyRequest};
 use crate::core::Outcome;
+use crate::threads::envelope::{ApiEnvelope, EmptyRequest};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
 use super::store;
 use super::types::{ProviderEvent, RespondQueueItem, RespondQueueListResponse};
 
-use crate::core::envelope::{counts, envelope as shared_envelope};
+use crate::threads::envelope::{counts, envelope as shared_envelope};
 
 fn envelope<T: Serialize>(
     data: T,

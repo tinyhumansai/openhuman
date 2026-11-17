@@ -126,7 +126,7 @@ export function BackgroundInboxCard({
         side="right"
         aria-describedby={undefined}
         data-testid="background-processes-panel"
-        className="max-w-sm">
+        className="">
         <header className="flex shrink-0 items-center justify-between border-b border-line-subtle px-4 py-3">
           <SheetTitle asChild>
             <h2 className="text-sm font-semibold text-content">

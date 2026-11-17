@@ -1,6 +1,7 @@
 # Virtual workspace root. Members: `crates/openhuman-core` (package `openhuman`,
 # the core library), `crates/openhuman-embed` (library facade),
-# `crates/openhuman-rpc` (JSON-RPC envelopes, client and server, above the core), `crates/openhuman-tinyhumans`
+# `crates/openhuman-rpc` (JSON-RPC envelopes, client and server, and the on-disk
+# session store hosts install, above the core), `crates/openhuman-tinyhumans`
 # (SDK-backed backend transport + login/session ownership for hosts),
 # `crates/openhuman-cli` (the `openhuman-core` binary, developer bins and the
 # root integration tests), and `crates/openhuman-tui` (terminal client). `crates/openhuman-app` is deliberately excluded: it is its
@@ -15,6 +16,7 @@ members = [
     "crates/openhuman-cli",
     "crates/openhuman-core",
     "crates/openhuman-embed",
+    "crates/openhuman-modules-linked",
     "crates/openhuman-rpc",
     "crates/openhuman-tinyhumans",
     "crates/openhuman-tui",
@@ -28,16 +30,21 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.64.12"
+version = "0.64.20"
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/tinyhumansai/openhuman"
 
 [workspace.dependencies]
-openhuman-core = { path = "crates/openhuman-core", package = "openhuman" }
+# The library chain: core -> embed -> tinyhumans -> rpc -> app/cli/tui. Hosts
+# name `openhuman-rpc` only (`scripts/ci/check-crate-chain.mjs`). There is no
+# `openhuman-core` entry on purpose: one spelled here carried the core's whole
+# `default` feature set into whichever member named it.
 openhuman-rpc = { path = "crates/openhuman-rpc", default-features = false }
 openhuman-embed = { path = "crates/openhuman-embed", default-features = false }
 openhuman-tinyhumans = { path = "crates/openhuman-tinyhumans", default-features = false }
+tinyagents-hooks = { path = "vendor/tinyagents/crates/tinyagents-hooks", default-features = false }
+tinyagents-harness-tools = { path = "vendor/tinyagents/crates/tinyagents-harness-tools", default-features = false }
 
 # Patches are workspace-root settings; Cargo ignores them in member manifests.
 [patch."https://github.com/tinyhumansai/tinytools"]
@@ -48,7 +55,57 @@ openhuman-tinyhumans = { path = "crates/openhuman-tinyhumans", default-features 
 tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-agent = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
 
+[patch."https://github.com/tinyhumansai/tinybus"]
+# tinystoragedrivers-bus (and tinywallet, which names tinybus by git rev) name
+# tinybus by git. Redirect them to the in-tree copy so the graph holds exactly
+# one `tinybus` (one `Interface`, one `Connection`) and one module SDK instead of
+# a second set compiled only for the storage wire types.
+tinybus = { path = "vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
+
+[patch."https://github.com/senamakel/tinybus"]
+# The v2 storage and TinyBox modules depend on the migration fork URL. Patch
+# that source identity to the same checkout as the canonical dependency above
+# so all bus interfaces share one Rust type identity.
+tinybus = { path = "vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
+
+[patch."https://github.com/tinyhumansai/tinystoragedrivers"]
+# Both canonical and fork module manifests can name TSD by Git. Resolve both
+# source identities to the one editable fork checkout below so every module
+# shares the same v2 types and bus contracts.
+tinystoragedrivers = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers" }
+tinystoragedrivers-api = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
+tinystoragedrivers-blob = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }
+tinystoragedrivers-bus = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-bus" }
+tinystoragedrivers-busproxy = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-busproxy" }
+tinystoragedrivers-connect = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-connect" }
+tinystoragedrivers-document = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-document" }
+tinystoragedrivers-kv = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-kv" }
+tinystoragedrivers-queue = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-queue" }
+tinystoragedrivers-secrets = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-secrets" }
+tinystoragedrivers-testkit = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-testkit" }
+tinystoragedrivers-types = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
+
+[patch."https://github.com/senamakel/tinystoragedrivers"]
+tinystoragedrivers = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers" }
+tinystoragedrivers-api = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
+tinystoragedrivers-blob = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }
+tinystoragedrivers-bus = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-bus" }
+tinystoragedrivers-busproxy = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-busproxy" }
+tinystoragedrivers-connect = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-connect" }
+tinystoragedrivers-document = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-document" }
+tinystoragedrivers-kv = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-kv" }
+tinystoragedrivers-queue = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-queue" }
+tinystoragedrivers-secrets = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-secrets" }
+tinystoragedrivers-testkit = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-testkit" }
+tinystoragedrivers-types = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
+
 [patch."https://github.com/tinyhumansai/tinyinference"]
+# tinycomputer depends on the Jev client by git; resolve it to the vendored copy.
+tinyinference-decisions = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-decisions" }
 tinyinference-core = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-embeddings = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }
 tinyinference-llm = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
@@ -57,6 +114,15 @@ tinyinference-providers = { path = "vendor/tinyagents/vendor/tinyinference/crate
 tinyinference-voice = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }
 
 [patch.crates-io]
+# Module crates name TinyAgents by version (with a nested-path patch of their
+# own for standalone builds); resolve those names to the one copy the host uses.
+tinyagents-live = { path = "vendor/tinyagents/crates/tinyagents-live" }
+tinyagents-harness = { path = "vendor/tinyagents/crates/tinyagents-harness" }
+tinyagents-hooks = { path = "vendor/tinyagents/crates/tinyagents-hooks" }
+tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
+tinybus = { path = "vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
 tinyinference-core = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-embeddings = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }
 tinyinference-llm = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
@@ -65,6 +131,7 @@ tinyinference-providers = { path = "vendor/tinyagents/vendor/tinyinference/crate
 tinyinference-voice = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }
 tinyflows = { path = "vendor/tinyflows/crates/tinyflows" }
 tinychannels = { path = "vendor/tinychannels" }
+tiny-artifacts = { path = "vendor/tiny-artifacts/crates/tiny-artifacts" }
 
 # Emit enough release DWARF for server-side Sentry symbolication while keeping
 # shipped binaries small. The CI profile deliberately disables LTO/debug info.
@@ -86,3 +153,10 @@ debug = false
 
 [profile.dev.package."*"]
 debug = false
+
+# Module admission hashes the host executable (tinybus `attach_linked`), once
+# per process. nextest runs every test in its own process, so an unoptimised
+# SHA-256 over a ~500 MB test binary cost ~10 s per module-backed test. Keep
+# in sync with the other workspace manifest.
+[profile.dev.package.sha2]
+opt-level = 3

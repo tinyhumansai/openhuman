@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import AIPanel from '../../../components/settings/panels/AIPanel';
+import WhatLeavesLink from '../../../features/privacy/WhatLeavesLink';
 import { useT } from '../../../lib/i18n/I18nContext';
 import CustomWizardConfigPage from './CustomWizardConfigPage';
 
@@ -25,7 +26,14 @@ const CustomInferencePage = () => {
       backRoute="/"
       continueDisabled={dirty}
       continueHint={dirty ? t('onboarding.custom.unsavedChanges') : undefined}
-      configureContent={<AIPanel embedded hideTabChrome onDirtyChange={setDirty} />}
+      configureContent={
+        <div className="space-y-4">
+          <AIPanel embedded hideTabChrome onDirtyChange={setDirty} />
+          <div className="flex justify-center">
+            <WhatLeavesLink />
+          </div>
+        </div>
+      }
     />
   );
 };

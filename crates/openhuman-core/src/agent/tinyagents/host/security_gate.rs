@@ -4,20 +4,20 @@
 //! This is `docs/specs/plan-agents.md` Phase 4 for the most policy-sensitive
 //! seam in the set. The tinyagents runtime holds *no* authority: it asks, and
 //! obeys. Everything it would otherwise have to guess at lives on this side —
-//! the autonomy tier, the command classifier, the per-channel tool policy, the
+//! the autonomy tier, policy over TinyBox's command facts, the per-channel tool policy, the
 //! human-in-the-loop approval park, and the prompt-injection screen.
 //!
 //! # Domains adapted
 //!
 //! - [`crate::security::policy`] — [`SecurityPolicy`], its
-//!   [`SecurityPolicy::classify_command`] / [`SecurityPolicy::check_gated_command`]
-//!   /  [`SecurityPolicy::gate_decision`] triad, and [`AutonomyLevel`].
+//!   TinySecurity's command authorization operation / [`SecurityPolicy::gate_decision`]
+//!   decisions, and [`AutonomyLevel`].
 //! - [`crate::approval`] — the process-global [`ApprovalGate`],
-//!   [`GateOutcome`], and the `summarize_action` / `redact_args` pair that keep
-//!   raw arguments out of the approval card.
+//!   [`GateOutcome`], and the summary helper; TinySecurity redacts the
+//!   structured arguments before persistence and prompt delivery.
 //! - [`crate::agent_tool_policy`] — a pre-built [`ToolPolicySession`]
 //!   (channel permission boundary).
-//! - [`crate::prompt_injection`] — [`enforce_prompt_input`] for
+//! - [`crate::prompt_injection`] — [`crate::security::prompt_injection::enforce_prompt_input`] for
 //!   [`SecurityGate::screen_input`].
 //!
 //! # Contract mismatches, resolved in favour of the existing guard
@@ -47,12 +47,8 @@
 //!    this gate must not also compose `ApprovalSecurityMiddleware`'s approval
 //!    step** — the two are alternatives, not layers. The session-allowlist
 //!    shortcut yields no id and needs no terminal row.
-//! 3. **No `Redacted` outcome is ever produced.** OpenHuman can *detect* PII
-//!    ([`crate::security::pii::scan`]) but exposes no verified
-//!    public helper that rewrites free text into a redacted copy — the one that
-//!    exists (`approval::redact::scrub_paths`) is private and shaped for JSON
-//!    argument maps. Screening therefore only ever passes or blocks. See the
-//!    `TODO(phase4)` in [`OpenHumanSecurityGate::screen_input`].
+//! 3. Credential redaction uses TinyInference's shared credential scrubber,
+//!    the same implementation used by the hosted credential middleware.
 //! 4. **An absent approval gate allows, it does not deny.** When
 //!    [`ApprovalGate::try_global`] is `None` (CLI, headless embed, tests) a
 //!    `Prompt` decision cannot be resolved by a human. This adapter warns
@@ -75,30 +71,19 @@
 //! permission returns [`GateDecision::Deny`], including an unrecognised tool
 //! name.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use tinyagents_harness::error::Result as TaResult;
-use tinyagents_harness::host::security_gate::{
-    ContentOrigin, GateDecision, ScreenOutcome, SecurityGate, ToolCallRequest,
-};
+use tinyagents_harness::host::security_gate::{GateDecision, ToolCallRequest};
 
 use crate::agent::tinyagents::policy_denial::PolicyDenial;
-use crate::security::approval::{redact_args, summarize_action, ApprovalGate, GateOutcome};
-use crate::security::policy::{CommandClass, GateDecision as PolicyGateDecision, SecurityPolicy};
-use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
-};
-use crate::tools::agent_policy::{ToolPolicyAction, ToolPolicySession};
+use crate::security::approval::{summarize_action, ApprovalGate, ApprovalTurnContext, GateOutcome};
+use crate::security::policy::{GateDecision as PolicyGateDecision, SecurityPolicy};
 use tinytools::{PermissionLevel, Tool};
+use tinytools::{ToolPolicyAction, ToolPolicySession};
 
-/// The tool name whose arguments carry a shell command string.
-///
-/// Command classification is not a generic capability: only `shell` has a
-/// `command` argument for [`SecurityPolicy::classify_command`] to read. Every
-/// other tool is classified by its declared permission level and
-/// `external_effect_with_args`, which is what the rest of the harness does too.
 const SHELL_TOOL: &str = "shell";
 
 /// The channel tool-policy's verdict for one tool, as three explicit outcomes.
@@ -127,7 +112,7 @@ pub struct OpenHumanSecurityGate {
     /// Fallback policy used when no process-global live policy is installed.
     ///
     /// Per-call resolution prefers
-    /// [`crate::security::live_policy::current`] so an autonomy
+    /// [`crate::security::live_policy::effective_in`] so an autonomy
     /// change made mid-session is observed on the very next tool call — the
     /// same live-first / snapshot-fallback discipline `ApprovalGate` uses for
     /// `auto_approve`. The trait explicitly forbids the runtime caching a
@@ -152,6 +137,26 @@ pub struct OpenHumanSecurityGate {
     /// second approval card for a call the user already approved once — see
     /// mismatch (2) in the module header.
     pending_audit: Mutex<HashMap<String, String>>,
+    /// `false` for a host-only turn reading untrusted data
+    /// ([`Self::with_input_screening`]): its input is data, not instructions.
+    screens_input: bool,
+    /// The owning turn's approval context (chat routing, copilot flag, flow
+    /// run), read from the turn's explicit run context when the gate is built.
+    approval: ApprovalTurnContext,
+    /// The owning turn's dispatch context, read from the turn's run context
+    /// when the gate is built; `None` falls back to the calling task's.
+    dispatch: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
+    /// Immutable configuration supplied by the owning host invocation.
+    screening_config: Option<Arc<crate::config::Config>>,
+    /// Only a root that owns settlement of its headless child tree may use
+    /// recursive delegation as orchestration control under the Cron policy.
+    /// The Cron origin check remains mandatory at authorization time.
+    headless_descendant_settlement: bool,
+    /// Set only on the root session the cron scheduler built for a job whose
+    /// agent opted into scheduled actions. Together with a
+    /// `TrustedAutomationSource::CronActions` origin and a root run (depth 0)
+    /// it lifts the read-only Cron stage; every later stage still applies.
+    scheduled_actions: bool,
 }
 
 impl OpenHumanSecurityGate {
@@ -168,7 +173,54 @@ impl OpenHumanSecurityGate {
             tool_policy: None,
             tool_sets,
             pending_audit: Mutex::new(HashMap::new()),
+            screens_input: true,
+            approval: ApprovalTurnContext::default(),
+            dispatch: None,
+            screening_config: None,
+            headless_descendant_settlement: false,
+            scheduled_actions: false,
         }
+    }
+
+    /// Marks the gate as the root session of an opted-in scheduled-actions
+    /// cron run (`cron::origin::scheduled_actions_enabled`).
+    pub(crate) fn with_scheduled_actions(mut self, enabled: bool) -> Self {
+        self.scheduled_actions = enabled;
+        self
+    }
+
+    /// Marks the gate as part of a host-owned headless root turn.
+    pub(crate) fn with_headless_descendant_settlement(mut self, enabled: bool) -> Self {
+        self.headless_descendant_settlement = enabled;
+        self
+    }
+
+    /// Bind prompt screening to the configuration supplied by the owning host.
+    /// This authority takes precedence over another task's ambient context.
+    pub fn with_config(mut self, config: Arc<crate::config::Config>) -> Self {
+        self.screening_config = Some(config);
+        self
+    }
+
+    /// Binds the owning turn's dispatch context.
+    pub fn with_dispatch(mut self, dispatch: DispatchCtx) -> Self {
+        self.dispatch = dispatch.downgrade();
+        self
+    }
+
+    /// Binds the owning turn's approval context, so a parked approval is routed
+    /// to the turn's chat surface and stamped with its flow run.
+    pub fn with_approval(mut self, approval: ApprovalTurnContext) -> Self {
+        self.approval = approval;
+        self
+    }
+
+    /// Whether this gate screens the turn's input. A host-only turn reading
+    /// untrusted data (`OpenHumanRunContext::untrusted_input_turn`) passes
+    /// `false`: its input is data, not instructions.
+    pub fn with_input_screening(mut self, screens_input: bool) -> Self {
+        self.screens_input = screens_input;
+        self
     }
 
     /// Attaches the session's channel permission boundary.
@@ -195,10 +247,39 @@ impl OpenHumanSecurityGate {
             .remove(call_id)
     }
 
-    /// The policy to answer this call against: the live process-global one when
+    /// The policy to answer this call against: the agent's or the live one when
     /// installed, else the constructor snapshot.
     fn effective_policy(&self) -> Arc<SecurityPolicy> {
-        crate::security::live_policy::current().unwrap_or_else(|| self.policy.clone())
+        crate::security::live_policy::effective_in(&DispatchCtx::from_weak(self.dispatch.as_ref()))
+            .unwrap_or_else(|| self.policy.clone())
+    }
+
+    /// Hand the answers TinySecurity gave for `evaluated` to the constructor
+    /// policy, which the session's tools hold, when the two are different
+    /// instances. The tools' sync gates read only their own cached answers.
+    ///
+    /// `false` when `evaluated` sets the tools' questions differently (the
+    /// autonomy settings changed during the session): the tools would check
+    /// paths against settings no longer in force, so the caller refuses.
+    fn share_answers(&self, evaluated: &Arc<SecurityPolicy>) -> bool {
+        if Arc::ptr_eq(evaluated, &self.policy) {
+            return true;
+        }
+        if !self.policy.decides_tools_like(evaluated) {
+            tracing::warn!(
+                target: "tinyagents",
+                "[tinyagents::host::security] the autonomy settings changed during this session; refusing the call"
+            );
+            return false;
+        }
+        self.policy.adopt_answers_from(evaluated);
+        true
+    }
+
+    /// The origin of the turn this gate authorizes for: the run's own context
+    /// when it carries one, else the calling task's turn scope.
+    fn turn_origin(&self) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
+        DispatchCtx::from_weak(self.dispatch.as_ref()).turn_origin_or_scoped()
     }
 
     /// Finds the registered [`Tool`] named `name`, if any.
@@ -244,30 +325,6 @@ impl OpenHumanSecurityGate {
                 .render(),
             ),
         }
-    }
-
-    /// Classifies a `shell` call and maps OpenHuman's three-way policy verdict
-    /// onto this trait's.
-    ///
-    /// Mirrors `ShellTool::external_effect_with_args` exactly: the deterministic
-    /// [`SecurityPolicy::classify_command`] floor, raised (never lowered) by the
-    /// model's self-declared `category`. [`SecurityPolicy::check_gated_command`]
-    /// runs first because it also enforces the hidden-execution guard
-    /// (`$(…)`, backticks, background `&`) that classification alone misses.
-    fn shell_decision(
-        policy: &SecurityPolicy,
-        args: &serde_json::Value,
-    ) -> std::result::Result<PolicyGateDecision, String> {
-        let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        let mut class: CommandClass = policy.check_gated_command(command)?;
-        if let Some(declared) = args
-            .get("category")
-            .and_then(|v| v.as_str())
-            .and_then(SecurityPolicy::parse_declared_class)
-        {
-            class = class.max(declared);
-        }
-        Ok(policy.gate_decision(class))
     }
 
     /// The allow-shaped answer for a call that reached the end of the stages.
@@ -328,9 +385,17 @@ impl OpenHumanSecurityGate {
             );
             return GateDecision::Allow;
         };
+        self.park_for_approval_on(&gate, call).await
+    }
 
+    /// [`Self::park_for_approval`] against an explicit gate, with this turn's
+    /// approval context.
+    pub(crate) async fn park_for_approval_on(
+        &self,
+        gate: &ApprovalGate,
+        call: &ToolCallRequest,
+    ) -> GateDecision {
         let summary = summarize_action(&call.tool_name, &call.arguments);
-        let redacted = redact_args(&call.arguments);
         tracing::debug!(
             target: "tinyagents",
             tool = %call.tool_name,
@@ -342,7 +407,12 @@ impl OpenHumanSecurityGate {
         // executor close the audit row later *without* raising a second
         // approval card. See mismatch (2).
         let (outcome, request_id) = gate
-            .intercept_audited(&call.tool_name, &summary, redacted)
+            .intercept_audited(
+                &self.approval,
+                &call.tool_name,
+                &summary,
+                call.arguments.clone(),
+            )
             .await;
         if matches!(outcome, GateOutcome::Allow) {
             // Only an approval that persisted a row yields an id; the
@@ -361,320 +431,15 @@ impl OpenHumanSecurityGate {
     }
 }
 
-/// Maps how the approval flow settled to what the runtime is told.
-///
-/// A refusal is a `Deny` whose text names no human and no timeout — every
-/// refusal reads the same — and rules out other routes explicitly, because
-/// `shell` never prompts while autonomy is disabled (`[autonomy] enabled =
-/// false`, the default) and was used to redo a refused call.
-///
-/// The text carries no `[policy-denied]` marker on purpose. The marker
-/// classifies as a policy failure with a zero recovery budget
-/// (`middleware::repeated_failure`), which pauses the turn before the model can
-/// answer. The model must get this turn to tell the user the action was not
-/// done, as it did with the harness's unmarked fallback text.
-fn decision_for_outcome(tool_name: &str, outcome: GateOutcome) -> GateDecision {
-    match outcome {
-        GateOutcome::Allow => GateDecision::Prompted { approved: true },
-        GateOutcome::Deny { reason } => {
-            tracing::warn!(
-                target: "tinyagents",
-                tool = %tool_name,
-                reason = %reason,
-                "[tinyagents::host::security] approval flow declined the tool call"
-            );
-            GateDecision::deny(
-                "This action was refused and must not be performed this turn — do not retry this \
-                 call and do not achieve the same result another way (shell, CLI, another tool). \
-                 Tell the user it was not done.",
-            )
-        }
-    }
-}
+#[path = "security_gate/authorize.rs"]
+mod authorize;
 
-#[async_trait]
-impl SecurityGate for OpenHumanSecurityGate {
-    /// Answers in five stages, each of which can only narrow the answer:
-    ///
-    /// 1. the channel tool policy (`agent_tool_policy`),
-    /// 2. tool resolution — an unregistered name is denied,
-    /// 3. `shell` command classification, which supersedes stage 4 for that one
-    ///    tool because it is strictly finer-grained,
-    /// 4. the autonomy tier for acting tools (`can_act`) plus the non-mutating
-    ///    rate-limit read, and
-    /// 5. the approval park for anything the tier prompts on.
-    ///
-    /// **A human approval never short-circuits the remaining stages.** Approving
-    /// at stage 1 settles the *channel* restriction and nothing else; the call
-    /// still has to survive tool resolution, the shell classifier, and the
-    /// autonomy tier. Returning straight after the park would have let a
-    /// channel that merely asks for confirmation authorize a `shell` command the
-    /// tier blocks, or an acting tool under `readonly` — turning the channel's
-    /// second-strictest setting into an override of the user's own autonomy
-    /// choice. A refusal at any stage is still terminal, and `channel_approved`
-    /// is carried forward so a later prompting stage does not ask twice.
-    async fn authorize_tool(&self, call: &ToolCallRequest) -> TaResult<GateDecision> {
-        let policy = self.effective_policy();
-        #[cfg(feature = "modules")]
-        let desktop_approval_disabled = match self.resolve_tool(&call.tool_name) {
-            Some(tool) => crate::desktop::control::approvals_disabled_for(tool).await,
-            None => false,
-        };
-        #[cfg(not(feature = "modules"))]
-        let desktop_approval_disabled = false;
-        tracing::debug!(
-            target: "tinyagents",
-            tool = %call.tool_name,
-            agent = %call.agent_id,
-            autonomy = ?policy.autonomy,
-            "[tinyagents::host::security] authorizing tool call"
-        );
+#[path = "security_gate_approval.rs"]
+mod approval;
+use approval::decision_for_outcome;
 
-        // Set when the channel policy demanded approval and the human granted
-        // it. Carried forward so a later stage that would prompt for the *same*
-        // call does not raise a second card for an answer already given.
-        let mut channel_approved = false;
-
-        // 1. Channel permission boundary.
-        match self.tool_policy_verdict(&call.tool_name) {
-            ToolPolicyVerdict::Allow => {}
-            ToolPolicyVerdict::Deny(reason) => {
-                tracing::warn!(
-                    target: "tinyagents",
-                    tool = %call.tool_name,
-                    "[tinyagents::host::security] denied by the session tool policy"
-                );
-                return Ok(GateDecision::Deny { reason });
-            }
-            ToolPolicyVerdict::RequireApproval if desktop_approval_disabled => {
-                tracing::debug!(tool = %call.tool_name,
-                    "[desktop] channel approval park skipped by desktop setting");
-            }
-            ToolPolicyVerdict::RequireApproval => {
-                // The channel says a human must approve. Unlike the shell and
-                // external-effect paths below, an absent approval gate must
-                // **deny** here rather than allow: `agent_tool_policy` classes
-                // `RequireApproval` as blocked, so the only thing that can
-                // unblock it is an actual approval. Falling back to allow on a
-                // headless host would turn the channel's strictest non-deny
-                // setting into its weakest.
-                if ApprovalGate::try_global().is_none() {
-                    tracing::warn!(
-                        target: "tinyagents",
-                        tool = %call.tool_name,
-                        "[tinyagents::host::security] channel policy requires approval but no \
-                         approval gate is installed; denying"
-                    );
-                    return Ok(GateDecision::deny(
-                        PolicyDenial::ApprovalRequired {
-                            tool: &call.tool_name,
-                            policy: "channel tool policy",
-                            reason: "This tool requires human approval, and no approval flow is \
-                                     available in this session.",
-                        }
-                        .render(),
-                    ));
-                }
-                // Approval here settles the **channel** restriction only. It is
-                // not a general authorization: returning now would skip tool
-                // resolution and the autonomy tier, so a `shell` command the
-                // tier blocks, or any acting tool under `readonly`, would run
-                // purely because the channel asked for a prompt. Each stage may
-                // only narrow the answer, so record the human's answer and keep
-                // going.
-                match self.park_for_approval(call).await {
-                    GateDecision::Prompted { approved: true } => {
-                        channel_approved = true;
-                    }
-                    // A refusal (or an expired TTL) is terminal — no later
-                    // stage can widen it back to an allow.
-                    denial => return Ok(denial),
-                }
-            }
-        }
-
-        // 2. Resolve the tool. Fail closed on an unknown name: without the
-        //    registered `Tool` there is no permission level and no
-        //    external-effect classification to reason about.
-        let Some(tool) = self.resolve_tool(&call.tool_name) else {
-            tracing::warn!(
-                target: "tinyagents",
-                tool = %call.tool_name,
-                "[tinyagents::host::security] denied: tool is not registered in this session"
-            );
-            return Ok(GateDecision::deny(format!(
-                "Tool '{}' is not available in this session, so it cannot be authorized. \
-                 Use a registered tool or report that this cannot be done here.",
-                call.tool_name
-            )));
-        };
-
-        // 3. `shell` is the one tool whose arguments carry a classifiable
-        //    command, and `gate_decision` already encodes the autonomy tier —
-        //    at a finer grain than the tool's coarse `Execute` permission
-        //    level. Running stage 4 first would refuse `ls` in read-only mode,
-        //    which OpenHuman's own `ShellTool` permits. So shell answers here
-        //    and returns.
-        if call.tool_name == SHELL_TOOL {
-            match Self::shell_decision(&policy, &call.arguments) {
-                Err(raw_reason) => {
-                    tracing::warn!(
-                        target: "tinyagents",
-                        tool = %call.tool_name,
-                        "[tinyagents::host::security] shell command blocked by security policy"
-                    );
-                    return Ok(GateDecision::deny(
-                        PolicyDenial::SecurityPolicyBlocked {
-                            tool: &call.tool_name,
-                            raw_reason: &raw_reason,
-                        }
-                        .render(),
-                    ));
-                }
-                Ok(PolicyGateDecision::Block) => {
-                    // `check_gated_command` already rejects the read-only Block
-                    // case; this arm catches a Block produced by the model's
-                    // escalate-only `category` hint.
-                    let raw = format!(
-                        "{} Security policy: this command's category is not permitted in the \
-                         current access tier.",
-                        crate::security::POLICY_BLOCKED_MARKER
-                    );
-                    return Ok(GateDecision::deny(
-                        PolicyDenial::SecurityPolicyBlocked {
-                            tool: &call.tool_name,
-                            raw_reason: &raw,
-                        }
-                        .render(),
-                    ));
-                }
-                Ok(PolicyGateDecision::Prompt) => {
-                    return Ok(self.park_once(call, channel_approved).await);
-                }
-                Ok(PolicyGateDecision::Allow) => {
-                    return Ok(self.settled(channel_approved));
-                }
-            }
-        }
-
-        let required = tool.permission_level_with_args(&call.arguments);
-        let acts = required > PermissionLevel::ReadOnly;
-
-        // 4. Autonomy tier + budget. Read-only mode refuses every acting tool
-        //    outright; no in-tier prompt can authorize it.
-        if acts && !policy.can_act() {
-            tracing::warn!(
-                target: "tinyagents",
-                tool = %call.tool_name,
-                %required,
-                "[tinyagents::host::security] denied: read-only autonomy tier"
-            );
-            let raw = format!(
-                "{} Security policy: read-only mode, cannot perform '{}'.",
-                crate::security::POLICY_BLOCKED_MARKER,
-                call.tool_name
-            );
-            return Ok(GateDecision::deny(
-                PolicyDenial::SecurityPolicyBlocked {
-                    tool: &call.tool_name,
-                    raw_reason: &raw,
-                }
-                .render(),
-            ));
-        }
-        // `is_rate_limited` is the read-only twin of `record_action`; the tools
-        // still do the recording themselves (mismatch (1)).
-        if acts && policy.is_rate_limited() {
-            tracing::warn!(
-                target: "tinyagents",
-                tool = %call.tool_name,
-                max_per_hour = policy.max_actions_per_hour,
-                "[tinyagents::host::security] denied: hourly action budget exhausted"
-            );
-            return Ok(GateDecision::deny(format!(
-                "Rate limit exceeded: action budget exhausted ({} actions/hour). Wait for the \
-                 rolling one-hour window to refill, or raise the limit in Settings -> Advanced \
-                 -> Agent autonomy.",
-                policy.max_actions_per_hour
-            )));
-        }
-
-        // 5. Everything else: the tool's own external-effect classification
-        //    decides whether a human is asked.
-        if tool.external_effect_with_args(&call.arguments) && !desktop_approval_disabled {
-            return Ok(self.park_once(call, channel_approved).await);
-        }
-
-        tracing::debug!(
-            target: "tinyagents",
-            tool = %call.tool_name,
-            "[tinyagents::host::security] allowed"
-        );
-        Ok(self.settled(channel_approved))
-    }
-
-    /// Runs OpenHuman's prompt-injection detector over `text`.
-    ///
-    /// Every origin is screened, `User` included — the detector's primary
-    /// production caller is the user-prompt path, and provenance is not trust.
-    /// Both non-allow verdicts map to [`ScreenOutcome::Block`]: OpenHuman's
-    /// `Review` verdict is already spelled `ReviewBlocked` on the enforcement
-    /// side, so admitting it here would be this adapter inventing a permission
-    /// the host does not grant.
-    ///
-    /// The reason string carries the verdict and the rule codes only — never
-    /// the screened text, which is the thing suspected of being hostile.
-    ///
-    /// TODO(phase4): no [`ScreenOutcome::Redacted`] is ever returned. Producing
-    /// one needs a free-text redactor; `security::pii::scan` detects spans but
-    /// returns no rewritten string, and `approval::redact::scrub_paths` is
-    /// private and shaped for JSON argument maps. Either lift a public
-    /// `redact_text(&str) -> String` out of `approval::redact` or add one to
-    /// `security::pii`, then map "PII found, injection clean" to `Redacted`.
-    async fn screen_input(&self, text: &str, origin: ContentOrigin) -> TaResult<ScreenOutcome> {
-        let source = match origin {
-            ContentOrigin::User => "agent.user",
-            ContentOrigin::Tool => "agent.tool_output",
-            ContentOrigin::Web => "agent.web",
-            ContentOrigin::Channel => "agent.channel",
-            ContentOrigin::Agent => "agent.subagent",
-            ContentOrigin::Stored => "agent.stored",
-        };
-        let decision = enforce_prompt_input(
-            text,
-            PromptEnforcementContext {
-                source,
-                request_id: None,
-                user_id: None,
-                session_id: None,
-            },
-        );
-
-        match decision.action {
-            PromptEnforcementAction::Allow => Ok(ScreenOutcome::Pass),
-            PromptEnforcementAction::Blocked | PromptEnforcementAction::ReviewBlocked => {
-                let codes: Vec<&str> = decision.reasons.iter().map(|r| r.code.as_str()).collect();
-                tracing::warn!(
-                    target: "tinyagents",
-                    %source,
-                    score = decision.score,
-                    codes = %codes.join(","),
-                    chars = decision.prompt_chars,
-                    "[tinyagents::host::security] blocked untrusted input"
-                );
-                Ok(ScreenOutcome::block(format!(
-                    "Content from '{source}' was rejected by the prompt-injection screen \
-                     ({}). It has not been added to the conversation.",
-                    if codes.is_empty() {
-                        "no rule detail".to_string()
-                    } else {
-                        codes.join(", ")
-                    }
-                )))
-            }
-        }
-    }
-}
+#[path = "security_gate_impl.rs"]
+mod security_gate_impl;
 
 #[cfg(test)]
 #[path = "security_gate_tests.rs"]

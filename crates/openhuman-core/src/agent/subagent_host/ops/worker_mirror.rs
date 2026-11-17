@@ -1,0 +1,237 @@
+//! Mirroring a sub-agent turn's conversation onto its spawn's worker thread,
+//! matching the legacy `SubagentObserver`.
+
+use crate::core::runtime::DispatchCtx;
+use tinyagents_session::transcript::TranscriptMessage;
+use tinytools_agent::dialect::{DialectRole, TranscriptEntry};
+
+/// Append a worker-thread [`StoredMessage`](crate::threads::store::ConversationMessage)
+/// with the restored legacy [`SubagentObserver`] metadata (#4466): `scope`,
+/// `agent_id`, `task_id`, plus the per-message `iteration`, `final`, `mode`, and
+/// (for assistant tool rounds / tool results) `tool_calls` / `tool_call_id` /
+/// `tool_name`. The migrated path had reduced this to `{scope, agent_id,
+/// task_id}` only, dropping the fields worker-thread consumers key on.
+#[allow(clippy::too_many_arguments)]
+fn append_worker_message(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+    agent_id: &str,
+    task_id: &str,
+    content: String,
+    sender: &str,
+    metadata: serde_json::Value,
+) {
+    use crate::threads::store::{append_message, ConversationMessage as StoredMessage};
+    let mut extra = serde_json::json!({
+        "scope": "worker_thread",
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "mode": "typed",
+        // #5934: a mirror row that is not the sub-agent speaking is a tool
+        // result, and the renderer maps every non-`"agent"` sender to
+        // `role: 'user'` (`assistantUiMessages.ts`) — so without this flag a
+        // tool's raw output is painted, in an openable worker thread, as
+        // something the human typed. `hidden` keeps the row in the log for the
+        // process rail and the process-source view; it only stops being chat.
+        // Genuine worker-thread user turns are written by
+        // `worker_thread::{create_worker_thread, append_worker_user_message}`,
+        // not here, so they are unaffected. Overridable by `metadata` below.
+        "hidden": sender != "agent",
+    });
+    if let (Some(base), Some(extra_fields)) = (extra.as_object_mut(), metadata.as_object()) {
+        for (k, v) in extra_fields {
+            base.insert(k.clone(), v.clone());
+        }
+    }
+    let message = StoredMessage {
+        id: format!("{sender}:{}", uuid::Uuid::new_v4()),
+        content,
+        message_type: "text".to_string(),
+        extra_metadata: extra,
+        sender: sender.to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    if let Err(err) = append_message(ctx, workspace_dir.to_path_buf(), thread_id, message) {
+        tracing::debug!(
+            agent_id,
+            thread_id,
+            error = %err,
+            "[subagent_host:graph] failed to append worker-thread message"
+        );
+    }
+}
+
+/// Mirror a sub-agent turn's structured conversation to its worker thread,
+/// matching the legacy [`SubagentObserver`]: assistant turns (intents + final)
+/// become `agent` messages, tool results become `user` messages. `extra_final`,
+/// when set, is appended as a trailing `agent` message (the cap checkpoint or
+/// clarifying question, which isn't a plain assistant turn in the transcript).
+///
+/// Each message carries the restored legacy metadata (#4466): a per-round
+/// `iteration` counter, `final` on the trailing message, `tool_calls` on an
+/// assistant round, and `tool_call_id` / `tool_name` on each tool result.
+pub(crate) fn mirror_worker_thread(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+    agent_id: &str,
+    task_id: &str,
+    conversation: &[TranscriptEntry],
+    extra_final: Option<&str>,
+) {
+    use std::collections::HashMap;
+
+    // call_id -> tool name, so each tool result records the tool it came from.
+    let mut names: HashMap<&str, &str> = HashMap::new();
+    for msg in conversation {
+        if let TranscriptEntry::AssistantToolCalls { tool_calls, .. } = msg {
+            for call in tool_calls {
+                names.insert(call.id.as_str(), call.name.as_str());
+            }
+        }
+    }
+
+    let mut iteration: u64 = 0;
+    for msg in conversation {
+        match msg {
+            TranscriptEntry::AssistantToolCalls {
+                text, tool_calls, ..
+            } => {
+                iteration += 1;
+                if let Some(t) = text.as_deref().filter(|t| !t.trim().is_empty()) {
+                    let call_names: Vec<&str> =
+                        tool_calls.iter().map(|c| c.name.as_str()).collect();
+                    append_worker_message(
+                        ctx,
+                        workspace_dir,
+                        thread_id,
+                        agent_id,
+                        task_id,
+                        t.to_string(),
+                        "agent",
+                        serde_json::json!({
+                            "iteration": iteration,
+                            "final": false,
+                            "tool_calls": call_names,
+                        }),
+                    );
+                }
+            }
+            TranscriptEntry::ToolResults(results) => {
+                for r in results {
+                    let tool_name = names
+                        .get(r.tool_call_id.as_str())
+                        .copied()
+                        .unwrap_or("tool");
+                    append_worker_message(
+                        ctx,
+                        workspace_dir,
+                        thread_id,
+                        agent_id,
+                        task_id,
+                        r.content.clone(),
+                        "user",
+                        serde_json::json!({
+                            "iteration": iteration,
+                            "final": false,
+                            "tool_call_id": r.tool_call_id,
+                            "tool_name": tool_name,
+                        }),
+                    );
+                }
+            }
+            TranscriptEntry::Chat(c)
+                if c.role == DialectRole::Assistant && !c.content.trim().is_empty() =>
+            {
+                iteration += 1;
+                append_worker_message(
+                    ctx,
+                    workspace_dir,
+                    thread_id,
+                    agent_id,
+                    task_id,
+                    c.content.clone(),
+                    "agent",
+                    serde_json::json!({
+                        "iteration": iteration,
+                        "final": extra_final.is_none(),
+                    }),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(text) = extra_final.filter(|t| !t.trim().is_empty()) {
+        append_worker_message(
+            ctx,
+            workspace_dir,
+            thread_id,
+            agent_id,
+            task_id,
+            text.to_string(),
+            "agent",
+            serde_json::json!({ "iteration": iteration + 1, "final": true }),
+        );
+    }
+}
+
+/// Worker-thread mirror from a flat [`TranscriptMessage`] history (the error-recovery
+/// path, #4466): assistant messages become `agent` rows, tool messages become
+/// `user` rows. Used when only the recovered snapshot (not the typed
+/// `conversation`) is available. `failure_final`, when set, is appended as a
+/// trailing `agent` failure marker.
+pub(crate) fn mirror_worker_thread_from_history(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+    agent_id: &str,
+    task_id: &str,
+    history: &[TranscriptMessage],
+    failure_final: Option<&str>,
+) {
+    let mut iteration: u64 = 0;
+    for m in history {
+        match m.role.as_str() {
+            "assistant" if !m.content.trim().is_empty() => {
+                iteration += 1;
+                append_worker_message(
+                    ctx,
+                    workspace_dir,
+                    thread_id,
+                    agent_id,
+                    task_id,
+                    m.content.clone(),
+                    "agent",
+                    serde_json::json!({ "iteration": iteration, "final": false }),
+                );
+            }
+            "tool" if !m.content.trim().is_empty() => {
+                append_worker_message(
+                    ctx,
+                    workspace_dir,
+                    thread_id,
+                    agent_id,
+                    task_id,
+                    m.content.clone(),
+                    "user",
+                    serde_json::json!({ "iteration": iteration, "final": false }),
+                );
+            }
+            _ => {}
+        }
+    }
+    if let Some(text) = failure_final.filter(|t| !t.trim().is_empty()) {
+        append_worker_message(
+            ctx,
+            workspace_dir,
+            thread_id,
+            agent_id,
+            task_id,
+            text.to_string(),
+            "agent",
+            serde_json::json!({ "iteration": iteration + 1, "final": true }),
+        );
+    }
+}

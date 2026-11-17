@@ -1,4 +1,5 @@
 export const CORE_RPC_METHODS = {
+  agentRegistryAvailableTools: 'openhuman.agent_registry_available_tools',
   authClearCredential: 'openhuman.auth_clear_credential',
   authGetSessionToken: 'openhuman.auth_get_session_token',
   authGetState: 'openhuman.auth_get_state',
@@ -14,6 +15,7 @@ export const CORE_RPC_METHODS = {
   configGetPrivacyMode: 'openhuman.config_get_privacy_mode',
   configGetSandboxSettings: 'openhuman.config_get_sandbox_settings',
   configGetSearchSettings: 'openhuman.config_get_search_settings',
+  configGetUserTimezone: 'openhuman.config_get_user_timezone',
   configSetPrivacyMode: 'openhuman.config_set_privacy_mode',
   configUpdateSearchSettings: 'openhuman.config_update_search_settings',
   configSetBrowserAllowAll: 'openhuman.config_set_browser_allow_all',
@@ -28,6 +30,7 @@ export const CORE_RPC_METHODS = {
   configUpdateMemorySettings: 'openhuman.config_update_memory_settings',
   configUpdateModelSettings: 'openhuman.config_update_model_settings',
   configUpdateRuntimeSettings: 'openhuman.config_update_runtime_settings',
+  configUpdateUserTimezone: 'openhuman.config_update_user_timezone',
   configUpdateSandboxSettings: 'openhuman.config_update_sandbox_settings',
   configWorkspaceOnboardingFlagExists: 'openhuman.config_workspace_onboarding_flag_exists',
   configWorkspaceOnboardingFlagSet: 'openhuman.config_workspace_onboarding_flag_set',
@@ -40,6 +43,7 @@ export const CORE_RPC_METHODS = {
   memoryFetch: 'openhuman.memory_fetch',
   memoryLearn: 'openhuman.memory_learn',
   memoryForget: 'openhuman.memory_forget',
+  memoryEraseAll: 'openhuman.memory_erase_all',
   memoryItemsList: 'openhuman.memory_items_list',
   memoryExplore: 'openhuman.memory_explore',
   memoryItemsGet: 'openhuman.memory_items_get',
@@ -62,6 +66,11 @@ export const CORE_RPC_METHODS = {
   memoryImportScan: 'openhuman.memory_import_scan',
   memoryImportStart: 'openhuman.memory_import_start',
   memoryImportStatus: 'openhuman.memory_import_status',
+  memoryImportRetryFailed: 'openhuman.memory_import_retry_failed',
+  memoryMigrationScan: 'openhuman.memory_migration_scan',
+  memoryMigrationStart: 'openhuman.memory_migration_start',
+  memoryMigrationStatus: 'openhuman.memory_migration_status',
+  memoryMigrationRetry: 'openhuman.memory_migration_retry',
   inferenceAgentChat: 'openhuman.inference_agent_chat',
   inferenceAgentChatSimple: 'openhuman.inference_agent_chat_simple',
   inferenceDiagnostics: 'openhuman.inference_diagnostics',
@@ -90,6 +99,8 @@ export const CORE_RPC_METHODS = {
 
 type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
 
+// keep until v0.66 (review after 2027-01-11): remove with the server table only
+// after shipped-client analytics and Sentry method-count evidence.
 export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   // The session RPCs became the kind-agnostic credential pair once the core
   // stopped validating sessions itself. Mirrored in

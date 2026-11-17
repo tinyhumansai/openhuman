@@ -8,9 +8,9 @@ plus the `LocalOnly` enforcement chokepoint built on top of it.
 
 | File | Purpose |
 | --- | --- |
-| `types.rs` | `EgressDescriptor`, `DataKind`, `EgressReason`, `IdentificationRisk`: the descriptor contract |
-| `emit.rs` | `emit_external_transfer`, the single publish chokepoint, plus per-turn dedup |
-| `enforce.rs` | `local_only_blocks` (pure decision) and its two side-effecting wrappers, `enforce_egress` / `local_only_tool_block` |
+| [`types.rs`](./types.rs) | `EgressDescriptor`, `DataKind`, `EgressReason`, `IdentificationRisk`: the descriptor contract |
+| [`emit.rs`](./emit.rs) | `emit_external_transfer`, the single publish chokepoint, plus per-turn dedup |
+| [`enforce.rs`](./enforce.rs) | `local_only_blocks` (pure decision) and its two side-effecting wrappers, `enforce_egress` / `local_only_tool_block` |
 
 ## Public surface
 
@@ -25,11 +25,11 @@ plus the `LocalOnly` enforcement chokepoint built on top of it.
   `::network_fetch`, rather than the struct literal.
 - `emit_external_transfer(descriptor)`: the one call every external-egress
   point makes right before a transfer leaves the device. It drops non-external
-  transfers, attaches best-effort chat routing from
-  `security::approval::APPROVAL_CHAT_CONTEXT`, and fire-and-forget publishes
+  transfers, attaches best-effort chat routing from the
+  turn's `ApprovalChatContext` (an argument, or carried by the `EgressLedger`), and fire-and-forget publishes
   `DomainEvent::ExternalTransferPending` on `crate::core::bus::BUS`. This
   never blocks or fails the caller.
-- `dedup_turn_scope(f)`: runs `f` with a per-turn dedup ledger so a single
+- `EgressLedger::per_turn()` / `emit_external_transfer_in(&ledger, d)`: an explicit per-turn dedup ledger, passed down the provider factory chain, so a single
   managed chat turn's multi-model fan-out (primary + workload-tier + summarizer
   builds) collapses repeated disclosures of the same destination into one
   event; every other call path emits unconditionally.
@@ -54,7 +54,7 @@ Both `enforce_egress` and `local_only_tool_block` read the live mode via
 
 - `config/schema/privacy.rs`: `PrivacyMode` (`Standard` / `Sensitive` /
   `LocalOnly`), the config-facing enum `local_only_blocks` matches on.
-- [`../pii/README.md`](../pii/README.md): the identification-risk detector
+- [`tinymemory_api::safety`](https://github.com/tinyhumansai/tinymemory/blob/d1b06334faf7f8abb62bd1bd4ec4c4d4862f53a4/crates/tinymemory-api/src/safety/README.md): the opt-in local identification-risk detector
   that will eventually populate `EgressDescriptor::risk_level` /
   `risk_categories` via `EgressDescriptor::with_risk`.
 - `core/events.rs`: `DomainEvent::ExternalTransferPending { descriptor,
@@ -65,14 +65,21 @@ Both `enforce_egress` and `local_only_tool_block` read the live mode via
 - `memory/guard/policy.rs` (`HostGuardPolicy`): memory-write egress guard.
 - `integrations/client/requests.rs`, `integrations/composio/client/execute.rs`,
   `integrations/composio/execute_dispatch.rs`: backend and Composio calls.
-- `tools/impl/network/{curl,http_request,web_fetch}.rs`: agent network-fetch
-  tools.
-- `search/tools/{tavily/client,exa}.rs`, `embeddings/cloud_adapter.rs`,
-  `inference/provider/factory.rs` and its `factory/` submodules: search and
-  cloud inference/embedding providers.
+- `security/tool_gates/net.rs` (`NetGate` for `SecurityPolicy`): the
+  `curl`, `http_request` and `web_fetch` agent network-fetch tools.
+- `search/tools/{tavily/client,exa}.rs`, `inference/provider/factory.rs` and
+  its `factory/` submodules, and the TinyHumans managed embedding provider:
+  search and hosted inference/embedding calls.
 - `web_chat/event_bus.rs`: subscribes to `ExternalTransferPending` and
   bridges it to the `external_transfer_pending` socket event for the frontend.
 
 ## Tests
 
-- `types_tests.rs`, `emit_tests.rs`, `enforce_tests.rs`.
+- [`types_tests.rs`](./types_tests.rs), [`emit_tests.rs`](./emit_tests.rs), [`enforce_tests.rs`](./enforce_tests.rs).
+
+## Further reading
+
+- [Parent module (`security`)](../README.md)
+- [Privacy mode](../../../../../docs/gitbooks/en/features/privacy-mode.md)
+- [Privacy and security](../../../../../docs/gitbooks/en/features/privacy-and-security.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)

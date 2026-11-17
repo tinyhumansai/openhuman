@@ -25,8 +25,9 @@ import {
   memoryJobsList,
   memoryLearn,
 } from '../../services/api/memoryApi';
-import { Alert, AlertDescription, Button, Card, Label, NativeSelect, TextArea } from '../ui';
+import { Button, Card, Label, NativeSelect, TextArea } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import MemoryHitRow from './MemoryHitRow';
 
 const log = debug('openhuman:memory:learnings');
@@ -214,11 +215,7 @@ export default function MemoryLearningsTab() {
         </form>
       </Card>
 
-      {error !== null && (
-        <Alert variant="destructive" data-testid="memory-learnings-error">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error !== null && <MemoryErrorAlert message={error} data-testid="memory-learnings-error" />}
 
       {items === null ? (
         <CenteredLoadingState label={t('memoryPage.loading')} />

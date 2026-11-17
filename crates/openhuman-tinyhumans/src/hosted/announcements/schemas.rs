@@ -1,9 +1,9 @@
+use openhuman_embed::__host::core::runtime::DispatchCtx;
+use openhuman_embed::__host::util::params::{json_output, to_json};
 use serde_json::{Map, Value};
 
-use openhuman_core::config::rpc as config_rpc;
-use openhuman_core::core::all::{ControllerFuture, RegisteredController};
-use openhuman_core::core::Outcome;
-use openhuman_core::core::{ControllerSchema, FieldSchema, TypeSchema};
+use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
+use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 pub fn all_announcements_controller_schemas() -> Vec<ControllerSchema> {
     vec![announcements_schemas("announcements_get_latest")]
@@ -43,24 +43,14 @@ pub fn announcements_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_announcements_get_latest(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_announcements_get_latest(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::announcements::get_latest_announcement(&config).await?)
     })
-}
-
-fn to_json(outcome: Outcome<Value>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
 }
 
 #[cfg(test)]

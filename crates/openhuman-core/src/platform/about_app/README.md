@@ -4,7 +4,7 @@ The single source of truth for the OpenHuman desktop app's **user-facing capabil
 
 ## Responsibilities
 
-- Define the canonical, hard-coded list of user-facing capabilities (`CAPABILITIES` in `catalog.rs`).
+- Define the canonical, hard-coded list of user-facing capabilities (`CAPABILITIES` in [`catalog.rs`](./catalog.rs)).
 - Classify each capability by `CapabilityCategory` (conversation, intelligence, workflows, local_ai, team, settings, auth, channels, automation, mobile) and `CapabilityStatus`.
 - Attach optional `CapabilityPrivacy` disclosures (`leaves_device`, `data_kind`, `destinations`) so the in-app Privacy surface can render "what leaves my computer".
 - Provide read APIs: list all (optionally filtered by category), look up one by stable id, keyword search across id/name/domain/category/description/how_to/status.
@@ -17,15 +17,15 @@ The single source of truth for the OpenHuman desktop app's **user-facing capabil
 | --- | --- |
 | `crates/openhuman-core/src/platform/about_app/mod.rs` | Export-only module root + docstring. Re-exports catalog reads, ops entry points, schema registry hooks, and types. |
 | `crates/openhuman-core/src/platform/about_app/types.rs` | Serde domain types: `Capability`, `CapabilityCategory` (with `as_str` / `FromStr` incl. aliases), `CapabilityStatus`, `CapabilityPrivacy`, `PrivacyDataKind`. Inline serde/roundtrip tests. |
-| `crates/openhuman-core/src/platform/about_app/catalog.rs` | Read API over the `CAPABILITIES` data it includes from `catalog_data.rs`. Implements `all_capabilities`, `capabilities_by_category`, `lookup`, `search`, and the `ensure_validated` integrity check. |
-| `crates/openhuman-core/src/platform/about_app/ops.rs` | RPC-facing logic returning `Outcome<T>`: `list_capabilities`, `lookup_capability`, `search_capabilities`. Thin wrappers over `catalog.rs` with summary logs. |
+| `crates/openhuman-core/src/platform/about_app/catalog.rs` | Read API over the `CAPABILITIES` data it includes from [`catalog_data.rs`](./catalog_data.rs). Implements `all_capabilities`, `capabilities_by_category`, `lookup`, `search`, and the `ensure_validated` integrity check. |
+| `crates/openhuman-core/src/platform/about_app/ops.rs` | RPC-facing logic returning `Outcome<T>`: `list_capabilities`, `lookup_capability`, `search_capabilities`. Thin wrappers over [`catalog.rs`](./catalog.rs) with summary logs. |
 | `crates/openhuman-core/src/platform/about_app/schemas.rs` | Controller schemas + `handle_*` async handlers for the three RPC methods; param structs; the `all_about_app_controller_schemas` / `all_about_app_registered_controllers` registry pair. |
-| `crates/openhuman-core/src/platform/about_app/catalog_data.rs` | The `CAPABILITIES` data itself (`LazyLock<Vec<Capability>>`) plus the shared `CapabilityPrivacy` constants, concatenated from the `catalog_conversation_intelligence.rs`, `catalog_workflows_automation.rs`, `catalog_auth_channels_team.rs`, and `catalog_localai_settings_mobile.rs` submodules. |
+| `crates/openhuman-core/src/platform/about_app/catalog_data.rs` | The `CAPABILITIES` data itself (`LazyLock<Vec<Capability>>`) plus the shared `CapabilityPrivacy` constants, concatenated from the [`catalog_conversation_intelligence.rs`](./catalog_conversation_intelligence.rs), [`catalog_workflows_automation.rs`](./catalog_workflows_automation.rs), [`catalog_auth_channels_team.rs`](./catalog_auth_channels_team.rs), and [`catalog_localai_settings_mobile.rs`](./catalog_localai_settings_mobile.rs) submodules. |
 | `crates/openhuman-core/src/platform/about_app/catalog_tests.rs` | Sibling test module (`#[path]`-included by `catalog.rs`) covering catalog behavior. |
 
 ## Public surface
 
-Re-exported from `mod.rs`:
+Re-exported from [`mod.rs`](./mod.rs):
 
 - **Catalog reads** (`catalog`): `all_capabilities()`, `capabilities_by_category(CapabilityCategory)`, `lookup(&str)`, `search(&str)`.
 - **Ops** (`ops`): `list_capabilities(Option<CapabilityCategory>) -> Outcome<Vec<Capability>>`, `lookup_capability(&str) -> Result<Outcome<Capability>, String>`, `search_capabilities(&str) -> Outcome<Vec<Capability>>`.
@@ -71,9 +71,16 @@ No dependencies on other `openhuman` domains: capability metadata for other doma
 
 ## Notes / gotchas
 
-- **`privacy: None` means "unknown", not "safe"** (per `types.rs` doc). UI must not treat an unannotated capability as local-only.
+- **`privacy: None` means "unknown", not "safe"** (per [`types.rs`](./types.rs) doc). UI must not treat an unannotated capability as local-only.
 - Adding/renaming/removing a user-facing feature requires editing `CAPABILITIES`: this is the capability catalog that CLAUDE.md's "Capability catalog" rule points at. Keep ids stable; duplicate or empty ids panic at first catalog access via `ensure_validated`.
 - Privacy constants encode real third-party destinations (Hugging Face, GitHub Releases, Composio `backend.composio.dev`, SearXNG, configured embedding providers, ElevenLabs, etc.): the inline comments document why several were corrected away from the generic `DERIVED_TO_BACKEND` / `LOCAL_CREDENTIALS` defaults; mirror that diligence when adding network-touching capabilities.
 - `Capability` fields are all `&'static str` / copy types, so `Capability` is `Copy` and the read APIs cheaply return owned `Vec`s by copying.
-- A capability's `domain` is a free-text label and does not always equal its `category` wire name (e.g. `embeddings`, `wallet`, `runtime_python`, `devices`, `desktop_companion`, `security`, `tools`, `memory`).
+- A capability's `domain` is a free-text label and does not always equal its `category` wire name (e.g. `embeddings`, `wallet`, `local_ai`, `devices`, `desktop_companion`, `security`, `tools`, `memory`).
 - `CapabilityCategory::FromStr` is lenient (case-insensitive, accepts `local-ai`/`local ai`/`localai` aliases); `as_str` emits the canonical snake_case wire name used by serde.
+
+## Further reading
+
+- [Parent module (`platform`)](../README.md)
+- [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)
+- [Tauri shell architecture](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [Architecture overview](../../../../../docs/gitbooks/en/developing/architecture.md)

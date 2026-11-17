@@ -2,22 +2,23 @@
 //!
 //! [`classify_failure`] is pure so the routing can be tested without a server.
 //! Whether an error is a session expiry is core's call
-//! ([`openhuman_core::core::session_expiry`]); this module only decides how
+//! (`openhuman::core::observability::is_session_expired_error`, extended by
+//! the predicate the TinyHumans layer installs); this module only decides how
 //! loudly the transport reports it.
 
-use openhuman_core::core::session_expiry::is_session_expired_error;
+use crate::core_host::core::observability::is_session_expired_error;
 
 /// Returns `true` when the error is the wallet's "not configured yet" message.
 ///
 /// Wallet-backed RPCs return
-/// [`openhuman_core::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE`] before
+/// `openhuman::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE` before
 /// setup. That is expected user state, not an internal failure.
 ///
 /// Matched against the shared wallet constant (exact equality) so a wording
 /// change in the wallet layer fails the coupling test in `classify_tests.rs`
 /// rather than silently letting the noise back into Sentry.
 pub(super) fn is_wallet_not_configured_error(msg: &str) -> bool {
-    msg == openhuman_core::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE
+    msg == crate::core_host::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE
 }
 
 /// How the `/rpc` handler reports a failed call, in priority order.
@@ -62,6 +63,14 @@ pub(super) enum FailureDisposition {
     /// error message (CodeRabbit on #4153), so the handler replaces it with
     /// [`USAGE_BACKOFF_CLIENT_MESSAGE`].
     UsageProbeBackoff,
+    /// A native module failed to load earlier in this process and the cached
+    /// failure is being returned again. tinybus never unloads a library, so
+    /// the outcome cannot change before a restart; the load failure itself was
+    /// reported once when the module resolved
+    /// (`modules::ops::report_resolution_failure`). Re-reporting it on every
+    /// call was the TAURI-RUST-117K flood (~1M events). Core's
+    /// `ExpectedErrorKind::ModuleUnavailable` decides what qualifies.
+    ModuleUnavailable,
     /// A downstream call (backend_api / integrations / provider) already
     /// demoted the underlying transient failure to a warn. Re-reporting at
     /// error level would re-create the Sentry noise the lower-layer demote was
@@ -95,25 +104,29 @@ pub(super) const USAGE_BACKOFF_CLIENT_MESSAGE: &str =
 /// The order is significant: the first matching rule wins, exactly as the
 /// handler's `if`/`else` chain did before it was extracted.
 pub(super) fn classify_failure(message: &str, expected_user_state: bool) -> FailureDisposition {
-    use openhuman_core::core::observability;
+    use crate::core_host::core::observability;
 
     if expected_user_state {
         FailureDisposition::ExpectedUserState
     } else if is_wallet_not_configured_error(message) {
         FailureDisposition::WalletNotConfigured
-    } else if openhuman_core::core::params::is_param_validation_error(message) {
+    } else if crate::core_host::core::params::is_param_validation_error(message) {
         FailureDisposition::ParamValidation
     } else if is_session_expired_error(message) {
         FailureDisposition::SessionExpired
     } else if observability::is_suppressed_usage_probe_backoff(message) {
         FailureDisposition::UsageProbeBackoff
+    } else if observability::expected_error_kind(message)
+        == Some(observability::ExpectedErrorKind::ModuleUnavailable)
+    {
+        FailureDisposition::ModuleUnavailable
     } else if observability::is_transient_message_failure(message) {
         FailureDisposition::TransientDownstream
     } else if let Some(unknown_method) =
-        openhuman_core::core::dispatch::unknown_method_name(message)
+        crate::core_host::core::dispatch::unknown_method_name(message)
     {
         FailureDisposition::UnknownMethod {
-            probe: openhuman_core::core::dispatch::is_known_probe_method(unknown_method),
+            probe: crate::core_host::core::dispatch::is_known_probe_method(unknown_method),
         }
     } else {
         FailureDisposition::Unexpected

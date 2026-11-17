@@ -28,7 +28,7 @@
 use crate::env_guard::EnvVarGuard;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use axum::http::header::AUTHORIZATION;
@@ -67,7 +67,8 @@ fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
 async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await
+        .lock()
+        .await
 }
 
 fn ensure_rpc_auth() {
@@ -248,7 +249,7 @@ fn error_message(value: &Value, context: &str) -> String {
 
 /// `session_import.run` over a seeded legacy `session_raw/` directory:
 /// dry-run plans without writing, the real run imports, and a second run is
-/// idempotent because the item ledger says the work is done.
+/// idempotent because the per-workspace marker says the work is done.
 #[tokio::test]
 async fn session_import_plans_imports_then_skips_on_rerun() {
     let _lock = env_lock_async().await;
@@ -300,33 +301,29 @@ async fn session_import_plans_imports_then_skips_on_rerun() {
     )
     .await;
     let planned = payload(&planned, "session_import_run dry");
+    // Since the storage ports (#7686) the run imports into the storage backend
+    // through TinyAgents' legacy reader and reports per domain
+    // (`agent/session_import/schemas.rs`): a dry run lists the legacy sources
+    // it found and imports nothing.
     assert_eq!(planned.get("dry_run").and_then(Value::as_bool), Some(true));
     assert_eq!(
-        planned.get("scanned").and_then(Value::as_u64),
-        Some(1),
-        "the seeded transcript must be discovered: {planned}"
+        planned
+            .pointer("/sources/session_raw")
+            .and_then(Value::as_bool),
+        Some(true),
+        "the seeded transcript directory must be discovered: {planned}"
     );
     assert_eq!(
-        planned.get("messages_written").and_then(Value::as_u64),
+        planned
+            .get("imports")
+            .and_then(Value::as_array)
+            .map(Vec::len),
         Some(0),
-        "a dry run writes no messages: {planned}"
+        "a dry run imports nothing: {planned}"
     );
-    let planned_item = planned
-        .get("items")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .unwrap_or_else(|| panic!("dry run must report the item: {planned}"))
-        .clone();
-    assert_eq!(
-        planned_item.get("action").and_then(Value::as_str),
-        Some("would_import"),
-        "dry-run action: {planned_item}"
-    );
-    // A dry run must not write the global marker either — proved below by the
-    // real run still having work to do. Asserting on the store *directory* would
-    // be wrong: `run_import` opens the stores before it decides to plan only.
 
-    // ── real run: writes the messages into the TinyAgents store ──
+    // ── real run: writes the transcript into the storage backend ──
+    // It still has work to do, which also proves the dry run wrote no marker.
     let imported = rpc(
         &harness.rpc_base,
         31_002,
@@ -339,49 +336,14 @@ async fn session_import_plans_imports_then_skips_on_rerun() {
         imported.get("dry_run").and_then(Value::as_bool),
         Some(false)
     );
+    // `found`/`written` count transcripts: the one seeded file is written.
     assert_eq!(
-        imported.get("imported").and_then(Value::as_u64),
-        Some(1),
-        "one source imported: {imported}"
-    );
-    assert_eq!(
-        imported.get("failed").and_then(Value::as_u64),
-        Some(0),
-        "no failures: {imported}"
-    );
-    assert_eq!(
-        imported.get("messages_written").and_then(Value::as_u64),
-        Some(4),
-        "the four message lines are written; the `_meta` header is not a message: {imported}"
-    );
-    let item = imported
-        .get("items")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .unwrap_or_else(|| panic!("the real run must report the item: {imported}"))
-        .clone();
-    assert_eq!(item.get("action").and_then(Value::as_str), Some("imported"));
-    assert_eq!(
-        item.get("messages").and_then(Value::as_u64),
-        Some(4),
-        "the per-item count must agree with the run total: {item}"
-    );
-    assert_eq!(
-        item.get("thread_id").and_then(Value::as_str),
-        Some("e2e-session-import-thread"),
-        "the thread id must come from the transcript's `_meta`, not be synthesized: {item}"
-    );
-    assert_eq!(
-        item.get("stream").and_then(Value::as_str),
-        Some("session.20260907_capitals.messages"),
-        "messages go to a per-session journal stream named from the stem: {item}"
-    );
-    assert!(
-        harness.workspace.join("tinyagents_store").exists(),
-        "the real run must create the store"
+        sessions_outcome(&imported),
+        "Imported { found: 1, written: 1 }",
+        "the seeded transcript must be imported: {imported}"
     );
 
-    // ── re-run: idempotent ──
+    // ── re-run: idempotent, short-circuited by the per-workspace marker ──
     let again = rpc(
         &harness.rpc_base,
         31_003,
@@ -391,17 +353,31 @@ async fn session_import_plans_imports_then_skips_on_rerun() {
     .await;
     let again = payload(&again, "session_import_run rerun");
     assert_eq!(
-        again.get("messages_written").and_then(Value::as_u64),
-        Some(0),
-        "a second run must write nothing: {again}"
-    );
-    assert!(
-        again.get("already_done").and_then(Value::as_bool) == Some(true)
-            || again.get("skipped").and_then(Value::as_u64) == Some(1),
-        "the re-run must be short-circuited by the marker or the item ledger: {again}"
+        sessions_outcome(&again),
+        "AlreadyDone",
+        "a second run must be short-circuited by the marker: {again}"
     );
 
     harness.join.abort();
+}
+
+/// The `sessions` domain's outcome in a `session_import_run` result, as the
+/// handler renders it (`format!("{outcome:?}")`); an import error fails here.
+fn sessions_outcome(result: &Value) -> String {
+    let entry = result
+        .get("imports")
+        .and_then(Value::as_array)
+        .and_then(|imports| {
+            imports
+                .iter()
+                .find(|i| i.get("domain").and_then(Value::as_str) == Some("sessions"))
+        })
+        .unwrap_or_else(|| panic!("no sessions import reported: {result}"));
+    entry
+        .get("outcome")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("the sessions import failed: {entry}"))
+        .to_string()
 }
 
 /// Failure path: `dry_run` is declared `Option<Bool>` in the schema, so the

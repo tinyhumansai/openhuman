@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_env::env_lock;
 
 #[test]
 fn main_window_centering_only_follows_failed_restore_and_maximize() {
@@ -7,12 +8,6 @@ fn main_window_centering_only_follows_failed_restore_and_maximize() {
     assert!(!should_center_main_window(false, false, true));
     assert!(should_center_main_window(false, false, false));
 }
-
-// Tests that read/write process-global env vars must serialize through this
-// mutex. Rust's test runner executes tests in parallel by default; without
-// coordination, concurrent set_var / remove_var calls race and produce
-// spurious failures.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // NOTE: `is_daemon_mode_detects_daemon_flag` removed (plan.md §2.1) — it
 // discarded the result with `let _` and asserted nothing.
@@ -52,7 +47,7 @@ fn restore_command_preserves_minimized_and_maximized_frames() {
 /// the embedded port — is unchanged and still lives in that function.
 #[test]
 fn core_rpc_url_returns_expected_format() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let original = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
 
     std::env::set_var("OPENHUMAN_CORE_RPC_URL", "http://localhost:9999/rpc");
@@ -62,30 +57,6 @@ fn core_rpc_url_returns_expected_format() {
     std::env::remove_var("OPENHUMAN_CORE_RPC_URL");
     let url = crate::core_rpc::core_rpc_url_value();
     assert_eq!(url, "http://127.0.0.1:7788/rpc");
-
-    match original {
-        Some(v) => std::env::set_var("OPENHUMAN_CORE_RPC_URL", v),
-        None => std::env::remove_var("OPENHUMAN_CORE_RPC_URL"),
-    }
-}
-
-/// Test overlay_parent_rpc_url handles empty env var
-#[test]
-fn overlay_parent_rpc_url_handles_empty() {
-    let _g = ENV_LOCK.lock().unwrap();
-    let original = std::env::var("OPENHUMAN_CORE_RPC_URL").ok();
-
-    std::env::set_var("OPENHUMAN_CORE_RPC_URL", "");
-    assert!(overlay_parent_rpc_url().is_none());
-
-    std::env::set_var("OPENHUMAN_CORE_RPC_URL", "   ");
-    assert!(overlay_parent_rpc_url().is_none());
-
-    std::env::set_var("OPENHUMAN_CORE_RPC_URL", "http://127.0.0.1:7788/rpc");
-    assert_eq!(
-        overlay_parent_rpc_url(),
-        Some("http://127.0.0.1:7788/rpc".to_string())
-    );
 
     match original {
         Some(v) => std::env::set_var("OPENHUMAN_CORE_RPC_URL", v),
@@ -656,7 +627,7 @@ fn sentry_release_tag_is_nonempty() {
 
 #[test]
 fn sentry_environment_reads_openhuman_app_env() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let key = "OPENHUMAN_APP_ENV";
     let original = std::env::var(key).ok();
     std::env::set_var(key, "staging");
@@ -670,7 +641,7 @@ fn sentry_environment_reads_openhuman_app_env() {
 
 #[test]
 fn sentry_environment_trims_whitespace_from_openhuman_app_env() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let key = "OPENHUMAN_APP_ENV";
     let original = std::env::var(key).ok();
     std::env::set_var(key, "  dev  ");
@@ -684,7 +655,7 @@ fn sentry_environment_trims_whitespace_from_openhuman_app_env() {
 
 #[test]
 fn sentry_environment_skips_empty_openhuman_app_env() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let key = "OPENHUMAN_APP_ENV";
     let original = std::env::var(key).ok();
     std::env::set_var(key, "");
@@ -699,7 +670,7 @@ fn sentry_environment_skips_empty_openhuman_app_env() {
 
 #[test]
 fn sentry_environment_skips_whitespace_only_openhuman_app_env() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let key = "OPENHUMAN_APP_ENV";
     let original = std::env::var(key).ok();
     std::env::set_var(key, "   ");
@@ -716,7 +687,7 @@ fn sentry_environment_skips_whitespace_only_openhuman_app_env() {
 /// asserts the hard default when no compile-time override is present.
 #[test]
 fn sentry_environment_defaults_to_production_when_unset() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     if option_env!("VITE_OPENHUMAN_APP_ENV").is_some() {
         // A compile-time override is baked in; skip — the fallback path is
         // exercised by sentry_environment_skips_empty_openhuman_app_env.
@@ -738,6 +709,16 @@ fn sentry_environment_defaults_to_production_when_unset() {
 //    builds (issue OPENHUMAN-TAURI-V). Tests target the pure
 //    `message_is_localhost_dev_fetch_noise` helper so the rule can be
 //    asserted without standing up a Sentry client.
+//
+//    The filter now lives in embed's shared `before_send` chain, which this
+//    shell installs; these tests pin that the chain still carries the
+//    shell's rule, under its `localhost-dev-fetch` name.
+
+use openhuman_rpc::embed::process::sentry::message_is_localhost_dev_fetch_noise;
+
+fn event_is_localhost_dev_fetch_noise(event: &sentry::protocol::Event<'static>) -> bool {
+    openhuman_rpc::embed::process::sentry::known_noise(event) == Some("localhost-dev-fetch")
+}
 
 #[test]
 fn localhost_dev_fetch_noise_drops_vite_dev_url_1420() {
@@ -862,7 +843,7 @@ fn localhost_dev_fetch_noise_anchors_to_message_start() {
 #[cfg(target_os = "linux")]
 #[test]
 fn path_has_executable_finds_file_on_path() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let original = std::env::var_os("PATH");
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -886,7 +867,7 @@ fn path_has_executable_finds_file_on_path() {
 #[cfg(target_os = "linux")]
 #[test]
 fn path_has_executable_returns_false_when_missing() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let original = std::env::var_os("PATH");
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -909,7 +890,7 @@ fn path_has_executable_returns_false_when_missing() {
 #[cfg(target_os = "linux")]
 #[test]
 fn path_has_executable_returns_false_when_path_unset() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let original = std::env::var_os("PATH");
 
     std::env::remove_var("PATH");
@@ -936,7 +917,7 @@ fn path_has_executable_returns_false_when_path_unset() {
 #[cfg(target_os = "linux")]
 #[test]
 fn path_has_executable_returns_false_for_partial_xdg_utils_install() {
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = env_lock();
     let original = std::env::var_os("PATH");
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -992,4 +973,189 @@ fn single_instance_dep_enables_deep_link_feature() {
         "tauri-plugin-single-instance must enable the `deep-link` feature \
          (issue #2228 — hot-instance OAuth callback forwarding)"
     );
+}
+
+// Tauri checks every app command against `permissions/*.toml` once the app
+// ships its own permission files. A command that is registered in
+// `generate_handler!` but missing from every allow list is rejected at invoke
+// time with "<cmd> not allowed. Command not found" (#4950, `core_rpc_endpoint`,
+// the gateway picker). These tests pin the two lists to each other.
+
+/// Command names registered in `generate_handler![...]`, read from source so
+/// feature-gated commands are included whatever features this test runs with.
+fn registered_ipc_commands() -> std::collections::BTreeSet<String> {
+    let src = include_str!("lib.rs");
+    let start = src
+        .find("tauri::generate_handler![")
+        .expect("generate_handler! call in lib.rs");
+    let body = &src[start + "tauri::generate_handler![".len()..];
+    // Stop at the first line that closes the macro; `#[cfg(...)]` attributes
+    // inside it carry their own `]`.
+    body.lines()
+        .take_while(|line| !line.trim_start().starts_with(']'))
+        .map(|line| line.split("//").next().unwrap_or("").trim())
+        .filter(|line| !line.is_empty() && !line.starts_with("#["))
+        .flat_map(|line| line.split(','))
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.rsplit("::").next().unwrap_or(item).to_string())
+        .collect()
+}
+
+/// Command names allowed by any app permission file, and the permission
+/// identifiers those files define.
+fn allowed_ipc_commands() -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("permissions");
+    let mut commands = std::collections::BTreeSet::new();
+    let mut identifiers = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(&dir).expect("read permissions dir") {
+        let path = entry.expect("permissions dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read permission file");
+        let doc: toml::Value = toml::from_str(&text).expect("parse permission file");
+        for perm in doc["permission"].as_array().expect("[[permission]] array") {
+            identifiers.insert(perm["identifier"].as_str().unwrap().to_string());
+            let allow = perm["commands"]["allow"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            commands.extend(allow.iter().map(|c| c.as_str().unwrap().to_string()));
+        }
+    }
+    (commands, identifiers)
+}
+
+#[test]
+fn every_registered_ipc_command_is_allowed_by_a_permission() {
+    let registered = registered_ipc_commands();
+    assert!(
+        registered.contains("core_rpc_endpoint") && registered.len() > 40,
+        "generate_handler! parse looks wrong: {registered:?}"
+    );
+    let (allowed, _) = allowed_ipc_commands();
+    let missing: Vec<_> = registered.difference(&allowed).collect();
+    assert!(
+        missing.is_empty(),
+        "registered in generate_handler! but not allowed by any permissions/*.toml, \
+         so every invoke is rejected: {missing:?}"
+    );
+}
+
+#[test]
+fn every_allowed_ipc_command_is_registered() {
+    let registered = registered_ipc_commands();
+    let (allowed, _) = allowed_ipc_commands();
+    let stale: Vec<_> = allowed.difference(&registered).collect();
+    assert!(
+        stale.is_empty(),
+        "allowed in permissions/*.toml but not registered in generate_handler!: {stale:?}"
+    );
+}
+
+#[test]
+fn removed_shell_ptt_and_dictation_commands_are_not_registered() {
+    let registered = registered_ipc_commands();
+    let removed = [
+        "register_dictation_hotkey",
+        "unregister_dictation_hotkey",
+        "register_ptt_hotkey",
+        "unregister_ptt_hotkey",
+        "show_ptt_overlay",
+        "activate_main_window",
+        "overlay_parent_rpc_url",
+    ];
+    for command in removed {
+        assert!(
+            !registered.contains(command),
+            "removed command {command} is still registered in generate_handler!"
+        );
+    }
+}
+
+#[test]
+fn capabilities_reference_only_defined_app_permissions() {
+    let (_, identifiers) = allowed_ipc_commands();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+    for entry in std::fs::read_dir(&dir).expect("read capabilities dir") {
+        let path = entry.expect("capabilities dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read capability file");
+        let doc: serde_json::Value = serde_json::from_str(&text).expect("parse capability");
+        for perm in doc["permissions"].as_array().expect("permissions array") {
+            let id = perm
+                .as_str()
+                .or_else(|| perm["identifier"].as_str())
+                .expect("permission identifier");
+            // Plugin permissions are namespaced (`core:...`, `opener:...`).
+            if !id.contains(':') {
+                assert!(
+                    identifiers.contains(id),
+                    "{} references undefined app permission {id}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn exit_event_after_exit_requested_returns_to_the_event_loop() {
+    // Normal quits run ExitRequested first; tao then exits on its own.
+    assert!(!must_terminate_after_exit_event(true, true));
+    assert!(!must_terminate_after_exit_event(true, false));
+}
+
+#[test]
+fn exit_event_without_exit_requested_terminates_on_windows_only() {
+    // WM_ENDSESSION: LoopDestroyed fires while tao's message loop keeps
+    // running, so the next event would panic "cannot move state from
+    // Destroyed" (#8505).
+    assert!(must_terminate_after_exit_event(false, true));
+    // Other platforms leave the loop before LoopDestroyed fires.
+    assert!(!must_terminate_after_exit_event(false, false));
+}
+
+#[tokio::test(start_paused = true)]
+async fn session_end_stops_the_core_before_a_hung_gateway_cleanup_and_bounds_it() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let core_stopped = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::clone(&core_stopped);
+    let observed = Arc::clone(&core_stopped);
+    let started = tokio::time::Instant::now();
+    let finished = session_end_teardown(
+        async move { stopped.store(true, Ordering::SeqCst) },
+        async move {
+            // The core must already be stopped when gateway cleanup starts.
+            assert!(observed.load(Ordering::SeqCst));
+            std::future::pending::<()>().await
+        },
+        SESSION_END_GATEWAY_BUDGET,
+    )
+    .await;
+
+    assert!(core_stopped.load(Ordering::SeqCst));
+    assert!(!finished, "a hung gateway cleanup is abandoned");
+    assert_eq!(started.elapsed(), SESSION_END_GATEWAY_BUDGET);
+    // Inside Windows' few-second session-end window.
+    assert!(SESSION_END_GATEWAY_BUDGET < std::time::Duration::from_secs(5));
+}
+
+#[tokio::test(start_paused = true)]
+async fn session_end_reports_a_gateway_cleanup_that_finishes_in_time() {
+    let finished = session_end_teardown(
+        async {},
+        tokio::time::sleep(std::time::Duration::from_millis(100)),
+        SESSION_END_GATEWAY_BUDGET,
+    )
+    .await;
+    assert!(finished);
 }

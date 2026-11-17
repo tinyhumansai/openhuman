@@ -1,5 +1,7 @@
 use super::*;
 use chrono::{Datelike, Duration};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use tempfile::TempDir;
 
 fn enabled_config() -> CostConfig {
@@ -11,7 +13,7 @@ fn enabled_config() -> CostConfig {
 
 /// A managed-backend tier slug — spend on this route is billed to OpenHuman
 /// credits and so is the only kind the local budget may gate (#5016).
-const MANAGED_MODEL: &str = "chat-v1";
+const MANAGED_MODEL: &str = "openrouter/test/managed-model";
 
 /// A bring-your-own-key model id, as reported in #5016 (OpenRouter). Spend
 /// here is billed by the user's own provider and must never gate a request.
@@ -355,13 +357,16 @@ fn get_dashboard_budget_status_warning_and_exceeded() {
         monthly_limit_usd: 100.0,
         ..Default::default()
     };
-    let tracker = CostTracker::new(config.clone(), tmp.path()).unwrap();
+    let tracker = CostTracker::new(config, tmp.path()).unwrap();
     let warn_dash = tracker.get_dashboard("USD", 0.8, 0.95).unwrap();
     assert_eq!(warn_dash.budget_status, BudgetStatus::Warning);
 
-    write_raw_record(tmp.path(), &dated_record("s1", MANAGED_MODEL, 15.0, today));
-    let tracker2 = CostTracker::new(config, tmp.path()).unwrap();
-    let alert_dash = tracker2.get_dashboard("USD", 0.8, 0.95).unwrap();
+    // The legacy ledger is imported once, so the next spend goes through the
+    // tracker like any other.
+    tracker
+        .record_usage_unconditional(dated_record("s1", MANAGED_MODEL, 15.0, today).usage)
+        .unwrap();
+    let alert_dash = tracker.get_dashboard("USD", 0.8, 0.95).unwrap();
     assert_eq!(alert_dash.budget_status, BudgetStatus::Exceeded);
     assert!((alert_dash.budget_utilization - 1.0).abs() < f64::EPSILON);
 }
@@ -564,4 +569,54 @@ fn empty_ledger_sums_are_not_negative_zero() {
     assert!(dashboard.period_total_usd.is_sign_positive());
     assert!(dashboard.monthly_pace_usd.is_sign_positive());
     assert!(!serde_json::to_string(&dashboard).unwrap().contains("-0.0"));
+}
+
+#[test]
+fn the_ledger_dispatches_to_documents_when_a_backend_is_pinned() {
+    use crate::storage::Scope;
+    let storage = crate::storage::test_support::memory_backend();
+    let docs_for = |scope: &str| {
+        super::super::tracker_documents::CostDocs::over(
+            &storage.for_scope(&Scope::new(scope).unwrap()).unwrap(),
+        )
+    };
+    let tmp = TempDir::new().unwrap();
+    let tracker = CostTracker::new(enabled_config(), tmp.path()).unwrap();
+
+    super::super::tracker_documents::with_override(docs_for("alice"), || {
+        tracker
+            .record_usage(TokenUsage::new(MANAGED_MODEL, 1000, 500, 1.0, 2.0))
+            .unwrap();
+        tracker
+            .record_usage(TokenUsage::new(BYOK_MODEL, 100, 50, 1.0, 2.0))
+            .unwrap();
+        let summary = tracker.get_summary().unwrap();
+        assert!(summary.daily_cost_usd > 0.0);
+        assert_eq!(summary.request_count, 2);
+        let now = Utc::now();
+        assert!(tracker.get_daily_cost(now.date_naive()).unwrap() > 0.0);
+        assert!(tracker.get_monthly_cost(now.year(), now.month()).unwrap() > 0.0);
+        assert!(
+            tracker
+                .get_managed_monthly_cost(now.year(), now.month())
+                .unwrap()
+                > 0.0
+        );
+        assert_eq!(tracker.get_recent_records(1, 10).unwrap().len(), 2);
+    });
+
+    // Another agent's scope starts empty: the period totals are not a shared cache.
+    super::super::tracker_documents::with_override(docs_for("bob"), || {
+        let summary = tracker.get_summary().unwrap();
+        assert_eq!(summary.daily_cost_usd, 0.0);
+        assert!(tracker.get_recent_records(1, 10).unwrap().is_empty());
+    });
+
+    // Nothing reached the JSONL file.
+    assert!(
+        !tmp.path().join("state/costs.jsonl").exists()
+            || std::fs::read_to_string(tmp.path().join("state/costs.jsonl"))
+                .unwrap()
+                .is_empty()
+    );
 }

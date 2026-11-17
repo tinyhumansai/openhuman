@@ -613,6 +613,20 @@ describe('saveAISettings', () => {
     expect(patch.cloud_providers![0]).not.toHaveProperty('has_api_key');
   });
 
+  it('saves an edited provider CA certificate even when the endpoint is unchanged', async () => {
+    const prev = makeSettings();
+    const next = makeSettings({
+      cloudProviders: [
+        { ...prev.cloudProviders[0], ca_cert_pem: '-----BEGIN CERTIFICATE-----\nCA' },
+      ],
+    });
+
+    await saveAISettings(prev, next);
+
+    const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
+    expect(patch.cloud_providers?.[0].ca_cert_pem).toBe('-----BEGIN CERTIFICATE-----\nCA');
+  });
+
   it('preserves local runtime providers in the cloud_providers payload', async () => {
     const prev = makeSettings({ cloudProviders: [] });
     const next = makeSettings({

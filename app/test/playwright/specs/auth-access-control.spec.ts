@@ -20,7 +20,7 @@ interface MockRequest {
   body?: string;
 }
 
-/** `AuthStateResponse` (`crates/openhuman-core/src/security/credentials/responses.rs`). */
+/** `AuthStateResponse` (`crates/openhuman-core/src/credentials/responses.rs`). */
 interface AuthState {
   isAuthenticated: boolean;
   userId?: string | null;

@@ -1,5 +1,6 @@
 //! RPC handler implementations for keyring consent.
 
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 
 use super::policy;
@@ -18,7 +19,10 @@ pub async fn keyring_status() -> Result<Outcome<KeyringStatus>, String> {
     Ok(Outcome::single_log(status, "keyring status fetched"))
 }
 
-pub async fn keyring_consent_decide(mode: String) -> Result<Outcome<ConsentPreference>, String> {
+pub async fn keyring_consent_decide(
+    ctx: &DispatchCtx,
+    mode: String,
+) -> Result<Outcome<ConsentPreference>, String> {
     if mode != "local_encrypted" && mode != "declined" {
         return Err(format!(
             "invalid mode '{mode}': expected 'local_encrypted' or 'declined'"
@@ -31,7 +35,7 @@ pub async fn keyring_consent_decide(mode: String) -> Result<Outcome<ConsentPrefe
 
     // Persist to disk first. If this fails we return an error without
     // updating the cache, so cache and disk stay consistent.
-    persist_consent(&pref).await?;
+    persist_consent(ctx, &pref).await?;
 
     // Only update the in-memory cache after a successful persist.
     policy::apply_consent(&pref);
@@ -51,12 +55,12 @@ pub async fn keyring_retry_probe() -> Result<Outcome<KeyringStatus>, String> {
     ))
 }
 
-async fn persist_consent(pref: &ConsentPreference) -> Result<(), String> {
+async fn persist_consent(ctx: &DispatchCtx, pref: &ConsentPreference) -> Result<(), String> {
     let patch = crate::desktop::app_state::StoredAppStatePatch {
         keyring_consent: Some(Some(pref.clone())),
         ..Default::default()
     };
-    crate::desktop::app_state::update_local_state(patch).await?;
+    crate::desktop::app_state::update_local_state(ctx, patch).await?;
     log::debug!("{LOG_PREFIX} consent persisted to app state");
     Ok(())
 }

@@ -16,10 +16,14 @@ import {
   ToolGroupTrigger,
 } from '@/components/assistant-ui/elements/tool-group';
 import { OpenHumanReasoningGroup } from '@/components/assistant-ui/reasoning-group';
+import { formatElapsed } from '@/components/assistant-ui/utils/task';
+import { useT } from '@/lib/i18n/I18nContext';
 import { type MessagePrimitive, useAuiState } from '@assistant-ui/react';
 import { type FC, type PropsWithChildren, useState } from 'react';
 
 export type ActivityGroupPart = MessagePrimitive.GroupedParts.GroupPart;
+
+type Translate = (key: string) => string;
 
 /**
  * Trigger text for a run of reasoning and tool calls.
@@ -27,12 +31,32 @@ export type ActivityGroupPart = MessagePrimitive.GroupedParts.GroupPart;
  * Tool calls are what the reader counts; reasoning is either there or not, so
  * it is named rather than counted. The group only exists when it holds at
  * least one of the two, so the empty fallback is never shown in practice.
+ *
+ * `workedMs`, when known, turns a settled group into OpenClaw's turn receipt:
+ * "Worked for 42s · 3 tool calls".
  */
-export function activityGroupLabel(reasoningCount: number, toolCount: number): string {
-  const tools = toolCount > 0 ? `${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}` : null;
-  if (reasoningCount > 0 && tools) return `Reasoning · ${tools}`;
-  if (reasoningCount > 0) return 'Reasoning';
-  return tools ?? 'Activity';
+export function activityGroupLabel(
+  reasoningCount: number,
+  toolCount: number,
+  t: Translate,
+  workedMs?: number
+): string {
+  const tools =
+    toolCount > 0
+      ? t(toolCount === 1 ? 'chat.tools.callOne' : 'chat.tools.callOther').replace(
+          '{count}',
+          String(toolCount)
+        )
+      : null;
+  if (workedMs !== undefined && tools) {
+    return t('chat.tools.workedFor')
+      .replace('{duration}', formatElapsed(workedMs))
+      .replace('{calls}', tools);
+  }
+  if (reasoningCount > 0 && tools)
+    return t('chat.tools.reasoningWithCalls').replace('{calls}', tools);
+  if (reasoningCount > 0) return t('chat.tools.reasoning');
+  return tools ?? t('chat.tools.activity');
 }
 
 /**
@@ -73,6 +97,18 @@ export const ActivityGroup: FC<PropsWithChildren<{ group: ActivityGroupPart }>> 
   const requiresAction = useAuiState(s =>
     indices.some(i => s.message.parts[i]?.status?.type === 'requires-action')
   );
+  // The turn's wall time (`chat_done.timing.total_ms`), credited to this group
+  // only when it holds every tool call in the message: a message with several
+  // activity groups cannot say which share of the time each one took.
+  const messageToolCount = useAuiState(
+    s => s.message.parts.filter(part => part?.type === 'tool-call').length
+  );
+  const totalStreamTime = useAuiState(
+    s =>
+      (s.message.metadata as { timing?: { totalStreamTime?: number } } | undefined)?.timing
+        ?.totalStreamTime
+  );
+  const { t } = useT();
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
 
   const running = group.status.type === 'running' || isTail;
@@ -88,7 +124,12 @@ export const ActivityGroup: FC<PropsWithChildren<{ group: ActivityGroupPart }>> 
     <ToolGroupRoot variant="ghost" open={userOpen ?? live} onOpenChange={setUserOpen}>
       <ToolGroupTrigger
         count={toolCount}
-        label={activityGroupLabel(reasoningCount, toolCount)}
+        label={activityGroupLabel(
+          reasoningCount,
+          toolCount,
+          t,
+          !live && toolCount === messageToolCount ? totalStreamTime : undefined
+        )}
         active={running}
       />
       <ToolGroupContent>{children}</ToolGroupContent>

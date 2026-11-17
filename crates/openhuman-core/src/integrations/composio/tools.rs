@@ -1,5 +1,5 @@
-//! Agent-facing tools that proxy through the openhuman backend's
-//! `/agent-integrations/composio/*` routes.
+//! Agent-facing tools that proxy through the managed backend's
+//! composio routes.
 //!
 //! These expose Composio capabilities to the autonomous agent loop
 //! (discovery + execution) and to the CLI/RPC surface via the normal
@@ -33,7 +33,8 @@ mod list_tools;
 mod live_config;
 mod redact;
 mod registry;
-mod visibility;
+mod render;
+mod scope_gate;
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ mod tests;
 
 pub use execute::ComposioExecuteTool;
 pub(crate) use live_config::live_composio_config;
-pub(crate) use redact::redact_composio_outcome;
+pub(crate) use redact::{composio_call_keys, redact_composio_outcome, redact_composio_response};
 pub use registry::all_composio_agent_tools;
 
 // Brought into this module's own namespace (private `use`, not `pub use`)
@@ -51,23 +52,25 @@ pub use registry::all_composio_agent_tools;
 // — can still reach these via a plain `use super::*;`, exactly as when
 // this was one un-split file. See each item's `pub(super)` in its owning
 // submodule.
-pub(crate) use visibility::{action_mutates_external_state, resolve_action_scope};
+#[cfg(test)]
+pub(crate) use connect::canonicalize_toolkit_slug;
+pub(crate) use scope_gate::{action_mutates_external_state, resolve_action_scope};
 
 pub use authorize::ComposioAuthorizeTool;
 #[cfg(test)]
 use connect::{
-    canonicalize_toolkit_slug, connection_is_active, parse_composio_connect_timeout,
-    ComposioConnectTool, DEFAULT_COMPOSIO_CONNECT_TIMEOUT_SECS,
+    composio_connect_tool_timeout, connection_is_active, parse_composio_connect_timeout,
+    remaining_park_bound, ComposioConnectTool, DEFAULT_COMPOSIO_CONNECT_TIMEOUT_SECS,
 };
 pub use list_connections::ComposioListConnectionsTool;
 pub use list_toolkits::ComposioListToolkitsTool;
 pub use list_tools::ComposioListToolsTool;
 #[cfg(test)]
-use tinytools::Tool;
-#[cfg(test)]
-use tinytools::{PermissionLevel, ToolCategory};
-#[cfg(test)]
-use visibility::{
+use render::{
     empty_uncurated_toolkits_message, normalized_scope_toolkits, render_tools_markdown,
     retain_connected_tools,
 };
+#[cfg(test)]
+use tinytools::Tool;
+#[cfg(test)]
+use tinytools::{PermissionLevel, ToolCategory};

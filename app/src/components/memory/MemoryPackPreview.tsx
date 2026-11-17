@@ -22,8 +22,9 @@ import {
   memoryPolicyGet,
   type PackPreview,
 } from '../../services/api/memoryApi';
-import { Alert, AlertDescription, Badge, Button, Card, Label, NativeSelect, TextArea } from '../ui';
+import { Badge, Button, Card, Label, NativeSelect, TextArea } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import { fill } from './memoryFormat';
 
 const log = debug('openhuman:memory:pack');
@@ -127,11 +128,7 @@ export default function MemoryPackPreview() {
         </form>
       </Card>
 
-      {error !== null && (
-        <Alert variant="destructive" data-testid="memory-pack-error">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error !== null && <MemoryErrorAlert message={error} data-testid="memory-pack-error" />}
 
       {busy && <CenteredLoadingState label={t('memoryPage.pack.building')} />}
 

@@ -1,132 +1,98 @@
-//! `plan_exit` — signal the end of a plan-mode pass.
-//!
-//! Coding-harness baseline tool (issue #1205). When a plan-mode agent
-//! is ready to hand off to an execution-mode agent, it calls
-//! `plan_exit { plan }`. The tool returns a structured marker AND flips the
-//! calling thread's `RunMode` (`agent::tinyagents::run_mode::set_mode`) back
-//! to `Build`, so the very next tool exposure/execution check on that thread
-//! sees every tool again — the actual gating lives in
-//! `PlanModeMiddleware` (wired per-turn in `harness_assembly.rs`), not here;
-//! this tool only flips the live handle the middleware reads.
-//!
-//! Threadless callers (no `ToolRunContext::thread_id`, e.g. a test double or
-//! a run with no thread identity) have no per-thread mode to flip — the
-//! marker is still returned so the plan text is not lost.
+//! OpenHuman's tenant-aware adapter for the harness-owned `plan_exit` tool.
 
-use async_trait::async_trait;
-use serde_json::json;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolRunContext};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
-/// Stable marker the harness greps for to detect a plan→build hand-off.
-pub const PLAN_EXIT_MARKER: &str = "[plan_exit]";
+use tinyagents_harness::middleware::RunModeHandle;
+use tinyagents_harness_tools::run_mode::RunModeStore;
+use tinyagents_harness_tools::{ParkedPlanReviewLookup, PlanExitHost};
+use tinytools::{Tool, ToolRunContext};
 
-pub struct PlanExitTool;
+#[derive(Clone)]
+struct PlanExitScope {
+    context: crate::core::runtime::DispatchCtx,
+    tenant: crate::core::runtime::Tenant,
+    valid: bool,
+}
 
-impl PlanExitTool {
-    pub fn new() -> Self {
-        Self
+impl PartialEq for PlanExitScope {
+    fn eq(&self, other: &Self) -> bool {
+        self.valid == other.valid && self.tenant == other.tenant
     }
 }
 
-impl Default for PlanExitTool {
-    fn default() -> Self {
-        Self::new()
+impl Eq for PlanExitScope {}
+
+impl Hash for PlanExitScope {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.valid.hash(state);
+        self.tenant.hash(state);
     }
 }
 
-#[async_trait]
-impl Tool for PlanExitTool {
-    fn name(&self) -> &str {
-        "plan_exit"
+struct OpenHumanPlanExitHost;
+
+impl PlanExitHost for OpenHumanPlanExitHost {
+    type Scope = PlanExitScope;
+
+    fn scope_and_thread(&self, context: &dyn ToolRunContext) -> (Self::Scope, String) {
+        let dispatch =
+            crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(Some(context));
+        let tenant = dispatch.tenant();
+        let (tenant, valid) = match tenant {
+            Ok(tenant) => (tenant, true),
+            Err(_) => (crate::core::runtime::Tenant::default(), false),
+        };
+        let scope = PlanExitScope {
+            context: dispatch,
+            tenant,
+            valid,
+        };
+        (scope, context.thread_id().unwrap_or_default().to_owned())
+    }
+}
+
+struct OpenHumanRunModes;
+
+impl RunModeStore<PlanExitScope> for OpenHumanRunModes {
+    fn handle_for_thread(&self, scope: &PlanExitScope, thread_id: &str) -> RunModeHandle {
+        crate::threads::run_mode::handle_for_thread(&scope.context, thread_id)
     }
 
-    fn description(&self) -> &str {
-        "Exit plan mode and hand off the plan to execution. Call this once \
-         the plan is complete — the wrapped harness will switch to build \
-         mode (when wired). The `plan` argument is the user-facing plan \
-         text that downstream agents will execute against."
-    }
-
-    fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "plan": {
-                    "type": "string",
-                    "description": "Markdown-formatted plan text to hand off."
-                }
-            },
-            "required": ["plan"]
-        })
-    }
-
-    fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::None
-    }
-
-    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        self.execute_in_context(args, None).await
-    }
-
-    async fn execute_with_context(
+    fn get_mode(
         &self,
-        args: serde_json::Value,
-        _options: ToolCallOptions,
-        context: Option<&dyn ToolRunContext>,
-    ) -> anyhow::Result<ToolResult> {
-        self.execute_in_context(args, context).await
+        scope: &PlanExitScope,
+        thread_id: &str,
+    ) -> tinyagents_harness::middleware::RunMode {
+        crate::threads::run_mode::get_mode(&scope.context, thread_id)
+    }
+
+    fn set_mode(
+        &self,
+        scope: &PlanExitScope,
+        thread_id: &str,
+        mode: tinyagents_harness::middleware::RunMode,
+    ) {
+        if scope.valid && !thread_id.is_empty() {
+            crate::threads::run_mode::set_mode(&scope.context, thread_id, mode);
+        }
     }
 }
 
-impl PlanExitTool {
-    async fn execute_in_context(
-        &self,
-        args: serde_json::Value,
-        context: Option<&dyn ToolRunContext>,
-    ) -> anyhow::Result<ToolResult> {
-        let plan = args
-            .get("plan")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'plan' parameter"))?;
-        let trimmed = plan.trim();
-        if trimmed.is_empty() {
-            return Ok(ToolResult::error("`plan` must not be empty"));
-        }
-        if let Some(thread_id) = context.and_then(ToolRunContext::thread_id) {
-            // Only flip to Build when there is no plan review still parked on
-            // this thread. A review resolves (approve/reject/revise) before
-            // `request_plan_review` returns control to the agent, so by the
-            // time a well-behaved agent calls `plan_exit` after an approval
-            // the review is already gone from the gate's parked map — this
-            // check is a no-op there. It only matters for a mis-timed or
-            // concurrent `plan_exit` call that races a still-pending review:
-            // flipping the mode early would unlock every tool for the thread
-            // before the user has actually approved anything.
-            if crate::agent::plan_review::gate::global()
-                .parked_review_for_thread(thread_id)
-                .is_some()
-            {
-                tracing::warn!(
-                    thread_id = %thread_id,
-                    "[tool][plan_exit] a plan review is still parked on this thread — not flipping to build"
-                );
-            } else {
-                tracing::info!(
-                    thread_id = %thread_id,
-                    "[tool][plan_exit] flipping thread run mode to build"
-                );
-                crate::agent::tinyagents::run_mode::set_mode(
-                    thread_id,
-                    tinyagents_harness::middleware::RunMode::Build,
-                );
-            }
-        } else {
-            tracing::debug!("[tool][plan_exit] no thread id on this run context — nothing to flip");
-        }
-        Ok(ToolResult::success(format!(
-            "{PLAN_EXIT_MARKER}\n{trimmed}"
-        )))
+struct OpenHumanParkedReviews;
+
+impl ParkedPlanReviewLookup<PlanExitScope> for OpenHumanParkedReviews {
+    fn has_parked_review(&self, scope: &PlanExitScope, thread_id: &str) -> bool {
+        scope.valid && crate::plan_review::host::has_parked_review(&scope.tenant, thread_id)
     }
+}
+
+pub(crate) fn plan_exit_tool() -> impl Tool {
+    tinyagents_harness_tools::PlanExitTool::new(
+        Arc::new(OpenHumanPlanExitHost),
+        Arc::new(OpenHumanRunModes),
+        Some(Arc::new(OpenHumanParkedReviews)),
+    )
 }
 
 #[cfg(test)]

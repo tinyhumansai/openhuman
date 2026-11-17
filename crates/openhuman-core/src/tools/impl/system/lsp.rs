@@ -97,7 +97,7 @@ impl Tool for LspTool {
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         Ok(ToolResult::error(
-            "lsp backend not yet implemented — capability gate is on but no language server is wired. Track this in the follow-up issue."
+            "lsp backend not yet implemented — capability gate is on but no language server is wired. Track this in the follow-up issue.",
         ))
     }
 }

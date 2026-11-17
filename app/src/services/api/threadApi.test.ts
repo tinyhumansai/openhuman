@@ -58,6 +58,26 @@ describe('threadApi', () => {
     expect(result).toEqual(message);
   });
 
+  it('searches message text across threads', async () => {
+    const hit = {
+      threadId: 't1',
+      messageId: 'm1',
+      role: 'user',
+      snippet: '…the quarterly plan…',
+      createdAt: '2026-04-10T12:00:00Z',
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: { hits: [hit] } });
+
+    const { threadApi } = await import('./threadApi');
+    const result = await threadApi.searchMessages('plan', 10);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.threads_search',
+      params: { query: 'plan', limit: 10 },
+    });
+    expect(result).toEqual([hit]);
+  });
+
   it('folds the legacy `assistant` sender onto `agent` when listing messages (#5933)', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({
       data: {

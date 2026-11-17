@@ -1,3 +1,5 @@
+use crate::core::runtime::DispatchCtx;
+use crate::util::params::required_string;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -5,11 +7,12 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::execution::{
-    balances, chain_status, execute_prepared, lookup_tx, network_defaults, prepare_transfer,
-    supported_assets, tx_receipt, tx_status, ExecutePreparedParams, PrepareTransferParams,
+    balances, chain_status, encode_erc20_transfer, execute_prepared, lookup_tx, network_defaults,
+    prepare_transfer, supported_assets, tx_receipt, tx_status, ExecutePreparedParams,
+    PrepareTransferParams,
 };
 use super::ops::{WalletAccount, WalletSetupParams, WalletSetupSource};
-use super::{encode_erc20_transfer, EvmNetwork, WalletChain};
+use super::{EvmNetwork, WalletChain};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +45,17 @@ struct EncodeErc20TransferParams {
     amount_raw: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerateMnemonicParams {
+    word_count: u8,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecoveryPhraseParams {
+    phrase: String,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     all_wallet_controller_schemas()
 }
@@ -69,11 +83,21 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
         wallet_schemas("tx_receipt"),
         wallet_schemas("lookup_tx"),
         wallet_schemas("reveal_recovery_phrase"),
+        wallet_schemas("generate_mnemonic"),
+        wallet_schemas("validate_mnemonic"),
+        wallet_schemas("derive_recovery_material"),
+        wallet_schemas("token_balances"),
+        wallet_schemas("policy_get"),
+        wallet_schemas("policy_update"),
+        wallet_schemas("ledger_list"),
+        wallet_schemas("account"),
+        wallet_schemas("prepare_program"),
+        wallet_schemas("execute_prepared_program"),
     ]
 }
 
 pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
-    vec![
+    let mut controllers = vec![
         RegisteredController {
             schema: wallet_schemas("status"),
             handler: handle_status,
@@ -126,7 +150,37 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
             schema: wallet_schemas("reveal_recovery_phrase"),
             handler: handle_reveal_recovery_phrase,
         },
-    ]
+        RegisteredController {
+            schema: wallet_schemas("generate_mnemonic"),
+            handler: handle_generate_mnemonic,
+        },
+        RegisteredController {
+            schema: wallet_schemas("validate_mnemonic"),
+            handler: handle_validate_mnemonic,
+        },
+        RegisteredController {
+            schema: wallet_schemas("derive_recovery_material"),
+            handler: handle_derive_recovery_material,
+        },
+        RegisteredController {
+            schema: wallet_schemas("token_balances"),
+            handler: handle_token_balances,
+        },
+        RegisteredController {
+            schema: wallet_schemas("policy_get"),
+            handler: handle_policy_get,
+        },
+        RegisteredController {
+            schema: wallet_schemas("policy_update"),
+            handler: handle_policy_update,
+        },
+        RegisteredController {
+            schema: wallet_schemas("ledger_list"),
+            handler: handle_ledger_list,
+        },
+    ];
+    controllers.extend(super::program::schemas::registered());
+    controllers
 }
 
 pub fn wallet_schemas(function: &str) -> ControllerSchema {
@@ -349,6 +403,97 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "generate_mnemonic" => ControllerSchema {
+            namespace: "wallet",
+            function: "generate_mnemonic",
+            description: "Generate a recovery phrase inside the TinyWallet module.",
+            inputs: vec![required_json("wordCount", "BIP-39 word count: 12, 15, 18, 21, or 24.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Generated recovery phrase and word count.",
+                required: true,
+            }],
+        },
+        "validate_mnemonic" => ControllerSchema {
+            namespace: "wallet",
+            function: "validate_mnemonic",
+            description: "Validate a recovery phrase in the TinyWallet module.",
+            inputs: vec![required_string("phrase", "Recovery phrase to validate.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Whether the phrase is valid BIP-39 input.",
+                required: true,
+            }],
+        },
+        "derive_recovery_material" => ControllerSchema {
+            namespace: "wallet",
+            function: "derive_recovery_material",
+            description: "Derive the host storage-key seed and public wallet accounts through TinyWallet.",
+            inputs: vec![required_string("phrase", "Recovery phrase to derive wallet setup material from.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Seed bytes for the OpenHuman storage-key KDF and derived public chain accounts.",
+                required: true,
+            }],
+        },
+        "token_balances" => ControllerSchema {
+            namespace: "wallet",
+            function: "token_balances",
+            description: "List catalogued token balances for the wallet accounts: today the configured Solana cluster's USDC SPL mint, summed over the owner's token accounts. A row whose providerStatus is missing could not be read and shows zero.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of {chain, evmNetwork?, address, assetSymbol, tokenAddress, decimals, raw, formatted, providerStatus}.",
+                required: true,
+            }],
+        },
+        "policy_get" => ControllerSchema {
+            namespace: "wallet",
+            function: "policy_get",
+            description: "Read the effective native-wallet spend policy ([wallet_policy] plus env overrides): whether trusted automation may execute transfers, whether caps also apply to interactive executes, and the per-asset allowlist with per-transaction, rolling-24h and per-recipient rolling-7-day caps in atomic units.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{automation_enabled, apply_to_interactive, assets: [{chain, symbol, evm_network?, token_address?, per_tx_max_raw?, daily_max_raw?, recipient_weekly_max_raw?}]}.",
+                required: true,
+            }],
+        },
+        "policy_update" => ControllerSchema {
+            namespace: "wallet",
+            function: "policy_update",
+            description: "Update and persist the native-wallet spend policy. Absent fields keep their value; assets replaces the whole list. Environment overrides still win at the next load.",
+            inputs: vec![
+                optional_json("automationEnabled", "Optional boolean: allow trusted automation to execute transfers within the caps."),
+                optional_json("applyToInteractive", "Optional boolean: also cap interactive (UI / approved chat) executes."),
+                optional_json("assets", "Optional array of asset caps; replaces the list. Each {chain, symbol, evm_network?, token_address?, per_tx_max_raw?, daily_max_raw?, recipient_weekly_max_raw?}."),
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "The updated policy.",
+                required: true,
+            }],
+        },
+        "ledger_list" => ControllerSchema {
+            namespace: "wallet",
+            function: "ledger_list",
+            description: "List recent native-wallet execute records from the persistent spend ledger, newest first: pending, broadcast, in_doubt (never retried) and refused.",
+            inputs: vec![optional_json("limit", "Optional number of records (default 50, max 500).")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of {id, quoteId, createdAtMs, updatedAtMs, origin, originClass, policyApplied, chain, evmNetwork?, assetSymbol, tokenAddress?, toAddress, amountRaw, status, transactionHash?, error?}.",
+                required: true,
+            }],
+        },
+        "account" | "prepare_program" | "execute_prepared_program" => {
+            super::program::schemas::schema(function)
+        }
         _ => ControllerSchema {
             namespace: "wallet",
             function: "unknown",
@@ -364,111 +509,196 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_status(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        crate::web3::wallet::status()
+        crate::web3::wallet::status(&ctx)
             .await?
             .into_cli_compatible_json()
     })
 }
 
-fn handle_setup(params: Map<String, Value>) -> ControllerFuture {
+fn handle_setup(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: SetupWalletParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        crate::web3::wallet::setup(WalletSetupParams {
-            consent_granted: payload.consent_granted,
-            source: payload.source,
-            mnemonic_word_count: payload.mnemonic_word_count,
-            encrypted_mnemonic: Some(payload.encrypted_mnemonic),
-            accounts: payload.accounts,
-            force: payload.force,
-        })
+        crate::web3::wallet::setup(
+            &ctx,
+            WalletSetupParams {
+                consent_granted: payload.consent_granted,
+                source: payload.source,
+                mnemonic_word_count: payload.mnemonic_word_count,
+                encrypted_mnemonic: Some(payload.encrypted_mnemonic),
+                accounts: payload.accounts,
+                force: payload.force,
+            },
+        )
         .await?
         .into_cli_compatible_json()
     })
 }
 
-fn handle_balances(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { balances().await?.into_cli_compatible_json() })
+fn handle_balances(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { balances(&ctx).await?.into_cli_compatible_json() })
 }
 
-fn handle_network_defaults(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { network_defaults().await?.into_cli_compatible_json() })
+fn handle_network_defaults(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { network_defaults(&ctx).await?.into_cli_compatible_json() })
 }
 
-fn handle_supported_assets(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { supported_assets().await?.into_cli_compatible_json() })
+fn handle_supported_assets(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { supported_assets(&ctx).await?.into_cli_compatible_json() })
 }
 
-fn handle_encode_erc20_transfer(params: Map<String, Value>) -> ControllerFuture {
+fn handle_encode_erc20_transfer(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: EncodeErc20TransferParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         if parsed.chain != WalletChain::Evm {
             return Err("encode_erc20_transfer only supports the evm chain".to_string());
         }
-        serde_json::to_value(encode_erc20_transfer(
-            &parsed.to_address,
-            &parsed.amount_raw,
-        )?)
+        serde_json::to_value(
+            encode_erc20_transfer(&ctx, &parsed.to_address, &parsed.amount_raw).await?,
+        )
         .map_err(|e| format!("failed to encode ERC20 transfer output: {e}"))
     })
 }
 
-fn handle_chain_status(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { chain_status().await?.into_cli_compatible_json() })
+fn handle_chain_status(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { chain_status(&ctx).await?.into_cli_compatible_json() })
 }
 
-fn handle_prepare_transfer(params: Map<String, Value>) -> ControllerFuture {
+fn handle_prepare_transfer(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: PrepareTransferParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        prepare_transfer(parsed).await?.into_cli_compatible_json()
+        prepare_transfer(&ctx, parsed, None)
+            .await?
+            .into_cli_compatible_json()
     })
 }
 
-fn handle_execute_prepared(params: Map<String, Value>) -> ControllerFuture {
+fn handle_execute_prepared(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: ExecutePreparedParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        execute_prepared(parsed).await?.into_cli_compatible_json()
-    })
-}
-
-fn handle_tx_status(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let parsed: TxQueryParams = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("invalid params: {e}"))?;
-        tx_status(parsed.chain, parsed.evm_network, &parsed.hash)
+        execute_prepared(&ctx, parsed, None)
             .await?
             .into_cli_compatible_json()
     })
 }
 
-fn handle_tx_receipt(params: Map<String, Value>) -> ControllerFuture {
+fn handle_tx_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: TxQueryParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        tx_receipt(parsed.chain, parsed.evm_network, &parsed.hash)
+        tx_status(&ctx, parsed.chain, parsed.evm_network, &parsed.hash)
             .await?
             .into_cli_compatible_json()
     })
 }
 
-fn handle_lookup_tx(params: Map<String, Value>) -> ControllerFuture {
+fn handle_tx_receipt(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: TxQueryParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        lookup_tx(parsed.chain, parsed.evm_network, &parsed.hash)
+        tx_receipt(&ctx, parsed.chain, parsed.evm_network, &parsed.hash)
             .await?
             .into_cli_compatible_json()
     })
 }
 
-fn handle_reveal_recovery_phrase(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_lookup_tx(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        crate::web3::wallet::reveal_recovery_phrase()
+        let parsed: TxQueryParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        lookup_tx(&ctx, parsed.chain, parsed.evm_network, &parsed.hash)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_reveal_recovery_phrase(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        crate::web3::wallet::reveal_recovery_phrase(&ctx)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_generate_mnemonic(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: GenerateMnemonicParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        crate::web3::wallet::generate_recovery_phrase(&ctx, parsed.word_count)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_validate_mnemonic(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: RecoveryPhraseParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        crate::web3::wallet::validate_recovery_phrase(&ctx, parsed.phrase)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_derive_recovery_material(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: RecoveryPhraseParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        crate::web3::wallet::derive_recovery_material(&ctx, parsed.phrase)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_token_balances(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        crate::web3::wallet::token_balances(&ctx)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_policy_get(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        super::policy_ops::policy_get(&ctx)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_policy_update(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let patch: super::policy_ops::WalletPolicyPatch =
+            serde_json::from_value(Value::Object(params))
+                .map_err(|e| format!("invalid params: {e}"))?;
+        super::policy_ops::policy_update(&ctx, patch)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct LedgerListParams {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+fn handle_ledger_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: LedgerListParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        super::policy_ops::ledger_list(&ctx, parsed.limit)
             .await?
             .into_cli_compatible_json()
     })
@@ -495,6 +725,15 @@ fn required_json(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Json,
         comment,
         required: true,
+    }
+}
+
+fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+        comment,
+        required: false,
     }
 }
 

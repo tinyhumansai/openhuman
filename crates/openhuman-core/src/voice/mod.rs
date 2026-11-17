@@ -1,8 +1,7 @@
 //! Voice domain — hosted speech-to-text and text-to-speech (local piper / hosted).
 //!
 //! Provides RPC endpoints under the `openhuman.voice_*` namespace for
-//! transcription, synthesis, proactive availability checking, and a
-//! standalone voice dictation server (hotkey → record → transcribe → insert).
+//! transcription, synthesis, and proactive availability checking.
 //!
 //! Reusable inference mechanics live in `tinyinference-voice`; this module
 //! binds them to OpenHuman configuration, authentication, providers, RPC,
@@ -11,14 +10,11 @@
 //! ## Compile-time gate (`voice` feature)
 //!
 //! `pub mod voice;` is ALWAYS compiled — it is a facade. The real
-//! implementation (the submodules below)
-//! is gated behind the default-ON `voice` Cargo feature. When the feature is
-//! off, [`stub`] takes its place and exposes the same public surface that
-//! always-on / other-gated callers depend on (`server`, `dictation_listener`,
-//! `streaming`, `reply_speech`, `cloud_transcribe`, `create_stt_provider`,
-//! `effective_stt_provider`, `publish_ptt_transcript_committed`) with
-//! no-op / disabled-error bodies. Keeping the two surfaces in lockstep is
-//! enforced by the disabled-build check
+//! implementation (the submodules below) is gated behind the `voice` Cargo
+//! feature. When the feature is off, [`stub`] takes its place and exposes the
+//! same public surface that other-gated callers depend on (`create_stt_provider`
+//! and `effective_stt_provider`) with no-op / disabled-error bodies. Keeping
+//! the two surfaces in lockstep is enforced by the disabled-build check
 //! (`cargo check --no-default-features --features "<all-but-voice>"`): any
 //! signature drift fails that build.
 
@@ -29,74 +25,37 @@ pub mod compile_status;
 pub use compile_status::VOICE_COMPILED_IN;
 
 #[cfg(feature = "voice")]
-pub mod always_on;
-#[cfg(feature = "voice")]
-pub mod audio_capture;
-/// Podcast generation + email delivery (`audio_toolkit` RPC namespace). Part of
-/// the voice family: it is compiled out with the same `voice` gate.
-#[cfg(feature = "voice")]
-pub mod audio_toolkit;
-#[cfg(feature = "voice")]
-pub mod bus;
-#[cfg(feature = "voice")]
-pub use bus::publish_ptt_transcript_committed;
-#[cfg(feature = "voice")]
-pub(crate) mod cli;
-#[cfg(feature = "voice")]
-pub mod dictation_listener;
-#[cfg(feature = "voice")]
 pub mod factory;
 #[cfg(feature = "voice")]
-pub mod hotkey;
+pub mod live;
 #[cfg(feature = "voice")]
 mod ops;
 #[cfg(feature = "voice")]
-pub mod realtime;
-#[cfg(feature = "voice")]
 pub mod realtime_harness;
-#[cfg(feature = "voice")]
-pub mod reply_speech;
+pub mod reply_synthesis;
 #[cfg(feature = "voice")]
 mod schemas;
-#[cfg(feature = "voice")]
-pub mod server;
 #[cfg(feature = "voice")]
 mod types;
 
 #[cfg(feature = "voice")]
-pub mod cloud_transcribe;
-#[cfg(feature = "voice")]
 pub mod local_speech;
 #[cfg(feature = "voice")]
 pub mod postprocess;
-// `streaming` (the dictation WebSocket handler) is axum-only, so it is compiled
-// only when BOTH `voice` and `http-server` are on (#5048). With `http-server`
-// off, its sole caller (the gated core HTTP router) is absent too, so nothing
-// needs `voice::streaming`.
-#[cfg(all(feature = "voice", feature = "http-server"))]
-pub mod streaming;
-
 #[cfg(feature = "voice")]
 pub use factory::{
-    create_stt_provider, create_tts_provider, default_stt_provider, default_tts_provider,
-    effective_stt_provider, effective_tts_provider, ExternalSttProvider, ExternalTtsProvider,
-    SttProvider, SttResult, TtsProvider, DEFAULT_PIPER_VOICE, DEFAULT_STT_MODEL,
+    create_stt_provider, create_tts_provider, effective_stt_provider, effective_tts_provider,
+    ExternalSttProvider, ExternalTtsProvider, SttProvider, SttResult, TtsProvider,
+    DEFAULT_PIPER_VOICE, DEFAULT_STT_MODEL,
 };
 #[cfg(feature = "voice")]
 pub use ops::*;
 #[cfg(feature = "voice")]
+pub(crate) use schemas::all_voice_controller_entries;
+#[cfg(feature = "voice")]
 pub use schemas::{all_voice_controller_schemas, all_voice_registered_controllers, voice_schemas};
 #[cfg(feature = "voice")]
 pub use types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
-
-/// Default model id sent to the backend cloud STT proxy. Kept
-/// here (rather than in `cloud_transcribe.rs`) so the factory module can
-/// reach it via the public `voice::` surface without re-exporting an
-/// internal constant.
-#[cfg(feature = "voice")]
-pub(crate) fn cloud_transcribe_default_model() -> &'static str {
-    "whisper-v1"
-}
 
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `voice` feature is OFF.
@@ -106,3 +65,6 @@ pub(crate) fn cloud_transcribe_default_model() -> &'static str {
 mod stub;
 #[cfg(not(feature = "voice"))]
 pub use stub::*;
+
+#[cfg(all(test, feature = "voice"))]
+pub(crate) use schemas::parameter_contracts;

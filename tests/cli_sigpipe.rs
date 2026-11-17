@@ -48,3 +48,146 @@ fn help_output_closed_pipe_does_not_panic() {
         output.status
     );
 }
+
+#[test]
+fn help_does_not_require_a_keyring_master_key() {
+    use std::process::Command;
+
+    let workspace = tempfile::tempdir().unwrap();
+    for args in [Vec::<&str>::new(), vec!["--help"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+            .args(args)
+            .current_dir(workspace.path())
+            .env("OPENHUMAN_WORKSPACE", workspace.path())
+            .env("OPENHUMAN_KEYRING_MASTER_KEY", "invalid")
+            .env_remove("OPENHUMAN_KEYRING_MASTER_KEY_FILE")
+            .env_remove("OPENHUMAN_APP_ENV")
+            .env_remove("OPENHUMAN_KEYRING_BACKEND")
+            .env_remove("OPENHUMAN_MODE")
+            .output()
+            .expect("run help-only CLI invocation");
+        assert!(
+            output.status.success(),
+            "help should not initialize the keyring: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn headless_default_keyring_stores_provider_secrets_encrypted() {
+    use std::process::Command;
+
+    let workspace = tempfile::tempdir().expect("temporary OpenHuman workspace");
+    // macOS exposes the system temporary directory through aliases under
+    // `/var`; the secrets driver deliberately refuses symlinked namespace
+    // components, so pass the canonical workspace path to the child.
+    let workspace_path = std::fs::canonicalize(workspace.path())
+        .expect("canonicalize temporary OpenHuman workspace");
+    let secret = "provider-secret-e2e";
+    let params = format!(r#"{{"provider":"openai","token":"{secret}"}}"#);
+    let output = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+        .args([
+            "call",
+            "--method",
+            "openhuman.auth_store_provider_credentials",
+            "--params",
+            &params,
+        ])
+        .current_dir(&workspace_path)
+        .env("OPENHUMAN_WORKSPACE", &workspace_path)
+        .env("OPENHUMAN_KEYRING_MASTER_KEY", "42".repeat(32))
+        .env_remove("OPENHUMAN_KEYRING_MASTER_KEY_FILE")
+        .env_remove("OPENHUMAN_APP_ENV")
+        .env_remove("OPENHUMAN_KEYRING_BACKEND")
+        .env_remove("OPENHUMAN_MODE")
+        .output()
+        .expect("run provider credential store command");
+    assert!(
+        output.status.success(),
+        "credential store failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Credential slots live in TinySecurity's sealed `secrets.enc` store by
+    // default (docs/gitbooks/en/features/os-keyring-and-secret-storage.md),
+    // not as `enc2:` documents in the storage backend. Assert the property:
+    // the plaintext is nowhere under the workspace, and a non-empty sealed
+    // secret store is.
+    let files = files_under(&workspace_path);
+    let mut saw_encrypted_record = false;
+    for path in &files {
+        let bytes = std::fs::read(path).expect("read workspace file");
+        assert!(
+            !bytes
+                .windows(secret.len())
+                .any(|window| window == secret.as_bytes()),
+            "provider secret stored in plaintext at {}",
+            path.display()
+        );
+        saw_encrypted_record |=
+            path.file_name().is_some_and(|name| name == "secrets.enc") && !bytes.is_empty();
+    }
+    assert!(
+        saw_encrypted_record,
+        "no encrypted secret record under the workspace; files: {files:?}"
+    );
+
+    // And the stored credential reads back in a fresh process.
+    let listed = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+        .args([
+            "call",
+            "--method",
+            "openhuman.auth_list_provider_credentials",
+            "--params",
+            r#"{"provider":"openai"}"#,
+        ])
+        .current_dir(&workspace_path)
+        .env("OPENHUMAN_WORKSPACE", &workspace_path)
+        .env("OPENHUMAN_KEYRING_MASTER_KEY", "42".repeat(32))
+        .env_remove("OPENHUMAN_KEYRING_MASTER_KEY_FILE")
+        .env_remove("OPENHUMAN_APP_ENV")
+        .env_remove("OPENHUMAN_KEYRING_BACKEND")
+        .env_remove("OPENHUMAN_MODE")
+        .output()
+        .expect("run provider credential list command");
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    let listing: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    // The profile must come back with its token, not just its metadata: a lost
+    // token still lists the profile with `hasToken: false`.
+    assert!(
+        listed.status.success() && lists_openai_token(&listing),
+        "stored credential not read back with its token: stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+}
+
+/// Whether `value` holds the `openai` profile summary with its token present.
+fn lists_openai_token(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            (map.get("provider").and_then(serde_json::Value::as_str) == Some("openai")
+                && map.get("hasToken").and_then(serde_json::Value::as_bool) == Some(true))
+                || map.values().any(lists_openai_token)
+        }
+        serde_json::Value::Array(items) => items.iter().any(lists_openai_token),
+        _ => false,
+    }
+}
+
+/// Every regular file under `root`, recursively.
+fn files_under(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read workspace dir") {
+            let path = entry.expect("workspace dir entry").path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    files
+}

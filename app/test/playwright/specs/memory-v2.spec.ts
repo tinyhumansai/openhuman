@@ -62,7 +62,28 @@ interface FakeOptions {
   importFound?: boolean;
   /** An earlier import stopped with this error (e.g. credits ran out) after 7 of 20 items. */
   importStoppedWith?: string;
+  /** An earlier import finished with this many items the engine refused. */
+  importFinishedWithFailed?: number;
+  /** `memory_migration_scan` finds legacy memory to move; `shared` when other accounts may share it. */
+  migration?: { shared: boolean };
+  /**
+   * Methods (without `openhuman.`) answered with a JSON-RPC error instead,
+   * shaped like the core's memory error (`data.code` / `data.kind`).
+   */
+  failWith?: Record<string, RpcFailure>;
 }
+
+interface RpcFailure {
+  code: string;
+  message: string;
+}
+
+/** The core's refusal for an exhausted credit balance (memory/error.rs). */
+const OUT_OF_CREDITS: RpcFailure = {
+  code: 'INSUFFICIENT_CREDITS',
+  message:
+    'insufficient credits: [USER_INSUFFICIENT_CREDITS] memory API recall: the account has insufficient credits (HTTP 402)',
+};
 
 interface RpcCall {
   method: string;
@@ -99,9 +120,25 @@ async function installMemoryFake(page: Page, opts: FakeOptions): Promise<MemoryF
   ];
   const sources: Array<Record<string, unknown>> = [];
   let nextId = 1;
+  let migrating = false;
+  let migrated = false;
   let importState = opts.importStoppedWith
-    ? { phase: 'error', imported: 7, total: 20, error: opts.importStoppedWith as string | null }
-    : { phase: 'idle', imported: 0, total: 0, error: null as string | null };
+    ? {
+        phase: 'error',
+        imported: 7,
+        total: 20,
+        error: opts.importStoppedWith as string | null,
+        failed: 0,
+      }
+    : opts.importFinishedWithFailed !== undefined
+      ? {
+          phase: 'done',
+          imported: 20 - opts.importFinishedWithFailed,
+          total: 20,
+          error: null as string | null,
+          failed: opts.importFinishedWithFailed,
+        }
+      : { phase: 'idle', imported: 0, total: 0, error: null as string | null, failed: 0 };
 
   const policy = {
     log_conversations: true,
@@ -273,16 +310,48 @@ async function installMemoryFake(page: Page, opts: FakeOptions): Promise<MemoryF
           : { found: false, counts: null };
       case 'memory_import_start':
         // A restart resumes from the persisted progress.
-        importState = { phase: 'running', imported: importState.imported, total: 20, error: null };
+        importState = {
+          phase: 'running',
+          imported: importState.imported,
+          total: 20,
+          error: null,
+          failed: 0,
+        };
+        return { state: importState };
+      case 'memory_import_retry_failed':
+        // The refused items go again; the next poll sees them stored.
+        importState = { ...importState, phase: 'running', error: null };
         return { state: importState };
       case 'memory_import_status': {
         const current = importState;
         // A running import finishes on the next poll, so the page walks
         // idle -> running -> done without the spec waiting on real work.
         if (importState.phase === 'running') {
-          importState = { phase: 'done', imported: 20, total: 20, error: null };
+          importState = { phase: 'done', imported: 20, total: 20, error: null, failed: 0 };
         }
         return { state: current };
+      }
+      case 'memory_migration_scan':
+        return {
+          needed: Boolean(opts.migration) && !migrated,
+          shared: Boolean(opts.migration?.shared),
+        };
+      case 'memory_migration_start':
+        // A shared tree is never taken without consent.
+        if (opts.migration?.shared && params.takeover !== true) {
+          return { state: { phase: 'idle', copied: 0 }, running: false, interrupted: false };
+        }
+        migrating = true;
+        return { state: { phase: 'copying', copied: 3 }, running: true, interrupted: false };
+      case 'memory_migration_status': {
+        // A running move finishes on the next poll.
+        if (migrating) {
+          migrating = false;
+          migrated = true;
+          return { state: { phase: 'copying', copied: 3 }, running: true, interrupted: false };
+        }
+        const phase = migrated ? 'cleaned' : 'idle';
+        return { state: { phase, copied: migrated ? 5 : 0 }, running: false, interrupted: false };
       }
       default:
         return undefined;
@@ -304,6 +373,24 @@ async function installMemoryFake(page: Page, opts: FakeOptions): Promise<MemoryF
     }
     const method = full.slice('openhuman.'.length);
     const params = body.params ?? {};
+    const failure = opts.failWith?.[method];
+    if (failure) {
+      calls.push({ method, params });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: {
+            code: -32000,
+            message: failure.message,
+            data: { code: failure.code, kind: failure.code },
+          },
+        }),
+      });
+      return;
+    }
     const result = handle(method, params);
     if (result === undefined) {
       // Not part of the v2 surface: let the real core answer it.
@@ -341,27 +428,24 @@ async function openMemory(page: Page, query = '') {
 const hash = (page: Page) => page.evaluate(() => window.location.hash);
 
 test.describe('Memory v2 — engine active', () => {
-  test('lands on Ask and drives engine, ask, pack preview, learnings, brain and background', async ({
+  test('lands on Provider and drives engine, ask, pack preview, learnings, brain and background', async ({
     page,
   }) => {
     const fake = await installMemoryFake(page, { engineOn: true });
     await bootAuthenticatedPage(page, 'pw-memory-v2-active');
     await openMemory(page);
 
-    // 1. An active engine and no `?brain=` → the Ask chip.
-    await expect(page.getByTestId('brain-tab-ask')).toHaveAttribute('aria-selected', 'true', {
+    // 1. No `?brain=` → the Provider chip, even with an active engine:
+    // one CortexDB card, connected via TinyHumans.
+    await expect(page.getByTestId('brain-tab-engine')).toHaveAttribute('aria-selected', 'true', {
       timeout: 20_000,
     });
-    await expect(page.getByTestId('memory-ask-tab')).toBeVisible();
-
-    // Engine chip: the three CortexDB options, Built-in (tinyhumans) active.
-    await page.getByTestId('brain-tab-engine').click();
-    await expect.poll(() => hash(page)).toContain('brain=engine');
     await expect(page.getByTestId('memory-engines')).toBeVisible();
     await expect(page.getByTestId('memory-engine-builtin')).toBeVisible();
     await expect(page.getByTestId('memory-engine-apikey')).toBeVisible();
     await expect(page.getByTestId('memory-engine-selfhost')).toBeVisible();
-    await expect(page.getByTestId('memory-engine-builtin-active')).toBeVisible();
+    await expect(page.getByTestId('memory-engine-status')).toHaveText('In use');
+    await expect(page.getByTestId('memory-engine-chip-active-builtin')).toBeVisible();
 
     // 2. Ask: the recall answer and its citation render.
     await page.getByTestId('brain-tab-ask').click();
@@ -426,7 +510,7 @@ test.describe('Memory v2 — engine active', () => {
   test('importing previous memory needs explicit consent', async ({ page }) => {
     const fake = await installMemoryFake(page, { engineOn: true, importFound: true });
     await bootAuthenticatedPage(page, 'pw-memory-v2-import');
-    await openMemory(page, '&brain=ask');
+    await openMemory(page, '&brain=migration');
 
     // 6. The scan found v1 data: the banner offers it with the counts.
     const banner = page.getByTestId('memory-import-banner');
@@ -449,6 +533,36 @@ test.describe('Memory v2 — engine active', () => {
       page.getByTestId('memory-import-running').or(page.getByTestId('memory-import-done'))
     ).toBeVisible();
     await expect(page.getByTestId('memory-import-done')).toBeVisible({ timeout: 15_000 });
+
+    // The import lives on Migration only; other chips carry no banner.
+    await page.getByTestId('brain-tab-ask').click();
+    await expect(page.getByTestId('memory-ask-tab')).toBeVisible();
+    await expect(page.getByTestId('memory-import-banner')).toHaveCount(0);
+  });
+
+  test('a finished import retries the items it could not store', async ({ page }) => {
+    const fake = await installMemoryFake(page, {
+      engineOn: true,
+      importFound: true,
+      importFinishedWithFailed: 2,
+    });
+    await bootAuthenticatedPage(page, 'pw-memory-v2-import-retry');
+    await openMemory(page, '&brain=migration');
+
+    // Finished, with the refused items counted and a retry beside them.
+    await expect(page.getByTestId('memory-import-failed-items')).toContainText('imported: 2', {
+      timeout: 20_000,
+    });
+    await page.getByTestId('memory-import-retry-failed').click();
+    // The click resolves before the RPC reaches the fake: wait for it.
+    await expect.poll(() => fake.paramsOf('memory_import_retry_failed')).toEqual([{}]);
+    expect(fake.paramsOf('memory_import_start')).toEqual([]);
+
+    // Running, then done with nothing left to retry.
+    await expect(page.getByTestId('memory-import-done')).toContainText('20 of 20', {
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId('memory-import-retry-failed')).toHaveCount(0);
   });
 
   test('a stopped import resumes only after consent', async ({ page }) => {
@@ -460,7 +574,7 @@ test.describe('Memory v2 — engine active', () => {
       importStoppedWith: stopped,
     });
     await bootAuthenticatedPage(page, 'pw-memory-v2-import-resume');
-    await openMemory(page, '&brain=ask');
+    await openMemory(page, '&brain=migration');
 
     // The stopped import shows its reason and a Resume control, not the fresh offer.
     const failed = page.getByTestId('memory-import-error');
@@ -528,6 +642,11 @@ test.describe('Memory v2 — memory off', () => {
     await expect.poll(() => hash(page)).toContain('brain=engine');
     await expect(page.getByTestId('memory-engine-tab')).toBeVisible();
 
+    // Migration explains memory is off too, instead of offering an import.
+    await page.getByTestId('brain-tab-migration').click();
+    await expect(page.getByTestId('memory-migration-tab')).toBeVisible();
+    await expect(page.getByTestId('memory-off-state')).toBeVisible();
+
     // With memory off the page never offers an import or lists sources.
     expect(fake.paramsOf('memory_import_scan')).toEqual([]);
     expect(fake.paramsOf('memory_sources_list')).toEqual([]);
@@ -547,30 +666,29 @@ function sessionToken(userId: string, signature: string): string {
 }
 
 test.describe('Memory v2 — Engine tab connect flows', () => {
-  test('Built-in connects with one click when signed in', async ({ page }) => {
+  test('TinyHumans connects with one click when signed in', async ({ page }) => {
     const fake = await installMemoryFake(page, { engineOn: false });
     await bootAuthenticatedPage(page, 'pw-memory-engine-builtin');
     // Stay on Engine: with no `?brain=` the page moves to Ask once memory is on.
     await openMemory(page, '&brain=engine');
 
-    // Nothing connected: Built-in is open and selectable.
-    const use = page.getByTestId('memory-engine-builtin-use');
+    // Nothing connected: the card opens on TinyHumans, one click away.
+    const use = page.getByTestId('memory-engine-builtin-submit');
     await expect(use).toBeEnabled({ timeout: 20_000 });
     await use.click();
     await expect.poll(() => fake.paramsOf('memory_engine_set')).toEqual([{ engine: 'tinyhumans' }]);
-    await expect(page.getByTestId('memory-engine-builtin-active')).toHaveText('Active');
+    await expect(page.getByTestId('memory-engine-status')).toHaveText('In use');
+    await expect(page.getByTestId('memory-engine-chip-active-builtin')).toBeVisible();
   });
 
-  test('API key connects CortexDB cloud with only a key', async ({ page }) => {
+  test('CortexDB with your API key connects with only a key', async ({ page }) => {
     const fake = await installMemoryFake(page, { engineOn: false });
     await bootAuthenticatedPage(page, 'pw-memory-engine-apikey');
     // Stay on Engine: with no `?brain=` the page moves to Ask once memory is on.
     await openMemory(page, '&brain=engine');
 
-    await page.getByTestId('memory-engine-apikey-trigger').click();
-    await expect(page.getByTestId('memory-engine-apikey-trigger')).toContainText(
-      'https://api-v1.cortexdb.ai'
-    );
+    await page.getByTestId('memory-engine-apikey').click();
+    await expect(page.getByTestId('memory-engine-panel-apikey')).toBeVisible();
     const submit = page.getByTestId('memory-engine-apikey-submit');
     await expect(submit).toBeDisabled(); // a key is required
     await page.getByTestId('memory-engine-apikey-key').fill('pw-cortex-key');
@@ -579,16 +697,17 @@ test.describe('Memory v2 — Engine tab connect flows', () => {
     await expect
       .poll(() => fake.paramsOf('memory_engine_set'))
       .toEqual([{ engine: 'cortexdb', endpoint: '', api_key: 'pw-cortex-key' }]);
-    await expect(page.getByTestId('memory-engine-apikey-active')).toHaveText('Active');
+    await expect(page.getByTestId('memory-engine-status')).toHaveText('In use');
+    await expect(page.getByTestId('memory-engine-chip-active-apikey')).toBeVisible();
   });
 
-  test('Self-host refuses a non-local endpoint and connects a local one', async ({ page }) => {
+  test('CortexDB Local refuses a non-local endpoint and connects a local one', async ({ page }) => {
     const fake = await installMemoryFake(page, { engineOn: false });
     await bootAuthenticatedPage(page, 'pw-memory-engine-selfhost');
     // Stay on Engine: with no `?brain=` the page moves to Ask once memory is on.
     await openMemory(page, '&brain=engine');
 
-    await page.getByTestId('memory-engine-selfhost-trigger').click();
+    await page.getByTestId('memory-engine-selfhost').click();
     await expect(page.getByTestId('memory-engine-selfhost-docs')).toBeVisible();
     await page.getByTestId('memory-engine-selfhost-key').fill('pw-local-key');
 
@@ -609,10 +728,11 @@ test.describe('Memory v2 — Engine tab connect flows', () => {
       .toEqual([
         { engine: 'cortexdb', endpoint: 'http://localhost:3141', api_key: 'pw-local-key' },
       ]);
-    await expect(page.getByTestId('memory-engine-selfhost-active')).toHaveText('Active');
+    await expect(page.getByTestId('memory-engine-status')).toHaveText('In use');
+    await expect(page.getByTestId('memory-engine-chip-active-selfhost')).toBeVisible();
   });
 
-  test('Built-in is not selectable without a TinyHumans account', async ({ page }) => {
+  test('TinyHumans is not selectable without a TinyHumans account', async ({ page }) => {
     const fake = await installMemoryFake(page, { engineOn: false });
     // A "Set it up myself" (local) session that finished onboarding.
     await bootRuntimeReadyGuestPage(page);
@@ -633,12 +753,96 @@ test.describe('Memory v2 — Engine tab connect flows', () => {
     await dismissWalkthroughIfPresent(page);
     await expect(page.getByTestId('memory-page')).toBeVisible({ timeout: 30_000 });
 
-    await expect(page.getByTestId('memory-engine-builtin-trigger')).toContainText(
-      'Sign in to use',
-      { timeout: 20_000 }
-    );
-    await expect(page.getByTestId('memory-engine-builtin-sign-in')).toBeVisible();
-    await expect(page.getByTestId('memory-engine-builtin-use')).toBeDisabled();
+    await expect(page.getByTestId('memory-engine-builtin-sign-in')).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId('memory-engine-builtin-submit')).toBeDisabled();
     expect(fake.paramsOf('memory_engine_set')).toEqual([]);
+  });
+});
+
+test.describe('Memory v2 — out of credits', () => {
+  test('a recall out of credits prompts a top-up that lands on billing', async ({ page }) => {
+    const fake = await installMemoryFake(page, {
+      engineOn: true,
+      failWith: { memory_recall: OUT_OF_CREDITS },
+    });
+    await bootAuthenticatedPage(page, 'pw-memory-v2-credits-ask');
+    await openMemory(page);
+
+    await page.getByTestId('brain-tab-ask').click();
+    await page.getByTestId('memory-ask-input').fill('When does Atlas migrate?');
+    await page.getByTestId('memory-ask-submit').click();
+
+    // A prompt, not an error: warning variant, the top-up explanation, no raw 402.
+    const prompt = page.getByTestId('memory-ask-error');
+    await expect(prompt).toHaveAttribute('data-kind', 'out-of-credits', { timeout: 20_000 });
+    await expect(prompt).toHaveAttribute('data-variant', 'warning');
+    await expect(prompt).toContainText('Out of credits');
+    await expect(prompt).toContainText('nothing stored has been lost');
+    await expect(prompt).not.toContainText('HTTP 402');
+    expect(fake.paramsOf('memory_recall')).toEqual([{ question: 'When does Atlas migrate?' }]);
+
+    // Top up goes to the billing page.
+    await page.getByTestId('memory-top-up').click();
+    await expect.poll(() => hash(page)).toContain('#/settings/account');
+  });
+
+  test('the Explorer keeps Try again beside Top up', async ({ page }) => {
+    const fake = await installMemoryFake(page, {
+      engineOn: true,
+      failWith: { memory_explore: OUT_OF_CREDITS },
+    });
+    await bootAuthenticatedPage(page, 'pw-memory-v2-credits-explorer');
+    await openMemory(page, '&brain=explorer');
+
+    const prompt = page.getByTestId('memory-explorer-error');
+    await expect(prompt).toHaveAttribute('data-kind', 'out-of-credits', { timeout: 20_000 });
+    await expect(prompt.getByTestId('memory-top-up')).toBeVisible();
+    const retry = prompt.getByRole('button', { name: 'Try again' });
+    await expect(retry).toBeVisible();
+
+    // Try again re-runs the load (it fails again here: still out of credits).
+    const before = fake.paramsOf('memory_explore').length;
+    await retry.click();
+    await expect.poll(() => fake.paramsOf('memory_explore').length).toBeGreaterThan(before);
+    await expect(page.getByTestId('memory-explorer-error')).toHaveAttribute(
+      'data-kind',
+      'out-of-credits'
+    );
+  });
+});
+
+test.describe('Memory v2 — move into the per-user layout', () => {
+  test('migrate now moves the legacy memory and the banner goes away', async ({ page }) => {
+    const fake = await installMemoryFake(page, { engineOn: true, migration: { shared: false } });
+    await bootAuthenticatedPage(page, 'pw-memory-v2-migrate');
+    await openMemory(page, '&brain=migration');
+
+    await expect(page.getByTestId('memory-migration-offer')).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('memory-migration-start').click();
+    await expect.poll(() => fake.paramsOf('memory_migration_start')).toEqual([{ takeover: false }]);
+    await expect(page.getByTestId('memory-migration-banner')).toBeHidden({ timeout: 15_000 });
+  });
+
+  test('a tree other accounts may share is taken only after consent', async ({ page }) => {
+    const fake = await installMemoryFake(page, { engineOn: true, migration: { shared: true } });
+    await bootAuthenticatedPage(page, 'pw-memory-v2-migrate-takeover');
+    await openMemory(page, '&brain=migration');
+
+    await page.getByTestId('memory-migration-start').click({ timeout: 20_000 });
+    const takeover = page.getByTestId('memory-migration-takeover');
+    await expect(takeover).toBeVisible();
+    expect(fake.paramsOf('memory_migration_start')).toEqual([]);
+
+    await page.getByTestId('memory-migration-takeover-cancel').click();
+    await expect(takeover).toBeHidden();
+    expect(fake.paramsOf('memory_migration_start')).toEqual([]);
+
+    await page.getByTestId('memory-migration-start').click();
+    await page.getByTestId('memory-migration-takeover-confirm').click();
+    await expect(takeover).toBeHidden();
+    await expect.poll(() => fake.paramsOf('memory_migration_start')).toEqual([{ takeover: true }]);
+    await expect(page.getByTestId('memory-migration-banner')).toBeHidden({ timeout: 15_000 });
   });
 });

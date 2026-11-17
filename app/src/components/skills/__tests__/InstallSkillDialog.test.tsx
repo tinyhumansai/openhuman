@@ -20,6 +20,9 @@ vi.mock('../../../services/api/skillsApi', () => ({
   skillsApi: { installWorkflowFromUrl: vi.fn() },
 }));
 
+const submitButton = () =>
+  document.querySelector<HTMLButtonElement>('button[type="submit"]') as HTMLButtonElement;
+
 describe('InstallSkillDialog', () => {
   beforeEach(async () => {
     const { skillsApi } = await import('../../../services/api/skillsApi');
@@ -73,6 +76,7 @@ describe('InstallSkillDialog', () => {
   it('forwards timeoutSecs to skillsApi and fires onInstalled on success', async () => {
     const { skillsApi } = await import('../../../services/api/skillsApi');
     vi.mocked(skillsApi.installWorkflowFromUrl).mockResolvedValueOnce({
+      status: 'installed',
       url: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md',
       stdout: 'added my-skill',
       stderr: '',
@@ -107,6 +111,7 @@ describe('InstallSkillDialog', () => {
   it('omits timeoutSecs when field is blank', async () => {
     const { skillsApi } = await import('../../../services/api/skillsApi');
     vi.mocked(skillsApi.installWorkflowFromUrl).mockResolvedValueOnce({
+      status: 'installed',
       url: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md',
       stdout: '',
       stderr: '',
@@ -191,5 +196,82 @@ describe('InstallSkillDialog', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('URL form not supported');
     });
     expect(screen.getByRole('alert')).toHaveTextContent(/direct `?\.md`? links/i);
+  });
+
+  it('prompts when the scan blocks a pasted URL and installs only on Install anyway', async () => {
+    const { skillsApi } = await import('../../../services/api/skillsApi');
+    const onInstalled = vi.fn();
+    vi.mocked(skillsApi.installWorkflowFromUrl).mockResolvedValueOnce({
+      status: 'scan_blocked',
+      scan: {
+        target: 'https://example.com/SKILL.md',
+        fetchedFrom: 'https://example.com/SKILL.md',
+        slug: 'pasted',
+        digest: 'digest-one',
+        findings: [
+          {
+            check: 'hardcoded_credential',
+            verdict: 'block',
+            field: 'the document body',
+            message: 'a hard-coded credential in the document body',
+          },
+        ],
+        message: 'blocked',
+      },
+    });
+    render(<InstallSkillDialog onClose={vi.fn()} onInstalled={onInstalled} />);
+    fireEvent.change(screen.getByLabelText(/Skill URL/), {
+      target: { value: 'https://example.com/SKILL.md' },
+    });
+    await act(async () => {
+      fireEvent.click(submitButton());
+    });
+
+    expect(await screen.findByTestId('scan-blocked-dialog')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('scan-blocked-block'));
+    });
+    expect(screen.queryByTestId('scan-blocked-dialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('install-scan-declined')).toBeInTheDocument();
+    expect(onInstalled).not.toHaveBeenCalled();
+
+    vi.mocked(skillsApi.installWorkflowFromUrl).mockResolvedValueOnce({
+      status: 'scan_blocked',
+      scan: {
+        target: 'https://example.com/SKILL.md',
+        fetchedFrom: 'https://example.com/SKILL.md',
+        slug: 'pasted',
+        digest: 'digest-two',
+        findings: [],
+        message: 'blocked',
+      },
+    });
+    await act(async () => {
+      fireEvent.click(submitButton());
+    });
+    await screen.findByTestId('scan-blocked-dialog');
+    vi.mocked(skillsApi.installWorkflowFromUrl).mockResolvedValueOnce({
+      status: 'installed',
+      url: 'https://example.com/SKILL.md',
+      stdout: 'Installed to /x',
+      stderr: '',
+      newWorkflows: ['pasted'],
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('scan-blocked-install-anyway'));
+    });
+
+    await waitFor(() => expect(onInstalled).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(skillsApi.installWorkflowFromUrl).mock.calls.at(-1)?.[0]).toEqual({
+      url: 'https://example.com/SKILL.md',
+      acknowledgedDigest: 'digest-two',
+    });
+    expect(onInstalled.mock.calls[0][0]).toEqual({
+      url: 'https://example.com/SKILL.md',
+      stdout: 'Installed to /x',
+      stderr: '',
+      newWorkflows: ['pasted'],
+    });
+    expect(screen.queryByTestId('scan-blocked-dialog')).not.toBeInTheDocument();
   });
 });

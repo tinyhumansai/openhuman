@@ -7,14 +7,10 @@
 
 fn main() {
     // Every path below boots a core that must reach the hosted backend
-    // (billing, integrations, channel relay, login): give it the SDK-backed
-    // transport before the first dispatch. The core itself carries none.
-    if let Err(err) = openhuman_tinyhumans::install(openhuman_tinyhumans::InstallOptions::default())
-    {
-        eprintln!("failed to install the TinyHumans backend transport: {err}");
-        std::process::exit(1);
-    }
-
+    // (billing, integrations, channel relay, login). Each boots through an
+    // `openhuman_rpc::host` entry (`cli` for `core`/`mcp`, `desktop` for the
+    // GUI's embedded server), which connects the TinyHumans backend transport
+    // itself, so there is no separate install step here.
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(String::as_str);
     if sub == Some("core") {

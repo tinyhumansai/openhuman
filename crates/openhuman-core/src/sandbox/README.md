@@ -1,148 +1,94 @@
-# Sandbox
+# Sandbox host adapter
 
-Per-session sandbox backend selection and routed execution for agent tool
-commands. This separates three concerns that used to be conflated: where a
-tool runs (this module), which tools are allowed (security and tool policy),
-and whether a tool needs host access (elevated ops, also owned here). The
-gateway/core process itself always runs on the host; only selected tool
-families (shell, filesystem, process) execute through a sandbox backend.
+OpenHuman owns command-execution orchestration and the existing `sandbox.*`
+RPC surface. TinySecurity owns sandbox planning, admission and single-use plan
+consumption. TinyBox owns native jail facts and process execution.
 
-This domain resolves a per-session `SandboxPolicy`, owns its own Docker
-backend, and delegates local OS-level confinement to `tinybox-jail`.
+The host builds a plan request from trusted command, environment, runtime and
+caller facts, asks TinySecurity for a plan, then passes the admitted artifact to
+the selected TinyBox executor. A missing module, refused plan or failed
+consumption denies execution. OpenHuman maps the module results to the existing
+`None`, `Local`, `Docker`, `OpenShell` or `Agent37` routing and status contracts; it does
+not duplicate the protected-path or credential-root policy.
 
-## Public surface
+`[security.sandbox] backend = "openshell"` routes a command to the tenant's own
+long-lived box on an NVIDIA OpenShell gateway ([`openshell/`](./openshell/mod.rs)),
+declared to TinySecurity as the `tinybox-openshell` container executor. Nothing
+on the host is mounted, egress is denied, and the box comes from
+`[runtime.openshell]`. `BoxRegistry` keys boxes on the whole `Tenant` (profile
+and agent) within an `OwnerScope` (a hash of the active workspace, which is
+per signed-in user, and on agent37 of `[runtime.agent37] retention_namespace`),
+creates each one once under concurrent first commands, reaps idle boxes and
+caps live ones; a command with no tenant (`NoTenant`) is refused, never run in
+a shared box. A command whose caller gives up (its future dropped) lets go of
+its box on a detached task, which stops the command; a create cancelled
+before the module answers closes its reservation.
 
-- `pub enum SandboxBackendKind { None, Local, Docker }` (`types.rs`): which
-  backend a session resolved to.
-- `pub struct SandboxPolicy` (`types.rs`): `backend`, `workspace_root`,
-  `state_dir`, `read_only_mounts`, `read_write_mounts`, `allow_network`, `env_passthrough`,
-  `docker_overrides`.
-- `pub struct DockerOverrides` (`types.rs`): per-session image, network, and
-  resource-limit overrides layered on `RuntimeConfig`'s `[runtime.docker]`.
-- `pub struct ElevatedOp` and `pub const ELEVATED_TOOLS` (`types.rs`): tools
-  (`git_operations`, `install_tool`, `docker_management`,
-  `process_management`) that always require host access and must be audited
-  via `build_elevated_op` rather than silently bypassing the sandbox. No code
-  outside this domain calls `is_elevated_op`/`build_elevated_op` yet.
-- `pub const SANDBOX_ENV_PASSTHROUGH` (`ops.rs`): the allowlisted environment
-  variables (`PATH`, `HOME`, `TERM`, and so on) forwarded into sandboxed
-  execution; no other host env leaks in.
-- `pub fn resolve_sandbox_policy(mode: SandboxMode, action_dir, state_dir, runtime_config, is_remote_session) -> SandboxPolicy`
-  (`ops.rs`): `SandboxMode::None`/`ReadOnly` resolve to
-  `SandboxBackendKind::None`. `Sandboxed` resolves to `Docker` when
-  `runtime_config.kind == "docker"` or the session is remote (channel/cron),
-  otherwise `Local` (OS jail via `cwd_jail`). `allow_network` is
-  `!is_remote_session` for `Sandboxed` and `true` otherwise; `workspace_root`
-  is `action_dir`; `state_dir` is the core's internal `workspace_dir`;
-  `read_only_mounts`/`read_write_mounts` carry the local jail's grant set
-  (`grants.rs`, empty for other backends); `docker_overrides` is
-  populated from `[runtime.docker]` only for the `Docker` backend.
-  A host that already isolates the core (container, CI or benchmark task
-  image, VM) sets `OPENHUMAN_SANDBOX=off` (`SANDBOX_OFF_ENV`; also `none`,
-  `0`, `false`, `disabled`), and `Sandboxed` then resolves to `None` for the
-  whole process: the outer isolation permits work (package installs, `/etc`
-  edits) that the action-dir jail would refuse.
-- `pub async fn create_sandbox_backend(policy) -> SandboxBackendHandle`
-  (`ops.rs`): instantiates and probes the resolved backend.
-- `pub async fn execute_in_sandbox(policy, command, working_dir, extra_env, timeout) -> anyhow::Result<SandboxExecResult>`
-  (`ops.rs`): routes to unsandboxed execution, the `cwd_jail`-based local
-  jail, or Docker execution based on `policy.backend`.
-- `pub fn is_elevated_op(tool_name) -> bool` and
-  `pub fn build_elevated_op(...) -> ElevatedOp` (`ops.rs`): the escape hatch a
-  sandboxed tool call uses to run on the host, with an audited reason.
-- `pub mod docker`: Docker-specific container execution (`docker_exec`,
-  `docker_backend_handle`, orphan cleanup).
-- `pub use tinybox_jail as cwd_jail`: the OS-level path-confinement backend
-  used by `Local`, owned by `vendor/tinybox/crates/tinybox-jail` (see its
-  README). This module keeps only the policy of when to jail.
-- `sandbox` RPC namespace (`schemas.rs`): `status`, `resolve_policy`,
-  `cleanup_orphans`, `validate_policy`, wired through
-  `all_sandbox_registered_controllers()` in
-  `crates/openhuman-core/src/core/all.rs`.
+`[security.sandbox] backend = "agent37"` goes through the same registry
+([`boxes/`](./boxes/mod.rs), `BoxBackend::Agent37`) on agent37's hosted
+service, declared as the `tinybox-agent37` container executor and refused
+under `[privacy] mode = "local_only"`. Its boxes are *retained* (box contract
+2.4): each is created with `Retention { key, idle_sleep_secs,
+delete_after_secs }` (the box contract's own `tinybox_bus::Retention`), where
+`key` is `boxes::owner_key`, `oh-` plus the SHA-256 of the owner scope and the
+whole tenant (stable, opaque, never a raw id or path). Deployments sharing one
+agent37 key that could see equal tenants in equal workspace paths (staging and
+production of one service) must set distinct `retention_namespace` values;
+changing it starts each tenant on a fresh box and the old one expires. The service
+sleeps a box after `[runtime.agent37] idle_sleep_secs` (default 900, clamped
+to 300–86400), wakes it on the next command, and deletes it after
+`delete_after_secs` asleep (default 30 days). The registry never deletes a
+retained box: reaping, `release`, `shutdown`, a box that stopped answering and
+a full registry (which lets go of its least recently used idle box) all only
+forget it (`BoxDriver::forget`, the module's `Close`, which keeps a retained
+instance). The next create with the same key adopts it, files included, even
+after a restart. OpenShell boxes are not retained and are closed as before;
+TinyBox refuses retention on every backend without `Capability::Retention`.
 
-## Backend behavior
+## Files in and out of a box
 
-- None: `execute_unsandboxed` runs the command directly via
-  `agent::platform_shell` after validating `working_dir` with
-  `config::ensure_usable_cwd`.
-- Local: `execute_local_jail` builds a `cwd_jail::Jail` rooted at
-  `policy.workspace_root`, applies `deny_net()` and any read-only mounts from
-  the policy, and spawns through `cwd_jail::default_backend()` (falling back
-  to `NoopBackend` if no OS jail is available on the host). Output is
-  captured by redirecting stdout/stderr to files, because some backends
-  (macOS Seatbelt) rebuild the command and drop piped stdio. The files live
-  in a fresh per-call directory, `sandbox_capture_root(state_dir)/<uuid>/`
-  (`<workspace_dir>/artifacts/sandbox-capture/<uuid>/{stdout,stderr}`), which
-  the jail is granted read/write for that spawn only
-  (`Jail::add_read_write`) and which is removed once read, on every exit
-  path. Nothing is written into the user's project, and concurrent calls
-  never share a file (#6961).
-- Local grants: a real jail (Landlock, Seatbelt) denies everything it is not
-  told about, so `resolve_sandbox_policy` adds the grant set from
-  `grants::resolve_local_jail_grants` and `[runtime.local_jail]`
-  (`LocalJailConfig`): `~/.cargo/bin` and its configuration files read-only;
-  `~/.cargo/registry` and `~/.cargo/git` read-write; `~/.rustup`, `~/.nvm`,
-  `~/.npm`, `/usr/local`, `/opt` and the user's git config files (symlink and
-  `include` targets canonicalized) read-only, each only when it exists; plus
-  the `extra_read_only` / `extra_read_write` lists. Cargo binaries and
-  configuration remain read-only whether or not registry credentials exist.
-  Credential stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, ... and any
-  parent that would contain one) are never granted, and `/proc` only with
-  `allow_proc = true` (off by default: `/proc/<pid>/environ` exposes every
-  process's environment). Each call also gets a private writable scratch
-  directory, `sandbox_scratch_root(state_dir)/<uuid>/`, exported as `TMPDIR`
-  (so `mktemp` works without granting `/tmp`) and removed afterwards.
-  `create_sandbox_backend` reports `Inactive` for both the `noop` and the
-  `unsupported` backend names: neither confines anything.
-- Docker: `docker::docker_exec` maps the policy onto `tinybox_docker::OneShot`, which runs `docker run --rm` with the host
-  `action_dir` mounted read/write at `/workspace`, network `none` by default,
-  `--cap-drop ALL` (plus policy-specified extra drops),
-  `--security-opt no-new-privileges`, a read-only rootfs with `/tmp` and
-  `/var/tmp` tmpfs mounts, memory/CPU limits (512 MB / 1 CPU defaults), and
-  only the explicit env passthrough list injected. Containers carry
-  `openhuman.sandbox=true` for orphan cleanup. `validate_docker_policy`
-  rejects host networking and `/`, `/etc`, `/proc`, `/sys`, or the Docker
-  socket as mount roots.
+A box has its own disk: a user's upload on the host is not in it, and a file the
+agent makes in it is not on the host. `boxes::write_file` and
+`boxes::read_file` (re-exported as `sandbox::write_box_file` /
+`read_box_file`, and as `openhuman_embed::sandbox::{write_file, read_file}`)
+move bytes across over plain command execution (`BoxDriver::exec`), so any box
+driver supports them and no box contract grows. The generic forms
+`write_file_in` / `read_file_in` take the registry, for tests and drivers.
 
-## Security invariant
+- Paths are relative to the box work folder (`BoxBackend::workdir`: `/sandbox`
+  on OpenShell, `/home/node` on agent37). The process-level calls use the
+  configured backend and refuse one that keeps no boxes (`NoBoxBackend`). Absolute paths, `..`, NUL and empty paths are refused; every path
+  that reaches the shell is single-quoted and written `./<path>`. Every command
+  resolves the path inside the box and refuses one that leaves the work folder
+  (a symlink out of it included). Files over `MAX_FILE_BYTES` (8 MiB)
+  are refused, and a read also honours the caller's `max_bytes`.
+- Write: 48 KiB raw per command (`printf %s '<base64>' | base64 -d >> <part>`;
+  a Linux argument is at most 128 KiB). The part file is beside the target, named
+  uniquely per transfer and created exclusively, so an existing file or a
+  concurrent upload is never overwritten. The last command checks the part file's
+  length and renames it over the target, so a box replaced mid-write fails
+  instead of keeping a truncated file. A failure removes the part file.
+- Read: `test -f` and `stat` (size and identity) first, a file over the limit is refused before any
+  chunk moves, then 256 KiB raw per `tail | head | base64 -w0` (a hosted exec
+  keeps 512 KB of output per stream). The identity is checked before and after
+  every chunk, so a file replaced mid-read fails. A short read is an error.
+- Failures are typed `BoxError`s (`InvalidPath`, `FileTooLarge`, `FileNotFound`,
+  `ShortRead`, `FileTransfer`) whose messages read as a tool result; none names a
+  host path.
+- Keyed on the whole tenant like a command; no tenant (`NoTenant`) is refused.
 
-Sandbox backend selection is a defense-in-depth layer, not a replacement for
-policy. The Rust path checks in `security` (`is_workspace_internal_path`,
-`is_always_forbidden`, `classify_command`) still apply even when
-`resolve_sandbox_policy` falls back to `SandboxBackendKind::None`, whether
-explicitly (`SandboxMode::None`/`ReadOnly`) or implicitly, when the `Local`
-backend has no usable OS jail: `cwd_jail::default_backend()` substitutes
-`NoopBackend`, `execute_local_jail` in `ops.rs` spawns through it, and
-`create_sandbox_backend` reports the handle as `SandboxStatus::Inactive`
-rather than `Ready` so callers can tell the difference. Do not treat a
-resolved `SandboxBackendKind` as a security boundary on its own.
+`create_artifact` with a file `path` uses this when the backend keeps boxes
+(`SandboxBackendKind::keeps_boxes`: `openshell` and `agent37`): `artifacts::box_source`
+reads the file from the calling tenant's box, stages it under the artifacts
+kept-copies folder for the call, and hands it to the artifact service like any
+file. Other backends read the host disk as before.
 
-## Dependencies
+The host keeps the `SANDBOX_ENV_PASSTHROUGH` allowlist, configuration switches,
+status RPC, and executor lifecycle. The sandbox cannot be disabled for SaaS.
+Local grants for stdio MCP servers use the same TinySecurity floor and TinyBox
+admission path.
 
-- `crate::agent::harness::definition::SandboxMode`: the agent-declared mode
-  this domain resolves against.
-- `crate::agent::platform_shell`: Windows-aware shell/command building for
-  the unsandboxed and local-jail paths.
-- `crate::config::RuntimeConfig`: `[runtime] kind`, `[runtime.docker]` and
-  `[runtime.local_jail]` overrides feed `resolve_sandbox_policy`.
-
-## Called by
-
-- `crates/openhuman-core/src/tools/impl/system/{shell,node_exec,npm_exec,python_exec}.rs`:
-  resolve a policy and call `execute_in_sandbox` per invocation.
-- `crates/openhuman-core/src/flows/tinyflows/caps/code.rs`: sandboxed code
-  execution capability.
-- `crates/openhuman-core/src/agent/platform_shell.rs`: doc references only;
-  it is the shared Windows-aware command builder that
-  `execute_unsandboxed`/`execute_local_jail` call into.
-- `crates/openhuman-core/src/config/ops/sandbox.rs`: RPC settings surface
-  (`get_sandbox_settings`) reads `SANDBOX_ENV_PASSTHROUGH` and
-  `[security.sandbox]` config.
-
-## Tests
-
-- `types_tests.rs`, `ops_tests.rs`, `schemas_tests.rs`, `docker_tests.rs`:
-  sibling `#[cfg(test)]` suites per file.
-- `ops_tests.rs` includes a regression test (#3235) pinning
-  `local_status_for_backend` so a host with no OS jail reports `Inactive`
-  rather than a false `Ready`.
+See [Privacy and security](../../../../docs/gitbooks/en/features/privacy-and-security.md)
+for the product boundary. Policy behavior belongs in TinySecurity and native
+execution behavior belongs in TinyBox; OpenHuman tests only its mapping,
+routing, callbacks and module seams.

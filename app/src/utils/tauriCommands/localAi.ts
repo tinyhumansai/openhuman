@@ -21,7 +21,6 @@ export interface LocalAiStatus {
   embedding_model_id: string;
   stt_model_id: string;
   tts_voice_id: string;
-  quantization: string;
   vision_state: string;
   vision_mode: string;
   embedding_state: string;

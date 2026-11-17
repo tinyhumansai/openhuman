@@ -5,11 +5,11 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::credentials;
+use crate::credentials;
 
-use super::super::super::definitions::{find_channel_definition, ChannelAuthMode};
 use super::memory::clear_channel_memory;
 use super::shared::credential_provider;
+use tinychannels_bus::controllers::{find_channel_definition, ChannelAuthMode};
 
 /// Disconnect a channel by removing stored credentials.
 pub async fn disconnect_channel(
@@ -33,10 +33,13 @@ pub async fn disconnect_channel(
     if channel_id == "telegram" && auth_mode == ChannelAuthMode::BotToken {
         let mut persisted = config.clone();
         if persisted.channels_config.telegram.take().is_some() {
-            persisted
-                .save()
-                .await
-                .map_err(|e| format!("failed to clear telegram config.toml: {e}"))?;
+            persisted.save().await.map_err(|error| {
+                crate::config::ops::config_save_error_with_context(
+                    error,
+                    "failed to clear telegram config.toml",
+                    false,
+                )
+            })?;
             tracing::info!(
                 target: "openhuman::channels",
                 "[telegram] disconnect_channel: cleared channels_config.telegram"
@@ -45,10 +48,13 @@ pub async fn disconnect_channel(
     } else if channel_id == "discord" && auth_mode == ChannelAuthMode::BotToken {
         let mut persisted = config.clone();
         if persisted.channels_config.discord.take().is_some() {
-            persisted
-                .save()
-                .await
-                .map_err(|e| format!("failed to clear discord config.toml: {e}"))?;
+            persisted.save().await.map_err(|error| {
+                crate::config::ops::config_save_error_with_context(
+                    error,
+                    "failed to clear discord config.toml",
+                    false,
+                )
+            })?;
             tracing::info!(
                 target: "openhuman::channels",
                 "[discord] disconnect_channel: cleared channels_config.discord"
@@ -57,10 +63,13 @@ pub async fn disconnect_channel(
     } else if channel_id == "imessage" && auth_mode == ChannelAuthMode::ManagedDm {
         let mut persisted = config.clone();
         if persisted.channels_config.imessage.take().is_some() {
-            persisted
-                .save()
-                .await
-                .map_err(|e| format!("failed to clear imessage config.toml: {e}"))?;
+            persisted.save().await.map_err(|error| {
+                crate::config::ops::config_save_error_with_context(
+                    error,
+                    "failed to clear imessage config.toml",
+                    false,
+                )
+            })?;
             tracing::info!(
                 target: "openhuman::channels",
                 "[imessage] disconnect_channel: cleared channels_config.imessage"
@@ -69,10 +78,13 @@ pub async fn disconnect_channel(
     } else if channel_id == "yuanbao" && auth_mode == ChannelAuthMode::ApiKey {
         let mut persisted = config.clone();
         if persisted.channels_config.yuanbao.take().is_some() {
-            persisted
-                .save()
-                .await
-                .map_err(|e| format!("failed to clear yuanbao config.toml: {e}"))?;
+            persisted.save().await.map_err(|error| {
+                crate::config::ops::config_save_error_with_context(
+                    error,
+                    "failed to clear yuanbao config.toml",
+                    false,
+                )
+            })?;
             tracing::info!(
                 target: "openhuman::channels",
                 "[yuanbao] disconnect_channel: cleared channels_config.yuanbao"
@@ -81,10 +93,13 @@ pub async fn disconnect_channel(
     } else if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
         let mut persisted = config.clone();
         if persisted.channels_config.email.take().is_some() {
-            persisted
-                .save()
-                .await
-                .map_err(|e| format!("failed to clear email config.toml: {e}"))?;
+            persisted.save().await.map_err(|error| {
+                crate::config::ops::config_save_error_with_context(
+                    error,
+                    "failed to clear email config.toml",
+                    false,
+                )
+            })?;
             tracing::info!(
                 target: "openhuman::channels",
                 "[email] disconnect_channel: cleared channels_config.email"

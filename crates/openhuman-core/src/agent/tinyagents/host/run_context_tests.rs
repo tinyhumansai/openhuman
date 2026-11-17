@@ -76,10 +76,28 @@ fn direct_subagent_child_shares_tinyagents_and_host_cancellation_tree() {
 }
 
 #[test]
+fn cancelling_a_direct_child_reaches_host_data_and_spares_the_parent() {
+    let parent = OpenHumanRunContext::new()
+        .into_tinyagents(tinyagents_harness::context::RunConfig::new("root-iso"));
+    let (_, child) = direct_subagent_child(
+        &parent,
+        "iso-task",
+        tinyagents_harness::context::RunConfig::new("child-iso"),
+    )
+    .expect("direct child");
+
+    child.cancellation.cancel();
+    assert!(child.data.cancellation.is_cancelled());
+    assert!(!parent.cancellation.is_cancelled());
+    assert!(!parent.data.cancellation.is_cancelled());
+}
+
+#[test]
 fn child_inherits_tree_handles_but_isolates_observations_and_usage() {
     let mut parent = OpenHumanRunContext::new();
     parent.thread_id = Some("thread-a".to_string());
     parent.file_state_agent_id = Some("parent-file-state".to_string());
+    parent.headless_descendant_settlement = true;
     *parent.resolved_route.lock().expect("route lock") =
         Some(tinyinference_llm::model::ResolvedModelRoute {
             provider: "provider-a".to_string(),
@@ -90,6 +108,7 @@ fn child_inherits_tree_handles_but_isolates_observations_and_usage() {
     let child = parent.child();
 
     assert_eq!(child.spawn_depth, 1);
+    assert!(child.headless_descendant_settlement);
     assert_eq!(child.thread_id.as_deref(), Some("thread-a"));
     assert!(child.file_state_agent_id().is_none());
     assert!(child
@@ -115,32 +134,6 @@ fn root_context_is_owned_and_children_inherit_thread() {
 }
 
 #[test]
-fn dispatch_guard_refuses_pause_and_budget_without_a_task_scope() {
-    let paused = TurnDispatchState::new(Some(std::time::Duration::from_secs(60)));
-    paused.record_pause_requested(15, 15);
-    assert_eq!(
-        paused.check(),
-        DispatchDecision::RefusePaused {
-            completed_model_calls: 15,
-            cap: 15,
-        }
-    );
-
-    // A zero budget makes the time relationship deterministic: after an
-    // observed child, any check is strictly short of that child's duration.
-    let exhausted = TurnDispatchState::new(Some(std::time::Duration::ZERO));
-    exhausted.record_subagent_elapsed(std::time::Duration::from_secs(1));
-    assert!(matches!(
-        exhausted.check(),
-        DispatchDecision::RefuseBudget {
-            observed_max_ms: 1_000,
-            observed_samples: 1,
-            ..
-        }
-    ));
-}
-
-#[test]
 fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     let root = OpenHumanRunContext::new();
     let left = root.child();
@@ -148,11 +141,12 @@ fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     left.append_subagent_usage(SubagentUsageEntry {
         task_id: "left-task".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 3,
             output_tokens: 2,
             cached_input_tokens: 1,
             charged_amount_usd: 0.01,
+            cost_source: tinyagents_harness::cost::CostSource::Charged,
         },
     });
     assert!(right.subagent_usage_entries().is_empty());
@@ -160,7 +154,7 @@ fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     left.record_completed_subagent_usage(SubagentUsageEntry {
         task_id: "completed-child".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage::default(),
+        usage: tinyagents_harness::progress::SubagentUsage::default(),
     });
     assert_eq!(root.subagent_usage_entries().len(), 1);
     assert_eq!(left.subagent_usage_entries().len(), 1);
@@ -173,7 +167,7 @@ fn failed_outer_run_promotes_completed_nested_usage_once() {
     outer.append_subagent_usage(SubagentUsageEntry {
         task_id: "nested".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 7,
             ..Default::default()
         },
@@ -191,12 +185,35 @@ fn failed_outer_run_promotes_completed_nested_usage_once() {
 fn detached_children_reset_turn_accounting_and_cancellation() {
     let mut root = OpenHumanRunContext::new();
     root.thread_id = Some("thread-a".into());
+    root.headless_descendant_settlement = true;
+    root.headless_descendant_owner = Some("root-owner".into());
     let dispatch = Arc::new(TurnDispatchState::new(Some(std::time::Duration::ZERO)));
     dispatch.record_subagent_elapsed(std::time::Duration::from_secs(1));
     root.dispatch = Some(dispatch);
     let detached = root.detached_child();
 
     assert_eq!(detached.thread_id.as_deref(), Some("thread-a"));
+    assert!(
+        !detached.headless_descendant_settlement,
+        "detached work is outside the root's settlement lease"
+    );
+    assert_eq!(
+        root.child().headless_descendant_owner.as_deref(),
+        Some("root-owner")
+    );
+    assert!(detached.headless_descendant_owner.is_none());
+    let workspace = std::path::Path::new("/workspace");
+    assert_eq!(
+        root.child()
+            .subagent_owner_scope(workspace, "session", Some("worker-thread")),
+        "root-owner",
+        "headless descendants retain the root lease's owner across native thread ids"
+    );
+    assert_ne!(
+        detached.subagent_owner_scope(workspace, "session", Some("worker-thread")),
+        "root-owner",
+        "detached chat work keeps its own owner scope"
+    );
     assert!(detached.dispatch.is_none());
     root.cancellation.cancel();
     assert!(!detached.cancellation.is_cancelled());
@@ -243,11 +260,12 @@ fn stale_parent_snapshot() -> ParentExecutionContext {
         session_id: "parent-session".into(),
         channel: "test".into(),
         connected_integrations: Vec::new(),
-        tool_call_format: crate::agent::prompts::ToolCallFormat::Native,
+        tool_call_format: tinytools_agent::dialect::ToolCallFormat::Native,
         session_key: "parent-key".into(),
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }
 
@@ -258,7 +276,7 @@ fn stale_parent_snapshot() -> ParentExecutionContext {
 /// `on_progress.is_some()` proves *presence*, not *identity*: a bind that
 /// installed some other, freshly created channel satisfies it just as happily,
 /// and that is the miswiring that actually ships. Production reads this exact
-/// field one clone away — `spawn_async_subagent_execute.rs` opens with
+/// field one clone away — `spawn_subagent_execute.rs` opens with
 /// `let progress_sink = parent.on_progress.clone();` — so delivery onto this
 /// receiver is what "the panel will see the spawn" reduces to.
 fn assert_bound_sink_is_this_runs_channel(
@@ -362,5 +380,207 @@ fn attach_parent_keeps_the_snapshot_sink_when_the_run_has_none() {
         &mut rx,
         "a run without its own sink must keep the snapshot's, and keep the \
          CLI/cron receiver that snapshot was carrying",
+    );
+}
+
+#[test]
+fn child_inherits_shared_model_budget_and_narrowed_depth_limit() {
+    use {
+        tinyagents_harness::cost::ModelBudget, tinyinference_llm::model::budget::Budget,
+        tinyinference_llm::model::budget::CallBudget, tinyinference_llm::model::budget::Spend,
+        tinyinference_llm::model::budget::SpendLimits,
+    };
+    let ledger = Budget::new(SpendLimits {
+        tokens: Some(100),
+        cost_micros: None,
+    });
+    let mut parent = OpenHumanRunContext::new();
+    parent.model_budget = Some(ModelBudget {
+        ledger: ledger.clone(),
+        call: CallBudget {
+            input_tokens: 50,
+            output_tokens: 10,
+            cost_micros: 1,
+        },
+    });
+    parent.max_spawn_depth = Some(1);
+    let child = parent.child();
+    assert_eq!(child.max_spawn_depth, Some(1));
+    assert_eq!(child.spawn_depth, 1);
+    let reservation = child
+        .model_budget
+        .unwrap()
+        .ledger
+        .reserve(Spend {
+            tokens: 60,
+            cost_micros: 0,
+        })
+        .unwrap();
+    assert_eq!(ledger.snapshot().reserved.tokens, 60);
+    reservation.settle(Spend {
+        tokens: 10,
+        cost_micros: 0,
+    });
+    assert_eq!(
+        parent.model_budget.unwrap().ledger.snapshot().spent.tokens,
+        10
+    );
+}
+
+#[test]
+fn task_recency_window_reaches_tools_as_a_host_extension_not_a_task_local() {
+    let mut host = OpenHumanRunContext::new();
+    host.task_recency_window = Some(Duration::from_secs(86_400));
+    let run = host.into_tinyagents(tinyagents_harness::context::RunConfig::new("run-recency"));
+    assert_eq!(
+        run.host::<OpenHumanRunExt>()
+            .and_then(|ext| ext.task_recency_window),
+        Some(Duration::from_secs(86_400))
+    );
+
+    let unrestricted = OpenHumanRunContext::new()
+        .into_tinyagents(tinyagents_harness::context::RunConfig::new("run-open"));
+    assert_eq!(
+        unrestricted
+            .host::<OpenHumanRunExt>()
+            .and_then(|ext| ext.task_recency_window),
+        None
+    );
+    // Direct dispatch (no run context) is unrestricted.
+    assert_eq!(task_recency_window_for_tool(None), None);
+}
+
+#[test]
+fn explicit_command_environment_reaches_tools_as_a_host_extension() {
+    let mut host = OpenHumanRunContext::new();
+    host.command_environment = Some(Arc::new(std::collections::BTreeMap::from([(
+        "TURN_OWNER".to_owned(),
+        "isolated".to_owned(),
+    )])));
+    let run = host.into_tinyagents(tinyagents_harness::context::RunConfig::new("run-env"));
+    assert_eq!(
+        run.host::<OpenHumanRunExt>()
+            .and_then(|ext| ext.command_environment.clone())
+            .and_then(|environment| environment.get("TURN_OWNER").cloned()),
+        Some("isolated".to_owned())
+    );
+}
+
+#[test]
+fn a_response_shape_belongs_to_the_root_turn_and_is_not_inherited() {
+    use tinyagents_harness::middleware::{ResponseShape, ResponseShapeScope};
+    let mut root = OpenHumanRunContext::new();
+    root.response_shape = Some(ResponseShapeScope::new(ResponseShape::default()));
+    assert!(root.child().response_shape.is_none());
+    assert!(root.response_shape.is_some());
+}
+
+#[test]
+fn autonomous_iter_cap_is_inherited_by_children_and_lifts_subagent_caps() {
+    use crate::agent::subagent_host::subagent_iter_cap_with_autonomous_lift as lift;
+    let mut parent = OpenHumanRunContext::new();
+    assert_eq!(parent.child().autonomous_iter_cap, None);
+    assert_eq!(lift(parent.autonomous_iter_cap, 10), 10);
+    parent.autonomous_iter_cap = Some(200);
+    let grandchild = parent.child().child();
+    assert_eq!(grandchild.autonomous_iter_cap, Some(200));
+    assert_eq!(lift(grandchild.autonomous_iter_cap, 10), 200);
+    assert_eq!(
+        lift(Some(5), 10),
+        10,
+        "a cap below the base never lowers it"
+    );
+}
+
+fn chat_approval(thread: &str) -> crate::security::approval::ApprovalTurnContext {
+    crate::security::approval::ApprovalTurnContext::chat(
+        crate::security::approval::ApprovalChatContext {
+            thread_id: thread.to_string(),
+            client_id: format!("client-{thread}"),
+            request_id: Some(format!("req-{thread}")),
+        },
+    )
+    .with_copilot_stream()
+}
+
+#[test]
+fn an_inline_child_inherits_the_turn_approval_context_and_a_detached_child_does_not() {
+    let mut root = OpenHumanRunContext::new();
+    root.approval = chat_approval("t-root");
+
+    // An inline sub-agent runs as part of the turn the user is watching, so its
+    // parks route to that chat like the turn's own.
+    let inline = root.child().child();
+    assert_eq!(
+        inline.approval.chat.as_ref().map(|c| c.thread_id.as_str()),
+        Some("t-root")
+    );
+    assert!(inline.approval.copilot_stream);
+
+    // A detached sub-agent can outlive the turn: it must start without the
+    // chat so its parks route through the origin as `detached` (#5499), and so
+    // must everything it spawns in turn.
+    let detached = root.detached_child();
+    assert!(detached.approval.chat.is_none());
+    assert!(!detached.approval.copilot_stream);
+    assert!(detached.child().approval.chat.is_none());
+
+    // The parent is untouched.
+    assert!(root.approval.chat.is_some());
+}
+
+#[test]
+fn the_host_turn_env_does_not_hand_its_approval_context_to_a_child_run() {
+    let env = crate::agent::turn_env::HostTurnEnv {
+        approval: chat_approval("t-env"),
+        ..Default::default()
+    };
+    // `with_host_env` builds the run context of a sub-agent from its parent's
+    // environment snapshot; the chat belongs to the root turn alone.
+    let child = OpenHumanRunContext::new().with_host_env(&env);
+    assert!(child.approval.chat.is_none());
+    assert!(!child.approval.copilot_stream);
+}
+
+#[test]
+fn tools_read_the_turn_approval_context_from_the_run_not_from_a_task_local() {
+    let mut host = OpenHumanRunContext::new();
+    host.approval = chat_approval("t-tool");
+    let run = host.into_tinyagents(tinyagents_harness::context::RunConfig::new("run-approval"));
+    let context = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
+        &run,
+        tinyagents_harness::ids::CallId::new("call-1"),
+    );
+    let seen = approval_for_tool(Some(&context));
+    assert_eq!(
+        seen.chat.as_ref().map(|c| c.client_id.as_str()),
+        Some("client-t-tool")
+    );
+    assert!(seen.copilot_stream);
+    // Direct dispatch (no run context) is not a chat turn.
+    assert!(approval_for_tool(None).chat.is_none());
+}
+
+#[tokio::test]
+async fn the_approval_context_survives_await_points_and_a_move_between_tasks() {
+    let mut host = OpenHumanRunContext::new();
+    host.approval = chat_approval("t-await");
+    let run = host.into_tinyagents(tinyagents_harness::context::RunConfig::new("run-await"));
+    let context = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
+        &run,
+        tinyagents_harness::ids::CallId::new("call-await"),
+    );
+    // The context is a value: it is still intact after the tool awaits and is
+    // handed to another task, which no ambient scope would survive.
+    tokio::task::yield_now().await;
+    let seen = tokio::spawn(async move {
+        tokio::task::yield_now().await;
+        approval_for_tool(Some(&context))
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        seen.chat.as_ref().map(|c| c.thread_id.as_str()),
+        Some("t-await")
     );
 }

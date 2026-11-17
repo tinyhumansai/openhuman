@@ -1,0 +1,28 @@
+[cluster]
+node_id = 1
+
+[storage]
+data_path = "/data/cortex"
+wal_sync = true
+
+[engine]
+vector_dimensions = 768
+hnsw_m = 32
+hnsw_ef_construction = 500
+hnsw_ef_search = 200
+# v0.9.9's shipped TOML enum uses `None` for lossless fp32 storage.
+hnsw_quantization = "None"
+block_cache_bytes = 536870912
+
+[network]
+
+[llm]
+
+[governance]
+
+[scheduler]
+enabled = true
+compaction_interval_secs = 300
+methylation_interval_secs = 600
+cognitive_persist_interval_secs = 60
+feedback_weight_interval_secs = 120

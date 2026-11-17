@@ -7,17 +7,21 @@
 //! - `helpers.rs` — shared plumbing (`to_json`, `deserialize_params`,
 //!   provider validation, silent-WAV generation).
 //! - `handlers.rs` — re-exports the actual `handle_voice_*` /
-//!   `handle_overlay_stt_notify` implementations, split further into
-//!   `handlers/transcribe_tts.rs` (transcription, synthesis, factory-dispatch)
-//!   and `handlers/provider_server.rs` (provider settings, model listing,
-//!   provider testing, dictation-server lifecycle).
+//!   handlers for transcription, synthesis, factory dispatch, and provider
+//!   settings.
 
 mod handlers;
 mod helpers;
 mod params;
 mod registry;
 
+#[cfg(test)]
+mod parameter_contracts;
+#[cfg(test)]
+pub(crate) use parameter_contracts::contracts as parameter_contracts;
+
 // Re-export the public API that callers outside this module use.
+pub(crate) use registry::all_voice_controller_entries;
 pub use registry::{all_voice_controller_schemas, all_voice_registered_controllers, voice_schemas};
 
 // ---------------------------------------------------------------------------
@@ -25,13 +29,9 @@ pub use registry::{all_voice_controller_schemas, all_voice_registered_controller
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-use handlers::{
-    handle_overlay_stt_notify, handle_voice_server_start, handle_voice_server_status,
-    handle_voice_server_stop,
-};
-#[cfg(test)]
 use helpers::{
-    deserialize_params, generate_silent_wav, to_json, validate_stt_provider, validate_tts_provider,
+    deserialize_params, validate_stt_provider, validate_tts_provider, SILENT_CLIP_SAMPLES,
+    SILENT_CLIP_SAMPLE_RATE,
 };
 #[cfg(test)]
 use params::{
@@ -40,8 +40,6 @@ use params::{
     VoiceUpdateProviderSettingsParams,
 };
 
-#[cfg(test)]
-use crate::core::Outcome;
 #[cfg(test)]
 use serde_json::Map;
 #[cfg(test)]

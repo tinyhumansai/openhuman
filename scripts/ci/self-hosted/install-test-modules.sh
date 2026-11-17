@@ -7,8 +7,8 @@
 # Release archives come from the module registry (test-module-assets.mjs),
 # are cached by sha256 under $CI_CACHE_DIR/blobs when that is set, and are
 # verified against the registry digest on every use, cached or not.
-# libtinyconnectors has no published artifact, so it is built from the pinned
-# submodule and cached by (submodule SHA, rustc version).
+# Every staged test module, including tinyconnectors and tinyeventqueues,
+# comes from its registry release; nothing is compiled from source here.
 #
 # tinybus refuses a module when any ancestor directory is owned by someone
 # other than root or the current user, so <dest-dir> must sit under a tree the
@@ -21,12 +21,21 @@ log() { echo "[ci][test-modules] $*"; }
 
 dest="${1:?usage: install-test-modules.sh <dest-dir> <env-file>}"
 env_file="${2:?usage: install-test-modules.sh <dest-dir> <env-file>}"
-host_key="${OH_TEST_MODULE_HOST_KEY:-ubuntu-22.04-x86_64}"
+host_key="${OH_MODULE_HOST_KEY:-ubuntu-22.04-x86_64}"
 blobs="${CI_CACHE_DIR:+${CI_CACHE_DIR}/blobs}"
 blobs="${blobs:-${dest}/.blobs}"
 mkdir -p "${blobs}" "${dest}"
+dest="$(cd "${dest}" && pwd -P)"
 
 verify() { echo "$1  $2" | sha256sum --check --status; }
+
+# Resolve before starting work: process substitution hides the resolver's exit
+# status, which used to continue with missing fixtures after a registry error.
+assets="$(node scripts/ci/self-hosted/test-module-assets.mjs "${host_key}")"
+if [ -z "${assets}" ]; then
+  echo "::error::registry resolved no native test module assets" >&2
+  exit 1
+fi
 
 while IFS=$'\t' read -r id url archive sha; do
   cached="${blobs}/${sha}-${archive}"
@@ -48,33 +57,41 @@ while IFS=$'\t' read -r id url archive sha; do
   mkdir -p "${dest}/${id}"
   # Do not restore the release builder's uid into the trusted tree.
   tar --no-same-owner -xzf "${cached}" -C "${dest}/${id}"
-done < <(node scripts/ci/self-hosted/test-module-assets.mjs "${host_key}")
+done <<< "${assets}"
 
-# The checkout action initializes root submodules, but the module build also
-# needs tinyconnectors' nested tinybus dependency.
-git submodule update --init --recursive vendor/tinyconnectors
-
-conn_rev="$(git -C vendor/tinyconnectors rev-parse HEAD)"
-rustc_rev="$(rustc -V | sha256sum | cut -c1-12)"
-conn_cached="${blobs}/tinyconnectors-${conn_rev}-${rustc_rev}.so"
-if [ -f "${conn_cached}" ]; then
-  log "tinyconnectors: cache hit ${conn_rev:0:12}"
-else
-  conn_target="${TINYCONNECTORS_TARGET_DIR:-vendor/tinyconnectors/target}"
-  log "tinyconnectors: building ${conn_rev:0:12} into ${conn_target}"
-  bash scripts/ci-cancel-aware.sh cargo build --release \
-    --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml \
-    --target-dir "${conn_target}"
-  cp "${conn_target}/release/libtinyconnectors.so" "${conn_cached}.part"
-  mv "${conn_cached}.part" "${conn_cached}"
+# Every staged directory goes on the search path the loader already honours
+# (release mode); each holds the released library.
+module_dirs=""
+for id in tinybox tinydocs tinywallet tinychannels tinymcp tinyeventqueues tinyjuice tinysearch tinyhosts tinyconnectors tinyflows tinysecurity; do
+  module_dirs="${module_dirs:+${module_dirs}:}${dest}/${id}"
+done
+# mcp_registry_multi_server loads TinyMCP by file, not by search path, as
+# scripts/test-rust-with-mock.sh supplies it locally.
+tinymcp_artifact="$(find "${dest}/tinymcp" -maxdepth 2 -type f \
+  \( -name libtinymcp_module.so -o -name libtinymcp_module.dylib -o -name tinymcp_module.dll \) | head -n 1)"
+if [ -z "${tinymcp_artifact}" ]; then
+  echo "::error::the tinymcp release holds no module library" >&2
+  exit 1
 fi
-touch "${conn_cached}"
-mkdir -p "${dest}/tinyconnectors"
-cp "${conn_cached}" "${dest}/tinyconnectors/libtinyconnectors.so"
-
+tinychannels_artifact="$(find "${dest}/tinychannels" -maxdepth 2 -type f \
+  \( -name libtinychannels_module.so -o -name libtinychannels_module.dylib -o -name tinychannels_module.dll \) | head -n 1)"
+if [ -z "${tinychannels_artifact}" ]; then
+  echo "::error::the tinychannels release holds no module library" >&2
+  exit 1
+fi
+# TinyVoice stays off the search path so no other suite starts loading it;
+# the native Telegram voice-note E2E loads it by file.
+tinyvoice_artifact="$(find "${dest}/tinyvoice" -maxdepth 2 -type f \
+  \( -name libtinyvoice_module.so -o -name libtinyvoice_module.dylib -o -name tinyvoice_module.dll \) | head -n 1)"
+if [ -z "${tinyvoice_artifact}" ]; then
+  echo "::error::the tinyvoice release holds no module library" >&2
+  exit 1
+fi
 {
-  echo "TINYJUICE_TEST_MODULE=${dest}/tinyjuice/libtinyjuice_module.so"
-  echo "TINYSEARCH_TEST_MODULE=${dest}/tinysearch/libtinysearch.so"
-  echo "TINYCONNECTORS_TEST_MODULE=${dest}/tinyconnectors/libtinyconnectors.so"
+  echo "OPENHUMAN_MODULE_PATH=${module_dirs}${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
+  echo "OPENHUMAN_TINYMCP_TEST_MODULE=${tinymcp_artifact}"
+  echo "OPENHUMAN_CHANNELS_TEST_ARTIFACT=${tinychannels_artifact}"
+  echo "OPENHUMAN_VOICE_TEST_ARTIFACT=${tinyvoice_artifact}"
+  echo "OPENHUMAN_TEST_MODULES_STAGED=1"
 } > "${env_file}"
 log "wrote ${env_file}"

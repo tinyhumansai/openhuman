@@ -2,42 +2,22 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn default_enables_analytics() {
-    let cfg = ObservabilityConfig::default();
-    assert!(cfg.sentry_dsn.is_none());
-    assert!(cfg.analytics_enabled);
-}
-
-#[test]
-fn default_analytics_enabled_helper_returns_true() {
-    assert!(default_analytics_enabled());
-}
-
-#[test]
-fn share_usage_data_is_on_by_default() {
-    assert!(default_share_usage_data());
-    assert!(ObservabilityConfig::default().share_usage_data);
-}
-
-#[test]
-fn deserialize_missing_optional_fields_uses_defaults() {
-    let cfg: ObservabilityConfig = serde_json::from_value(json!({})).unwrap();
-    assert!(cfg.analytics_enabled, "analytics default must be true");
-    assert!(
-        cfg.share_usage_data,
-        "usage-data sharing is on by default (consent to Langfuse push)"
-    );
-    // The local exporter stays opt-in and vendor-neutral by default.
-    assert!(
-        !cfg.agent_tracing.enabled,
-        "local tracing exporter is opt-in"
-    );
-    assert_eq!(cfg.agent_tracing.backend, AgentTracingBackend::Otel);
-    assert!(cfg.agent_tracing.export_path.is_none());
-    assert!(
-        cfg.agent_tracing.capture_content,
-        "content capture is on by default (deliberate product decision)"
-    );
+fn construction_and_empty_json_preserve_privacy_and_telemetry_defaults() {
+    for cfg in [
+        ObservabilityConfig::default(),
+        serde_json::from_value(json!({})).unwrap(),
+    ] {
+        assert!(cfg.sentry_dsn.is_none());
+        assert!(cfg.analytics_enabled, "analytics default must be true");
+        assert!(cfg.share_usage_data, "usage-data sharing defaults on");
+        assert!(!cfg.agent_tracing.enabled, "local tracing is opt-in");
+        assert_eq!(cfg.agent_tracing.backend, AgentTracingBackend::Otel);
+        assert!(cfg.agent_tracing.export_path.is_none());
+        assert!(
+            cfg.agent_tracing.capture_content,
+            "content capture defaults on"
+        );
+    }
 }
 
 #[test]

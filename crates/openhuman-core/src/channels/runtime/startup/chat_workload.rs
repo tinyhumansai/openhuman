@@ -24,7 +24,10 @@ pub(super) enum ChatWorkloadResolution {
 pub(super) fn resolve_chat_workload(config: &Config) -> ChatWorkloadResolution {
     let resolved = provider::provider_for_role("chat", config);
     let trimmed = resolved.trim();
-    if trimmed.is_empty() || trimmed == "cloud" || trimmed == provider::INFERENCE_BACKEND_ID {
+    if trimmed.is_empty()
+        || trimmed == "cloud"
+        || trimmed == provider::factory::INFERENCE_BACKEND_ID
+    {
         return ChatWorkloadResolution::Cloud;
     }
     let slug = trimmed

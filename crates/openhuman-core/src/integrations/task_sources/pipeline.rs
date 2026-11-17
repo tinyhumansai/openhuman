@@ -14,11 +14,12 @@ use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 
 use super::types::{FetchOutcome, FetchReason, TaskSource};
-use super::{enrich, filter, route, store};
+use super::{enrich, route, store};
 
 /// Run a single fetch pass over `source`. Captures errors into the
 /// returned [`FetchOutcome`] rather than propagating them.
 pub async fn run_source_once(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     source: &TaskSource,
     reason: FetchReason,
@@ -36,7 +37,7 @@ pub async fn run_source_once(
         "[task_sources:pipeline] fetch pass starting"
     );
 
-    match run_inner(config, source, reason, &mut outcome).await {
+    match run_inner(ctx, config, source, reason, &mut outcome).await {
         Ok(()) => {
             let status = format!(
                 "fetched {} routed {} dupes {} pruned {}",
@@ -124,12 +125,13 @@ fn fetch_tasks_unavailable(
 
 /// Fetch, process, and reconcile one source pass.
 async fn run_inner(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     source: &TaskSource,
     _reason: FetchReason,
     outcome: &mut FetchOutcome,
 ) -> Result<(), String> {
-    let fetch_filter = filter::to_fetch_filter(&source.filter, source.max_tasks_per_fetch);
+    let fetch_filter = source.filter.to_fetch_filter(source.max_tasks_per_fetch);
     let tasks = fetch_tasks_unavailable(source, &fetch_filter)?;
     outcome.fetched = tasks.len();
     // A fetch returns at most `fetch_filter.effective_max()` tasks (a hard
@@ -184,7 +186,7 @@ async fn run_inner(
         // Route first; only mark ingested on success so a routing
         // failure retries on the next pass instead of being silently
         // dropped.
-        if let Err(e) = route::route_enriched(config, source, &enriched).await {
+        if let Err(e) = route::route_enriched(ctx, config, source, &enriched).await {
             tracing::warn!(
                 source_id = %source.id,
                 external_id = %enriched.task.external_id,

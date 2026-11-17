@@ -5,13 +5,14 @@
  * it has no route of its own. Connections owns `?tab=` and the sidebar; this
  * page keeps its chip in `?brain=`:
  *
- *   engine · ask · explorer · learnings · conversations · brain · background · settings
+ *   engine · migration · ask · explorer · learnings · conversations · brain · background · settings
  *
- * With no `?brain=` the page opens on Ask when an engine is active and on
- * Engine otherwise. Retired values (v1's `graph`, `goals`, `sources`, `sync`,
- * `history`; v2's `documents` and `context`) are rewritten to their current
- * chip. While memory is off every chip
- * but Engine shows an empty state that points there.
+ * With no `?brain=` the page opens on the Provider (engine) chip. Retired
+ * values (v1's `graph`, `goals`, `sources`, `sync`, `history`; v2's
+ * `documents` and `context`) are rewritten to their current chip. While
+ * memory is off every chip but Engine shows an empty state that points there.
+ * Importing and organizing memory from earlier versions lives on its own
+ * Migration chip, not as a banner over the others.
  *
  * debug logging: DEBUG=openhuman:memory
  */
@@ -26,8 +27,8 @@ import { type MemoryChip, resolveMemoryChip } from '../components/memory/memoryC
 import MemoryConversationsTab from '../components/memory/MemoryConversationsTab';
 import MemoryEngineTab from '../components/memory/MemoryEngineTab';
 import MemoryExplorerTab from '../components/memory/MemoryExplorerTab';
-import MemoryImportBanner from '../components/memory/MemoryImportBanner';
 import MemoryLearningsTab from '../components/memory/MemoryLearningsTab';
+import MemoryMigrationTab from '../components/memory/MemoryMigrationTab';
 import MemoryOffState from '../components/memory/MemoryOffState';
 import MemorySettingsTab from '../components/memory/MemorySettingsTab';
 import SettingsTabbedPage from '../components/settings/layout/SettingsTabbedPage';
@@ -38,6 +39,7 @@ import { useCoreState } from '../providers/CoreStateProvider';
 import {
   type EngineDescriptor,
   type EngineState,
+  isMemoryDisabled,
   isMemoryOn,
   memoryEngineGet,
   memoryEnginesList,
@@ -85,7 +87,7 @@ export default function Memory() {
   const rawChip = params.get('brain');
   const requested = resolveMemoryChip(rawChip);
   const on = isMemoryOn(engine);
-  const chip: MemoryChip | null = requested ?? (engine ? (on ? 'ask' : 'engine') : null);
+  const chip: MemoryChip | null = requested ?? (engine ? 'engine' : null);
 
   const setChip = useCallback(
     (next: MemoryChip, replace = false) => {
@@ -101,12 +103,21 @@ export default function Memory() {
   // Rewrite a legacy (or unknown) `?brain=` value to its canonical chip so the
   // address bar, history and analytics all see the v2 name.
   useEffect(() => {
-    if (rawChip === null) return;
-    if (requested && requested !== rawChip) setChip(requested, true);
-  }, [rawChip, requested, setChip]);
+    if (!rawChip) return;
+    if (requested) {
+      if (requested !== rawChip) setChip(requested, true);
+    } else if (engine) {
+      // Unknown value: land on the default chip once it is known.
+      setChip('engine', true);
+    }
+  }, [rawChip, requested, engine, setChip]);
 
   const headers: Record<MemoryChip, { title: string; description: string }> = {
     engine: { title: t('memoryPage.tabs.engine'), description: t('memoryPage.header.engine') },
+    migration: {
+      title: t('memoryPage.tabs.migration'),
+      description: t('memoryPage.header.migration'),
+    },
     ask: { title: t('memoryPage.tabs.ask'), description: t('memoryPage.header.ask') },
     explorer: {
       title: t('memoryPage.tabs.explorer'),
@@ -131,8 +142,9 @@ export default function Memory() {
     },
   };
 
-  const activeLabel =
-    engines.find(e => e.id === engine?.engine)?.label ?? engine?.engine ?? t('nav.brain');
+  const activeLabel = isMemoryDisabled(engine)
+    ? t('memoryPage.engine.disabled.title')
+    : (engines.find(e => e.id === engine?.engine)?.label ?? engine?.engine ?? t('nav.brain'));
 
   const body = (() => {
     if (chip === null || engine === null) {
@@ -141,9 +153,23 @@ export default function Memory() {
     if (chip === 'engine') {
       return <MemoryEngineTab state={engine} onStateChange={setEngine} />;
     }
-    if (!on) {
-      return <MemoryOffState reason={engine.reason} onOpenEngine={() => setChip('engine')} />;
+    const offState = on ? undefined : (
+      <MemoryOffState
+        reason={engine.reason}
+        disabled={isMemoryDisabled(engine)}
+        onOpenEngine={() => setChip('engine')}
+      />
+    );
+    if (chip === 'migration') {
+      return (
+        <MemoryMigrationTab
+          key={authUserId ?? 'signed-out'}
+          engineLabel={activeLabel}
+          offState={offState}
+        />
+      );
     }
+    if (offState) return offState;
     switch (chip) {
       case 'ask':
         return <MemoryAskTab fetchModes={engine.fetch_modes ?? []} />;
@@ -158,7 +184,7 @@ export default function Memory() {
       case 'background':
         return <MemoryBackgroundTab />;
       case 'settings':
-        return <MemorySettingsTab />;
+        return <MemorySettingsTab onMemoryErased={() => setReloadKey(k => k + 1)} />;
       default:
         return null;
     }
@@ -167,10 +193,11 @@ export default function Memory() {
   return (
     <div className="h-full w-full" data-testid="memory-page">
       <SettingsTabbedPage<MemoryChip>
-        title={headers[chip ?? 'engine'].title}
+        title={t('nav.brain')}
         description={headers[chip ?? 'engine'].description}
         tabs={[
           { id: 'engine', label: t('memoryPage.tabs.engine') },
+          { id: 'migration', label: t('memoryPage.tabs.migration') },
           { id: 'ask', label: t('memoryPage.tabs.ask') },
           { id: 'explorer', label: t('memoryPage.tabs.explorer') },
           { id: 'learnings', label: t('memoryPage.tabs.learnings') },
@@ -184,6 +211,13 @@ export default function Memory() {
         tabsAriaLabel={t('nav.brain')}
         tabsTestIdPrefix="brain-tab">
         <div className="w-full space-y-5">
+          <Alert
+            variant="warning"
+            density="compact"
+            role={undefined}
+            data-testid="memory-alpha-notice">
+            <AlertDescription>{t('memoryPage.alphaNotice')}</AlertDescription>
+          </Alert>
           {loadError !== null && (
             <Alert variant="warning" data-testid="memory-load-error">
               <AlertDescription>
@@ -198,9 +232,6 @@ export default function Memory() {
                 </Button>
               </AlertDescription>
             </Alert>
-          )}
-          {on && chip !== null && chip !== 'engine' && (
-            <MemoryImportBanner engineLabel={activeLabel} />
           )}
           {body}
         </div>

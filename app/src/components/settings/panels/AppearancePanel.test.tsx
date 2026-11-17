@@ -3,6 +3,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
+import { setChatMascotDismissed } from '../../../store/mascotSlice';
 import { createTestStore, renderWithProviders } from '../../../test/test-utils';
 import AppearancePanel from './AppearancePanel';
 
@@ -30,6 +31,15 @@ function renderPanel(
 // (`/settings/theme`, `ThemeStudioPanel`) rather than as a tab inside
 // AppearancePanel — see ThemeStudioPanel.test.tsx for that coverage.
 describe('<AppearancePanel />', () => {
+  it('lets a dismissed chat mascot be shown again', () => {
+    const store = createTestStore();
+    store.dispatch(setChatMascotDismissed(true));
+    const { getByRole } = renderWithProviders(<AppearancePanel />, { store });
+    const toggle = getByRole('switch', { name: 'settings.appearance.showChatMascot' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(toggle);
+    expect(store.getState().mascot.chatMascotDismissed).toBe(false);
+  });
   it('renders the font size card and no theme gallery/customizer of its own', () => {
     const { getByTestId, getByRole, queryByTestId } = renderPanel();
     expect(getByTestId('font-size-card')).toBeInTheDocument();

@@ -32,6 +32,53 @@ describe('walletApi', () => {
     expect(result.configured).toBe(true);
   });
 
+  it('generateRecoveryPhrase requests the module-owned 12-word phrase', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: { phrase: 'word1 ... word12', wordCount: 12 },
+    });
+
+    const { generateRecoveryPhrase } = await import('./walletApi');
+    const result = await generateRecoveryPhrase();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.wallet_generate_mnemonic',
+      params: { wordCount: 12 },
+    });
+    expect(result).toEqual({ phrase: 'word1 ... word12', wordCount: 12 });
+  });
+
+  it('validateRecoveryPhrase asks the module to validate an imported phrase', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: { valid: false } });
+
+    const { validateRecoveryPhrase } = await import('./walletApi');
+    const result = await validateRecoveryPhrase('abandon abandon');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.wallet_validate_mnemonic',
+      params: { phrase: 'abandon abandon' },
+    });
+    expect(result).toBe(false);
+  });
+
+  it('deriveRecoveryMaterial requests module-owned seed and account derivation', async () => {
+    const seed = Array.from({ length: 64 }, (_, index) => index);
+    const accounts = [
+      { chain: 'evm' as const, address: '0xabc', derivationPath: "m/44'/60'/0'/0/0" },
+    ];
+    mockCallCoreRpc.mockResolvedValueOnce({ result: { seed, accounts } });
+
+    const { deriveRecoveryMaterial } = await import('./walletApi');
+    const result = await deriveRecoveryMaterial('secret phrase');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.wallet_derive_recovery_material',
+      params: { phrase: 'secret phrase' },
+    });
+    expect(result.seed).toEqual(Uint8Array.from({ length: 64 }, (_, index) => index));
+    expect(seed).toEqual(new Array(64).fill(0));
+    expect(result.accounts).toEqual(accounts);
+  });
+
   it('setupLocalWallet calls the wallet setup RPC with params', async () => {
     const payload = {
       consentGranted: true,

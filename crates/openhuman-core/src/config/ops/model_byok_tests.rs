@@ -7,6 +7,16 @@
 //! there.
 
 use super::*;
+
+#[test]
+fn provider_ca_updates_validate_bundles_and_normalize_slugs() {
+    let error = collect_provider_ca_certs([(" team ", Some("not a certificate"))])
+        .expect_err("invalid CA material must fail before applying settings");
+    assert!(error.contains("CA bundle"));
+
+    let certs = collect_provider_ca_certs([(" team ", Some(""))]).unwrap();
+    assert_eq!(certs.get("team").map(String::as_str), Some(""));
+}
 use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::Config;
 
@@ -25,7 +35,6 @@ fn entry(slug: &str, endpoint: &str) -> CloudProviderCreds {
         label: slug.to_string(),
         endpoint: endpoint.to_string(),
         auth_style: AuthStyle::Bearer,
-        legacy_type: None,
         default_model: None,
     }
 }

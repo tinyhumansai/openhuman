@@ -50,9 +50,22 @@ async fn graph_wiring_warnings_uses_the_probed_output_fields_when_schema_is_unkn
         ]
     }));
     assert!(
-        graph_wiring_warnings(&config, &real_field).await.is_empty(),
+        graph_wiring_warnings(
+            &crate::core::runtime::DispatchCtx::unbound(),
+            &config,
+            &real_field
+        )
+        .await
+        .expect("TinyFlows wiring warnings should succeed")
+        .is_empty(),
         "a probed-real field must not warn: {:?}",
-        graph_wiring_warnings(&config, &real_field).await
+        graph_wiring_warnings(
+            &crate::core::runtime::DispatchCtx::unbound(),
+            &config,
+            &real_field
+        )
+        .await
+        .expect("TinyFlows wiring warnings should succeed")
     );
 
     // A binding to a field the probe did NOT observe — flagged, using the
@@ -72,7 +85,13 @@ async fn graph_wiring_warnings_uses_the_probed_output_fields_when_schema_is_unkn
             { "from_node": "post", "to_node": "xform" }
         ]
     }));
-    let warnings = graph_wiring_warnings(&config, &fake_field).await;
+    let warnings = graph_wiring_warnings(
+        &crate::core::runtime::DispatchCtx::unbound(),
+        &config,
+        &fake_field,
+    )
+    .await
+    .expect("TinyFlows wiring warnings should succeed");
     assert!(
         warnings
             .iter()
@@ -98,7 +117,9 @@ fn agent_prompt_binding_unaffected() {
         ],
         "edges": [ { "from_node": "t", "to_node": "summarize" } ]
     }));
-    assert!(validate_binding_resolvability(&g).is_empty());
+    let engine_graph: tinyflows::model::WorkflowGraph =
+        serde_json::from_value(g.clone()).expect("graph fixture converts to engine graph");
+    assert!(tinyflows::gates::failures(&engine_graph).is_empty());
 }
 
 /// Regression for issue #4593 (widened for #4881's `resume_flow_run`/
@@ -112,6 +133,7 @@ fn agent_prompt_binding_unaffected() {
 /// tools in place so the turn still functions (never fail-closes).
 #[tokio::test]
 async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
+    crate::agent::session_host::test_support::install_model_fixture();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -121,20 +143,25 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
     // belt name-resolution so the hide-list can't silently stop covering a
     // live-run/resume tool.
     use tinytools::Tool as _;
-    let live_runner = crate::flows::tools::RunFlowTool::new(std::sync::Arc::new(config.clone()));
+    let live_runner = crate::flows::copilot_bus::BusCopilotTool::from_name(
+        std::sync::Arc::new(config.clone()),
+        "run_flow",
+    );
     assert!(
         live_runner.external_effect(),
         "the flows live-runner must be external-effect for the #4593 concern to apply"
     );
-    let resumer =
-        crate::flows::builder_tools::ResumeFlowRunTool::new(std::sync::Arc::new(config.clone()));
+    let resumer = crate::flows::builder_tools::tests_support::resume_flow_run_tool(
+        std::sync::Arc::new(config.clone()),
+    );
     assert!(
         resumer.external_effect(),
         "resume_flow_run advances a real run's outbound effects, so it must be \
          external-effect for the same #4593/#4881 concern to apply"
     );
-    let canceller =
-        crate::flows::builder_tools::CancelFlowRunTool::new(std::sync::Arc::new(config.clone()));
+    let canceller = crate::flows::builder_tools::tests_support::cancel_flow_run_tool(
+        std::sync::Arc::new(config.clone()),
+    );
     assert!(
         canceller.external_effect(),
         "cancel_flow_run is external-effect since the T-M3 fix — it stays hidden on THIS \
@@ -144,19 +171,25 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
-        .expect("agent registry init");
-    let mut agent =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "workflow_builder")
-            .expect("build workflow_builder agent");
+    crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global(
+        &config.workspace_dir,
+    )
+    .expect("agent registry init");
+    let mut agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "workflow_builder",
+    )
+    .await
+    .expect("build workflow_builder agent");
     agent.set_agent_definition_name("workflow_builder".to_string());
 
     // Precondition: the builder advertises all four run-advancing tools on its
     // belt before restriction — the exact set #4593/#4881 are about.
-    let visible_before = agent.visible_tool_names_for_test();
+    let visible_before = agent.visible_tool_specs_arc();
     for present in ["run_flow", "resume_flow_run", "cancel_flow_run"] {
         assert!(
-            visible_before.contains(present),
+            visible_before.iter().any(|spec| spec.name == present),
             "precondition: workflow_builder belt should advertise `{present}`; visible = \
              {visible_before:?}"
         );
@@ -166,7 +199,7 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
 
     // After restriction none of the run-advancing tools are callable on the
     // flows_build path — the hide-list covers all of them (#4593 + #4881).
-    let visible = agent.visible_tool_names_for_test();
+    let visible = agent.visible_tool_specs_arc();
     for hidden in [
         "run_workflow",
         "run_flow",
@@ -174,7 +207,7 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
         "cancel_flow_run",
     ] {
         assert!(
-            !visible.contains(hidden),
+            !visible.iter().any(|spec| spec.name == hidden),
             "run-advancing tool `{hidden}` must be hidden on the flows_build path; visible = \
              {visible:?}"
         );
@@ -192,7 +225,7 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
         "duplicate_flow",
     ] {
         assert!(
-            visible.contains(keep),
+            visible.iter().any(|spec| spec.name == keep),
             "authoring tool `{keep}` must remain visible after restriction; visible = {visible:?}"
         );
     }
@@ -237,31 +270,82 @@ fn flows_build_hide_lists_have_the_expected_contents() {
 /// run — a product decision, deliberately not taken here.
 #[tokio::test]
 async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
+    crate::agent::session_host::test_support::install_model_fixture();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
-        .expect("agent registry init");
-    let mut agent =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "workflow_builder")
-            .expect("build workflow_builder agent");
+    crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global(
+        &config.workspace_dir,
+    )
+    .expect("agent registry init");
+    let mut agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "workflow_builder",
+    )
+    .await
+    .expect("build workflow_builder agent");
     agent.set_agent_definition_name("workflow_builder".to_string());
+
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("install test tracing subscriber");
 
     restrict_builder_toolset_for_copilot(&mut agent);
 
-    let visible = agent.visible_tool_names_for_test();
+    let log = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        log.contains("cancel_flow_run"),
+        "trace should name the hidden tool: {log}"
+    );
+    assert!(
+        log.contains("run_flow/resume_flow_run stay visible")
+            && log.contains("cancel_flow_run and the unrelated legacy run_workflow are hidden"),
+        "trace should describe the actual builder tool visibility: {log}"
+    );
+    assert!(
+        !log.contains("run_flow/resume_flow_run/cancel_flow_run stay visible"),
+        "trace contradicts the actual hidden toolset: {log}"
+    );
+
+    let visible = agent.visible_tool_specs_arc();
     for still_reachable in ["run_flow", "resume_flow_run"] {
         assert!(
-            visible.contains(still_reachable),
+            visible.iter().any(|spec| spec.name == still_reachable),
             "`{still_reachable}` must stay reachable on the streaming copilot path — it \
              is gated behind the WebChat approval surface, not hidden; visible = {visible:?}"
         );
     }
     for hidden in ["run_workflow", "cancel_flow_run"] {
         assert!(
-            !visible.contains(hidden),
+            !visible.iter().any(|spec| spec.name == hidden),
             "`{hidden}` must stay hidden on the copilot path (unrelated legacy runner / \
              a cancel that is now safe to unhide but deliberately still gated behind a \
              product decision); visible = {visible:?}"
@@ -277,7 +361,7 @@ async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
         "duplicate_flow",
     ] {
         assert!(
-            visible.contains(keep),
+            visible.iter().any(|spec| spec.name == keep),
             "authoring tool `{keep}` must remain visible on the copilot path; visible = \
              {visible:?}"
         );
@@ -294,6 +378,7 @@ async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
 /// override needed (that function was deleted as part of #4868).
 #[tokio::test]
 async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
+    crate::agent::session_host::test_support::install_model_fixture();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -303,9 +388,11 @@ async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
-        .expect("agent registry init");
-    let def = crate::agent::harness::AgentDefinitionRegistry::global()
+    crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global(
+        &config.workspace_dir,
+    )
+    .expect("agent registry init");
+    let def = crate::agent_registry::host_definition::AgentDefinitionRegistry::global()
         .expect("registry initialised")
         .get("workflow_builder")
         .expect("workflow_builder definition registered")
@@ -320,9 +407,13 @@ async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
     // End-to-end: the agent actually built for this path carries the
     // definition's cap straight off the unmodified `config` — the session
     // builder resolves it internally now, no `flows_build`-side override.
-    let agent =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "workflow_builder")
-            .expect("build workflow_builder agent");
+    let agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "workflow_builder",
+    )
+    .await
+    .expect("build workflow_builder agent");
     assert_eq!(agent.agent_config().max_tool_iterations, expected);
     assert_ne!(
         agent.agent_config().max_tool_iterations,

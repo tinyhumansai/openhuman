@@ -1,13 +1,14 @@
-//! High-level web3 surface built on top of the [`crate::web3::wallet`]
-//! signing primitives. Focuses on EVM/Solana dapp interactions: swaps, bridges,
-//! and generic contract calls.
+//! High-level Web3 product surface for swaps, bridges, dapp calls, and wallet
+//! operations. The host owns RPC policy and user approval; TinyWallet owns
+//! chain-specific algorithms and module-scoped quote state.
 //!
-//! The swap/bridge/dapp logic (quote preparation, the confirm-then-execute quote
-//! store, the agent tools) lives in `tinywallet_web3::crypto::service`. What
-//! stays here is the host adapter: the RPC controllers and their schemas (the
-//! namespace strings are wire contracts), the [`client`] over the backend's
-//! deBridge proxy (`/agent-integrations/crypto/*`), and [`seams`], which holds
-//! the host implementations of the crate's seams and the process-wide service.
+//! Quote preparation, signing, calldata encoding, provider algorithms, and the
+//! confirm-then-execute quote store run inside the compiled TinyWallet module.
+//! This host layer keeps product RPC controllers and schemas (their namespace
+//! strings are wire contracts), the wallet-backend hook
+//! (`modules::wallet_backend`, answered by a host that has a swap/bridge
+//! service), and adapters for configuration, custody,
+//! approval, and generic network transport.
 //! Three sub-modules expose distinct RPC namespaces:
 //! - [`swap`] (`web3_swap`) — single-chain swaps (cross-chain → `web3_bridge`).
 //! - [`bridge`] (`web3_bridge`) — cross-chain DLN bridges.
@@ -26,22 +27,16 @@
 #[cfg(feature = "web3")]
 pub mod bridge;
 #[cfg(feature = "web3")]
-pub mod client;
-#[cfg(feature = "web3")]
 pub mod dapp;
 #[cfg(feature = "web3")]
-pub mod seams;
-#[cfg(feature = "web3")]
 pub mod swap;
-/// The swap/bridge/dapp request and quote types, re-exported from
-/// `tinywallet-web3` under their historical path.
+/// Wallet and Web3 agent tool adapters over the declarations in `tinywallet-bus`.
 #[cfg(feature = "web3")]
-pub use tinywallet_web3::crypto::service as types;
-
+pub mod tools;
 // Ungated family members: `wallet` and `x402` are facades in their own right —
 // each keeps its own `stub.rs` and gates its real submodules on the same
 // default-ON `web3` feature. Always-compiled callers resolve through those
-// stubs (`tools/impl/network/host.rs` -> `x402`), so these
+// stubs (`tools/impl/network.rs` -> `x402`), so these
 // declarations must NOT carry a `#[cfg]`.
 pub mod wallet;
 pub mod x402;
@@ -70,17 +65,6 @@ pub(crate) fn req_json(name: &'static str, comment: &'static str) -> FieldSchema
         ty: TypeSchema::Json,
         comment,
         required: true,
-    }
-}
-
-/// An optional string controller input.
-#[cfg(feature = "web3")]
-pub(crate) fn opt_str(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
     }
 }
 
@@ -129,19 +113,5 @@ pub fn all_web3_registered_controllers() -> Vec<RegisteredController> {
 /// gracefully (rather than being hidden) when the user is not signed in.
 #[cfg(feature = "web3")]
 pub fn all_web3_agent_tools() -> Vec<Box<dyn Tool>> {
-    use tinywallet_web3::tools::web3::{
-        Web3BridgeExecuteTool, Web3BridgeQuoteTool, Web3DappCallTool, Web3DappExecuteTool,
-        Web3SwapExecuteTool, Web3SwapQuoteTool, Web3SwapRoutesTool,
-    };
-
-    let service = seams::service();
-    vec![
-        Box::new(Web3SwapQuoteTool::new(service.clone())),
-        Box::new(Web3SwapExecuteTool::new(service.clone())),
-        Box::new(Web3SwapRoutesTool::new(service.clone())),
-        Box::new(Web3BridgeQuoteTool::new(service.clone())),
-        Box::new(Web3BridgeExecuteTool::new(service.clone())),
-        Box::new(Web3DappCallTool::new(service.clone())),
-        Box::new(Web3DappExecuteTool::new(service)),
-    ]
+    tools::web3_agent_tools()
 }

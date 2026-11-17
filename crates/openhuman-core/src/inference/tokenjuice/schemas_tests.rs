@@ -1,10 +1,15 @@
 use super::*;
+use crate::core::all::{assert_schema_controller_parity, expect_schema_fields};
+use crate::core::runtime::DispatchCtx;
 
 #[test]
-fn all_schemas_have_namespace() {
-    for s in all_controller_schemas() {
-        assert_eq!(s.namespace, "tokenjuice");
-    }
+fn tokenjuice_schema_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "tokenjuice");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "compress",
+    );
 }
 
 /* Module-backed behavior is covered by TinyJuice's loader E2E. */
@@ -25,26 +30,18 @@ fn compress_hint_carries_every_caller_supplied_field() {
     p.insert("explicit".into(), Value::from("search"));
 
     let hint = compress_hint_from_params(&p).expect("a well-formed hint must parse");
-    assert_eq!(
-        hint.source_tool.as_deref(),
-        Some("grep"),
-        "`tool_name` was the only field the old handler read"
-    );
-    assert_eq!(
-        hint.mime.as_deref(),
-        Some("text/html"),
-        "`mime` must reach the router; it was dropped before #6088"
-    );
-    assert_eq!(
-        hint.extension.as_deref(),
-        Some("rs"),
-        "`extension` must reach the router; it was dropped before #6088"
-    );
-    assert_eq!(
-        hint.query.as_deref(),
-        Some("needle"),
-        "`query` must reach the router — the search compressor ranks by it"
-    );
+    for (field, actual, expected) in [
+        ("tool_name", hint.source_tool.as_deref(), "grep"),
+        ("mime", hint.mime.as_deref(), "text/html"),
+        ("extension", hint.extension.as_deref(), "rs"),
+        ("query", hint.query.as_deref(), "needle"),
+    ] {
+        assert_eq!(
+            actual,
+            Some(expected),
+            "caller-supplied {field} must reach the router"
+        );
+    }
     assert_eq!(
         hint.explicit,
         Some(ContentKind::Search),
@@ -96,38 +93,17 @@ fn compress_hint_accepts_the_documented_plain_text_spelling() {
 
 #[test]
 fn compress_schema_declares_all_five_hint_inputs() {
-    let s = schemas("compress");
-    for field in [
-        "content",
-        "tool_name",
-        "mime",
-        "extension",
-        "query",
-        "explicit",
-    ] {
-        assert!(
-            s.inputs.iter().any(|f| f.name == field),
-            "`compress` must declare `{field}`; a hint field the schema does not \
-             name is one a caller cannot discover"
-        );
-    }
-    assert!(
-        s.inputs
-            .iter()
-            .find(|f| f.name == "content")
-            .is_some_and(|f| f.required),
-        "only `content` is required"
+    expect_schema_fields(
+        &schemas("compress"),
+        &[
+            ("content", Some(true)),
+            ("tool_name", Some(false)),
+            ("mime", Some(false)),
+            ("extension", Some(false)),
+            ("query", Some(false)),
+            ("explicit", Some(false)),
+        ],
     );
-    for optional in ["tool_name", "mime", "extension", "query", "explicit"] {
-        assert!(
-            !s.inputs
-                .iter()
-                .find(|f| f.name == optional)
-                .unwrap()
-                .required,
-            "`{optional}` must stay optional"
-        );
-    }
 }
 
 /// `/schema` is what generators and model-facing tool definitions read. Declaring
@@ -169,4 +145,48 @@ fn compress_declares_explicit_as_an_enum_of_the_accepted_kinds() {
         "the declared variants must be exactly what `ContentKind::from_str` parses \
          — note `plain_text`, not serde's `plainText`"
     );
+}
+
+// ── [components] juice = false ────────────────────────────────────────
+
+#[tokio::test]
+async fn every_tokenjuice_method_answers_component_disabled_when_juice_is_off() {
+    type ControllerHandler = fn(DispatchCtx, Map<String, Value>) -> ControllerFuture;
+    let mut set = crate::core::runtime::ComponentSet::all();
+    set.juice = false;
+    let ctx = crate::core::runtime::context::CoreContext::for_test_with_components(set);
+    let handlers: [ControllerHandler; 8] = [
+        handle_detect,
+        handle_compress,
+        handle_cache_stats,
+        handle_retrieve,
+        handle_settings_get,
+        handle_settings_update,
+        handle_savings_stats,
+        handle_savings_reset,
+    ];
+    let dispatch = DispatchCtx::new(ctx.clone());
+    crate::core::runtime::context::CoreContext::scope(ctx, async {
+        for handler in handlers {
+            let err = handler(dispatch.clone(), Map::new()).await.unwrap_err();
+            let decoded = crate::core::StructuredRpcError::decode(&err).expect("typed error");
+            assert_eq!(decoded.message, "COMPONENT_DISABLED:juice");
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn tokenjuice_methods_are_not_gated_when_juice_is_on() {
+    let ctx = crate::core::runtime::context::CoreContext::for_test_with_components(
+        crate::core::runtime::ComponentSet::all(),
+    );
+    crate::core::runtime::context::CoreContext::scope(ctx.clone(), async {
+        // Gate passes; the handler then fails on its own missing param.
+        let err = handle_detect(DispatchCtx::new(ctx.clone()), Map::new())
+            .await
+            .unwrap_err();
+        assert!(!err.contains("COMPONENT_DISABLED"), "{err}");
+    })
+    .await;
 }

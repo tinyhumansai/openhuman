@@ -10,10 +10,10 @@
  * Detection strategy (per locale):
  *   - Technical literals are skipped (pure placeholders, URLs, single-token identifiers,
  *     file paths, commands, values with no real word).
- *   - Non-Latin-script locales (zh-CN, hi, bn, ar, ru, ko): a non-technical value that
+ *   - Non-Latin-script locales (zh-CN, hi, bn, ar, ru, ko, ja): a non-technical value that
  *     contains NO character of the locale's native script is treated as English.
  *     (High recall — vocabulary-independent.)
- *   - Latin-script locales (de, es, fr, it, pt, id, pl): a non-technical value is flagged
+ *   - Latin-script locales (de, es, fr, it, pt, id, pl, tr): a non-technical value is flagged
  *     when it is identical to the current English value, OR when it contains >= 2 distinct
  *     English-only function words (the/and/while/may/your/…) that do not exist in any of
  *     these languages. (A vocabulary-ratio test is unreliable here because French/Spanish/
@@ -40,10 +40,11 @@ const NATIVE_SCRIPT: Record<string, RegExp> = {
   bn: /[ঀ-৿]/,
   ar: /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/,
   ru: /[Ѐ-ӿ]/,
+  ja: /[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]/,
   ko: /[가-힯ᄀ-ᇿ㄰-㆏]/,
 };
 
-const LATIN_LOCALES = ["es", "fr", "pt", "de", "id", "it", "pl"] as const;
+const LATIN_LOCALES = ["es", "fr", "pt", "de", "id", "it", "pl", "tr"] as const;
 const ALL_LOCALES = [...Object.keys(NATIVE_SCRIPT), ...LATIN_LOCALES];
 
 // Keys whose values are intentionally English in every locale: brand/product names,
@@ -94,9 +95,6 @@ const INTENTIONAL_ENGLISH = new Set([
   "settings.taskSources.name",
   "skills.create.allowedToolsPlaceholder",
   "skills.create.optional",
-  "skills.meetingBots.wakePhraseHint",
-  "skills.meetingBots.platforms.gmeet",
-  "skills.meetingBots.platforms.teams",
   "conversations.goal.inlineSummary", // "{objective} ({status})" — both segments are variable placeholders, untranslatable data
   "vault.excludesPlaceholder",
   "vault.syncSummaryDuration",
@@ -119,6 +117,14 @@ const ENGLISH_FN = new Set(
     "because however therefore otherwise whether doesn isn aren don won enabled disabled"
   ).split(" "),
 );
+
+// Words in ENGLISH_FN that are also ordinary words in a specific locale, so they say nothing
+// about English there. Turkish (checked against the whole list): "can" (life/soul), "not"
+// (note, as in "Not: …"), "may" (yeast), "must" (grape must), "has" (pure), "had" (limit),
+// "don" (frost). "and" (oath) stays: it is archaic in UI copy and English's strongest signal.
+const LOCALE_SHARED_WORDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  tr: new Set(["can", "not", "may", "must", "has", "had", "don"]),
+};
 
 interface CliOptions {
   json: boolean;
@@ -200,9 +206,10 @@ function isTechnical(value: string): boolean {
   return false;
 }
 
-function looksEnglish(value: string): boolean {
+export function looksEnglish(value: string, locale?: string): boolean {
+  const shared = (locale && LOCALE_SHARED_WORDS[locale]) || undefined;
   const distinct = new Set(
-    contentWords(value).filter((w) => ENGLISH_FN.has(w)),
+    contentWords(value).filter((w) => ENGLISH_FN.has(w) && !shared?.has(w)),
   );
   return distinct.size >= 2;
 }
@@ -224,7 +231,7 @@ async function main() {
       if (INTENTIONAL_ENGLISH.has(k)) continue;
       const flagged = native
         ? !native.test(v) // non-Latin: no native char ⇒ English
-        : v === en[k] || looksEnglish(v); // Latin: identical or >=2 English-only function words
+        : v === en[k] || looksEnglish(v, locale); // Latin: identical or >=2 English-only function words
       if (flagged) items.push({ key: k, en: en[k], current: v });
     }
     items.sort((a, b) => a.key.localeCompare(b.key));
@@ -269,7 +276,13 @@ async function main() {
   process.exit(total > 0 ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(2);
-});
+// Run only as a CLI so tests can import `looksEnglish` without scanning the locales.
+if (
+  process.argv[1] &&
+  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(2);
+  });
+}

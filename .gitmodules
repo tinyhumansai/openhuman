@@ -32,9 +32,6 @@
 	path = vendor/tinybox
 	url = https://github.com/tinyhumansai/tinybox
 	branch = main
-[submodule "vendor/tinyruntime"]
-	path = vendor/tinyruntime
-	url = https://github.com/tinyhumansai/tinyruntime.git
 [submodule "vendor/tinydocs"]
 	path = vendor/tinydocs
 	url = https://github.com/tinyhumansai/tinydocs
@@ -60,3 +57,18 @@
 [submodule "vendor/tinysearch"]
 	path = vendor/tinysearch
 	url = https://github.com/tinyhumansai/tinysearch.git
+[submodule "vendor/tinystoragedrivers"]
+	path = vendor/tinystoragedrivers
+	url = https://github.com/tinyhumansai/tinystoragedrivers.git
+	branch = main
+[submodule "vendor/tiny-artifacts"]
+	path = vendor/tiny-artifacts
+	url = https://github.com/tinyhumansai/tiny-artifacts
+[submodule "vendor/tinyeventqueues"]
+	path = vendor/tinyeventqueues
+	url = https://github.com/tinyhumansai/tinyeventqueues
+	branch = main
+[submodule "vendor/tinysecurity"]
+	path = vendor/tinysecurity
+	url = https://github.com/tinyhumansai/tinysecurity.git
+	branch = main

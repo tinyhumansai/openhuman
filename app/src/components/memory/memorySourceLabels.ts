@@ -19,8 +19,6 @@ export function sourceKindLabel(kind: DocumentSourceKind, t: Translate): string 
       return t('memoryPage.sourceKind.github');
     case 'rss':
       return t('memoryPage.sourceKind.rss');
-    case 'composio':
-      return t('memoryPage.sourceKind.composio');
     default:
       return String(kind);
   }
@@ -39,8 +37,6 @@ export function sourceTargetHint(kind: DocumentSourceKind, t: Translate): string
       return t('memoryPage.sourceTarget.github');
     case 'rss':
       return t('memoryPage.sourceTarget.rss');
-    case 'composio':
-      return t('memoryPage.sourceTarget.composio');
     default:
       return '';
   }

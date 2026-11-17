@@ -6,17 +6,27 @@
  * upstream:
  * - `cn` import path (`@/components/assistant-ui/lib/utils`), matching every
  *   other vendored element in this directory.
- * No hard-coded user-facing copy — every string (`label`, `meta`, `elapsed`,
- * `result`) is a caller-supplied prop, so there is nothing to route through
- * `useT()` here.
+ * - the screen-reader state label goes through `useT()` instead of echoing the
+ *   raw state id. Every other string (`label`, `meta`, `elapsed`, `result`) is a
+ *   caller-supplied prop.
  */
 import { cn } from '@/components/assistant-ui/lib/utils';
-import { Ban, CheckIcon, ChevronRightIcon, Loader2Icon, XIcon } from 'lucide-react';
-import { Children, type ComponentProps, type ReactNode, useState } from 'react';
+import { useT } from '@/lib/i18n/I18nContext';
+import {
+  AlertTriangleIcon,
+  Ban,
+  CheckIcon,
+  ChevronRightIcon,
+  Loader2Icon,
+  XIcon,
+} from 'lucide-react';
+import { Children, type ComponentProps, type ReactNode, useContext, useState } from 'react';
+import { createPortal } from 'react-dom';
 
+import { TaskCardDockTarget } from '../lib/task-card-dock';
 import { mono, paper } from './surfaces';
 
-export type TaskCardState = 'working' | 'waiting' | 'done' | 'failed' | 'cancelled';
+export type TaskCardState = 'working' | 'waiting' | 'done' | 'failed' | 'cancelled' | 'incomplete';
 
 const isRenderable = (node: ReactNode) =>
   node !== undefined && node !== null && node !== false && node !== true;
@@ -30,15 +40,23 @@ export function TaskStateIcon({ state, className }: { state: TaskCardState; clas
   if (state === 'failed') {
     return <XIcon aria-hidden className={cn('text-destructive size-3.5 shrink-0', className)} />;
   }
+  if (state === 'incomplete') {
+    return (
+      <AlertTriangleIcon
+        aria-hidden
+        className={cn('size-3.5 shrink-0 text-amber-500', className)}
+      />
+    );
+  }
   if (state === 'cancelled') {
-    return <Ban aria-hidden className={cn('text-foreground/35 size-3.5 shrink-0', className)} />;
+    return <Ban aria-hidden className={cn('text-muted-foreground size-3.5 shrink-0', className)} />;
   }
   if (state === 'working') {
     return (
       <Loader2Icon
         aria-hidden
         className={cn(
-          'text-foreground/35 size-3.5 shrink-0 animate-spin motion-reduce:animate-none',
+          'text-muted-foreground size-3.5 shrink-0 animate-spin motion-reduce:animate-none',
           className
         )}
       />
@@ -78,6 +96,8 @@ export function TaskCard({
   onOpenChange?: ((open: boolean) => void) | undefined;
   children?: ReactNode | undefined;
 }) {
+  const { t } = useT();
+  const dock = useContext(TaskCardDockTarget);
   const hasTranscript = Children.toArray(children).length > 0;
   const inert = open !== undefined && onOpenChange === undefined;
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -88,11 +108,16 @@ export function TaskCard({
     onOpenChange?.(next);
   };
 
-  return (
+  const card = (
     <div
       data-slot="task-card"
       data-state={state}
-      className={cn(paper, 'flex w-full max-w-sm flex-col overflow-hidden rounded-2xl', className)}
+      className={cn(
+        paper,
+        'flex w-full flex-col overflow-hidden rounded-2xl',
+        (!dock || (state !== 'working' && state !== 'waiting')) && 'my-3',
+        className
+      )}
       {...props}>
       <button
         type="button"
@@ -101,19 +126,23 @@ export function TaskCard({
         onClick={toggle}
         className="hover:enabled:bg-foreground/[0.03] flex items-center gap-2.5 px-3.5 py-2.5 text-start transition-colors disabled:cursor-default">
         <TaskStateIcon state={state} />
-        <span className="sr-only">{state}</span>
-        <span className="min-w-0 flex-1 truncate text-[13.5px]">{label}</span>
+        <span className="sr-only">{t(`conversations.taskCard.state.${state}`)}</span>
+        <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
         {meta !== undefined && (
-          <span className={cn(mono, 'text-foreground/35 max-w-24 shrink-0 truncate')}>{meta}</span>
+          <span className={cn(mono, 'text-muted-foreground text-xs max-w-32 shrink-0 truncate')}>
+            {meta}
+          </span>
         )}
         {elapsed !== undefined && (
-          <span className={cn(mono, 'text-foreground/30 shrink-0 tabular-nums')}>{elapsed}</span>
+          <span className={cn(mono, 'text-muted-foreground text-xs shrink-0 tabular-nums')}>
+            {elapsed}
+          </span>
         )}
         {hasTranscript && (
           <ChevronRightIcon
             aria-hidden
             className={cn(
-              'text-foreground/25 size-3 shrink-0 transition-transform duration-200 motion-reduce:transition-none',
+              'text-muted-foreground size-3 shrink-0 transition-transform duration-200 motion-reduce:transition-none',
               isOpen && 'rotate-90'
             )}
           />
@@ -134,10 +163,11 @@ export function TaskCard({
       {isRenderable(result) && (
         <div
           data-slot="task-card-result"
-          className="border-border/60 text-foreground/70 border-t px-3.5 py-2 text-xs leading-relaxed">
+          className="border-border/60 text-muted-foreground border-t px-3.5 py-2 text-xs leading-relaxed">
           {result}
         </div>
       )}
     </div>
   );
+  return dock && (state === 'working' || state === 'waiting') ? createPortal(card, dock) : card;
 }

@@ -1,12 +1,12 @@
 //! Utility functions for `OpenHuman`.
 //!
 //! Kernel family — always compiled, never gated. Self-contained helpers
-//! reused across domains; nothing here may reach into a domain (no `use
-//! crate::` anywhere in this directory).
+//! reused across domains. The URL log redactor is the narrow exception: it
+//! uses TinySecurity's Endpoint mode through the shared module adapter.
 //!
 //! - [`text`]     — UTF-8-safe truncation, char-boundary rounding, provenance tags
 //! - [`retry`]    — retry-with-backoff + transient-filesystem-error classification
-//! - [`sanitize`] — LLM-facing text sanitization (control-char stripping,
+//! - `tinytools::sanitize` — LLM-facing text sanitization (control-char stripping,
 //!   instruction-fence removal, UTF-8-safe byte caps)
 //! - [`tls`]      — platform-conditional `reqwest::ClientBuilder` factory
 //! - [`types`]    — shared utility types
@@ -26,7 +26,6 @@ pub mod params;
 /// not taken from the memory engine.
 pub mod redact;
 pub mod retry;
-pub mod sanitize;
 pub mod text;
 pub mod tls;
 pub mod types;
@@ -40,3 +39,8 @@ pub use text::{
     truncate_with_suffix, utf8_safe_prefix_at_byte_boundary,
 };
 pub use types::MaybeSet;
+
+#[cfg(test)]
+pub(crate) mod classic_transcript_fixture;
+#[cfg(test)]
+pub(crate) mod module_test_process;

@@ -11,8 +11,10 @@ export type Locale =
   | 'ru'
   | 'id'
   | 'it'
+  | 'ja'
   | 'ko'
-  | 'pl';
+  | 'pl'
+  | 'tr';
 
 export interface TranslationMap {
   [key: string]: string;

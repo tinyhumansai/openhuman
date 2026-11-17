@@ -19,6 +19,144 @@
 use crate::config::Config;
 use crate::core::runtime::ServiceSet;
 
+/// The long-lived background services a runtime started, so it can stop them.
+///
+/// The service spawns below used to be fire-and-forget: fine for a desktop
+/// core that lives as long as its process, wrong for a library runtime that is
+/// dropped and rebuilt in one process, whose cron loop would otherwise keep
+/// polling the old workspace forever. [`CoreRuntime::start_services`]
+/// (crate::core::runtime::CoreRuntime::start_services) tracks each top-level
+/// service task here; [`stop`](Self::stop) and `Drop` abort them. Aborting the
+/// cron loop drops its dispatcher, which aborts the jobs it was running.
+///
+/// Work a service spawns detached on its own (a channel listener's sockets,
+/// the login-gated services' workers) is not reached by the abort; only the
+/// cron loop and the other top-level spawns are guaranteed to stop.
+#[derive(Default)]
+pub struct ServiceTasks {
+    started: std::sync::atomic::AtomicBool,
+    tasks: std::sync::Mutex<Vec<(&'static str, tokio::task::AbortHandle)>>,
+}
+
+impl ServiceTasks {
+    /// Claim the start; `false` when the services already started and have
+    /// not been stopped since.
+    pub fn begin(&self) -> bool {
+        !self.started.swap(true, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    /// Track a service task so [`stop`](Self::stop) can abort it.
+    pub fn track(&self, name: &'static str, handle: tokio::task::JoinHandle<()>) {
+        log::debug!("[runtime.services] tracking service task {name}");
+        self.tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((name, handle.abort_handle()));
+    }
+
+    /// How many service tasks are tracked.
+    pub fn len(&self) -> usize {
+        self.tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    /// Whether no service task is tracked.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Abort every tracked service task; the services may be started again.
+    pub fn stop(&self) {
+        let tasks = std::mem::take(
+            &mut *self
+                .tasks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for (name, handle) in &tasks {
+            log::debug!("[runtime.services] stopping service task {name}");
+            handle.abort();
+        }
+        self.started
+            .store(false, std::sync::atomic::Ordering::Release);
+        if !tasks.is_empty() {
+            log::info!("[runtime.services] stopped {} service task(s)", tasks.len());
+        }
+    }
+}
+
+impl Drop for ServiceTasks {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// The body of [`CoreRuntime::start_services`](crate::core::runtime::CoreRuntime::start_services):
+/// start what `services` selects once, tracking the long-lived loops in `tasks`.
+pub(crate) async fn start_selected_services(
+    tasks: &ServiceTasks,
+    services: ServiceSet,
+    config: Option<&Config>,
+    ctx: &std::sync::Arc<crate::core::runtime::CoreContext>,
+) {
+    if !tasks.begin() {
+        log::debug!("[core-runtime] start_services: already started; skipped");
+        return;
+    }
+    log::debug!("[core-runtime] start_services services={services:?}");
+    super::bootstrap::start_core_runtime_services(services, config).await;
+    if services.login_gated {
+        tasks.track(
+            "login_gated",
+            spawn_login_gated_services(ctx.host_kind().is_desktop_shell()),
+        );
+    }
+    if services.update_scheduler {
+        tasks.track("update_scheduler", spawn_update_scheduler());
+    }
+    if services.cron {
+        tasks.track("cron", spawn_cron_service(std::sync::Arc::clone(ctx)));
+        // Storage housekeeping rides the same `ServiceSet` switch as the other
+        // periodic maintenance: lapsed blobs stay in the backend until swept.
+        // It is deliberately not gated on `config.cron.enabled`: that setting
+        // turns the user's scheduled jobs off, whereas the sweep reclaims
+        // storage and must keep running (an expired blob is already invisible,
+        // so skipping it would only leak bytes).
+        tasks.track(
+            "blob_sweep",
+            crate::storage::blob_sweep::spawn(
+                &crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(ctx)),
+                crate::storage::blob_sweep::FIRST_SWEEP_DELAY,
+                crate::storage::blob_sweep::SWEEP_INTERVAL,
+            ),
+        );
+        // Run-journal sealing backfill, retention and backend maintenance.
+        tasks.track(
+            "journal_maintenance",
+            crate::storage::journal_maintenance::spawn(
+                &crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(ctx)),
+                crate::storage::journal_maintenance::FIRST_SWEEP_DELAY,
+                crate::storage::journal_maintenance::SWEEP_INTERVAL,
+            ),
+        );
+    }
+    // Flow-run boot reconciliation is selected by the flows *domain*, not by
+    // a background service — runs can be started without cron in the
+    // ServiceSet, so their orphans must be reconcilable without it too.
+    if ctx.domains().flows {
+        spawn_flows_boot_reconcile(std::sync::Arc::clone(ctx));
+    }
+    if services.channels {
+        if let Some(handle) = spawn_channels_service(&crate::core::runtime::DispatchCtx::new(
+            std::sync::Arc::clone(ctx),
+        )) {
+            tasks.track("channels", handle);
+        }
+    }
+}
+
 /// Background bootstrap for login-gated services (local AI, voice, screen
 /// intelligence, autocomplete).
 ///
@@ -26,7 +164,7 @@ use crate::core::runtime::ServiceSet;
 /// exists on disk, startup is deferred until the login handler in
 /// `credentials::ops::store_session()` triggers it. The autocomplete shutdown
 /// hook is registered unconditionally.
-pub fn spawn_login_gated_services(embedded_core: bool) {
+pub fn spawn_login_gated_services(embedded_core: bool) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         match crate::config::Config::load_or_init().await {
             Ok(config) => {
@@ -45,7 +183,11 @@ pub fn spawn_login_gated_services(embedded_core: bool) {
                 if already_logged_in {
                     // User has an active session — start all services now.
                     log::info!("[services] existing session found, starting services");
-                    crate::security::credentials::ops::start_login_gated_services(&config).await;
+                    crate::credentials::ops::start_credential_gated_services(
+                        &crate::core::runtime::DispatchCtx::host_default(),
+                        &config,
+                    )
+                    .await;
                 } else {
                     log::info!(
                         "[services] no active session — deferring service startup until login"
@@ -56,11 +198,11 @@ pub fn spawn_login_gated_services(embedded_core: bool) {
                 log::warn!("[core] config load failed, skipping service startup: {err}");
             }
         }
-    });
+    })
 }
 
 /// Periodic self-update checker (default: every 1 hour).
-pub fn spawn_update_scheduler() {
+pub fn spawn_update_scheduler() -> tokio::task::JoinHandle<()> {
     tokio::spawn(async {
         match crate::config::Config::load_or_init().await {
             Ok(config) => {
@@ -70,14 +212,13 @@ pub fn spawn_update_scheduler() {
                 log::warn!("[core] config load failed, skipping update scheduler: {err}");
             }
         }
-    });
+    })
 }
 
-/// Boot-time flow-run reconciliation (bug B42): reconciles any `flow_runs` row
-/// left at `running` by a prior process (crash/SIGKILL/power loss — where the
-/// in-process `RunRowFinalizer` drop-guard never got to run) to a terminal
-/// `interrupted`, so the run-details sidebar never shows a perpetual blank
-/// spinner for a run nothing is executing.
+/// Boot-time flow-run reconciliation: asks the TinyFlows Runs module to mark
+/// eligible local orphan rows left at `running` by a prior process as
+/// `interrupted`. The module owns the boot floor, live-actor checks, CAS,
+/// summary, checkpoint and terminal-event cleanup.
 ///
 /// Owned by the flows domain rather than piggybacked on cron bootstrap: runs
 /// can be started by the RPC "Run" control, the agent `run_flow` tool and the
@@ -85,19 +226,18 @@ pub fn spawn_update_scheduler() {
 /// [`ServiceSet`]. Gating this on cron would silently skip reconciliation on any
 /// cron-less selection (`headless_api()`, embedders), leaving prior-process
 /// orphans wedged forever. Selected by the `flows` **domain** flag instead, and
-/// safe at any point in boot — the sweep's own `PROCESS_RUN_FLOOR` guard means
-/// it can never touch a run this process started, so it carries no ordering
-/// requirement against the cron scheduler or any agent turn.
-pub fn spawn_flows_boot_reconcile() {
+/// safe at any point in boot — the module's boot-floor and live-actor guards
+/// keep it off runs this process owns, so it carries no ordering requirement
+/// against the cron scheduler or any agent turn.
+pub fn spawn_flows_boot_reconcile(ctx: std::sync::Arc<crate::core::runtime::CoreContext>) {
     #[cfg(feature = "flows")]
     {
         log::debug!("[flows] boot reconcile: scheduling orphaned-run sweep");
-        tokio::spawn(async {
+        tokio::spawn(async move {
             log::debug!("[flows] boot reconcile: loading config");
-            match crate::config::Config::load_or_init().await {
-                Ok(config) => {
-                    let swept =
-                        crate::flows::ops::sweep_orphaned_running_runs_on_boot(&config).await;
+            let dispatch = crate::core::runtime::DispatchCtx::new(ctx);
+            match reconcile_flows_on_boot(&dispatch).await {
+                Ok(swept) => {
                     // Logged unconditionally: a silent success and a task that
                     // never ran are otherwise indistinguishable in a boot log.
                     log::debug!("[flows] boot reconcile: completed; reconciled_runs={swept}");
@@ -107,21 +247,41 @@ pub fn spawn_flows_boot_reconcile() {
                         );
                     }
                 }
-                Err(err) => {
-                    log::warn!("[core] config load failed, skipping flows boot reconcile: {err}");
+                Err(error) => {
+                    log::warn!("[core] config load failed, skipping flows boot reconcile: {error}");
                 }
             }
         });
-    }
+    };
     #[cfg(not(feature = "flows"))]
     log::debug!("[flows] flows feature disabled at compile time — no boot run reconciliation");
 }
 
-/// Cron scheduler — polls `due_jobs()` every ~5s and executes them
+#[cfg(feature = "flows")]
+async fn reconcile_flows_on_boot(
+    dispatch: &crate::core::runtime::DispatchCtx,
+) -> Result<usize, String> {
+    let config = dispatch
+        .load_config()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(crate::flows::recovery::sweep_orphaned_runs_on_boot(dispatch, &config).await)
+}
+
+/// Cron scheduler — ticks the schedule module every ~5s and executes due jobs
 /// automatically. Gated by `config.cron.enabled`.
-pub fn spawn_cron_service() {
-    tokio::spawn(async {
-        match crate::config::Config::load_or_init().await {
+///
+/// Runs under `ctx`, the runtime's own context: the config is read through
+/// `load_config_with_timeout`, which prefers an embedder-supplied config, so a
+/// library runtime's scheduler polls *its* workspace rather than the
+/// operator's `~/.openhuman`, and every job it dispatches inherits that
+/// context.
+pub fn spawn_cron_service(
+    ctx: std::sync::Arc<crate::core::runtime::CoreContext>,
+) -> tokio::task::JoinHandle<()> {
+    let dispatch = crate::core::runtime::DispatchCtx::new(ctx);
+    dispatch.clone().spawn(async move {
+        match dispatch.load_config().await {
             Ok(config) => {
                 if !config.cron.enabled {
                     log::info!("[cron] scheduler disabled via config; skipping");
@@ -141,7 +301,7 @@ pub fn spawn_cron_service() {
                         "[flows] boot reconciliation of schedule-trigger cron jobs failed: {e}"
                     );
                 }
-                if let Err(e) = crate::cron::scheduler::run(config).await {
+                if let Err(e) = crate::cron::scheduler::run(&dispatch, config).await {
                     log::error!("[cron] scheduler loop ended with error: {e}");
                 }
             }
@@ -149,7 +309,7 @@ pub fn spawn_cron_service() {
                 log::warn!("[core] config load failed, skipping cron scheduler: {err}");
             }
         }
-    });
+    })
 }
 
 /// Realtime channel listeners (Telegram getUpdates, Discord gateway, etc.).
@@ -158,7 +318,9 @@ pub fn spawn_cron_service() {
 /// messages are never polled. Skipped entirely when
 /// `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` is set to `1`/`true`, and returns early
 /// when no channel integrations are configured.
-pub fn spawn_channels_service() {
+pub fn spawn_channels_service(
+    dispatch: &crate::core::runtime::DispatchCtx,
+) -> Option<tokio::task::JoinHandle<()>> {
     // Compile-time `channels` gate: the body names `channels::start_channels`,
     // so the whole thing is `#[cfg]`-gated. With the feature off there are no
     // realtime listeners to spawn.
@@ -170,33 +332,40 @@ pub fn spawn_channels_service() {
     {
         // Capture before loading config: logout during that await must also
         // invalidate a listener that has not finished starting yet.
-        let channel_session = crate::channels::session::channel_session();
-        tokio::spawn(async move {
-            let config = match crate::config::Config::load_or_init().await {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("[channels] could not load config for listeners: {e}");
-                    return;
-                }
-            };
-            if !config.channels_config.has_listening_integrations() {
-                log::debug!(
-                    "[channels] no channel integrations configured; not spawning listeners"
-                );
-                return;
-            }
-            log::info!("[channels] spawning in-process realtime listeners (Telegram, Discord, …)");
-            if let Err(e) =
-                crate::channels::start_channels_with_session(config, channel_session).await
-            {
-                log::error!("[channels] start_channels ended with error: {e}");
-            }
-        });
-    } else {
+        return Some(
+            crate::channels::session::spawn_current_channel_service_with(
+                dispatch,
+                |channel_session| async move {
+                    let config = match crate::config::Config::load_or_init().await {
+                        Ok(c) => c,
+                        Err(e) => return Err(e),
+                    };
+                    if !crate::channels::has_listener_configuration(&config) {
+                        log::debug!(
+                            "[channels] no channel integrations configured; not spawning listeners"
+                        );
+                        return Ok(());
+                    }
+                    log::info!(
+                        "[channels] spawning in-process realtime listeners (Telegram, Discord, …)"
+                    );
+                    crate::channels::start_channels_with_session(config, channel_session).await
+                },
+            ),
+        );
+    }
+    #[cfg(feature = "channels")]
+    {
         log::info!("[channels] OPENHUMAN_DISABLE_CHANNEL_LISTENERS set — skipping start_channels");
     }
     #[cfg(not(feature = "channels"))]
-    log::debug!("[channels] channels feature disabled at compile time — not spawning listeners");
+    {
+        let _ = dispatch;
+        log::debug!(
+            "[channels] channels feature disabled at compile time — not spawning listeners"
+        );
+    }
+    None
 }
 
 /// Which bootstrap jobs a given [`ServiceSet`] enables — the single source of
@@ -207,8 +376,6 @@ pub fn spawn_channels_service() {
 /// [`start_bootstrap_jobs`] launches. Each field maps 1:1 to one spawn site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BootstrapJobPlan {
-    /// Composio periodic connection sync (`composio::start_periodic_sync`).
-    pub composio_integration_sync: bool,
     /// Memory background work: seed memory's cron jobs and recover source
     /// sync state an interrupted process left `syncing`.
     pub memory_jobs: bool,
@@ -221,17 +388,27 @@ pub(crate) struct BootstrapJobPlan {
 
 /// Pure flag→job mapping for [`start_bootstrap_jobs`]. No side effects.
 ///
-/// Note the Composio integration sync AND the one-shot Composio source reconcile
-/// both ride `services.integrations` — both no-op without active Composio
-/// connections, so they share the one concern flag. `channels` gates NO
-/// bootstrap job (its remaining meaning is exactly `spawn_channels_service`).
+/// `channels` gates NO bootstrap job (its remaining meaning is exactly
+/// `spawn_channels_service`).
 pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
+    bootstrap_job_plan_with(
+        services,
+        crate::integrations::task_sources::types::any_provider_can_fetch(),
+    )
+}
+
+/// [`bootstrap_job_plan`] with the task-source fetch gate as a parameter, so
+/// tests can flip it. The poller only starts when some provider can fetch
+/// (senamakel/openhuman#324): with none, every tick would skip every source.
+pub(crate) fn bootstrap_job_plan_with(
+    services: &ServiceSet,
+    task_sources_fetchable: bool,
+) -> BootstrapJobPlan {
     BootstrapJobPlan {
-        composio_integration_sync: services.integrations,
         memory_jobs: services.memory_sync,
-        task_source_pollers: services.cron,
-        // Module preload is background boot work like the integrations sync
-        // and rides the same flag.
+        task_source_pollers: services.cron && task_sources_fetchable,
+        // Module preload is background boot work and rides the integrations
+        // flag.
         module_preload: services.integrations,
     }
 }
@@ -262,16 +439,6 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
         log::debug!("[runtime.bootstrap] native module preload disabled by ServiceSet");
     }
 
-    // Integrations — no bootstrap job. Composio → memory syncs run on memory
-    // source schedules (`memory::sources`), not a host loop here.
-    if plan.composio_integration_sync {
-        log::debug!(
-            "[runtime.bootstrap] composio integrations enabled; memory syncs run on memory source schedules"
-        );
-    } else {
-        log::debug!("[runtime.bootstrap] composio integrations disabled by ServiceSet");
-    }
-
     // Memory: seed the `memory_context_refresh` / `memory_sources_sync` cron
     // jobs (idempotent) and mark sources a killed process left `syncing` idle.
     if plan.memory_jobs {
@@ -287,7 +454,9 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
         log::debug!("[runtime.bootstrap] starting task-source poller");
         crate::integrations::task_sources::start_periodic_poll();
     } else {
-        log::debug!("[runtime.bootstrap] task-source polling disabled by ServiceSet");
+        log::debug!(
+            "[runtime.bootstrap] task-source polling disabled (ServiceSet, or no provider can fetch)"
+        );
     }
 
     log::debug!("[runtime.bootstrap] bootstrap job dispatch complete");
@@ -315,15 +484,6 @@ pub async fn start_boot_once_jobs(services: ServiceSet, config: &Config) {
     // The orphaned-run sweep does NOT live here. It runs in
     // `CoreBuilder::build`, which every runtime goes through — these jobs only
     // run from `serve()`, so a build-only embedder would never be swept.
-
-    if services.harness_init {
-        let cfg_for_init = config.clone();
-        tokio::spawn(async move {
-            crate::agent::harness_init::run_harness_init(cfg_for_init).await;
-        });
-    } else {
-        log::debug!("[runtime] harness init disabled by ServiceSet");
-    }
 
     if services.skill_catalog_refresh {
         crate::skills::catalog::ops::start_boot_catalog_refresh();
@@ -360,9 +520,9 @@ pub(crate) async fn run_legacy_migrations(config: &Config) {
 /// Auto-connect Socket.IO to the backend when enabled by the service selection.
 pub fn spawn_socket_auto_connect(
     services: ServiceSet,
-    socket_mgr: std::sync::Arc<crate::platform::socket::SocketManager>,
+    socket_mgr: std::sync::Arc<dyn crate::platform::socket::SocketPort>,
 ) {
-    if services.socketio && crate::backend::transport::is_installed() {
+    if services.socketio {
         tokio::spawn(async move {
             log::info!("[socket] Checking for stored session to auto-connect...");
             let config = match Config::load_or_init().await {
@@ -372,26 +532,26 @@ pub fn spawn_socket_auto_connect(
                     return;
                 }
             };
-            let Ok(api_url) = crate::backend::base_url(&config.api_url) else {
-                log::debug!("[socket] No backend transport or base URL — skipping auto-connect");
+            let Some(api_url) = config.resolved_endpoints.control_plane_url.clone() else {
+                log::debug!("[socket] No resolved control plane — skipping auto-connect");
                 return;
             };
-            let initial_token =
-                match crate::security::credentials::session_support::get_session_token(&config) {
-                    Ok(Some(t)) => t,
-                    Ok(None) => {
-                        log::info!(
-                        "[socket] No session token stored — skipping auto-connect (will connect after login)"
-                    );
-                        return;
-                    }
-                    Err(e) => {
-                        log::warn!("[socket] Failed to read session token: {e}");
-                        return;
-                    }
-                };
-            if crate::security::credentials::session_support::is_local_session_token(&initial_token)
+            let initial_token = match crate::credentials::session_state::get_session_token(&config)
+                .await
             {
+                Ok(Some(t)) => t,
+                Ok(None) => {
+                    log::info!(
+                            "[socket] No session token stored — skipping auto-connect (will connect after login)"
+                        );
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("[socket] Failed to read session token: {e}");
+                    return;
+                }
+            };
+            if crate::credentials::session_state::is_local_session_token(&initial_token) {
                 log::debug!("[socket] Offline local session — skipping auto-connect");
                 return;
             }

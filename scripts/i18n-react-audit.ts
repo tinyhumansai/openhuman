@@ -35,6 +35,7 @@ const IGNORED_TEXT = new Set([
   "github", // example MCP server name
   "-y @modelcontextprotocol/server-github", // example CLI args
   "https://mcp.example.com/mcp", // example MCP server URL
+  "http://localhost:8080", // example local search endpoint URL
   "X-API-Key", // example HTTP header name
   // flows/canvas/nodeConfig/* placeholders — flow-engine expression/code/field-name
   // examples, not prose (the product's `=`-expression syntax, field names, or code).

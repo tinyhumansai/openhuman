@@ -21,12 +21,16 @@ fn tui_help_advertises_cockpit_launch_and_navigation_controls() {
     for expected in [
         "[OPTIONS] [PROMPT]",
         "--resume",
+        "--demo",
+        "--no-mouse",
         "--last",
         "--no-alt-screen",
         "--provider",
         "--model",
         "Shift+Enter newline",
         "/ opens commands",
+        "Ctrl+Q queue",
+        "Ctrl+P commands",
     ] {
         assert!(
             stdout.contains(expected),

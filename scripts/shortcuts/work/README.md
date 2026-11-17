@@ -3,8 +3,8 @@
 Automate picking up a GitHub issue: sync `main`, cut a working branch, and
 hand the issue off to an LLM CLI to start implementing.
 
-Mirrors the structure of [`scripts/shortcuts/review`](../review) and reuses
-its `lib.sh` helpers.
+Mirrors the structure of [`scripts/shortcuts/review`](../review/README.md) and reuses
+its [`lib.sh`](../review/lib.sh) helpers. The entry point is [`start.sh`](./start.sh), with prompt templates in [`prompts/`](./prompts).
 
 ## Usage
 
@@ -29,7 +29,7 @@ and `pnpm work start 1234 …` are equivalent.
    max 40 chars). If the branch already exists it's checked out and `main`
    is merged in.
 4. Hands off to the agent CLI with a prompt containing the issue body,
-   repo conventions pointers (CLAUDE.md / AGENTS.md), and any trailing
+   repo conventions pointers ([CLAUDE.md](../../../CLAUDE.md) / [AGENTS.md](../../../AGENTS.md)), and any trailing
    `extra-prompt`. For `--agent codex`, the handoff uses
    `codex exec --dangerously-bypass-approvals-and-sandbox`. For
    `--agent cursor` or `--agent cursor-agent`, it uses
@@ -40,8 +40,13 @@ as soon as work starts.
 
 ## Config
 
-- `WORK_REPO=owner/name` — override the target repo.
-- `WORK_BRANCH_PREFIX=issue` — branch is `<prefix>/<num>-<slug>`.
-- `WORK_AUTO_ASSIGN=1` — auto-assign the issue to `@me` when work starts. Set
+- `WORK_REPO=owner/name`, override the target repo.
+- `WORK_BRANCH_PREFIX=issue`, branch is `<prefix>/<num>-<slug>`.
+- `WORK_AUTO_ASSIGN=1`, auto-assign the issue to `@me` when work starts. Set
   to `0` to disable.
 - Requires `git`, `gh`, `jq`, plus the agent CLI (default `claude`).
+
+## See also
+
+- [`scripts/shortcuts/`](../README.md) for the full shortcut table.
+- [`CONTRIBUTING.md`](../../../CONTRIBUTING.md) for the branch and PR conventions.

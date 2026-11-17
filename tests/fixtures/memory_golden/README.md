@@ -1,6 +1,6 @@
 # Golden memory-workspace fixture
 
-**Generated — do not hand-edit.** Regenerate with
+**Generated, do not hand-edit.** Regenerate with
 `scripts/regen-memory-golden-fixture.sh`.
 
 | | |
@@ -12,7 +12,7 @@
 
 ## Contents
 
-`workspace/**.db` is a real memory workspace seeded through production write
+[`workspace/**.db`](./workspace) is a real memory workspace seeded through production write
 paths and then `VACUUM`ed with `PRAGMA wal_checkpoint(TRUNCATE)`, so each
 file is self-contained (no `-wal` / `-shm` siblings). It holds:
 
@@ -27,11 +27,11 @@ file is self-contained (no `-wal` / `-shm` siblings). It holds:
 - a tinycortex leaf chunk with an embedding, and a summary tree sealed to an
   L1 summary node with its own embedding
 
-`manifest.txt` is **derived from those DB files**, never written by hand.
+[`manifest.txt`](./manifest.txt) is **derived from those DB files**, never written by hand.
 
 ## Why this is committed as a binary
 
-`.gitattributes` marks `tests/fixtures/memory_golden/**/*.db binary`. Without
+[`.gitattributes`](../../../.gitattributes) marks `tests/fixtures/memory_golden/**/*.db binary`. Without
 it the repo-wide `* text=auto eol=lf` rule would rewrite byte sequences inside
 the blobs on checkout and corrupt them.
 
@@ -40,3 +40,9 @@ the blobs on checkout and corrupt them.
 A diff that touches this directory is a **schema-migration review**, not a
 test-data refresh. Ask for the migration that carries existing user workspaces
 across, and check that the manifest diff matches the DDL diff.
+
+## See also
+
+- [`tests/README.md`](../../README.md), the layout of the Rust test targets.
+- [`memory` domain README](../../../crates/openhuman-core/src/memory/README.md) and [Memory architecture](../../../docs/gitbooks/en/developing/architecture/memory.md).
+- [`vendor/tinymemory/`](../../../vendor/tinymemory), which owns the engine contracts and migrations.

@@ -1,5 +1,8 @@
 # Migrate host-independent sessions to `tinyagents-session`
 
+> **Status, verified 2026-10-07:** landed. See [`README.md`](README.md) for
+> the whole set and how to re-check it.
+
 This plan moves durable, host-neutral agent-session mechanics into
 `vendor/tinyagents/crates/tinyagents-session`. It is intentionally separate
 from agent execution: the session crate is queryable persistence, not a model
@@ -63,7 +66,7 @@ implements only an adapter at the existing host boundary where conversion from
 | Deleted transcript facade | Consumers import `tinyagents_session::transcript` directly; no OpenHuman forwarding module remains. |
 | `agent/harness/session/transcript_history.rs` | Move generic history/read/locator traits and file implementation to `tinyagents-session/src/transcript/history.rs`; keep any OpenHuman message conversion adapter locally. |
 | `agent/harness/session/runtime/resume.rs` | Split pure transcript-to-model replay/deduplication into session; keep `Agent` mutation and host message-log fallback in OpenHuman. |
-| `agent/session_import/{convert,ops,live}.rs` | Move only pure descriptor/transcript conversion and generic source iteration; retain OpenHuman namespaces, controller/live backend wiring, run-ledger links, and memory import. |
+| `storage/import/{convert,ops,live}.rs` | Move only pure descriptor/transcript conversion and generic source iteration; retain OpenHuman namespaces, controller/live backend wiring, run-ledger links, and memory import. |
 | `agent/harness/session/{mod.rs,types.rs,builder/**,runtime/**,turn/**,tool_progress.rs,migration.rs}` | Keep: host session construction/execution, tools, policy, memory, progress, and migration policy. |
 | `agent/context/session_memory.rs`, `web_chat/**`, `threads/**` | Keep. |
 | All transcript/session-import tests named below | Port their host-independent cases to the matching TinyAgents module; retain OpenHuman adapter/integration tests. |
@@ -117,7 +120,7 @@ preserves tool calls/reasoning/usage and that an old transcript resumes without
 loss. Add a boundary check that fails if production code restores an
 OpenHuman transcript forwarding facade.
 
-**GREEN:** Update `agent/harness/session/**`, `agent/session_import/**`,
+**GREEN:** Update `agent/harness/session/**`, `storage/import/**`,
 `agent/tinyagents/{journal,reaper,turn_runner}.rs`, and direct consumers to
 import `tinyagents_session::transcript::*`. Delete moved source and tests; do
 not add `pub use` compatibility paths.

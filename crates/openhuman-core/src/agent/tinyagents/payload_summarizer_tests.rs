@@ -1,9 +1,10 @@
 use super::*;
-use crate::agent::harness::definition::{
-    DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope,
-};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tinyagents_definition::{DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope};
+use tinyagents_harness::context::RunConfig;
+use tinyagents_harness::runtime::AgentHarness;
+use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse, ModelStream};
 
 fn dummy_definition() -> AgentDefinition {
@@ -12,9 +13,6 @@ fn dummy_definition() -> AgentDefinition {
         when_to_use: "test".into(),
         display_name: Some("Summarizer".into()),
         system_prompt: PromptSource::Inline("test prompt".into()),
-        omit_identity: true,
-        omit_memory_context: true,
-        omit_safety_preamble: true,
         model: ModelSpec::Hint("summarization".into()),
         temperature: 0.2,
         tools: ToolScope::Named(vec![]),
@@ -22,6 +20,7 @@ fn dummy_definition() -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         deferred_tools: Vec::new(),
+        tool_rules: None,
         max_iterations: 1,
         iteration_policy: Default::default(),
         max_result_chars: None,
@@ -29,12 +28,19 @@ fn dummy_definition() -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
-        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
-        agent_tier: crate::agent::harness::definition::AgentTier::Worker,
+        agent_tier: tinyagents_definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
-        graph: Default::default(),
+        extensions: crate::agent_registry::host_definition::AgentExt {
+            omit_identity: true,
+            omit_memory_context: true,
+            omit_safety_preamble: true,
+            tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
+            searches_connected_mcp: false,
+            ..Default::default()
+        },
+        role: None,
     }
 }
 
@@ -55,6 +61,22 @@ fn unary_summarizer_child_inherits_cancellation_workspace_and_lineage() {
     assert_eq!(child.data.spawn_depth, 1);
     cancellation.cancel();
     assert!(child.cancellation.is_cancelled());
+}
+
+#[test]
+fn unary_summarizer_child_host_data_uses_the_linked_child_token() {
+    let parent = OpenHumanRunContext::new().into_tinyagents(RunConfig::new("parent-link"));
+    let child = unary_child_context(&parent, "summarizer", 1, 128).expect("child context");
+
+    child.cancellation.cancel();
+    assert!(child.data.cancellation.is_cancelled());
+    assert!(!parent.cancellation.is_cancelled());
+    assert!(!parent.data.cancellation.is_cancelled());
+
+    let parent = OpenHumanRunContext::new().into_tinyagents(RunConfig::new("parent-link-2"));
+    let child = unary_child_context(&parent, "summarizer", 1, 128).expect("child context");
+    parent.cancellation.cancel();
+    assert!(child.data.cancellation.is_cancelled());
 }
 
 struct UnaryOnlyModel(AtomicBool);
@@ -85,9 +107,7 @@ async fn unary_summarizer_child_keeps_summary_output_off_the_streaming_path() {
     let child = unary_child_context(&parent, "summarizer", 1, 128).expect("child context");
     let model = Arc::new(UnaryOnlyModel(AtomicBool::new(false)));
     let mut harness: AgentHarness<(), OpenHumanRunContext> = AgentHarness::new();
-    harness
-        .register_model("summary", model.clone())
-        .set_default_model("summary");
+    harness.with_model(model.clone());
 
     let run = harness
         .invoke_in_context(&(), child, vec![Message::user("summarize this")])

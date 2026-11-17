@@ -4,9 +4,9 @@
  * The page owns its own header — title, description and the tab strip — the
  * way the LLM page does, so the tabs sit in the header's chrome rather than in
  * a card under it. **Servers** is the list, **mcp.json** the same configuration
- * as one document, **Registry** the browse-only directories. The first two are
- * tabs and not two pages because they are not two things: both go through the
- * same core RPCs into the same store.
+ * as one document, **Registry** the directories, where a hosted server can be
+ * added in one step. The first two are tabs and not two pages because they are
+ * not two things: both go through the same core RPCs into the same store.
  */
 import { useState } from 'react';
 

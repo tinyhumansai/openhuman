@@ -16,6 +16,8 @@
  *   default "N tool calls" text (used by `ActivityGroup` for a mixed
  *   reasoning + tool run) and renders a shimmer duplicate of the label while
  *   `active`, matching `tool-fallback`'s running-label treatment.
+ * - The default "N tool calls" text is translated through `useT()`
+ *   (`chat.tools.callOne` / `chat.tools.callOther`).
  */
 import { cn } from '@/components/assistant-ui/lib/utils';
 import {
@@ -23,6 +25,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/assistant-ui/ui/collapsible';
+import { useT } from '@/lib/i18n/I18nContext';
 import { useScrollLock } from '@assistant-ui/react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { ChevronDownIcon, LoaderIcon } from 'lucide-react';
@@ -105,7 +108,13 @@ function ToolGroupTrigger({
   label?: string;
   active?: boolean;
 }) {
-  const label = labelOverride ?? `${count} tool ${count === 1 ? 'call' : 'calls'}`;
+  const { t } = useT();
+  const label =
+    labelOverride ??
+    t(count === 1 ? 'chat.tools.callOne' : 'chat.tools.callOther').replace(
+      '{count}',
+      String(count)
+    );
 
   return (
     <CollapsibleTrigger

@@ -3,7 +3,7 @@
 //! Per the per-folder `graph.rs` convention, this module owns the sub-agent
 //! folder's graph definition, its available tools, and its summarization step —
 //! all thin over the shared tinyagents seam
-//! ([`run_turn_via_tinyagents_shared`]).
+//! ([`TurnSpec::run`]).
 //!
 //! **Graph.** A single agent-loop turn driven by the tinyagents harness: the
 //! model is called, requested tools run, and the loop repeats until the model
@@ -38,22 +38,23 @@
 //   spawn's worker thread.
 mod dispatch;
 mod transcript;
-mod worker_mirror;
 
 // Re-exported under the original flat `graph::` path so external callers
 // (`ops/mod.rs`, `ops/runner.rs`, `graph_tests.rs`'s `use super::*`) are
 // unaffected by the responsibility split.
 #[cfg(test)]
 pub(super) use dispatch::inherited_thread_id;
-pub(super) use dispatch::{run_subagent_via_graph, AggregatedUsage};
+pub(super) use dispatch::run_subagent_via_graph;
+#[cfg(test)]
+pub(super) use dispatch::AggregatedUsage;
 
 // Only what `graph_tests.rs`'s `use super::*` still needs directly (the rest
 // of the original flat imports now live with the code that uses them, in
-// `dispatch.rs` / `transcript.rs` / `worker_mirror.rs`).
+// `dispatch.rs` / `transcript.rs` / `worker_mirror`).
 #[cfg(test)]
-use crate::agent::progress::AgentProgress;
+use super::{mirror_worker_thread, mirror_worker_thread_from_history};
 #[cfg(test)]
-use crate::inference::tokenjuice::AgentTokenjuiceCompression;
+use crate::progress::AgentProgress;
 #[cfg(test)]
 use std::collections::HashSet;
 #[cfg(test)]
@@ -61,8 +62,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use tinyagents_session::transcript::TranscriptMessage;
 #[cfg(test)]
-#[cfg(test)]
-use worker_mirror::{mirror_worker_thread, mirror_worker_thread_from_history};
+use tinyjuice_bus::types::AgentTokenjuiceCompression;
 
 #[cfg(test)]
 #[path = "graph_tests.rs"]

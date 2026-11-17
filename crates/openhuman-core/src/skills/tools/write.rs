@@ -11,7 +11,10 @@ use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use super::super::ops_create::{create_workflow, CreateWorkflowParams};
-use super::super::ops_install::{install_workflow_from_url, InstallWorkflowFromUrlParams};
+use super::super::ops_install::{
+    install_workflow_from_url, InstallWorkflowFromUrlParams, ScanAcknowledgement,
+    SkillInstallOutcome,
+};
 
 /// Scaffold a new user skill. **Writes to disk** — default-OFF.
 pub struct WorkflowCreateTool {
@@ -95,8 +98,9 @@ impl Tool for WorkflowInstallFromUrlTool {
     fn description(&self) -> &str {
         "Install a user workflow from a remote `url` (https, must point at a \
          SKILL.md). Fetches and writes it under `~/.openhuman/skills/`. \
-         Optional `timeout_secs`. Collisions are rejected. Only use when the \
-         user explicitly asks to install a workflow from a URL."
+         Optional `timeout_secs`. Collisions are rejected. A `scan_blocked` \
+         result means the security scan refused it and nothing was installed. \
+         Only use when the user explicitly asks to install a workflow from a URL."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -123,9 +127,17 @@ impl Tool for WorkflowInstallFromUrlTool {
         log::debug!("[tool][skills] install_from_url invoked");
         let params: InstallWorkflowFromUrlParams = serde_json::from_value(args)
             .map_err(|e| anyhow::anyhow!("install_workflow_from_url: invalid params: {e}"))?;
-        let outcome = install_workflow_from_url(&self.workspace_dir, params)
-            .await
-            .map_err(|e| anyhow::anyhow!("install_workflow_from_url: {e}"))?;
-        Ok(ToolResult::success(serde_json::to_string(&outcome)?))
+        let outcome =
+            install_workflow_from_url(&self.workspace_dir, params, ScanAcknowledgement::Absent)
+                .await
+                .map_err(|e| anyhow::anyhow!("install_workflow_from_url: {e}"))?;
+        match outcome {
+            SkillInstallOutcome::Installed(installed) => {
+                Ok(ToolResult::success(serde_json::to_string(&installed)?))
+            }
+            SkillInstallOutcome::ScanBlocked(blocked) => {
+                crate::skills::catalog::tools::scan_blocked_tool_result(&blocked)
+            }
+        }
     }
 }

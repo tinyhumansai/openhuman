@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `"backend"` (default) — every Composio call (toolkits, connections,
 /// authorize, tools, execute, triggers, …) is proxied through the
-/// OpenHuman backend (`api.tinyhumans.ai/agent-integrations/composio/*`).
+/// OpenHuman backend (its composio routes).
 /// The backend owns the Composio API key, allowlist, billing/margin, and
 /// HMAC-verified trigger webhooks fanned out over socket.io.
 ///
@@ -33,8 +33,6 @@ fn default_composio_mode() -> String {
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ComposioConfig {
-    #[serde(default)]
-    pub enabled: bool,
     #[serde(default = "default_entity_id")]
     pub entity_id: String,
     /// When true, the triage pipeline is disabled for all Composio
@@ -57,7 +55,7 @@ pub struct ComposioConfig {
     ///
     /// The user-provided API key for direct mode is *not* stored in the
     /// TOML — it lives in the encrypted keychain via
-    /// [`crate::security::credentials`] under the
+    /// [`crate::credentials`] under the
     /// `composio-direct` provider slot. We only persist the mode here so
     /// the factory can pick the right client at construction time.
     #[serde(default = "default_composio_mode")]
@@ -77,6 +75,21 @@ pub struct ComposioConfig {
     /// memory.
     #[serde(default)]
     pub gmail_sync_query: String,
+
+    /// Toolkits offered to the agent: when non-empty, only these are listed
+    /// (case-insensitive; `_` and `-` are ignored, so `google_calendar` is
+    /// `googlecalendar`). An empty list offers every toolkit. Narrows what the
+    /// connector module lists (tools, toolkits, agent-ready toolkits) without
+    /// touching existing connections or scope preferences. Sent in the module's
+    /// load blob, so an edit applies on the next launch; a connector module
+    /// loaded from the module search path (`OPENHUMAN_MODULE_PATH`) gets no
+    /// host blob and offers every toolkit.
+    #[serde(default)]
+    pub offered_toolkits_allow: Vec<String>,
+    /// Toolkits never offered to the agent, even when `offered_toolkits_allow`
+    /// names them. Same matching and timing as the allow list.
+    #[serde(default)]
+    pub offered_toolkits_deny: Vec<String>,
 
     /// A direct-mode credential an embedder pinned for one agent. Never
     /// persisted. While set, Composio tools resolve against this config
@@ -99,13 +112,14 @@ impl ComposioConfig {
 impl std::fmt::Debug for ComposioConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ComposioConfig")
-            .field("enabled", &self.enabled)
             .field("entity_id", &self.entity_id)
             .field("triage_disabled", &self.triage_disabled)
             .field("triage_disabled_toolkits", &self.triage_disabled_toolkits)
             .field("mode", &self.mode)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("gmail_sync_query", &self.gmail_sync_query)
+            .field("offered_toolkits_allow", &self.offered_toolkits_allow)
+            .field("offered_toolkits_deny", &self.offered_toolkits_deny)
             .field("host_credential", &self.host_credential)
             .finish()
     }
@@ -190,13 +204,14 @@ fn default_entity_id() -> String {
 impl Default for ComposioConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             entity_id: default_entity_id(),
             triage_disabled: false,
             triage_disabled_toolkits: Vec::new(),
             mode: default_composio_mode(),
             api_key: None,
             gmail_sync_query: String::new(),
+            offered_toolkits_allow: Vec::new(),
+            offered_toolkits_deny: Vec::new(),
             host_credential: None,
         }
     }
@@ -207,12 +222,51 @@ impl Default for ComposioConfig {
 pub struct SecretsConfig {
     #[serde(default = "defaults::default_true")]
     pub encrypt: bool,
+    /// Let a headless host unlock its config secrets without a person
+    /// answering the one-time "Unlock configuration secrets" approval.
+    ///
+    /// Off by default. It takes effect only when the operator supplied the
+    /// keyring master key (`OPENHUMAN_KEYRING_MASTER_KEY` or
+    /// `OPENHUMAN_KEYRING_MASTER_KEY_FILE`) to a `file` or `encrypted_file`
+    /// keyring backend: whoever can read that key can already decrypt the
+    /// keyring, so the host answers the grant on the operator's behalf.
+    /// Anywhere else the setting is ignored and the approval still parks for a
+    /// person. Env override: `OPENHUMAN_SECRETS_UNATTENDED_UNLOCK`.
+    #[serde(default)]
+    pub unattended_unlock: bool,
+}
+
+/// Env override for [`SecretsConfig::unattended_unlock`].
+pub const SECRETS_UNATTENDED_UNLOCK_ENV: &str = "OPENHUMAN_SECRETS_UNATTENDED_UNLOCK";
+
+impl SecretsConfig {
+    /// `unattended_unlock` with the process environment applied on top, so a
+    /// configuration read without the env overlay (a raw reload of the file)
+    /// still honours the operator's [`SECRETS_UNATTENDED_UNLOCK_ENV`]: `1` turns
+    /// it on, `0` turns it off, and an empty or unrecognised value leaves the
+    /// file's setting.
+    pub(crate) fn effective_unattended_unlock(&self) -> bool {
+        Self::unattended_unlock_with(
+            self.unattended_unlock,
+            std::env::var(SECRETS_UNATTENDED_UNLOCK_ENV).ok().as_deref(),
+        )
+    }
+
+    /// The decision behind [`Self::effective_unattended_unlock`].
+    pub(crate) fn unattended_unlock_with(file: bool, env: Option<&str>) -> bool {
+        match env.map(|raw| raw.trim().to_ascii_lowercase()).as_deref() {
+            Some("1" | "true" | "yes" | "on") => true,
+            Some("0" | "false" | "no" | "off") => false,
+            _ => file,
+        }
+    }
 }
 
 impl Default for SecretsConfig {
     fn default() -> Self {
         Self {
             encrypt: defaults::default_true(),
+            unattended_unlock: false,
         }
     }
 }
@@ -294,25 +348,21 @@ impl Default for IntegrationToggle {
 /// Composio in particular is unconditionally enabled and has no toggle:
 /// as long as the user is signed in, composio tools are available.
 ///
-/// The per-tool `apify`, `twilio`, `google_places`, `parallel`, and `tinyfish`
+/// The per-tool `google_places`, `tinyfish`, and `stock_prices`
 /// flags below are preserved because those integrations incur per-call
 /// costs that the user may legitimately want to turn off; composio
 /// costs are metered server-side, so there is no client-side toggle
 /// for it.
+///
+/// Unknown keys are ignored on load, so configs written by older builds that
+/// still carry the retired `twilio` / `apify` / `parallel` toggles keep
+/// deserializing.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default)]
 pub struct IntegrationsConfig {
-    /// Twilio phone-call integration.
-    #[serde(default)]
-    pub twilio: IntegrationToggle,
-
     /// Google Places location search integration.
     #[serde(default)]
     pub google_places: IntegrationToggle,
-
-    /// Parallel web search & content extraction integration.
-    #[serde(default)]
-    pub parallel: IntegrationToggle,
 
     /// TinyFish web search, fetch, and browser automation integration.
     #[serde(default)]

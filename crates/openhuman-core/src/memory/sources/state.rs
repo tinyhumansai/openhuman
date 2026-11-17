@@ -9,53 +9,31 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-
-use crate::memory::types::SourceStatus;
+use tinymemory_integrations::sources::{SourceState, SourceStatus};
 
 /// Serialises state-file read-modify-writes in this process.
 static LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-/// What the last sync of one source left behind.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceState {
-    /// When the last sync finished.
-    #[serde(default)]
-    pub last_sync_at: Option<DateTime<Utc>>,
-    /// Current status.
-    #[serde(default)]
-    pub status: SourceStatus,
-    /// Why the last sync failed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Items stored by the last successful sync.
-    #[serde(default)]
-    pub items: u64,
-}
+const STATE: &str = "sources_state";
 
 fn path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir.join("memory").join("sources_state.json")
+    crate::memory::state_store::legacy_path(workspace_dir, STATE)
 }
 
 fn read_all(workspace_dir: &Path) -> BTreeMap<String, SourceState> {
-    std::fs::read_to_string(path(workspace_dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    match crate::memory::state_store::load_strict(workspace_dir, STATE) {
+        Ok(Some(state)) => state,
+        Ok(None) => BTreeMap::new(),
+        Err(error) => {
+            tracing::warn!(%error, "[memory:sources] reading sync state failed");
+            BTreeMap::new()
+        }
+    }
 }
 
 fn write_all(workspace_dir: &Path, all: &BTreeMap<String, SourceState>) {
-    let file = path(workspace_dir);
-    let result = file
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| {
-            let json = serde_json::to_vec_pretty(all).map_err(std::io::Error::other)?;
-            std::fs::write(&file, json)
-        });
-    if let Err(error) = result {
-        tracing::warn!(error = %error, "[memory:sources] writing sync state failed");
+    if let Err(error) = crate::memory::state_store::save(workspace_dir, STATE, all) {
+        tracing::warn!(%error, "[memory:sources] writing sync state failed");
     }
 }
 
@@ -93,14 +71,15 @@ pub fn reset_interrupted(workspace_dir: &Path) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut all = read_all(workspace_dir);
-    let mut changed = false;
-    for state in all.values_mut() {
-        if state.status == SourceStatus::Syncing {
-            state.status = SourceStatus::Idle;
-            changed = true;
-        }
-    }
+    let changed = all
+        .values()
+        .any(|state| state.status == SourceStatus::Syncing);
     if changed {
+        tinymemory_integrations::sources::reset_interrupted(&mut all);
         write_all(workspace_dir, &all);
     }
 }
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;

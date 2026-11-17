@@ -2,16 +2,17 @@
  * The composer's message queue: the running prompt and the messages queued
  * behind it, rendered with assistant-ui's `message-queue` element.
  *
- * Reads `s.composer.queue`, the same list `ComposerPrimitive.Queue` iterates,
- * which the runtime fills from the external store's `queue` adapter
- * (`queueAdapter.ts`, over the core's run queue). The element owns the whole
- * list, so it takes the array rather than rendering one primitive per item.
- * Removal goes back through the runtime (`composer.queueItem().remove()`), so
- * it lands on the adapter and from there on the core.
+ * `ComposerPrimitive.Queue` supplies each item's scope; `QueueItemPrimitive`
+ * renders its text and removes it through the core-backed queue adapter.
  */
-import { useAui, useAuiState } from '@assistant-ui/react';
+import { ComposerPrimitive, QueueItemPrimitive, useAuiState } from '@assistant-ui/react';
+import { XIcon } from 'lucide-react';
 
-import { MessageQueue } from '../../../components/assistant-ui/elements/message-queue';
+import {
+  MessageQueue,
+  MessageQueueItem,
+} from '../../../components/assistant-ui/elements/message-queue';
+import { Button } from '../../../components/assistant-ui/ui/button';
 import { useT } from '../../../lib/i18n/I18nContext';
 
 type ThreadMessages = ReadonlyArray<{
@@ -34,7 +35,6 @@ function runningPrompt(messages: ThreadMessages): string {
 
 export function ComposerMessageQueue() {
   const { t } = useT();
-  const aui = useAui();
   const queue = useAuiState(s => s.composer.queue);
   const running = useAuiState(s => runningPrompt(s.thread.messages as ThreadMessages));
 
@@ -45,15 +45,42 @@ export function ComposerMessageQueue() {
       data-testid="queued-followups"
       className="mb-2 max-w-none"
       running={running}
-      queued={queue.map(item => ({
-        id: item.id,
-        text: item.parts.map(part => (part.type === 'text' ? part.text : '')).join(''),
-      }))}
-      onCancel={id => aui.composer.queueItem({ id }).remove()}
+      queuedCount={queue.length}
       runningLabel={t('chat.messageQueue.running')}
       queuedLabel={count => t('chat.messageQueue.queuedCount').replace('{count}', String(count))}
-      pendingHint={t('chat.messageQueue.pendingHint')}
-      removeLabel={text => t('chat.messageQueue.remove').replace('{text}', text)}
+      pendingHint={t('chat.messageQueue.pendingHint')}>
+      <ComposerPrimitive.Queue>{() => <RuntimeQueueItem />}</ComposerPrimitive.Queue>
+    </MessageQueue>
+  );
+}
+
+/** Queue item identity, text, and removal stay inside assistant-ui's item scope. */
+function RuntimeQueueItem() {
+  const { t } = useT();
+  const text = useAuiState(s =>
+    s.queueItem.parts
+      .filter(part => part.type === 'text')
+      .map(part => part.text)
+      .join('\n\n')
+  );
+  const position = useAuiState(
+    s => s.composer.queue.findIndex(item => item.id === s.queueItem.id) + 1
+  );
+  return (
+    <MessageQueueItem
+      position={position}
+      text={<QueueItemPrimitive.Text />}
+      action={
+        <QueueItemPrimitive.Remove asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('chat.messageQueue.remove').replace('{text}', text)}
+            className="rounded-full">
+            <XIcon aria-hidden className="size-3.5" />
+          </Button>
+        </QueueItemPrimitive.Remove>
+      }
     />
   );
 }

@@ -48,53 +48,6 @@
       }
     }
   ],
-  "journal": [
-    {
-      "content": "legacy system prompt",
-      "extra_metadata": {
-        "openhuman_replayed": {
-          "request_id": null
-        }
-      },
-      "role": "system"
-    },
-    {
-      "content": "legacy question 1",
-      "extra_metadata": {
-        "openhuman_replayed": {
-          "request_id": null
-        }
-      },
-      "role": "user"
-    },
-    {
-      "content": "legacy answer 1",
-      "extra_metadata": {
-        "openhuman_replayed": {
-          "request_id": null
-        }
-      },
-      "role": "assistant"
-    },
-    {
-      "content": "legacy question 2",
-      "extra_metadata": {
-        "openhuman_replayed": {
-          "request_id": null
-        }
-      },
-      "role": "user"
-    },
-    {
-      "content": "legacy answer 2",
-      "extra_metadata": {
-        "openhuman_replayed": {
-          "request_id": null
-        }
-      },
-      "role": "assistant"
-    }
-  ],
   "next_request": [
     {
       "system": {

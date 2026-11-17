@@ -3,6 +3,13 @@ import type { ReactNode } from 'react';
 import { cn } from '../../../lib/cn';
 import ChipTabs, { type ChipTabItem } from '../../layout/ChipTabs';
 
+/**
+ * The one max-width + centring rule for a page's inner content. Applied to the
+ * header block and the body's inner wrapper (never the scroll container, so the
+ * scrollbar stays at the pane edge) so both share a left edge.
+ */
+export const PAGE_CONTENT_WIDTH_CLASS = 'mx-auto w-full max-w-5xl';
+
 export interface SettingsTabbedPageProps<T extends string> {
   title: ReactNode;
   description?: ReactNode;
@@ -42,6 +49,13 @@ export interface SettingsTabbedPageProps<T extends string> {
    * still gets rounded corners.
    */
   bodyFullBleed?: boolean;
+  /**
+   * Opt out of the shared page width cap ({@link PAGE_CONTENT_WIDTH_CLASS}).
+   * Pages cap and centre their header and body at one max width on wide
+   * windows; Workflows (and Chat, which does not use this template) stay edge
+   * to edge.
+   */
+  fullWidth?: boolean;
   children: ReactNode;
 }
 
@@ -76,11 +90,14 @@ export default function SettingsTabbedPage<T extends string>({
   tabsTestIdPrefix,
   scrollable = true,
   bodyFullBleed = false,
+  fullWidth = false,
   children,
 }: SettingsTabbedPageProps<T>) {
+  const widthClass = fullWidth || bodyFullBleed ? undefined : PAGE_CONTENT_WIDTH_CLASS;
+  const headerWidthClass = fullWidth ? undefined : PAGE_CONTENT_WIDTH_CLASS;
   return (
     <div className="flex h-full flex-col">
-      <div className="space-y-4 pb-4">
+      <div className={cn('space-y-4 pb-4', headerWidthClass)}>
         {/* `items-center`, not `items-start`. Top-aligning put the back button
             and the action cluster against the `h1`'s line box while the
             title+description block ran a row taller, so both read as sitting
@@ -124,13 +141,14 @@ export default function SettingsTabbedPage<T extends string>({
           bodyFullBleed && '-mx-4 -mb-4 pr-0'
         )}>
         <div
-          className={
+          className={cn(
             bodyFullBleed
               ? 'h-full min-h-0'
               : scrollable
                 ? 'min-h-full pb-4 pt-4'
-                : 'h-full min-h-0 pt-4'
-          }>
+                : 'h-full min-h-0 pt-4',
+            widthClass
+          )}>
           {children}
         </div>
       </div>

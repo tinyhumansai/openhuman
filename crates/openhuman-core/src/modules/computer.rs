@@ -51,8 +51,8 @@ pub struct ComputerStatus {
     pub error: Option<String>,
 }
 
-fn planner_route(config: &Config) -> &'static str {
-    match super::computer_config::module_config(config)["planner"]["provider"].as_str() {
+async fn planner_route(config: &Config) -> &'static str {
+    match super::computer_config::module_config(config).await["planner"]["provider"].as_str() {
         Some("tiny_humans") => "hosted",
         Some("open_router") => "direct_openrouter",
         _ => "unavailable",
@@ -94,8 +94,8 @@ pub async fn status(config: &Config, load: bool) -> ComputerStatus {
     ComputerStatus {
         module: if ask { module() } else { before },
         decision_model: config.computer.decision_model.as_str(),
-        decision_route: super::computer_config::billing_route(config),
-        planner_route: planner_route(config),
+        decision_route: super::computer_config::billing_route(config).await,
+        planner_route: planner_route(config).await,
         capabilities,
         error,
     }

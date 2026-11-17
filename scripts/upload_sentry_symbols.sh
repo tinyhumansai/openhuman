@@ -16,6 +16,8 @@
 # Optional environment variables:
 #   SENTRY_VERSION     - Release version (defaults to: openhuman@{version})
 #   DEBUG_SYMBOLS_PATH - Path to debug symbols (defaults to: target/release/deps)
+#   SENTRY_SKIP_SET_COMMITS - Set to 1 to skip commit association deliberately;
+#                        otherwise a set-commits failure fails the script
 # =============================================================================
 
 set -euo pipefail
@@ -210,11 +212,31 @@ upload_symbols() {
     log_info "Uploading Rust debug symbols for release: ${release_name}"
     log_info "Symbols path: ${symbols_path}"
 
-    # Create Sentry release
+    # Create Sentry release. `releases new` is idempotent (it succeeds on an
+    # existing release, which every matrix target after the first hits), so
+    # any failure here is real — a bad token, org or project — and must fail
+    # the build rather than attach symbols to a release that may not exist
+    # (#8104).
     log_info "Creating/updating Sentry release..."
-    sentry-cli releases new "${release_name}" || true
-    # Use --ignore-missing for shallow clones or CI environments
-    sentry-cli releases set-commits --auto --ignore-missing "${release_name}" || true
+    if ! sentry-cli releases new "${release_name}"; then
+        log_error "sentry-cli releases new failed for ${release_name}"
+        exit 1
+    fi
+
+    # Associate commits. Fatal by default; the only way to skip it is an
+    # explicit SENTRY_SKIP_SET_COMMITS=1, never a swallowed error (#8104).
+    # Use --ignore-missing for shallow clones or CI environments.
+    if [[ "${SENTRY_SKIP_SET_COMMITS:-0}" == "1" ]]; then
+        log_warn "Skipping set-commits for ${release_name} (SENTRY_SKIP_SET_COMMITS=1)"
+    else
+        log_info "Associating commits with ${release_name}..."
+        if ! sentry-cli releases set-commits --auto --ignore-missing "${release_name}"; then
+            log_error "sentry-cli releases set-commits failed for ${release_name}"
+            log_error "A 403 here means the token lacks permission or no repository integration is configured."
+            log_error "Fix the token, or set SENTRY_SKIP_SET_COMMITS=1 to skip this step deliberately."
+            exit 1
+        fi
+    fi
 
     # Upload debug symbols + source bundles. `--include-sources` makes
     # `sentry-cli` package the referenced source files into a `.src.zip`

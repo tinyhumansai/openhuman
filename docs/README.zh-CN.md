@@ -1,162 +1,334 @@
 <h1 align="center">OpenHuman</h1>
 
 <p align="center">
- <img src="../gitbooks/.gitbook/assets/demo.png" alt="The Tet" />
+ <strong>最快、最省钱、最高效的开源智能体框架。在一台 10 美元的 VPS 上运行 500 多个智能体。</strong><br/>
+ 给普通人用的桌面应用，给开发者用的 Rust 库。
 </p>
 
-<p align="center" style="display: inline-block">
-	<a href="https://trendshift.io/repositories/23680" target="_blank" style="display: inline-block">
-		<img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
+<p align="center">
+ <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="Early Beta" />
+ <a href="https://github.com/tinyhumansai/openhuman/releases/latest"><img src="https://img.shields.io/github/v/release/tinyhumansai/openhuman?label=latest" alt="Latest Release" /></a>
+ <a href="https://github.com/tinyhumansai/openhuman/stargazers"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="GitHub Stars" /></a>
+ <a href="../LICENSE"><img src="https://img.shields.io/github/license/tinyhumansai/openhuman" alt="License" /></a>
+ <a href="https://github.com/tinyhumansai/openhuman-benchmarks"><img src="https://img.shields.io/badge/benchmarks-public-brightgreen" alt="Public benchmarks" /></a>
+</p>
+
+<p align="center">
+ <a href="https://tinyhumans.gitbook.io/openhuman/">文档</a> ·
+ <a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 快速入门</a> ·
+ <a href="https://tinyhumansai.github.io/openhuman-benchmarks/">基准测试</a> ·
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">讨论区</a> ·
+ <a href="https://guild.tinyhumans.ai/">Discord</a> ·
+ <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> ·
+ <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X</a> ·
+ <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel（创建者）</a>
+</p>
+
+<p align="center">
+ <img src="./demo.gif" alt="OpenHuman 桌面应用演示" />
+</p>
+
+<p align="center">
+	<a href="https://trendshift.io/repositories/23680" target="_blank">
+		<img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" width="250" height="55"/>
 	</a>
 	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-		<img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
-		</a>
-		<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-			<img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;t=1779351403565">
-		</a>
-</p>
-<p align="center" style="display: inline-block">
- <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-topic-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-  <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-topic-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;topic_id=268&amp;t=1779351808756">
-  </a>
-  <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-topic-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-   <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-topic-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;topic_id=46&amp;t=1779351808756">
-   </a>
- </p>
-
-<p align="center">
- <strong>OpenHuman 是你的个人 AI 超级智能：一颗记得一切的大脑、一位出色的编排者、一名深度研究员。本地优先，简洁而强大。</strong>
+		<img alt="OpenHuman on Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
+	</a>
+	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
+		<img alt="OpenHuman on Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;t=1779351403565">
+	</a>
 </p>
 
 <p align="center">
- <a href="https://guild.tinyhumans.ai/">Discord</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
- <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/Twitter</a> •
- <a href="https://tinyhumans.gitbook.io/openhuman/">文档</a> •
- <a href="https://x.com/intent/follow?screen_name=senamakel">关注 @senamakel（作者）</a>
+  🇺🇸 <a href="../README.md">English</a> | 🇸🇦 <a href="./README.ar.md">العربية</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇹🇷 <a href="./README.tr.md">Türkçe</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
 </p>
+
+> [!NOTE]
+> 🎉 上线仅一周，OpenHuman 就连续九天成为 **GitHub 趋势榜第一的仓库**。
+
+> **早期测试版。** OpenHuman 仍在积极开发中，难免有不完善的地方。
+
+---
+
+## 安装
+
+最简单的方式是从 [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) 或 [最新发布页](https://github.com/tinyhumansai/openhuman/releases/latest) 下载桌面应用。macOS 提供 `.dmg`，Windows 提供 `.msi` 或 `.exe`，Linux 提供 `.deb` 或 `.AppImage`。
+
+更喜欢用终端？安装脚本会为你的系统选择合适的安装包，校验其校验和并完成安装：
+
+```bash
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
+```
+
+想先看看 macOS 和 Linux 脚本会做什么，可以在命令末尾加上 `bash -s -- --dry-run`。其他选项和故障排查见 [INSTALL.md](../INSTALL.md)。
+
+---
+
+## 为什么选择 OpenHuman？
+
+大多数智能体框架给每个智能体开一个沉重的进程，并且每次调用都重新发送一大段提示词。OpenHuman 用少得多的资源完成同样的工作。它是唯一功能丰富、专为大规模智能体集群设计的开源框架：一台 10 美元的服务器就能装下 500 个智能体。
+
+<table>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>快</h3>
+
+<p><a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md">基准测试结果</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">冷启动数据</a></p>
+
+<p>完成编码任务只需约 20 秒，是我们测试的七款 AI 智能体工具中最快的。启动只需十分之一秒。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>省钱</h3>
+
+<p><a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md">成本与 token 数据</a> · <a href="https://tinyhumans.gitbook.io/openhuman/features/token-compression">压缩原理</a></p>
+
+<p>token 用量比一般的智能体工具少 2.6 倍，在我们的测试中总花费最低。</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>大规模下依然高效</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">集群测量数据</a> · <a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/profile/docs/library-benchmarking.md">测试方法</a></p>
+
+<p>内存和 CPU 用量约为一般智能体工具的八分之一。在一台 10 美元的服务器上运行 500 多个智能体。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>为开发者而建</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 快速入门</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">嵌入指南</a> · <a href="../crates/openhuman-embed/examples">示例</a></p>
+
+<p>把它当作 Rust 库来用：像调用普通函数一样调用智能体，或者在一台小服务器上运行整个集群。</p>
+
+</td>
+
+</tr>
+
+</table>
+
 
 <p align="center">
-  🇺🇸 <a href="../README.md">English</a> | 🇸🇦 <a href="./README.ar.md">العربية</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
+ <img src="./oh-v-hermes.gif" alt="Hermes vs OpenHuman" />
 </p>
+
+<p align="center"><em>相同的提示词，并排对比：“用动漫故事的形式给我写一个关于智能体框架的故事，写进一个 HTML 页面并帮我打开。”<br/>OpenHuman 用时 20 秒，使用 15k token，花费 $0.0054。Hermes 用时 9 分 40 秒，使用 37k token，花费 $0.0082。</em></p>
+
+---
+
+## 主要创新
+
+大多数智能体框架只是一个简单的循环：把所有内容发给模型，等待，再重复。这对单个智能体可行，但很快就会变得又慢又贵，一旦同时运行几百个就会崩溃。
+
+OpenHuman 重新设计了开销最大的几个环节：AI 要读多少文字、如何找到合适的工具、功能如何加载，以及整个系统需要多少机器资源。下面六个想法就是上文速度和节省的来源。每张卡片都链接到文档，方便你了解细节。
+
+<table>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>RLM token 压缩</h3>
+
+<p><a href="https://arxiv.org/abs/2512.24601">RLM 论文</a> · <a href="https://tinyhumans.gitbook.io/openhuman/features/token-compression">工作原理</a></p>
+
+<p>基于 <a href="https://arxiv.org/abs/2512.24601">递归语言模型（Recursive Language Models）</a>。体积大的工具结果会在 AI 读取之前先被压缩。对于特别大的结果，AI 拿到的是一个可以搜索的句柄，而不是把全部内容读一遍。不会丢弃任何内容。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>Jev：即时、准确的工具搜索</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/jev">Jev</a> · <a href="./plans/jev-tool-search-baseline.md">测量数据</a></p>
+
+<p>Jev 是一个小模型，能从 1,215 个工具中找出合适的那一个。正确的工具出现在它推荐前几名的概率是 86.8%，而关键词搜索只有 70.5%。</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>统一的 Rust 总线</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">插件如何工作</a></p>
+
+<p>每个功能，比如搜索、文档或语音，都接入同一条 Rust 总线，这个想法借鉴自 <a href="https://packages.debian.org/stable/dbus">Linux 系统总线</a>。功能只在需要时才加载，其中一个卡住了，其余的仍能正常工作。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>深度集成的记忆</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/features/memory">记忆如何工作</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/engines">记忆引擎</a></p>
+
+<p>记忆是内置的。每一轮对话之前，OpenHuman 只挑出重要的内容，控制在 token 预算之内，并附上引用交给 AI。开箱即用，你也可以通过一个设置换成别的记忆引擎。</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>即时的浏览器与桌面控制</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer">浏览器与电脑控制</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/jev">Jev</a></p>
+
+<p>智能体会使用真实的浏览器和你的桌面应用。Jev 根据屏幕上的按钮来决定每一次点击，不需要截图。遇到任何付款操作它都会先停下。</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>可编程的 Rust 核心</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 快速入门</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">性能</a></p>
+
+<p>整个框架是在单个进程中运行的编译型 Rust，所以启动只需十分之一秒，而且一直很轻量：在我们的编码任务中峰值仅 68 MB。同一个核心也是一个库。你可以在自己的 Rust 代码里调用智能体，也可以在一台小服务器上并排运行几百个。</p>
+
+</td>
+
+</tr>
+
+</table>
+
+---
+
+## 基准测试
 
 <p align="center">
- <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="早期测试版" />
- <a href="https://github.com/tinyhumansai/openhuman/releases/latest"><img src="https://img.shields.io/github/v/release/tinyhumansai/openhuman?label=latest" alt="最新版本" /></a>
- <a href="https://github.com/tinyhumansai/openhuman"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="GitHub Stars" /></a>
- <a href="../LICENSE"><img src="https://img.shields.io/github/license/tinyhumansai/openhuman" alt="许可证" /></a>
+ <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified 运行 swe-x86-1：OpenHuman 与其他六个框架在十个面板上的对比" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+ </picture>
 </p>
 
-> **早期测试版**：正在积极开发中，可能存在不完善之处。
+我们让七个框架在相同的 SWE-bench 任务上运行，使用相同的模型、API 密钥和容器，并记录了每一次调用。测试环境和结果都公开在 [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks)，任何人都可以重新运行。最新一次运行是 [`swe-x86-1`](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md)，共十个任务。
 
-> 🎉 发布仅一周内，OpenHuman 便登顶 GitHub 全站趋势榜第一名，并连续九天保持榜首。
+OpenHuman 完成任务用时不到中位数的一半，token 少用 2.6 倍，内存和 CPU 只用八分之一。它发起了 114 次模型调用，其他框架是 134 到 212 次；整次运行花费 $0.05，其他框架花费 $0.08 到 $0.35。
 
-# 安装
+它的优势来自每一步做得更少。核心是单进程的编译型 Rust，而不是 Node 或 Python，所以占用内存很少，在两次模型调用之间几乎不占 CPU。它发送的提示词是七个框架里最小的，包含 20 个工具也只有 4.6k token，因此每次调用更便宜、返回更快（中位数 1.65 秒，同样最快）。它得出答案所需的调用次数也更少，大部分节省正是来自这里。
 
-从 [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) 或 [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) 页面下载安装包。
+| 每个已解决任务 | OpenHuman（对比中位数） | 其他六个的中位数 | 其他六个中最好的 |
+| --- | --- | --- | --- |
+| 耗时 (p50) | **19.8 s**（快 2.3 倍） | 46.5 s | 28.4 s (OpenCode) |
+| Token | **167k**（少 2.6 倍） | 435k | 370k (Codex) |
+| 成本 | **$0.0077**（-36%） | $0.012 | $0.0077（OpenCode，持平） |
+| 峰值内存 | **68 MB**（少 7.7 倍） | 523 MB | 123 MB (Codex) |
+| CPU 时间 | **1.3 s**（少 8 倍） | 10.4 s | 2.9 s (DeepSeek Harness) |
+| 系统提示词 | **4.6k token**（-40%） | 7.7k | 6.2k (DeepSeek Harness) |
 
-终端安装（Homebrew、Debian/Ubuntu `.deb`、AUR、安装脚本以及各平台注意事项）请参阅 **[INSTALL.md](../INSTALL.md)**。
+---
 
-# 什么是 OpenHuman？
+## 面向用户
 
-OpenHuman 是大多数助手所不具备的三样东西的集合：**一颗大脑**，为你的世界构建持久的本地记忆；**一位出色的编排者**，在持久化的图上调度成群的智能体；以及**一名深度研究员**，在你话音未落之前就已扫遍你的数据和整个网络。每条要点都链接到[文档](https://tinyhumans.gitbook.io/openhuman/)中更详细的说明。
+如果你用过 Claude Code、Codex、OpenClaw 或 Hermes，这些概念你一定不陌生：带工具的智能体循环、MCP、技能、BYOK 模型和记忆。OpenHuman 全都有，可以在桌面应用、终端应用或无界面服务器中使用。
 
-### 🧠 大脑
+| 能力 | OpenHuman 提供什么 |
+| --- | --- |
+| 可配置的记忆 | [覆盖你的文件、代码仓库、信息流和应用的内置记忆](https://tinyhumans.gitbook.io/openhuman/features/memory)，每一轮之前带引用地调出，使用你选择的记忆引擎 |
+| 语音智能体 | 可以随时打断的[实时语音智能体](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice)，另有语音输入和语音回复 |
+| 电脑与浏览器控制 | [操作真实的 Chrome 浏览器和你的桌面应用](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)，做任何无法撤销的操作前都会先询问 |
+| 搜索 | [搜索引擎和搜索智能体](https://tinyhumans.gitbook.io/openhuman/features/native-tools/web-search)：内置 Exa 和 Gemini，使用你自己的密钥还可用 Brave、Tavily、Parallel 等，提供带引用的有依据回答和 Deep Research |
+| 工具 | [原生工具](https://tinyhumans.gitbook.io/openhuman/features/native-tools)：Shell 和编码、网页抓取、文档、图像和视频生成、定时任务 |
+| MCP 与技能 | [MCP 服务器和技能包](https://tinyhumans.gitbook.io/openhuman/features/integrations/mcp-and-skills) |
+| OAuth 集成 | [通过 Composio 接入 119 个应用](https://tinyhumans.gitbook.io/openhuman/features/integrations)，并有[触发器](https://tinyhumans.gitbook.io/openhuman/features/integrations/triggers)，在事件发生时启动智能体 |
+| 模型 | [本地模型（Ollama、LM Studio、MLX）和 26 个提供商的 BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models)，并支持[自动模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
+| 渠道 | [14 个消息渠道](https://tinyhumans.gitbook.io/openhuman/features/channels)可作为智能体的前端：Telegram、Discord、iMessage、电子邮件等 |
+| 工作流 | [持久化的工作流图](https://tinyhumans.gitbook.io/openhuman/features/workflows)：定时、事件或手动触发，审批步骤，暂停后可继续 |
+| 安全 | [审批关卡](https://tinyhumans.gitbook.io/openhuman/features/approval-gate)、[沙箱执行](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)（系统隔离或 Docker）、仅本地运行的[隐私模式](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)、存放在[系统密钥环](https://tinyhumans.gitbook.io/openhuman/features/os-keyring-and-secret-storage)中的密钥 |
+| 用量追踪 | [每次调用的成本和 token 用量](https://tinyhumans.gitbook.io/openhuman/features/billing-and-usage)，以及可回放的运行日志 |
 
-- **[记忆](../gitbooks/features/memory.md)**：基于可替换引擎（TinyHumans 托管或你自己的 CortexDB）的 Recall、Fetch、Store。存储文档、对话和学习内容，回答附带引用，并在每一轮对话前召回相关的记忆包。
-- **[100+ OAuth 集成、5,000+ MCP 服务器、90,000+ Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**：一键接入 Gmail、Notion、GitHub、Slack 以及你技术栈中的其他服务。[自动拉取](https://tinyhumans.gitbook.io/openhuman/features/memory)每 20 分钟为大脑输送养分，所以它在今天早上就已经拥有明天的上下文。
-- **[目标与待办](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**：持久化的会话级目标，以及在聊天中显示的智能体待办列表。
-- **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：工具输出在触达模型之前先被压缩：信息不变，token 最多减少 80%。没有它，这么大的一颗大脑将贵得用不起。
+从[快速上手](https://tinyhumans.gitbook.io/openhuman/overview/getting-started)或[指南](https://tinyhumans.gitbook.io/openhuman/guides)开始吧。
 
-### 🕸️ 编排者
+---
 
-- **[Workflows](https://tinyhumans.gitbook.io/openhuman/features/workflows)**：智能体提出自动化方案；你在画布上审阅并保存。持久化、触发器驱动、审批把关的运行，基于开源的 [tinyflows](https://github.com/tinyhumansai/tinyflows)。
-- **[能把事情做完的执行框架](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**：基于开源 [tinyagents](https://github.com/tinyhumansai/tinyagents) 的检查点式图运行：卡住的智能体会被引导回正轨，中止的会交回根因，每次运行都可回放并附带真实的每次调用成本。
-- **[常驻的分脑](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**：一个快速反应智能体负责分流入站流量，一个深度推理核心负责向工作者舰队分派任务，由潜意识统一调度。
+## 面向开发者
 
-### 🔬 深度研究员与实干家
+OpenHuman 是一个以库为先的框架。把它加入你的 Rust 项目，就能像调用普通函数一样调用智能体，不需要运行任何边车进程或守护进程。一个运行时可以容纳几百个智能体，每个智能体都有自己的模型、工具、记忆和沙箱。500 个智能体就能装进一台 10 美元的 VPS，所以每位客户一个智能体的产品不需要集群也能起步。
 
-- **开箱即用**：网络搜索、抓取器、编码工具集、真正的[浏览器](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)、语音识别经后端代理、语音合成可选托管或本地 Piper 的[原生语音](../gitbooks/features/native-tools/voice.md)，以及为每个工作负载挑选合适 LLM 的[模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing)。一个订阅搞定，[本地 AI 可选](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)。
-- **[图像与视频生成](https://tinyhumans.gitbook.io/openhuman/features/native-tools)**：Seedream/SeedEdit 图像和 Seedance/Veo 视频，直接输出到你的工作区，同一份订阅。
-- **[15 个消息渠道](https://tinyhumans.gitbook.io/openhuman/features/channels)**：Telegram、Discord、Slack、WhatsApp、Signal、iMessage……外加**原生邮件**（IMAP IDLE + SMTP）。无论你在哪里，智能体都能找到你。
+```rust
+use openhuman_embed::{Access, Harness, Provider, Workspace};
 
-### 🧍 人性化、私密、属于你
+let agent = Harness::builder()
+    .provider(Provider::openai_compatible("https://api.openai.com/v1", "sk-...").model("gpt-5"))
+    .workspace(Workspace::Ephemeral)
+    .access(Access::readonly())
+    .build()
+    .await?;
 
-- **简洁、UI 优先、人性化**：从安装到拥有一个可用的智能体仅需几次点击，无需配置文件，也无需终端。它还有[一张脸](https://tinyhumans.gitbook.io/openhuman/features/mascot)：一个会说话、会回应、记得你的吉祥物。
-- **[隐私与安全](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)**：设备端加密数据、审批关卡、操作系统钥匙串密钥、可选沙箱，以及 **[隐私模式](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)**：一个开关，任何推理都不会离开你的机器，由 Rust 核心强制执行。
-- **[主题与主题工作室](https://tinyhumans.gitbook.io/openhuman/features/theming)**：五套主题系列，外加完整的可视化编辑器，可导出为 JSON。
+let reply = agent.run("Summarize what you can see in this directory.").await?;
+println!("{}", reply.reply);
+```
 
-## 几分钟内建立上下文，而非数周
+接下来看：[Rust 快速入门](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)、[嵌入指南](../docs/gitbooks/en/developing/embed/README.md)和[开发者文档](https://tinyhumans.gitbook.io/openhuman/developing)。
 
-OpenHuman 是首个能在几分钟内了解你的智能体框架。灵感来源于 [Karpathy 的 LLM 知识库](https://x.com/karpathy/status/2039805659525644595)。大多数智能体从零开始。Hermes 通过观察你的工作来学习；OpenClaw 等待插件输送上下文。无论哪种方式，你都需要花费数天甚至数周时间，智能体才能对你的技术栈有足够的了解从而真正发挥作用。
+---
 
-> OpenHuman 将文档、对话和学习内容存入记忆引擎，并带引用地回答问题。
+## 与其他框架相比如何？
 
-OpenHuman 跳过了等待期。添加来源（文件夹、文件、链接、GitHub、RSS、已连接应用），按计划同步，智能体即可通过[记忆](../gitbooks/features/memory.md)直接回答。
+下面把 OpenHuman 和大多数人已经在用的框架放在一起比较。前四行来自我们的[公开基准测试](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md)：十个 SWE-bench 编码任务，每个框架使用相同的模型和容器。每个数字都是每个已解决任务的数据。其余各行比较功能。
 
-仅需一次同步，智能体就拥有了你收件箱、日历、仓库、文档、消息的完整（压缩后的）上下文。无需训练期，无需"给它几周时间"。它成为你，由你掌控。
+简单来说，其他框架很适合一个人搭配一个智能体工作。OpenHuman 同样可以做到，并且它还是可以作为库嵌入、并能扩展到整个集群的开源选择。产品变化很快，做决定前请先查看各个项目。
 
-## 编排器，而非聊天机器人
+|                         | Claude Code          | Codex                | OpenClaw             | Hermes Agent         | OpenHuman                                |
+| ----------------------- | -------------------- | -------------------- | -------------------- | -------------------- | ---------------------------------------- |
+| **任务用时中位数**      | 37.8 s               | 36.1 s               | 62 s                 | 58.5 s               | 🚀 19.8 s                                 |
+| **每个任务平均 token**  | 428k                 | 370k                 | 442k                 | 482k                 | 🚀 167k                                   |
+| **每个任务峰值内存**    | 231 MB               | 123 MB               | 1.57 GB              | 816 MB               | 🚀 68 MB                                  |
+| **每个任务平均成本**    | $0.04                | $0.02                | $0.01                | $0.0082              | 🚀 $0.0077                                |
+| **开源**                | 🚫 专有              | ✅ Apache-2.0        | ✅ MIT               | ✅ MIT               | ✅ GPL-3.0                               |
+| **智能体集群**          | ⚠️ 每个智能体一个进程 | ⚠️ 每个智能体一个进程 | ⚠️ 每个智能体一个进程 | ⚠️ 每个智能体一个进程 | 🚀 10 美元 VPS 上 500 个智能体            |
+| **可嵌入的库**          | ⚠️ CLI 之上的 SDK    | ⚠️ CLI 之上的 SDK    | 🚫 无                | ⚠️ Python 包         | 🚀 有类型的 Rust API                     |
+| **记忆**                | ⚠️ 记忆文件          | ⚠️ 记忆文件          | ⚠️ 依赖插件          | ✅ 自我学习          | 🚀 每一轮都调用，并附引用                |
+| **集成**                | ✅ MCP               | ✅ MCP               | ⚠️ 自行接入          | ⚠️ 自行接入          | 🚀 119 个 OAuth 应用、MCP、技能          |
+| **消息渠道**            | 🚫 无                | 🚫 无                | ✅ 很多              | ✅ 若干              | ✅ 14 个，包括电子邮件                   |
+| **浏览器与桌面**        | ⚠️ 通过 MCP 使用浏览器 | ⚠️ 通过 MCP 使用浏览器 | ✅ 浏览器            | ✅ 浏览器            | ✅ 浏览器和桌面应用                      |
+| **工作流**              | 🚫 无                | 🚫 无                | ⚠️ 脚本              | ⚠️ 脚本              | 🚀 可视化，由智能体起草                  |
+| **模型选择**            | ⚠️ Anthropic 模型    | ⚠️ 优先 OpenAI       | ✅ 任意              | ✅ 任意              | ✅ 任意，内置路由                        |
 
-大多数智能体框架都是一个智能体跑一个循环。OpenHuman 是一个**[编排器](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**：
+---
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/orchestration.png" alt="OpenHuman 编排示意图">
-</p>
+## 参与贡献
 
-> 智能体之间的消息通过 Signal 协议端到端加密传输，因此你可以接入任何东西（Claude Code、Codex、OpenClaw、Hermes），并用 OpenHuman 编排你所有的智能体和工具。
+请阅读 [`CONTRIBUTING.md`](../CONTRIBUTING.md)，或者用[这段提示词](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you)让 AI 编码智能体带你上手。
 
-- **图，而非循环**：每一轮对话都作为带检查点的图在 [tinyagents](https://github.com/tinyhumansai/tinyagents) 上运行，可暂停等待人工介入、可在重启后存活、可从运行中途恢复。
-- **子智能体舰队**：专家子智能体可派生至三层深；卡住的智能体会变成根因报告。
-- **智能体对智能体，端到端加密**：实例之间通过 Signal 协议 E2E 会话相互编排，并支持 x402 支付。任何服务器都无法看到明文。
+1. 安装 Git、Node.js 24+、pnpm 10.10.0、Rust 1.99.1（含 `rustfmt` 和 `clippy`）、CMake、Ninja、ripgrep，以及你所用平台的桌面构建依赖。
+2. Fork 并克隆仓库。运行 `git submodule update --init --recursive`，然后运行 `pnpm install`。
+3. 做界面开发运行 `pnpm dev`，做桌面应用运行 `pnpm dev:app`。提交 PR 之前，请运行 `pnpm typecheck`、`pnpm format:check` 和 `cargo check --manifest-path Cargo.toml`。
 
-## 看得见的工作流
+更多内容见[环境搭建](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up)、[`AGENTS.md`](../AGENTS.md)和 [crates 概览](../crates/README.md)。OpenHuman 的许多部分位于 [`vendor/`](../vendor) 下各自独立的仓库中，同样欢迎贡献。
 
-深受 n8n 和 Zapier 的启发，[工作流](https://tinyhumans.gitbook.io/openhuman/features/workflows)将同样的可视化、触发器驱动的自动化带给你的智能体。不同的是，智能体会替你构建它们。向智能体请求一个自动化，它就会提出方案：一张 [tinyflows](https://github.com/tinyhumansai/tinyflows) 图，你可以在可视化画布上审阅后再保存。
+贡献者可获得免费周边，并在 [Discord](https://guild.tinyhumans.ai/) 上获得特别权限。
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/workflows.png" alt="OpenHuman 工作流画布">
-</p>
-
-> 智能体提出工作流；你在画布上审阅并保存。
-
-保存的工作流是持久且触发器驱动的：它们由定时任务、Webhook 或渠道事件触发，可在重启后存活，并将副作用置于审批把关之后。
-
-## OpenHuman vs 其他智能体框架
-
-高层次对比（产品持续演进，请以各厂商最新情况为准）。OpenHuman 的设计目标是**减少供应商碎片化**、将**工作流知识保留在设备上**、为智能体提供对你数据的**持久记忆**，而不仅仅是对话。
-
-|                | Claude Cowork    | OpenClaw    | Hermes Agent | OpenHuman                                                                                   |
-| -------------- | ---------------- | ----------- | ------------ | ------------------------------------------------------------------------------------------- |
-| **开源**       | 🚫 闭源          | ✅ MIT      | ✅ MIT       | ✅ GNU                                                                                      |
-| **易上手**     | ✅ 桌面 + CLI    | ⚠️ 终端优先 | ⚠️ 终端优先  | ✅ 清爽 UI，几分钟上手                                                                      |
-| **成本**       | ⚠️ 订阅 + 附加项 | ⚠️ 自带模型 | ⚠️ 自带模型  | ✅ 单一订阅 + TokenJuice                                                                    |
-| **记忆**       | ✅ 对话范围      | ⚠️ 依赖插件 | ✅ 自学习    | 🚀 可替换引擎（TinyHumans 或自有 CortexDB）、引用、每轮记忆包 |
-| **集成**       | ⚠️ 少量连接器    | ⚠️ 自行接入 | ⚠️ 自行接入  | 🚀 100+ OAuth · 5k+ MCP · 90k+ Skills                                                       |
-| **来源同步**   | 🚫 无            | 🚫 无       | 🚫 无        | ✅ 按计划同步到记忆 |
-| **编排**       | ⚠️ 子任务        | ⚠️ 单循环   | ⚠️ 单循环    | 🚀 智能体图 + 检查点 + E2E 加密的 A2A                                                       |
-| **工作流**     | 🚫 无            | ⚠️ 脚本     | ⚠️ 脚本      | 🚀 可视化、持久化、智能体提议、审批把关                                                     |
-| **会议**       | 🚫 无            | 🚫 无       | 🚫 无        | 🚀 加入 Meet/Zoom/Teams/Webex，能发言，实时转写                                             |
-| **消息渠道**   | 🚫 无            | ⚠️ 少数几个 | ⚠️ 少数几个  | ✅ 15 个，含原生邮件（IMAP/SMTP）                                                           |
-| **纯本地模式** | 🚫 仅云端        | ⚠️ 自带本地 | ⚠️ 自带本地  | ✅ 一键强制的隐私模式                                                                       |
-| **可观测性**   | 🚫 不透明        | ⚠️ 日志     | ⚠️ 日志      | ✅ 可回放的运行日志 + 每次调用的成本核算                                                    |
-| **API 碎片化** | 🚫 额外密钥      | 🚫 自带密钥 | 🚫 多供应商  | ✅ 一个账户                                                                                 |
-| **模型路由**   | 🚫 单一模型      | ⚠️ 手动     | ⚠️ 手动      | ✅ 内置                                                                                     |
-| **原生工具**   | ✅ 仅代码        | ✅ 仅代码   | ✅ 仅代码    | ✅ 代码 + 搜索 + 抓取 + 浏览器 + 语音 + 媒体生成                                            |
-
-## 从源码贡献
-
-新贡献者？从 [`CONTRIBUTING.md`](../CONTRIBUTING.md) 了解 fork/PR 工作流和本地验证命令，或使用 [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) 中可直接复制粘贴的 AI 智能体提示词。快速路径：
-
-1. 安装 Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep，以及各平台桌面构建的前置依赖。
-2. Fork 并克隆仓库，然后运行 `git submodule update --init --recursive` 之后再执行 `pnpm install`，确保内置的 Tauri/CEF 源码就位。
-3. 使用 `pnpm dev` 进行纯 Web UI 开发，`pnpm --filter openhuman-app dev:app` (macOS) 或 `pnpm dev:app:win` (Windows) 用于桌面壳，在提交 PR 之前运行针对性的检查如 `pnpm typecheck`、`pnpm format:check` 和 `cargo check -p openhuman --lib`。
-
-更多文档：[架构](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [环境搭建](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [云端部署](../gitbooks/features/cloud-deploy.md)。
-
-# 在 GitHub 上为我们加星
-
-_致力于 AGI 和人工意识？为仓库加星，帮助更多人找到这条路。_
+## Star 历史
 
 <p align="center">
  <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
@@ -168,9 +340,7 @@ _致力于 AGI 和人工意识？为仓库加星，帮助更多人找到这条�
  </a>
 </p>
 
-# 贡献者名人堂
-
-贡献一份力量，进入名人堂。贡献者可获得免费周边以及我们 [Discord](https://guild.tinyhumans.ai/) 的专属访问权限。
+## 贡献者
 
 <a href="https://github.com/tinyhumansai/openhuman/graphs/contributors">
  <img src="https://contrib.rocks/image?repo=tinyhumansai/openhuman" alt="OpenHuman contributors" />

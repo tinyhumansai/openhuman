@@ -1,0 +1,646 @@
+{
+ "catalog": {
+  "drafts": [
+   {
+    "created_at": "2025-03-01T12:00:00+00:00",
+    "graph": {
+     "nodes": []
+    },
+    "id": "draft-1",
+    "name": "Scratch",
+    "origin": "chat",
+    "updated_at": "2025-03-01T12:05:00+00:00"
+   },
+   {
+    "created_at": "2025-03-01T13:00:00+00:00",
+    "flow_id": "flow-alpha",
+    "graph": {
+     "nodes": [
+      {
+       "id": "x"
+      }
+     ]
+    },
+    "id": "draft-2",
+    "name": "Edit alpha",
+    "origin": "canvas",
+    "updated_at": "2025-03-01T13:05:00+00:00"
+   }
+  ],
+  "flows": [
+   {
+    "created_at": "2025-03-01T10:00:00+00:00",
+    "enabled": true,
+    "graph": {
+     "agents": [],
+     "edges": [
+      {
+       "from_node": "t",
+       "from_port": "main",
+       "to_node": "work",
+       "to_port": "main"
+      }
+     ],
+     "id": null,
+     "inputs": [],
+     "name": "",
+     "nodes": [
+      {
+       "config": {
+        "n": 3,
+        "trigger_kind": "manual"
+       },
+       "id": "t",
+       "kind": "trigger",
+       "name": "start",
+       "ports": [],
+       "position": null,
+       "type_version": 1
+      },
+      {
+       "config": {
+        "set": {
+         "a": "=.item.a"
+        }
+       },
+       "id": "work",
+       "kind": "transform",
+       "name": "work",
+       "ports": [],
+       "position": null,
+       "type_version": 1
+      }
+     ],
+     "schema_version": 1
+    },
+    "id": "flow-alpha",
+    "last_run_at": "2025-03-02T09:00:00+00:00",
+    "last_status": "completed",
+    "name": "Alpha v3",
+    "require_approval": true,
+    "updated_at": "2026-10-12T23:56:24.181688654+00:00"
+   },
+   {
+    "created_at": "2025-03-01T11:00:00+00:00",
+    "enabled": false,
+    "graph": {
+     "agents": [],
+     "edges": [
+      {
+       "from_node": "t",
+       "from_port": "main",
+       "to_node": "work",
+       "to_port": "main"
+      }
+     ],
+     "id": null,
+     "inputs": [],
+     "name": "",
+     "nodes": [
+      {
+       "config": {
+        "schedule": "0 9 * * *",
+        "trigger_kind": "schedule"
+       },
+       "id": "t",
+       "kind": "trigger",
+       "name": "start",
+       "ports": [],
+       "position": null,
+       "type_version": 1
+      },
+      {
+       "config": {
+        "set": {
+         "a": "=.item.a"
+        }
+       },
+       "id": "work",
+       "kind": "transform",
+       "name": "work",
+       "ports": [],
+       "position": null,
+       "type_version": 1
+      }
+     ],
+     "schema_version": 1
+    },
+    "id": "flow-beta",
+    "last_run_at": null,
+    "last_status": null,
+    "name": "Beta",
+    "require_approval": true,
+    "updated_at": "2025-03-01T11:00:00+00:00"
+   }
+  ],
+  "kv": [
+   [
+    "workflow:flow-alpha",
+    "cursor",
+    {
+     "page": 3
+    }
+   ],
+   [
+    "workflow:flow-alpha",
+    "seen",
+    [
+     "a",
+     "b"
+    ]
+   ],
+   [
+    "workflow:flow-beta",
+    "cursor",
+    null
+   ]
+  ],
+  "revisions": {
+   "flow-alpha": [
+    {
+     "created_at": "2026-10-12T23:56:24.181688654+00:00",
+     "flow_id": "flow-alpha",
+     "graph": {
+      "agents": [],
+      "edges": [
+       {
+        "from_node": "t",
+        "from_port": "main",
+        "to_node": "work",
+        "to_port": "main"
+       }
+      ],
+      "id": null,
+      "inputs": [],
+      "name": "",
+      "nodes": [
+       {
+        "config": {
+         "n": 2,
+         "trigger_kind": "manual"
+        },
+        "id": "t",
+        "kind": "trigger",
+        "name": "start",
+        "ports": [],
+        "position": null,
+        "type_version": 1
+       },
+       {
+        "config": {
+         "set": {
+          "a": "=.item.a"
+         }
+        },
+        "id": "work",
+        "kind": "transform",
+        "name": "work",
+        "ports": [],
+        "position": null,
+        "type_version": 1
+       }
+      ],
+      "schema_version": 1
+     },
+     "id": "b3144569-f9f4-43b1-9dbc-c81054803d48",
+     "name": "Alpha v2",
+     "require_approval": false
+    },
+    {
+     "created_at": "2026-10-12T23:56:24.179370688+00:00",
+     "flow_id": "flow-alpha",
+     "graph": {
+      "agents": [],
+      "edges": [
+       {
+        "from_node": "t",
+        "from_port": "main",
+        "to_node": "work",
+        "to_port": "main"
+       }
+      ],
+      "id": null,
+      "inputs": [],
+      "name": "",
+      "nodes": [
+       {
+        "config": {
+         "trigger_kind": "manual"
+        },
+        "id": "t",
+        "kind": "trigger",
+        "name": "start",
+        "ports": [],
+        "position": null,
+        "type_version": 1
+       },
+       {
+        "config": {
+         "set": {
+          "a": "=.item.a"
+         }
+        },
+        "id": "work",
+        "kind": "transform",
+        "name": "work",
+        "ports": [],
+        "position": null,
+        "type_version": 1
+       }
+      ],
+      "schema_version": 1
+     },
+     "id": "8e53c44d-ff50-4b17-9f44-a32bbdc1ad35",
+     "name": "Alpha",
+     "require_approval": false
+    }
+   ],
+   "flow-beta": []
+  },
+  "runs": {
+   "flow-alpha": [
+    {
+     "error": null,
+     "finished_at": null,
+     "flow_id": "flow-alpha",
+     "id": "run-live",
+     "pending_approvals": [],
+     "started_at": "2025-03-02T11:00:00+00:00",
+     "status": "running",
+     "steps": [],
+     "thread_id": "thread-live"
+    },
+    {
+     "error": null,
+     "finished_at": "2025-03-02T09:00:05+00:00",
+     "flow_id": "flow-alpha",
+     "id": "run-done",
+     "pending_approvals": [],
+     "started_at": "2025-03-02T09:00:00+00:00",
+     "status": "completed",
+     "steps": [
+      {
+       "diagnostics": [
+        {
+         "expression": "=item.to",
+         "location": "args.to"
+        }
+       ],
+       "duration_ms": 12,
+       "node_id": "t",
+       "output": [
+        {
+         "a": 1
+        }
+       ],
+       "port": "main",
+       "status": "success"
+      }
+     ],
+     "thread_id": "thread-done"
+    },
+    {
+     "error": "boom",
+     "finished_at": "2025-03-02T08:00:02+00:00",
+     "flow_id": "flow-alpha",
+     "id": "run-failed",
+     "pending_approvals": [],
+     "started_at": "2025-03-02T08:00:00+00:00",
+     "status": "failed",
+     "steps": [],
+     "thread_id": "thread-failed"
+    }
+   ],
+   "flow-beta": [
+    {
+     "error": null,
+     "finished_at": "2025-03-02T10:00:01+00:00",
+     "flow_id": "flow-beta",
+     "graph_hash": "hash-1",
+     "id": "run-parked",
+     "pending_approvals": [
+      "gate"
+     ],
+     "started_at": "2025-03-02T10:00:00+00:00",
+     "status": "pending_approval",
+     "steps": [],
+     "thread_id": "thread-parked"
+    }
+   ]
+  },
+  "suggestions": [
+   {
+    "build_prompt": "back it up",
+    "confidence": 0.5,
+    "created_at": "2025-03-01T09:30:00+00:00",
+    "id": "sugg-2",
+    "one_liner": "Nightly backup",
+    "rationale": "safety",
+    "source_run_id": "run-done",
+    "status": "dismissed",
+    "steps_outline": [],
+    "suggested_connections": [],
+    "suggested_slugs": [],
+    "title": "Backup"
+   },
+   {
+    "build_prompt": "build it",
+    "confidence": 0.75,
+    "created_at": "2025-03-01T09:00:00+00:00",
+    "id": "sugg-1",
+    "one_liner": "Daily digest",
+    "rationale": "you do it",
+    "status": "new",
+    "steps_outline": [
+     "fetch",
+     "send"
+    ],
+    "suggested_connections": [
+     "gmail"
+    ],
+    "suggested_slugs": [
+     "GMAIL_SEND"
+    ],
+    "title": "Digest",
+    "trigger_hint": "daily"
+   }
+  ]
+ },
+ "checkpoints": {
+  "threads": {
+   "Run Two/Upper": [
+    {
+     "barrier_arrivals": [],
+     "checkpoint_id": "u1",
+     "completed_tasks": [
+      "done"
+     ],
+     "interrupts": [],
+     "metadata": {
+      "source": "loop",
+      "step": 1
+     },
+     "namespace": [],
+     "next_nodes": [
+      "next"
+     ],
+     "parent_checkpoint_id": null,
+     "pending_activations": null,
+     "pending_writes": [],
+     "run_id": "run-1",
+     "state": {
+      "u": 1
+     },
+     "thread_id": "Run Two/Upper"
+    }
+   ],
+   "run-1": [
+    {
+     "barrier_arrivals": [],
+     "checkpoint_id": "c1",
+     "completed_tasks": [
+      "done"
+     ],
+     "interrupts": [],
+     "metadata": {
+      "source": "loop",
+      "step": 1
+     },
+     "namespace": [],
+     "next_nodes": [
+      "next"
+     ],
+     "parent_checkpoint_id": null,
+     "pending_activations": null,
+     "pending_writes": [],
+     "run_id": "run-1",
+     "state": {
+      "n": 1
+     },
+     "thread_id": "run-1"
+    },
+    {
+     "barrier_arrivals": [],
+     "checkpoint_id": "c2",
+     "completed_tasks": [
+      "done"
+     ],
+     "interrupts": [],
+     "metadata": {
+      "source": "loop",
+      "step": 2
+     },
+     "namespace": [],
+     "next_nodes": [
+      "next"
+     ],
+     "parent_checkpoint_id": "c1",
+     "pending_activations": null,
+     "pending_writes": [],
+     "run_id": "run-1",
+     "state": {
+      "n": 2
+     },
+     "thread_id": "run-1"
+    },
+    {
+     "barrier_arrivals": [],
+     "checkpoint_id": "s1",
+     "completed_tasks": [
+      "done"
+     ],
+     "interrupts": [],
+     "metadata": {
+      "source": "loop",
+      "step": 1
+     },
+     "namespace": [
+      "sub"
+     ],
+     "next_nodes": [
+      "next"
+     ],
+     "parent_checkpoint_id": null,
+     "pending_activations": null,
+     "pending_writes": [],
+     "run_id": "run-1",
+     "state": {
+      "sub": true
+     },
+     "thread_id": "run-1"
+    }
+   ]
+  },
+  "writes": [
+   {
+    "channel": "out",
+    "idx": 0,
+    "node": "work",
+    "payload": {
+     "v": 1
+    },
+    "task_id": "task-1"
+   },
+   {
+    "channel": "out",
+    "idx": 1,
+    "node": "work",
+    "payload": {
+     "v": 2
+    },
+    "task_id": "task-1"
+   },
+   {
+    "channel": "t",
+    "idx": 0,
+    "node": "t",
+    "payload": null,
+    "task_id": "task-0"
+   }
+  ]
+ },
+ "cron": {
+  "jobs": [
+   {
+    "agent_id": null,
+    "command": "flow-beta",
+    "created_at": "2026-10-12T23:56:24.212840089Z",
+    "delete_after_run": false,
+    "delivery": {
+     "best_effort": true,
+     "channel": null,
+     "mode": "none",
+     "to": null
+    },
+    "enabled": true,
+    "expression": "",
+    "id": "43e104ff-b3b3-4197-98e7-5e8f6461af35",
+    "job_type": "flow",
+    "last_output": null,
+    "last_run": null,
+    "last_status": null,
+    "model": null,
+    "name": "flow:flow-beta",
+    "next_run": "2026-10-12T23:57:24.212840089Z",
+    "prompt": null,
+    "schedule": {
+     "every_ms": 60000,
+     "kind": "every"
+    },
+    "session_target": "isolated"
+   },
+   {
+    "agent_id": "researcher",
+    "command": "",
+    "created_at": "2026-10-12T23:56:24.210521974Z",
+    "delete_after_run": false,
+    "delivery": {
+     "best_effort": true,
+     "channel": null,
+     "mode": "none",
+     "to": null
+    },
+    "enabled": true,
+    "expression": "",
+    "id": "196e677d-f6d5-4612-be57-d6457ce27af6",
+    "job_type": "agent",
+    "last_output": null,
+    "last_run": null,
+    "last_status": null,
+    "model": "some-model",
+    "name": "inbox",
+    "next_run": "2026-10-13T00:56:24.210521974Z",
+    "origin": {
+     "channel": "telegram",
+     "history_key": "telegram:chat-42",
+     "kind": "channel",
+     "reply_target": "chat-42",
+     "sender": "alice"
+    },
+    "prompt": "summarise the inbox",
+    "schedule": {
+     "every_ms": 3600000,
+     "kind": "every"
+    },
+    "session_target": "isolated"
+   },
+   {
+    "agent_id": null,
+    "command": "echo hi",
+    "created_at": "2026-10-12T23:56:24.205535224Z",
+    "delete_after_run": false,
+    "delivery": {
+     "best_effort": true,
+     "channel": null,
+     "mode": "none",
+     "to": null
+    },
+    "enabled": true,
+    "expression": "0 3 * * *",
+    "id": "a0ebbb67-f060-4467-92f7-78d6272be94e",
+    "job_type": "shell",
+    "last_output": "last output",
+    "last_run": "2025-03-02T03:00:04Z",
+    "last_status": "ok",
+    "model": null,
+    "name": "nightly",
+    "next_run": "2026-10-13T03:00:00Z",
+    "prompt": null,
+    "schedule": {
+     "active_hours": null,
+     "expr": "0 3 * * *",
+     "kind": "cron",
+     "tz": "UTC"
+    },
+    "session_target": "isolated"
+   }
+  ],
+  "runs": {
+   "196e677d-f6d5-4612-be57-d6457ce27af6": [
+    {
+     "duration_ms": 4000,
+     "finished_at": "2025-03-02T03:02:04Z",
+     "id": 3,
+     "job_id": "196e677d-f6d5-4612-be57-d6457ce27af6",
+     "output": "output 2",
+     "started_at": "2025-03-02T03:02:00Z",
+     "status": "ok"
+    }
+   ],
+   "43e104ff-b3b3-4197-98e7-5e8f6461af35": [
+    {
+     "delivery_status": "not_requested",
+     "duration_ms": 4000,
+     "finished_at": "2025-03-02T03:03:04Z",
+     "id": 4,
+     "job_id": "43e104ff-b3b3-4197-98e7-5e8f6461af35",
+     "output": "output 3",
+     "started_at": "2025-03-02T03:03:00Z",
+     "status": "ok"
+    }
+   ],
+   "a0ebbb67-f060-4467-92f7-78d6272be94e": [
+    {
+     "delivery_status": "failed",
+     "duration_ms": 4000,
+     "finished_at": "2025-03-02T03:01:04Z",
+     "id": 2,
+     "job_id": "a0ebbb67-f060-4467-92f7-78d6272be94e",
+     "output": "output 1",
+     "started_at": "2025-03-02T03:01:00Z",
+     "status": "error"
+    },
+    {
+     "delivery_status": "delivered",
+     "duration_ms": 4000,
+     "finished_at": "2025-03-02T03:00:04Z",
+     "id": 1,
+     "job_id": "a0ebbb67-f060-4467-92f7-78d6272be94e",
+     "output": "output 0",
+     "started_at": "2025-03-02T03:00:00Z",
+     "status": "ok"
+    }
+   ]
+  }
+ }
+}

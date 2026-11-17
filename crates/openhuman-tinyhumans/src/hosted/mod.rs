@@ -44,7 +44,7 @@ pub mod webhooks;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use openhuman_core::core::all::{ControllerExtension, DomainGroup};
+use openhuman_embed::seams::{ControllerExtension, DomainGroup};
 
 /// Namespace descriptions the core's `namespace_description` serves for the
 /// namespaces only the hosted surface uses. Shared namespaces (`auth`,

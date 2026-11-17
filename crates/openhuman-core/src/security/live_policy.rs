@@ -50,9 +50,10 @@ pub fn install(
         privacy_mode: RwLock::new(policy.privacy_mode),
         generation: AtomicU64::new(0),
     });
-    if let Ok(mut guard) = state.policy.write() {
-        *guard = Arc::clone(&policy);
-    }
+    let Ok(mut policy_guard) = state.policy.write() else {
+        return policy;
+    };
+    *policy_guard = Arc::clone(&policy);
     if let Ok(mut guard) = state.workspace_dir.write() {
         *guard = workspace_dir;
     }
@@ -72,7 +73,7 @@ pub fn install(
     policy
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-keyring-consent"))]
 thread_local! {
     /// Test-only, **thread-scoped** [`PrivacyMode`] override. When set it wins
     /// over the process-global policy in [`current_privacy_mode`].
@@ -88,7 +89,10 @@ thread_local! {
     /// on the same thread while sibling tests on their own threads are unaffected.
     static TEST_PRIVACY_MODE: std::cell::Cell<Option<PrivacyMode>> =
         const { std::cell::Cell::new(None) };
+}
 
+#[cfg(test)]
+thread_local! {
     /// Test-only, thread-scoped live-policy override. Approval-gate tests run
     /// in parallel on separate `#[tokio::test]` current-thread runtimes, so a
     /// process-global override can otherwise make an unrelated test observe a
@@ -98,10 +102,11 @@ thread_local! {
 }
 
 /// RAII guard that restores the previous thread-local privacy override on drop.
-#[cfg(test)]
-pub(crate) struct TestPrivacyGuard(Option<PrivacyMode>);
+#[cfg(any(test, feature = "test-keyring-consent"))]
+#[must_use = "the override lasts only while the guard is alive"]
+pub struct TestPrivacyGuard(Option<PrivacyMode>);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-keyring-consent"))]
 impl Drop for TestPrivacyGuard {
     fn drop(&mut self) {
         TEST_PRIVACY_MODE.with(|c| c.set(self.0));
@@ -111,8 +116,13 @@ impl Drop for TestPrivacyGuard {
 /// Override [`current_privacy_mode`] for the current thread until the returned
 /// guard drops. Test-only; needs no `TEST_ENV_LOCK` because it never touches the
 /// process-global policy.
-#[cfg(test)]
-pub(crate) fn test_privacy_scope(mode: PrivacyMode) -> TestPrivacyGuard {
+///
+/// Also test support for downstream crates (the hosted embedder's egress guard
+/// tests), so they can drive a restrictive mode deterministically whether or not
+/// TinySecurity is staged. Not built into the product (`test-keyring-consent` is
+/// a test-only feature).
+#[cfg(any(test, feature = "test-keyring-consent"))]
+pub fn test_privacy_scope(mode: PrivacyMode) -> TestPrivacyGuard {
     let prev = TEST_PRIVACY_MODE.with(|c| c.replace(Some(mode)));
     TestPrivacyGuard(prev)
 }
@@ -156,7 +166,7 @@ pub(crate) fn install_scoped(
 pub fn current_privacy_mode() -> PrivacyMode {
     // Test-only per-thread override (see `TEST_PRIVACY_MODE`) wins so a test can
     // drive the egress gate without mutating the shared process-global policy.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-keyring-consent"))]
     if let Some(mode) = TEST_PRIVACY_MODE.with(|c| c.get()) {
         return mode;
     }
@@ -175,6 +185,21 @@ pub fn current() -> Option<Arc<SecurityPolicy>> {
         .and_then(|s| s.policy.read().ok().map(|g| Arc::clone(&g)))
 }
 
+/// The policy a call should be answered against: `ctx`'s agent's own policy
+/// when it carries one, else the process-global [`current`] policy.
+pub fn effective_in(ctx: &crate::core::runtime::DispatchCtx) -> Option<Arc<SecurityPolicy>> {
+    if let Some(policy) = ctx.agent_policy() {
+        return Some(policy);
+    }
+    if let Some(agent) = crate::core::runtime::agent_scope::current_agent_id() {
+        tracing::trace!(
+            agent_id = %agent,
+            "[security:live_policy] agent context carries no policy; using the process policy"
+        );
+    }
+    current()
+}
+
 /// Reload counter — incremented on every [`reload_from`]. Observability/tests.
 pub fn generation() -> u64 {
     STATE
@@ -185,8 +210,22 @@ pub fn generation() -> u64 {
 /// Rebuild the policy from `autonomy_config` against the stored workspace dir
 /// and swap it in, bumping the generation counter. No-op if nothing has been
 /// installed yet (e.g. a CLI invocation that never started a session runtime).
+/// A test thread holding an `install_scoped` policy owns its policy, so its
+/// reloads never reach the process-global one that sibling tests read.
 pub fn reload_from(autonomy_config: &crate::config::AutonomyConfig) {
+    #[cfg(test)]
+    if TEST_POLICY_OVERRIDE.with(|current| current.borrow().is_some()) {
+        tracing::trace!("[security:live_policy] reload skipped for scoped test policy");
+        return;
+    }
     let Some(state) = STATE.get() else {
+        return;
+    };
+    // Serialize the read/modify/write with privacy and action-directory swaps.
+    // Holding this guard while reading the stored fields prevents a concurrent
+    // setter from being overwritten by a stale policy clone.
+    let Ok(mut policy_guard) = state.policy.write() else {
+        tracing::warn!("[security:live_policy] policy write lock poisoned; reload skipped");
         return;
     };
     let workspace = state
@@ -207,9 +246,8 @@ pub fn reload_from(autonomy_config: &crate::config::AutonomyConfig) {
         SecurityPolicy::from_config(autonomy_config, &workspace, &action)
             .with_privacy_mode(stored_privacy),
     );
-    if let Ok(mut guard) = state.policy.write() {
-        *guard = rebuilt;
-    }
+    *policy_guard = rebuilt;
+    drop(policy_guard);
     let gen = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
     tracing::info!(
         generation = gen,
@@ -233,26 +271,18 @@ pub fn reload_privacy(new_mode: PrivacyMode) -> Result<u64, String> {
             "[security:live_policy] no policy installed yet — cannot update privacy_mode".into(),
         );
     };
-    {
-        let mut guard = state
-            .privacy_mode
-            .write()
-            .map_err(|e| format!("[security:live_policy] privacy_mode lock poisoned: {e}"))?;
-        *guard = new_mode;
-    }
-    let current_policy = state
+    let mut policy_guard = state
         .policy
-        .read()
-        .map(|g| Arc::clone(&g))
-        .map_err(|e| format!("[security:live_policy] policy lock poisoned: {e}"))?;
-    let rebuilt = (*current_policy).clone().with_privacy_mode(new_mode);
-    {
-        let mut guard = state
-            .policy
-            .write()
-            .map_err(|e| format!("[security:live_policy] policy write lock poisoned: {e}"))?;
-        *guard = Arc::new(rebuilt);
-    }
+        .write()
+        .map_err(|e| format!("[security:live_policy] policy write lock poisoned: {e}"))?;
+    let mut privacy_guard = state
+        .privacy_mode
+        .write()
+        .map_err(|e| format!("[security:live_policy] privacy_mode lock poisoned: {e}"))?;
+    *privacy_guard = new_mode;
+    *policy_guard = Arc::new((**policy_guard).clone().with_privacy_mode(new_mode));
+    drop(privacy_guard);
+    drop(policy_guard);
     let gen = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
     tracing::info!(
         generation = gen,
@@ -281,43 +311,32 @@ pub fn set_action_dir(new: PathBuf) {
         return;
     };
 
-    if let Ok(mut guard) = state.action_dir.write() {
-        *guard = new.clone();
-    }
-
-    let rebuilt = match state.policy.read() {
-        Ok(current) => Some({
-            let mut next = (**current).clone();
-            next.action_dir = new.clone();
-            Arc::new(next)
-        }),
-        Err(_) => {
+    let Ok(mut policy_guard) = state.policy.write() else {
+        if let Ok(mut action_guard) = state.action_dir.write() {
+            *action_guard = new.clone();
+        }
+        {
             tracing::warn!(
                 action_dir = %new.display(),
-                "[security:live_policy] set_action_dir: policy read lock poisoned; \
+                "[security:live_policy] set_action_dir: policy lock poisoned; \
                  action_dir stored but live policy not swapped — next reload_from will reconcile"
             );
-            None
         }
+        return;
     };
-
-    if let Some(rebuilt) = rebuilt {
-        if let Ok(mut guard) = state.policy.write() {
-            *guard = rebuilt;
-        } else {
-            tracing::warn!(
-                action_dir = %new.display(),
-                "[security:live_policy] set_action_dir: policy write lock poisoned; \
-                 rebuilt policy discarded — next reload_from will reconcile"
-            );
-        }
-        let generation = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
-        tracing::info!(
-            generation,
-            action_dir = %new.display(),
-            "[security:live_policy] SecurityPolicy action_dir swapped after agent-paths change"
-        );
+    if let Ok(mut action_guard) = state.action_dir.write() {
+        *action_guard = new.clone();
     }
+    let mut next = (**policy_guard).clone();
+    next.action_dir = new.clone();
+    *policy_guard = Arc::new(next);
+    drop(policy_guard);
+    let generation = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::info!(
+        generation,
+        action_dir = %new.display(),
+        "[security:live_policy] SecurityPolicy action_dir swapped after agent-paths change"
+    );
 }
 
 #[cfg(test)]

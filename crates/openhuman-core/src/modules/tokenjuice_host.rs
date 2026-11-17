@@ -14,23 +14,12 @@ struct MlHost;
 
 #[tinybus::interface(name = "ai.tinyhumans.tinyjuice.MlHost")]
 impl MlHost {
-    async fn compress(
-        &self,
-        text: String,
-        options: serde_json::Value,
-    ) -> tinybus::Result<Option<String>> {
-        let options = serde_json::from_value(options).map_err(method_error)?;
-        crate::inference::tokenjuice::ml::compress(&text, &options)
-            .await
-            .map_err(method_error)
-    }
-
     /// One tool-less model call for the module's summary stage, run under the
     /// turn its `context_token` names. `None` declines — the token is unknown
     /// or already used, and the module falls back to its own compressors.
     async fn generate(
         &self,
-        request: crate::inference::tokenjuice::types::GenerateRequest,
+        request: tinyjuice_bus::wire::GenerateRequest,
     ) -> tinybus::Result<Option<String>> {
         crate::inference::tokenjuice::generate::serve(request)
             .await
@@ -46,6 +35,11 @@ fn method_error(error: impl std::fmt::Display) -> tinybus::Error {
 }
 
 pub(super) async fn install(connection: &tinybus::Connection) -> tinybus::Result<()> {
-    connection.serve_at(ObjectPath::new(PATH)?, MlHost).await?;
+    connection
+        .serve_at(
+            ObjectPath::new(PATH)?,
+            super::callback_owner::OwnedBy::new(MlHost, connection, tinyjuice_bus::names::BUS_NAME),
+        )
+        .await?;
     connection.request_name(NAME).await
 }

@@ -3,14 +3,43 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Extension;
 use axum::Json;
 
-use openhuman_core::core::invoke::invoke_method;
-use openhuman_core::core::types::AppState;
-use openhuman_core::core::StructuredRpcError;
+use crate::core_host::core::invoke::invoke_method;
+use crate::core_host::core::runtime::DispatchCtx;
+use crate::core_host::core::types::AppState;
+use crate::core_host::core::StructuredRpcError;
 
 use super::super::classify::{classify_failure, FailureDisposition, USAGE_BACKOFF_CLIENT_MESSAGE};
 use crate::{RpcError, RpcFailure, RpcRequest, RpcSuccess, JSONRPC_VERSION, SERVER_ERROR_CODE};
+
+/// JSON-RPC entry point during config-secret preflight. It shares normal
+/// dispatch and auth but admits only version and the operator's approval list
+/// and decision methods until the host opens `PreflightGate`.
+pub(super) async fn preflight_rpc_handler(
+    State(state): State<AppState>,
+    ctx: Option<Extension<DispatchCtx>>,
+    Extension(gate): Extension<super::super::auth::PreflightGate>,
+    Json(req): Json<RpcRequest>,
+) -> Response {
+    if gate.is_active() && !super::super::auth::preflight_rpc_method_allowed(&req.method) {
+        return (
+            StatusCode::OK,
+            Json(RpcFailure {
+                jsonrpc: JSONRPC_VERSION,
+                id: req.id,
+                error: RpcError {
+                    code: -32601,
+                    message: "Method is unavailable during startup approval preflight".into(),
+                    data: None,
+                },
+            }),
+        )
+            .into_response();
+    }
+    rpc_handler(State(state), ctx, Json(req)).await
+}
 
 /// Axum handler for JSON-RPC POST requests.
 ///
@@ -26,12 +55,22 @@ use crate::{RpcError, RpcFailure, RpcRequest, RpcSuccess, JSONRPC_VERSION, SERVE
 /// # Arguments
 ///
 /// * `state` - The application state, injected by Axum.
+/// * `ctx` - The [`DispatchCtx`] the serving middleware attached to the request:
+///   the operator's context, or the context of the SaaS user the gateway
+///   admitted. A request that carries none dispatches unbound.
 /// * `req` - The parsed [`RpcRequest`].
-pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
+pub async fn rpc_handler(
+    State(state): State<AppState>,
+    ctx: Option<Extension<DispatchCtx>>,
+    Json(req): Json<RpcRequest>,
+) -> Response {
+    let ctx = ctx
+        .map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx)
+        .with_authenticated_user_controller();
     let id = req.id.clone();
     let method = req.method.clone();
     let started = std::time::Instant::now();
-    let result = invoke_method(state, method.as_str(), req.params).await;
+    let result = invoke_method(ctx, state, method.as_str(), req.params).await;
     let ms = started.elapsed().as_millis();
 
     match result {
@@ -94,6 +133,15 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     );
                     display_message = USAGE_BACKOFF_CLIENT_MESSAGE.to_string();
                 }
+                FailureDisposition::ModuleUnavailable => {
+                    tracing::warn!(
+                        method = %method,
+                        elapsed_ms = ms as u64,
+                        error = %display_message,
+                        "[rpc] cached module-load failure (reported once at resolution) — \
+                         not reporting to Sentry"
+                    );
+                }
                 FailureDisposition::TransientDownstream => {
                     let redacted =
                         tinyinference_core::sanitize::sanitize_api_error(&display_message);
@@ -112,7 +160,7 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     );
                 }
                 FailureDisposition::UnknownMethod { probe: false } => {
-                    openhuman_core::core::observability::report_warning_message(
+                    crate::core_host::core::observability::report_warning_message(
                         display_message.as_str(),
                         "rpc",
                         "invoke_method",
@@ -120,7 +168,7 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                     );
                 }
                 FailureDisposition::Unexpected => {
-                    openhuman_core::core::observability::report_error_or_expected(
+                    crate::core_host::core::observability::report_error_or_expected(
                         display_message.as_str(),
                         "rpc",
                         "invoke_method",

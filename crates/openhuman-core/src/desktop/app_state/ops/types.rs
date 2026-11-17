@@ -1,10 +1,10 @@
 //! Serde types exchanged with the frontend: the persisted local app-state
 //! blob, the patch applied to it, and the polled `app_state_snapshot` shape.
 
-use crate::inference::LocalAiStatus;
 use crate::platform::service::ServiceStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tinyinference_local::status::LocalAiStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -37,7 +37,7 @@ pub struct StoredAppState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStateSnapshot {
-    pub auth: crate::security::credentials::responses::AuthStateResponse,
+    pub auth: crate::credentials::responses::AuthStateResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

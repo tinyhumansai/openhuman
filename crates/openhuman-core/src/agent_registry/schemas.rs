@@ -1,0 +1,322 @@
+//! Controller-registry schemas for `openhuman.agent_registry_*`.
+
+use crate::core::runtime::DispatchCtx;
+use crate::util::params::{optional_string, required_string, to_json};
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
+
+use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+
+use super::rpc;
+
+const NAMESPACE: &str = "agent_registry";
+
+pub fn all_controller_schemas() -> Vec<ControllerSchema> {
+    vec![
+        schemas("list"),
+        schemas("available_tools"),
+        schemas("get"),
+        schemas("create_custom"),
+        schemas("upsert_custom"),
+        schemas("update"),
+        schemas("set_enabled"),
+        schemas("remove"),
+    ]
+}
+
+pub fn all_registered_controllers() -> Vec<RegisteredController> {
+    vec![
+        RegisteredController {
+            schema: schemas("list"),
+            handler: handle_list,
+        },
+        RegisteredController {
+            schema: schemas("available_tools"),
+            handler: handle_available_tools,
+        },
+        RegisteredController {
+            schema: schemas("get"),
+            handler: handle_get,
+        },
+        RegisteredController {
+            schema: schemas("create_custom"),
+            handler: handle_create_custom,
+        },
+        RegisteredController {
+            schema: schemas("upsert_custom"),
+            handler: handle_upsert_custom,
+        },
+        RegisteredController {
+            schema: schemas("update"),
+            handler: handle_update,
+        },
+        RegisteredController {
+            schema: schemas("set_enabled"),
+            handler: handle_set_enabled,
+        },
+        RegisteredController {
+            schema: schemas("remove"),
+            handler: handle_remove,
+        },
+    ]
+}
+
+pub fn schemas(function: &str) -> ControllerSchema {
+    match function {
+        "list" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "list",
+            description: "List default and custom agents available in the high-level registry.",
+            inputs: vec![FieldSchema {
+                name: "include_disabled",
+                ty: TypeSchema::Bool,
+                comment: "When true, include disabled agents in the response.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "agents",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("AgentRegistryEntry"))),
+                comment: "Registry entries in default-first order.",
+                required: true,
+            }],
+        },
+        "available_tools" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "available_tools",
+            description: "List every assignable agent tool (the full built-in tool catalog), with descriptions, for the agent editor's tool picker.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "tools",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("AgentToolInfo"))),
+                comment: "Available tools sorted by name; each name is a valid tool_allowlist entry.",
+                required: true,
+            }],
+        },
+        "get" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "get",
+            description: "Get one agent registry entry by id.",
+            inputs: vec![required_string("id", "Agent id.")],
+            outputs: vec![FieldSchema {
+                name: "agent",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Ref("AgentRegistryEntry"))),
+                comment: "Agent registry entry if found.",
+                required: false,
+            }],
+        },
+        "upsert_custom" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "upsert_custom",
+            description: "Create or replace a custom user-authored agent with its tool policy.",
+            inputs: vec![FieldSchema {
+                name: "agent",
+                ty: TypeSchema::Ref("AgentRegistryEntry"),
+                comment: "Custom agent entry. Source is forced to custom.",
+                required: true,
+            }],
+            outputs: vec![agent_output()],
+        },
+        "create_custom" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "create_custom",
+            description: "Create or replace a custom user-authored agent from flat RPC params.",
+            inputs: vec![
+                required_string("id", "Custom agent id."),
+                required_string("name", "Display name."),
+                required_string("description", "When this agent should be used."),
+                optional_bool("enabled", "Enable or disable this agent. Defaults to true."),
+                optional_string("model", "Model id or route hint."),
+                optional_string("system_prompt", "Custom instructions."),
+                optional_string_array("tool_allowlist", "Allowed tool names; '*' means all."),
+                optional_string_array("tool_denylist", "Denied tool names."),
+                FieldSchema {
+                    name: "tool_rules",
+                    ty: TypeSchema::Json,
+                    comment: "Tool rules (tinytools::ToolRules): allow/deny/hide/approval patterns applied to the agent's catalogue, tool_search and calls. An empty rule set clears them.",
+                    required: false,
+                },
+                optional_subagents_policy(
+                    "subagents",
+                    "Subagent delegation policy. Only ids in allowlist may be spawned.",
+                ),
+                optional_string_array("tags", "UI grouping/search tags."),
+                FieldSchema {
+                    name: "metadata",
+                    ty: TypeSchema::Json,
+                    comment: "Free-form metadata.",
+                    required: false,
+                },
+            ],
+            outputs: vec![agent_output()],
+        },
+        "update" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "update",
+            description: "Patch either a default-agent override or a custom agent.",
+            inputs: vec![
+                required_string("id", "Agent id."),
+                optional_string("name", "New display name."),
+                optional_string("description", "New description."),
+                optional_bool("enabled", "Enable or disable this agent."),
+                optional_string("model", "Model id or route hint."),
+                optional_string("system_prompt", "Custom instructions."),
+                optional_string_array("tool_allowlist", "Allowed tool names; '*' means all."),
+                optional_string_array("tool_denylist", "Denied tool names."),
+                FieldSchema {
+                    name: "tool_rules",
+                    ty: TypeSchema::Json,
+                    comment: "Tool rules (tinytools::ToolRules): allow/deny/hide/approval patterns applied to the agent's catalogue, tool_search and calls. An empty rule set clears them.",
+                    required: false,
+                },
+                optional_subagents_policy(
+                    "subagents",
+                    "Subagent delegation policy. Only ids in allowlist may be spawned.",
+                ),
+                optional_string_array("tags", "UI grouping/search tags."),
+                FieldSchema {
+                    name: "metadata",
+                    ty: TypeSchema::Json,
+                    comment: "Free-form metadata.",
+                    required: false,
+                },
+            ],
+            outputs: vec![agent_output()],
+        },
+        "set_enabled" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "set_enabled",
+            description: "Enable or disable a default or custom agent.",
+            inputs: vec![
+                required_string("id", "Agent id."),
+                FieldSchema {
+                    name: "enabled",
+                    ty: TypeSchema::Bool,
+                    comment: "Desired enabled state.",
+                    required: true,
+                },
+            ],
+            outputs: vec![agent_output()],
+        },
+        "remove" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "remove",
+            description: "Remove a custom agent or reset a default-agent override.",
+            inputs: vec![required_string("id", "Agent id.")],
+            outputs: vec![FieldSchema {
+                name: "removed",
+                ty: TypeSchema::Bool,
+                comment: "True when a configured entry was removed.",
+                required: true,
+            }],
+        },
+        other => panic!("unknown agent_registry schema function: {other}"),
+    }
+}
+
+fn handle_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::ListRequest>(Value::Object(params))?;
+        to_json(rpc::list_rpc(&ctx, req).await?)
+    })
+}
+
+fn handle_available_tools(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::AvailableToolsRequest>(Value::Object(params))?;
+        to_json(rpc::available_tools_rpc(&ctx, req).await?)
+    })
+}
+
+fn handle_get(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::GetRequest>(Value::Object(params))?;
+        to_json(rpc::get_rpc(&ctx, req).await?)
+    })
+}
+
+fn handle_create_custom(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::CreateCustomRequest>(Value::Object(params))?;
+        to_json(rpc::create_custom_rpc(&ctx, req).await?)
+    })
+}
+
+fn handle_upsert_custom(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::UpsertCustomRequest>(Value::Object(params))?;
+        to_json(rpc::upsert_custom_rpc(&ctx, req).await?)
+    })
+}
+
+fn handle_update(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::UpdateRequest>(Value::Object(params))?;
+        to_json(rpc::update_rpc(&ctx, req).await?)
+    })
+}
+
+fn handle_set_enabled(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::SetEnabledRequest>(Value::Object(params))?;
+        to_json(rpc::set_enabled_rpc(&ctx, req).await?)
+    })
+}
+
+fn handle_remove(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::RemoveRequest>(Value::Object(params))?;
+        to_json(rpc::remove_rpc(&ctx, req).await?)
+    })
+}
+
+fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_string_array(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_subagents_policy(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Object {
+            fields: vec![FieldSchema {
+                name: "allowlist",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Whitelisted subagent ids this agent may call.",
+                required: false,
+            }],
+        })),
+        comment,
+        required: false,
+    }
+}
+
+fn agent_output() -> FieldSchema {
+    FieldSchema {
+        name: "agent",
+        ty: TypeSchema::Ref("AgentRegistryEntry"),
+        comment: "Updated agent registry entry.",
+        required: true,
+    }
+}
+
+fn parse_value<T: DeserializeOwned>(v: Value) -> Result<T, String> {
+    serde_json::from_value(v).map_err(|e| format!("invalid params: {e}"))
+}
+
+#[cfg(test)]
+#[path = "schemas_tests.rs"]
+mod tests;

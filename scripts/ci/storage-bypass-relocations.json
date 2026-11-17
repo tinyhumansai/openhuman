@@ -1,0 +1,131 @@
+[
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-core/src/security/credentials/http_creds.rs",
+    "text": "fs::write(&tmp_path, &json)",
+    "occurrence": 1,
+    "source": {
+      "commit": "5f01951c9c585c393ea4e8c3ba2907c25809663d",
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/security/credentials/http_creds.rs",
+      "text": "fs::write(&tmp_path, &json)",
+      "occurrence": 1
+    },
+    "trackedBefore": {
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/flows/http_credentials.rs",
+      "text": "fs::write(&tmp_path, &json)",
+      "occurrence": 1
+    },
+    "rationale": "Preserve legacy desktop credential import while the storage master-key source becomes portable.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/security/credentials/http_creds.rs",
+    "text": "if let Err(e) = fs::rename(&tmp_path, &self.path) {",
+    "occurrence": 1,
+    "source": {
+      "commit": "5f01951c9c585c393ea4e8c3ba2907c25809663d",
+      "rule": "file-mutation",
+      "path": "crates/openhuman-core/src/security/credentials/http_creds.rs",
+      "text": "if let Err(e) = fs::rename(&tmp_path, &self.path) {",
+      "occurrence": 1
+    },
+    "rationale": "Preserve legacy desktop credential import while the storage master-key source becomes portable.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
+    "text": "let mut file = OpenOptions::new()",
+    "occurrence": 1,
+    "source": {
+      "commit": "5f01951c9c585c393ea4e8c3ba2907c25809663d",
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
+      "text": "let mut file = OpenOptions::new()",
+      "occurrence": 1
+    },
+    "trackedBefore": {
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/credentials/profiles/persistence.rs",
+      "text": "let mut file = OpenOptions::new()",
+      "occurrence": 1
+    },
+    "rationale": "Preserve legacy desktop credential import while the storage master-key source becomes portable.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
+    "text": "fs::write(path, bytes)",
+    "occurrence": 1,
+    "source": {
+      "commit": "5f01951c9c585c393ea4e8c3ba2907c25809663d",
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
+      "text": "fs::write(path, bytes)",
+      "occurrence": 1
+    },
+    "trackedBefore": {
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/credentials/profiles/persistence.rs",
+      "text": "fs::write(path, bytes)",
+      "occurrence": 1
+    },
+    "rationale": "Preserve legacy desktop credential import while the storage master-key source becomes portable.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
+    "text": "fs::rename(path, &candidate).with_context(|| {",
+    "occurrence": 1,
+    "source": {
+      "commit": "5f01951c9c585c393ea4e8c3ba2907c25809663d",
+      "rule": "file-mutation",
+      "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
+      "text": "fs::rename(path, &candidate).with_context(|| {",
+      "occurrence": 1
+    },
+    "rationale": "Preserve legacy desktop credential import while the storage master-key source becomes portable.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-core/src/security/credentials/profiles/lock.rs",
+    "text": "OpenOptions::new()",
+    "occurrence": 1,
+    "source": {
+      "commit": "5f01951c9c585c393ea4e8c3ba2907c25809663d",
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/security/credentials/profiles/lock.rs",
+      "text": "OpenOptions::new()",
+      "occurrence": 1
+    },
+    "trackedBefore": {
+      "rule": "json-write",
+      "path": "crates/openhuman-core/src/credentials/profiles/lock.rs",
+      "text": "OpenOptions::new()",
+      "occurrence": 1
+    },
+    "rationale": "Preserve legacy desktop credential import while the storage master-key source becomes portable.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/security/credentials/profiles/persistence.rs",
+    "text": "fs::rename(&tmp_path, &self.path).context(\"rename auth profile tmp -> store\")",
+    "occurrence": 1,
+    "source": {
+      "commit": "5f01951c9c585c393ea4e8c3ba2907c25809663d",
+      "rule": "file-mutation",
+      "path": "crates/openhuman-core/src/security/credentials/profiles/persistence.rs",
+      "text": "fs::rename(&tmp_path, &self.path).context(\"rename auth profile tmp -> store\")",
+      "occurrence": 1
+    },
+    "rationale": "Preserve legacy desktop credential import while the storage master-key source becomes portable.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  }
+]

@@ -44,8 +44,8 @@ export type TokenUsage = {
   reasoningTokens?: number | undefined;
 };
 
-const formatTokenCount = (tokens: number): string => {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+export const formatTokenCount = (tokens: number): string => {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}mn`;
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
   return `${tokens}`;
 };
@@ -123,6 +123,7 @@ export type PresetProps = Omit<ComponentProps<'button'>, 'children' | 'className
   usage?: TokenUsage | undefined;
   resetKey?: string | undefined;
   labels?: ContextDisplayLabels | undefined;
+  showTooltip?: boolean;
 };
 
 export type ContextDisplayRootProps = {
@@ -189,20 +190,22 @@ function ContextDisplayRoot({
     </ContextDisplayContext.Provider>
   );
 }
-function ContextDisplayTrigger({ className, children, ...props }: React.ComponentProps<'button'>) {
-  return (
-    <TooltipTrigger
-      render={
-        <button
-          type="button"
-          data-slot="context-display-trigger"
-          className={cn('inline-flex items-center rounded-md transition-colors', className)}
-          {...props}
-        />
-      }>
+function ContextDisplayTrigger({
+  className,
+  children,
+  showTooltip = true,
+  ...props
+}: React.ComponentProps<'button'> & { showTooltip?: boolean }) {
+  const trigger = (
+    <button
+      type="button"
+      data-slot="context-display-trigger"
+      className={cn('inline-flex items-center rounded-md transition-colors', className)}
+      {...props}>
       {children}
-    </TooltipTrigger>
+    </button>
   );
+  return showTooltip ? <TooltipTrigger render={trigger} /> : trigger;
 }
 
 type ContextSegment = { label: string; tokens: number };
@@ -254,10 +257,10 @@ function ContextDisplayContent({
             {formatTokenCount(modelContextWindow)}
           </span>
         </div>
-        <div className="bg-muted mt-2.5 h-1 overflow-hidden rounded-full">
+        <div className="bg-muted inset-ring-border mt-2.5 h-1 overflow-hidden rounded-full inset-ring forced-colors:border">
           <div
             className={cn(
-              'h-full w-(--usage-width) rounded-full transition-[width] duration-300',
+              'h-full w-(--usage-width) rounded-full transition-[width] duration-300 forced-color-adjust-none',
               totalTokens > 0 && 'min-w-1',
               getBarColor(percent)
             )}
@@ -331,6 +334,7 @@ const ContextDisplayRing: FC<PresetProps> = ({
   usage,
   resetKey,
   labels,
+  showTooltip = true,
   ...triggerProps
 }) => {
   const { t } = useT();
@@ -341,6 +345,7 @@ const ContextDisplayRing: FC<PresetProps> = ({
       resetKey={resetKey}
       labels={labels}>
       <ContextDisplayTrigger
+        showTooltip={showTooltip}
         className={cn(
           'text-muted-foreground hover:text-foreground gap-1.5 px-1.5 py-1 text-xs',
           className
@@ -350,7 +355,7 @@ const ContextDisplayRing: FC<PresetProps> = ({
         <RingVisual />
         <RingPercentLabel />
       </ContextDisplayTrigger>
-      <ContextDisplayContent side={side} />
+      {showTooltip && <ContextDisplayContent side={side} />}
     </ContextDisplayRoot>
   );
 };

@@ -13,11 +13,11 @@
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::skills::Workflow;
 use async_trait::async_trait;
 use std::sync::{Arc, OnceLock};
 use tinybus::EventHandler;
 use tinybus::SubscriptionHandle;
+use tinyskills::Skill as Workflow;
 
 // ── Trigger pattern ───────────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ use tinybus::SubscriptionHandle;
 /// [`DomainEvent`] exposes no stable slug yet, so matching passes an empty
 /// slug: bare-domain patterns match every event in the domain and
 /// slug-qualified patterns stay inert rather than firing for the whole domain.
-pub use tinyskills::TriggerPattern;
+use tinyskills::TriggerPattern;
 
 fn pattern_matches_event(pattern: &TriggerPattern, event: &DomainEvent) -> bool {
     // TODO(#skills-triggers): pass the real slug once DomainEvent exposes one.
@@ -203,6 +203,20 @@ static TRIGGERED_WORKFLOW_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLoc
 pub fn ensure_triggered_workflow_subscriber(workspace: &std::path::Path) {
     TRIGGERED_WORKFLOW_HANDLE.get_or_init(|| {
         let workflows = crate::skills::load_workflow_metadata(workspace);
+        register_triggered_workflow_subscriber(&workflows)
+    });
+}
+
+/// Idempotently install the subscriber from the exact startup Config and
+/// profile context after async builtin prewarming has completed.
+pub(crate) fn ensure_triggered_workflow_subscriber_for(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &crate::config::Config,
+    domains: Option<crate::core::runtime::DomainSet>,
+) {
+    TRIGGERED_WORKFLOW_HANDLE.get_or_init(|| {
+        let workflows =
+            crate::skills::ops_discover::load_workflow_metadata_for_domains(ctx, config, domains);
         register_triggered_workflow_subscriber(&workflows)
     });
 }

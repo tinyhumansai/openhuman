@@ -6,6 +6,7 @@
 //! [`DomainGroup`](crate::core::all::DomainGroup) registers the first time a
 //! boot enables it.
 
+use crate::core::runtime::DispatchCtx;
 /// Per-`DomainGroup` gating decision for each event-bus subscriber that
 /// [`register_domain_subscribers`] conditionally registers. Extracted as a
 /// pure value so the subscriber→group mapping has a single source of truth
@@ -29,7 +30,7 @@ pub struct DomainSubscriberPlan {
     pub desktop: bool,
     /// webhook request subscriber (skills own inbound webhook routing).
     pub skills: bool,
-    /// channel-inbound + web-only proactive.
+    /// channel-inbound dispatch.
     pub channels: bool,
     /// flows trigger dispatch.
     pub flows: bool,
@@ -41,7 +42,7 @@ pub struct DomainSubscriberPlan {
     pub agent: bool,
     /// hosted orchestration ingest.
     pub hosted: bool,
-    /// mcp::registry lifecycle bus init.
+    /// mcp domain start (default config + module-client shutdown hook).
     pub mcp: bool,
 }
 
@@ -109,12 +110,18 @@ pub(super) fn register_domain_subscribers(
     config: crate::config::Config,
     embedded_core: bool,
     domains: crate::core::runtime::DomainSet,
+    ctx: &DispatchCtx,
+    defer_credentials: bool,
 ) {
     use crate::core::all::DomainGroup;
     use std::sync::{Arc, Once};
 
     let plan = DomainSubscriberPlan::for_domains(domains);
     log::debug!("[event_bus] register_domain_subscribers: domains={domains:?} plan={plan:?}");
+
+    // Proactive messages always have a web destination, including builds
+    // without the optional external channels runtime.
+    crate::web_chat::proactive::register_proactive_subscriber();
 
     // `subscribe_global` returns `None` only before the process-global bus is
     // initialized. Because that bus is a monotonic `OnceLock`, checking it here
@@ -157,66 +164,38 @@ pub(super) fn register_domain_subscribers(
     // (`SubscriptionHandle::drop` aborts the task).
     static INFRA: Once = Once::new();
     INFRA.call_once(|| {
+        // Debug-log every domain event; the handle lives for the process.
+        if let Some(handle) =
+            crate::core::bus::BUS.subscribe(Arc::new(crate::core::bus::TracingSubscriber))
+        {
+            std::mem::forget(handle);
+        }
         crate::platform::health::bus::register_health_subscriber();
 
         // Initialise the scheduler gate before any background AI workers start
         // so they observe a real policy on their first iteration (otherwise they
         // fall back to `Policy::Normal` and miss the initial throttle decision on
         // battery-powered hosts).
-        crate::cron::scheduler_gate::init_global(config.scheduler_gate.clone());
+        crate::platform::llm_gate::init_global(config.scheduler_gate.clone());
 
         // A headless host (Docker / VPS / CI) has no interactive login; it
         // hands the core a credential through the environment instead. The
         // API key is a plain profile write, so it lands before the gate is
         // seeded from the store below; a session token runs the full
         // `set_credential` path and seeds the gate itself when it finishes.
-        crate::security::credentials::seed_api_key_from_env(&config);
-        if std::env::var_os(crate::security::credentials::BACKEND_SESSION_TOKEN_ENV).is_some() {
-            let config = config.clone();
-            tokio::spawn(async move {
-                crate::security::credentials::seed_session_from_env(&config).await;
-            });
-        }
-
-        // Seed the scheduler-gate signed-out override from the on-disk
-        // credential — an API key (library runtime) or the app session.
-        // Without this, a sidecar that boots with no stored credential would
-        // happily spin up cron / channel loops and fire LLM requests that all
-        // 401.
-        if crate::security::credentials::api_key::has_api_key(&config) {
-            log::info!("[auth] api-key credential present at startup — scheduler gate signed in");
-            crate::cron::scheduler_gate::set_signed_out(false);
+        if defer_credentials {
+            crate::platform::llm_gate::set_signed_out(true);
         } else {
-            match crate::security::credentials::jwt::get_session_token(&config) {
-                Ok(Some(_)) => {
-                    crate::cron::scheduler_gate::set_signed_out(false);
-                }
-                Ok(None) => {
-                    log::info!(
-                        "[auth] no session token at startup — scheduler gate set to signed_out \
-                         (config_path={}, keyring_backend={})",
-                        config.config_path.display(),
-                        crate::security::keyring::backend_name(),
-                    );
-                    crate::cron::scheduler_gate::set_signed_out(true);
-                }
-                Err(err) => {
-                    log::warn!(
-                        "[auth] failed to read session token at startup ({err}) — assuming signed_out \
-                         (config_path={}, keyring_backend={})",
-                        config.config_path.display(),
-                        crate::security::keyring::backend_name(),
-                    );
-                    crate::cron::scheduler_gate::set_signed_out(true);
-                }
-            }
+            let config = config.clone();
+            let ctx = ctx.clone();
+            tokio::spawn(async move { seed_startup_credentials(&ctx, &config).await });
         }
 
         // Register the SessionExpired handler before any subscribers that might
         // publish 401-derived events, so the very first 401 is routed through
         // `clear_session` + the scheduler-gate override.
         if let Some(handle) = crate::core::bus::BUS.subscribe(Arc::new(
-            crate::security::credentials::bus::SessionExpiredSubscriber::new(),
+            crate::credentials::bus::SessionExpiredSubscriber::new(),
         )) {
             std::mem::forget(handle);
         } else {
@@ -295,12 +274,11 @@ pub(super) fn register_domain_subscribers(
         log::debug!("[event_bus] device-tunnel subscriber SKIPPED — Security domain disabled");
     }
 
-    // Channels: inbound dispatch + web-only proactive messaging.
+    // Channels: inbound dispatch.
     // The `plan.channels` runtime guard cannot stand in for the compile-time
-    // gate: the `channels::bus::ChannelInboundSubscriber` +
-    // `channels::proactive` type paths below must still resolve for this to
-    // compile, so the whole block is `#[cfg]`-gated too (mirrors the flows
-    // dual-gate below).
+    // gate: the `channels::bus::ChannelInboundSubscriber` type path below must
+    // still resolve for this to compile, so the whole block is `#[cfg]`-gated
+    // too (mirrors the flows dual-gate below).
     #[cfg(feature = "channels")]
     if plan.channels {
         if group_first_time(DomainGroup::Channels) {
@@ -313,21 +291,16 @@ pub(super) fn register_domain_subscribers(
                     "[event_bus] failed to register channel subscriber — bus not initialized"
                 );
             }
-            // Web-only proactive message subscriber (no external channel
-            // instances are registered here in the desktop runtime).
-            crate::channels::proactive::register_web_only_proactive_subscriber();
         }
     } else {
-        log::debug!(
-            "[event_bus] Channels subscribers (inbound + web-only proactive) SKIPPED — Channels domain disabled"
-        );
+        log::debug!("[event_bus] channel-inbound subscriber SKIPPED — Channels domain disabled");
     }
     #[cfg(not(feature = "channels"))]
     log::debug!(
-        "[event_bus] Channels subscribers (inbound + web-only proactive) SKIPPED — channels feature disabled at compile time"
+        "[event_bus] channel-inbound subscriber SKIPPED — channels feature disabled at compile time"
     );
 
-    // Flows trigger dispatch (issue B2): maps FlowScheduleTick /
+    // Flows trigger dispatch (issue B2): maps
     // ComposioTriggerReceived / WebhookIncomingRequest onto enabled flows and
     // runs `flows::ops::flows_run`, so schedule/app-event workflows still
     // dispatch when no realtime channel is configured or
@@ -362,26 +335,6 @@ pub(super) fn register_domain_subscribers(
             } else {
                 log::warn!(
                     "[event_bus] failed to register flows run-digest subscriber — bus not initialized"
-                );
-            }
-            // Dedup commit-on-success (issue #5263 PR2): on every terminal
-            // `FlowRunFinished`, settles each `dedup` node in the flow's graph
-            // — unions tentative keys into committed on success, releases
-            // (clears) tentative on failure/cancel/interrupt. This is the
-            // host half of the `dedup` node's exactly-once contract; the node
-            // itself (`tinyflows::nodes::control_flow::dedup`) only ever
-            // reads `committed` and writes `tentative`. Registered in the
-            // same `group_first_time(DomainGroup::Flows)` block as the other
-            // two flows subscribers above — see the digest subscriber's
-            // comment just above for why a second `group_first_time` guard
-            // here would be redundant.
-            if let Some(handle) = crate::core::bus::BUS.subscribe(Arc::new(
-                crate::flows::bus::DedupCommitSubscriber::new(Arc::new(config.clone())),
-            )) {
-                std::mem::forget(handle);
-            } else {
-                log::warn!(
-                    "[event_bus] failed to register flows dedup-commit subscriber — bus not initialized"
                 );
             }
         }
@@ -424,16 +377,16 @@ pub(super) fn register_domain_subscribers(
             // `run_tool_call_loop` directly.
             crate::agent::bus::register_agent_handlers();
             // Background-completion delivery: when a detached sub-agent
-            // (spawn_async_subagent) finishes, surface its result back into the
+            // (spawn_subagent) finishes, surface its result back into the
             // originating chat as an idle-gated, batched, system-injected turn.
             crate::agent::orchestration::background_delivery::register_background_delivery();
-            // Run-ledger finalizer: detached `spawn_async_subagent` runs outlive
+            // Run-ledger finalizer: detached `spawn_subagent` runs outlive
             // their parent turn, so their terminal `AgentProgress` never reaches
             // the per-turn progress bridge that settles the ledger. This
             // global-bus subscriber settles `agent_runs` from
             // `DomainEvent::Subagent{Completed,Failed}`, preventing rows from
             // leaking as perpetual `running` timeline entries on thread reopen.
-            crate::agent::orchestration::run_ledger_finalize::register_run_ledger_finalize_subscriber(&config);
+            crate::agent_runs::register_subagent_finalize_subscriber(&config);
         }
     } else {
         log::debug!(
@@ -441,15 +394,10 @@ pub(super) fn register_domain_subscribers(
         );
     }
 
-    // MCP clients lifecycle subscriber: logs McpServer{Installed,Connected,
-    // Disconnected} + McpClientToolExecuted for observability. The boot-time
-    // spawn of installed servers (boot::spawn_installed_servers) runs later in
-    // bootstrap_core_runtime; this subscriber must be live before then so those
-    // connect events are observed (issue #3039 gap A1).
-    //
-    // What bringing the domain up means is the domain's own; this only says
-    // when. The service it opens is wanted here rather than later for the same
-    // reason as the subscriber: every RPC handler in the domain reaches for it,
+    // MCP domain bring-up. What bringing the domain up means is the domain's
+    // own; this only says when. The service it opens is wanted here, before
+    // the boot-time spawn of installed servers later in
+    // bootstrap_core_runtime: every RPC handler in the domain reaches for it,
     // and opening it from the boot-connect job would leave a window where a
     // handler answers "still starting" to a caller whose domain is, as far as
     // anything else can tell, already up.
@@ -458,10 +406,55 @@ pub(super) fn register_domain_subscribers(
             crate::mcp::start(&config);
         }
     } else {
-        log::debug!("[event_bus] mcp_registry bus init SKIPPED — Mcp domain disabled");
+        log::debug!("[event_bus] mcp domain start SKIPPED — Mcp domain disabled");
     }
 
     log::info!("[event_bus] domain subscriber registration complete: plan={plan:?}");
+}
+
+pub(crate) async fn finish_secret_preflight_credentials(
+    ctx: &DispatchCtx,
+    config: &crate::config::Config,
+) {
+    seed_startup_credentials(ctx, config).await;
+    // Boot could not read a profile the keyring keeps; now it can be asked.
+    if let Err(e) = crate::credentials::session_state::bind_session_user(config).await {
+        log::debug!("[auth] session user bind skipped after the secret preflight: {e}");
+    }
+}
+
+async fn seed_startup_credentials(ctx: &DispatchCtx, config: &crate::config::Config) {
+    crate::credentials::seed_api_key_from_env(config).await;
+    if std::env::var_os(crate::credentials::BACKEND_SESSION_TOKEN_ENV).is_some() {
+        crate::credentials::seed_session_from_env(ctx, config).await;
+    }
+
+    if crate::credentials::api_key::has_api_key(config).await {
+        log::info!("[auth] api-key credential present at startup — scheduler gate signed in");
+        crate::platform::llm_gate::set_signed_out(false);
+    } else {
+        match crate::credentials::session_state::get_session_token(config).await {
+            Ok(Some(_)) => crate::platform::llm_gate::set_signed_out(false),
+            Ok(None) => {
+                log::info!(
+                    "[auth] no session token at startup — scheduler gate set to signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::security::secret_storage::backend_name(),
+                );
+                crate::platform::llm_gate::set_signed_out(true);
+            }
+            Err(err) => {
+                log::warn!(
+                    "[auth] failed to read session token at startup ({err}) — assuming signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::security::secret_storage::backend_name(),
+                );
+                crate::platform::llm_gate::set_signed_out(true);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

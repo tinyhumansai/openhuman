@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::config::schema::{CapabilityProviderTrustState, Config};
 
-use super::types::CapabilityProviderDiagnostics;
+use tinytools::CapabilityProviderDiagnostics;
 
 const MAX_PROVIDER_ID_LEN: usize = 96;
 

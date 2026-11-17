@@ -12,10 +12,14 @@ const TURN_COUNT = 18;
 
 test.describe('Chat scroll paint stability', () => {
   test('keeps every message laid out while scrolling a long transcript', async ({ page }) => {
-    let transcriptRpcCount = 0;
+    const transcriptRequests: string[] = [];
     page.on('request', request => {
-      if (request.postData()?.includes('openhuman.threads_transcript_get')) {
-        transcriptRpcCount += 1;
+      const body = request.postDataJSON() as {
+        method?: string;
+        params?: { thread_id?: string };
+      } | null;
+      if (body?.method === 'openhuman.threads_transcript_get') {
+        transcriptRequests.push(body.params?.thread_id ?? '<missing-thread-id>');
       }
     });
     await bootAuthenticatedPage(page, USER_ID, '/chat');
@@ -49,12 +53,38 @@ test.describe('Chat scroll paint stability', () => {
     await dismissWalkthroughIfPresent(page);
     const row = page.getByTestId(`thread-row-${threadId}`);
     await expect(row).toBeVisible({ timeout: 20_000 });
+    const transcriptLoaded = page.waitForResponse(response => {
+      const body = response.request().postData();
+      return Boolean(body?.includes('openhuman.threads_transcript_get') && body.includes(threadId));
+    });
     await row.click({ force: true });
+    // The message list can paint before the settled-turn projection request
+    // completes. Establish that initial hydration is finished before measuring
+    // whether scrolling itself triggers another transcript read.
+    await transcriptLoaded;
 
     const roots = page.locator(
       '[data-slot="aui_assistant-message-root"], [data-slot="aui_user-message-root"]'
     );
     await expect(roots).toHaveCount(TURN_COUNT * 2, { timeout: 20_000 });
+    await expect
+      .poll(() =>
+        page.evaluate(currentThreadId => {
+          const store = (
+            window as unknown as {
+              __OPENHUMAN_STORE__?: {
+                getState?: () => {
+                  thread?: { selectedThreadId?: string | null; isLoadingMessages?: boolean };
+                };
+              };
+            }
+          ).__OPENHUMAN_STORE__;
+          const thread = store?.getState?.().thread;
+          return thread?.selectedThreadId === currentThreadId && !thread.isLoadingMessages;
+        }, threadId)
+      )
+      .toBe(true);
+    await page.waitForLoadState('networkidle');
     expect(
       await roots.evaluateAll(elements =>
         elements.every(
@@ -72,7 +102,7 @@ test.describe('Chat scroll paint stability', () => {
         '[data-slot="aui_assistant-message-root"], [data-slot="aui_user-message-root"]'
       ).length,
     }));
-    const rpcCountBeforeScroll = transcriptRpcCount;
+    const rpcCountBeforeScroll = transcriptRequests.length;
 
     for (const fraction of [0, 0.25, 0.5, 0.75, 1, 0.5, 0]) {
       const metrics = await viewport.evaluate(async (element, nextFraction) => {
@@ -93,6 +123,9 @@ test.describe('Chat scroll paint stability', () => {
       // checking the loading element.
       await expect(page.getByText('Loading conversation')).toHaveCount(0);
     }
-    expect(transcriptRpcCount).toBe(rpcCountBeforeScroll);
+    expect(
+      transcriptRequests.length,
+      `transcript requests: ${JSON.stringify(transcriptRequests)}`
+    ).toBe(rpcCountBeforeScroll);
   });
 });

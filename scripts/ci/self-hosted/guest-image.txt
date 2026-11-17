@@ -1,0 +1,1 @@
+ghcr.io/tinyhumansai/rust_ci@sha256:c3a3de05ec6b7320afb4d4f39b112afd5a2920f0067f80fd095a0b869703edcb

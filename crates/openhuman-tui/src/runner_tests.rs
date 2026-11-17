@@ -58,6 +58,9 @@ fn tui_invokes_use_canonical_registered_rpc_method_names() {
         "openhuman.approval_decide",
         "openhuman.plan_review_decide",
         "openhuman.config_get_client_config",
+        "openhuman.config_get",
+        "openhuman.config_update_agent_settings",
+        "openhuman.inference_list_models",
         "openhuman.config_get_agent_paths",
         "openhuman.config_update_model_settings",
         "openhuman.config_get_autonomy_settings",
@@ -67,17 +70,17 @@ fn tui_invokes_use_canonical_registered_rpc_method_names() {
         "openhuman.auth_get_state",
         // Session ownership lives in `openhuman-tinyhumans`; these are the
         // credential RPCs its `CoreLink` drives through the in-process link.
-        openhuman_tinyhumans::link::AUTH_GET_STATE,
-        openhuman_tinyhumans::link::AUTH_GET_SESSION_TOKEN,
-        openhuman_tinyhumans::link::AUTH_SET_CREDENTIAL,
-        openhuman_tinyhumans::link::AUTH_CLEAR_CREDENTIAL,
-        openhuman_tinyhumans::link::CONFIG_RESOLVE_API_URL,
+        openhuman_rpc::tinyhumans::link::AUTH_GET_STATE,
+        openhuman_rpc::tinyhumans::link::AUTH_GET_SESSION_TOKEN,
+        openhuman_rpc::tinyhumans::link::AUTH_SET_CREDENTIAL,
+        openhuman_rpc::tinyhumans::link::AUTH_CLEAR_CREDENTIAL,
+        openhuman_rpc::tinyhumans::link::CONFIG_RESOLVE_API_URL,
     ];
     methods.push("openhuman.skills_list");
     methods.push("openhuman.mcp_clients_installed_list");
     for method in methods {
         assert!(
-            openhuman_core::core::all::schema_for_rpc_method(method).is_some(),
+            openhuman_rpc::embed::schema_for_rpc_method(method).is_some(),
             "TUI invokes `{method}`, but it is not a registered RPC method — \
              the tabbed terminal UI would fail with `unknown method: {method}`"
         );

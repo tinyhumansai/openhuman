@@ -218,7 +218,7 @@ describe('markSubagentCancelled', () => {
 });
 
 describe('hydrateRuntimeFromSnapshot — sub-agent child tool arguments', () => {
-  function settledSnapshot(args: unknown): PersistedTurnState {
+  function settledSnapshot(args: Record<string, unknown> | undefined): PersistedTurnState {
     return {
       threadId: THREAD,
       requestId: 'req-1',

@@ -261,6 +261,13 @@ interface MascotState {
    */
   chatMascotListening: boolean;
   /**
+   * Phase of the live voice-agent session running on the mascot stage:
+   * `off`, `connecting`, `listening` or `speaking`. Drives the overlay's
+   * listening pose and amplitude lip-sync, and silences speak-replies TTS while
+   * the live agent is talking. Transient — never persisted or restored.
+   */
+  chatMascotLiveVoicePhase: ChatMascotLiveVoicePhase;
+  /**
    * Whether the mascot appears on the chat composer at all.
    *
    * Dismissing it from the composer is a real preference, not a session quirk —
@@ -271,15 +278,19 @@ interface MascotState {
    */
   chatMascotDismissed: boolean;
   /**
-   * Which voice-chat implementation the mascot's voice stage uses (#5399).
-   * `classic` is
-   * today's turn-based record → transcribe → reply → TTS pipeline; `realtime`
-   * is the streaming ElevenLabs Agents session. Defaults to `classic` and is
-   * only togglable when `VOICE_MODE_FLAG_ENABLED` is on, so the realtime path
-   * ships dark until it is ready.
+   * Legacy voice-chat selector from the ElevenLabs browser path (#5399):
+   * `classic` or `realtime`. No surface reads it any more — the mascot stage
+   * always runs the core-hosted live voice agent — but it stays in the slice so
+   * persisted blobs keep rehydrating cleanly.
    */
   voiceMode: VoiceMode;
 }
+
+/** Coarse live voice-agent phase published by the mascot stage. */
+export type ChatMascotLiveVoicePhase = 'off' | 'connecting' | 'listening' | 'speaking';
+
+const isLiveVoicePhase = (value: unknown): value is ChatMascotLiveVoicePhase =>
+  value === 'off' || value === 'connecting' || value === 'listening' || value === 'speaking';
 
 /** Voice-chat implementation used by the mascot's voice stage. */
 export type VoiceMode = 'classic' | 'realtime';
@@ -301,6 +312,7 @@ const initialState: MascotState = {
   chatMascotExpanded: false,
   speakReplies: true,
   chatMascotListening: false,
+  chatMascotLiveVoicePhase: 'off',
   chatMascotDismissed: false,
   voiceMode: 'classic',
 };
@@ -522,6 +534,12 @@ const mascotSlice = createSlice({
       state.chatMascotListening = next;
       mascotLog('[mascot][voice] listening=%s', next);
     },
+    setChatMascotLiveVoicePhase(state, action: PayloadAction<ChatMascotLiveVoicePhase>) {
+      const next = isLiveVoicePhase(action.payload) ? action.payload : 'off';
+      if (state.chatMascotLiveVoicePhase === next) return;
+      state.chatMascotLiveVoicePhase = next;
+      mascotLog('[mascot][live-voice] phase=%s', next);
+    },
     setVoiceMode(state, action: PayloadAction<VoiceMode>) {
       if (isVoiceMode(action.payload)) {
         state.voiceMode = action.payload;
@@ -632,6 +650,7 @@ const mascotSlice = createSlice({
           : initialState.chatMascotDismissed;
       // Never restored — see the field docs on `chatMascotListening`.
       state.chatMascotListening = false;
+      state.chatMascotLiveVoicePhase = 'off';
       const restoredVoiceMode = rehydrateAction.payload?.voiceMode;
       state.voiceMode = isVoiceMode(restoredVoiceMode) ? restoredVoiceMode : 'classic';
     });
@@ -653,6 +672,7 @@ export const {
   setChatMascotDismissed,
   setSpeakReplies,
   setChatMascotListening,
+  setChatMascotLiveVoicePhase,
   setVoiceMode,
 } = mascotSlice.actions;
 
@@ -670,6 +690,10 @@ export const selectChatMascotListening = (state: { mascot: MascotState }): boole
   state.mascot.chatMascotListening ?? false;
 
 /** Whether the user has dismissed the mascot from the composer. */
+export const selectChatMascotLiveVoicePhase = (state: {
+  mascot: MascotState;
+}): ChatMascotLiveVoicePhase => state.mascot.chatMascotLiveVoicePhase ?? 'off';
+
 export const selectChatMascotDismissed = (state: { mascot: MascotState }): boolean =>
   state.mascot.chatMascotDismissed ?? false;
 

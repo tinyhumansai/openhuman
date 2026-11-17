@@ -1,58 +1,46 @@
-//! Classifying a managed-backend error by its stable `errorCode` (#870) —
-//! the trusted fast path that runs before the substring ladder in
-//! [`classify_inference_error`](super::classify::classify_inference_error).
+//! Applying registered provider-owned semantic metadata before generic copy
+//! heuristics in [`classify_inference_error`](super::classify::classify_inference_error).
 
 use super::classify::ClassifiedError;
 use super::retry::retry_after_hint;
 use tinyinference_llm::failure::{is_malformed_tool_history_text, parse_retry_after_secs};
 
-/// Classify a managed-backend error by its stable `errorCode` (#870).
+/// Apply registered provider-owned semantic metadata when present.
 ///
-/// Returns `Some` only when the flattened error string carries a *recognised*
-/// backend `errorCode`. Because an `errorCode` is present **only** when the
-/// error came through the managed backend, branching on it here lets us trust
-/// the backend's verdict (operator faults route to the calm "temporarily
-/// unavailable — we've been notified" copy, no user-blaming) instead of the
-/// substring heuristics, which are tuned for the BYO / direct-provider path
-/// (where no `errorCode` exists and "check your API key / model settings" is
-/// the correct, user-actionable copy). See [`classify_inference_error`] (F2).
+/// Returns `Some` only when a registered provider classifier claims the error
+/// and supplies a known semantic kind. Provider-specific token parsing stays
+/// with that provider; the core uses only the provider-neutral classification.
 ///
-/// `None` falls through to the substring ladder, covering both the BYO path
-/// (no code) and any future/unrecognised managed code we don't yet map.
+/// `None` falls through to generic message heuristics, including unknown or
+/// unowned provider errors.
 pub(super) fn classify_by_backend_error_code(
     err: &str,
     provider: Option<String>,
     fallback_available: Option<bool>,
 ) -> Option<ClassifiedError> {
-    use crate::inference::provider::{
-        body_flags_malformed, extract_backend_error_code, is_managed_backend_envelope,
-        BackendErrorCode,
-    };
+    use crate::inference::registry::{classify_backend_error, BackendErrorKind};
 
-    // Managed-vs-BYO gate: an `errorCode` is only trustworthy on a
-    // managed-backend envelope. A BYO / direct-provider body that merely
-    // contains an `errorCode`-shaped field must fall through to the substring
-    // ladder (CodeRabbit), keeping its user-actionable copy intact.
-    if !is_managed_backend_envelope(err) {
+    // The provider classifier owns this distinction. Message-shaped lookalikes
+    // alone never claim provider ownership.
+    let classification = classify_backend_error(None, err)?;
+    if !classification.provider_owned {
         return None;
     }
+    let kind = classification.kind?;
 
-    let code = extract_backend_error_code(err)?;
-
-    // Verbose diagnostics on the new managed-code branch (per CLAUDE.md).
-    // Low-cardinality only — the raw `err` may carry a provider payload / PII
-    // and is logged at the caller, not here.
+    // Log only the semantic kind; the raw error may carry provider payload or
+    // user data.
     log::debug!(
-        "[chat-error][classify][errorCode] code={:?} provider={:?}",
-        code,
+        "[chat-error][classify][provider] kind={:?} provider={:?}",
+        kind,
         provider,
     );
 
     use super::classify::{classified, classified_plain, copy_params};
     use crate::inference::failure_copy::{failure_copy, FailureClass as C};
 
-    let classified = match code {
-        BackendErrorCode::RateLimited => {
+    let classified = match kind {
+        BackendErrorKind::RateLimited => {
             let retry_secs = parse_retry_after_secs(err);
             ClassifiedError {
                 retry_after_ms: retry_secs.map(|s| s.saturating_mul(1000)),
@@ -69,7 +57,7 @@ pub(super) fn classify_by_backend_error_code(
                 )
             }
         }
-        BackendErrorCode::UserInsufficientCredits => {
+        BackendErrorKind::InsufficientCredits => {
             classified_plain(C::ManagedBudgetExhausted, provider, None)
         }
         // Operator fault (our key/account/quota/5xx) OR operator registry /
@@ -77,14 +65,14 @@ pub(super) fn classify_by_backend_error_code(
         // calm "we've been notified" copy; the backend already paged. We
         // deliberately DROP the "check your API key" (F4) and "pick a
         // different model" (F6) copy the BYO substring arms would emit.
-        BackendErrorCode::UpstreamUnavailable | BackendErrorCode::ModelUnavailable => {
+        BackendErrorKind::UpstreamUnavailable | BackendErrorKind::ModelUnavailable => {
             classified_plain(C::ManagedUnavailable, provider, fallback_available)
         }
-        BackendErrorCode::PayloadTooLarge => classified_plain(C::PayloadTooLarge, provider, None),
-        BackendErrorCode::ContextLengthExceeded => {
+        BackendErrorKind::PayloadTooLarge => classified_plain(C::PayloadTooLarge, provider, None),
+        BackendErrorKind::ContextLengthExceeded => {
             classified_plain(C::ContextOverflow, provider, None)
         }
-        BackendErrorCode::BadRequest => {
+        BackendErrorKind::BadRequest => {
             // Same code, three shapes. FIRST: a tool-ordering rejection
             // (`validateToolMessageOrdering` — an orphaned `role:'tool'` message
             // with no matching assistant `tool_call`) is *poisoned history*, not
@@ -100,7 +88,7 @@ pub(super) fn classify_by_backend_error_code(
             // user-parameter rejection is a model/param mismatch the user can
             // fix. The copy differs: don't tell the user to abandon the thread
             // for a one-off malformation (only this turn failed).
-            } else if body_flags_malformed(err) {
+            } else if classification.malformed_bad_request {
                 classified_plain(C::ManagedMalformedRequest, provider, None)
             } else {
                 classified_plain(C::ManagedRequestRejected, provider, None)
@@ -108,7 +96,7 @@ pub(super) fn classify_by_backend_error_code(
         }
         // Backend already paged its own 500; the FE must not double-report
         // (gated in the Sentry classifier) and the user just retries.
-        BackendErrorCode::InternalError => {
+        BackendErrorKind::Internal => {
             classified_plain(C::ManagedInternal, provider, fallback_available)
         }
     };

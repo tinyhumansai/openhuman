@@ -4,6 +4,13 @@ import { json } from "../http.mjs";
 export function handleVersion(ctx) {
   const { method, url, res } = ctx;
 
+  // The backend liveness probe the app runs before an OAuth sign-in
+  // (`services/backendHealth.ts`); the real backend answers `{"status":"ok"}`.
+  if (method === "GET" && /^\/health\/?(\?.*)?$/.test(url)) {
+    json(res, 200, { status: "ok" });
+    return true;
+  }
+
   if (/^\/version-check\/?(\?.*)?$/.test(url)) {
     if (method === "GET" || method === "POST") {
       json(res, 200, {

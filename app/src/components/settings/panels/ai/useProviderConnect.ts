@@ -4,7 +4,7 @@
  * the built-in cloud provider chips, the local-runtime chips, and the Codex
  * connect button.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   classifyProviderVerificationFailure,
@@ -30,6 +30,10 @@ import {
   maskKeyLabel,
 } from './aiPanelTypes';
 
+const normalizeProviderSlug = (slug: string) => slug.trim().toLowerCase();
+const isProviderSlug = (candidate: string, slug: string) =>
+  normalizeProviderSlug(candidate) === normalizeProviderSlug(slug);
+
 export type ConnectCredentialMode =
   | 'api_key'
   | 'oauth'
@@ -53,6 +57,13 @@ export function useProviderConnect({
    *  dialog-open state the caller is tracking. */
   onConnected: () => void;
 }) {
+  const latestSettings = useRef({ draft, saved });
+  const providerConnectQueue = useRef(Promise.resolve());
+  const providerConnectRevisions = useRef(new Map<string, number>());
+  useEffect(() => {
+    latestSettings.current = { draft, saved };
+  }, [draft, saved]);
+
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [codexAuthError, setCodexAuthError] = useState<string | null>(null);
   const [providerAuthErrors, setProviderAuthErrors] = useState<ProviderAuthError[]>([]);
@@ -93,6 +104,21 @@ export function useProviderConnect({
       endpoint?: string | null;
       credentialMode: ConnectCredentialMode;
     }) => {
+      slug = normalizeProviderSlug(slug);
+      const revision = (providerConnectRevisions.current.get(slug) ?? 0) + 1;
+      providerConnectRevisions.current.set(slug, revision);
+      const previousOperation = providerConnectQueue.current;
+      let finishOperation!: () => void;
+      const currentOperation = new Promise<void>(resolve => {
+        finishOperation = resolve;
+      });
+      providerConnectQueue.current = previousOperation.then(() => currentOperation);
+      if (previousOperation) await previousOperation;
+      if (revision !== providerConnectRevisions.current.get(slug)) {
+        finishOperation();
+        return;
+      }
+
       const isLocalRuntime = credentialMode === 'endpoint' || credentialMode === 'endpoint_key';
       const isEndpointKey = credentialMode === 'endpoint_key';
       const isCodexOAuth = credentialMode === 'codex_oauth';
@@ -100,7 +126,7 @@ export function useProviderConnect({
       setBusyAction(`toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`);
       // A fresh attempt on THIS provider clears only its own prior advisory —
       // an advisory about a different provider must survive (#5341).
-      setProviderSaveNotice(prev => (prev?.slug === slug ? null : prev));
+      setProviderSaveNotice(prev => (prev && isProviderSlug(prev.slug, slug) ? null : prev));
 
       try {
         const trimmed = value.trim();
@@ -118,27 +144,25 @@ export function useProviderConnect({
             })()
           : defaultEndpointFor(slug);
 
+        const initialSettings = latestSettings.current;
+        const initialProvider = initialSettings.draft.cloudProviders.find(provider =>
+          isProviderSlug(provider.slug, slug)
+        );
+        const initialSavedProvider = initialSettings.saved.cloudProviders.find(provider =>
+          isProviderSlug(provider.slug, slug)
+        );
         const upserted: CloudProvider = {
           id: `p_${slug}_${Math.random().toString(36).slice(2, 7)}`,
           slug,
           label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
           endpoint,
+          caCertPem: initialProvider?.caCertPem ?? initialSavedProvider?.caCertPem,
           authStyle: authStyleForSlug(slug),
           // CLI-login providers hold no API key — reflect that honestly.
           maskedKey: maskKeyLabel(!isCliLogin),
         };
 
-        const priorWireProviders = saved.cloudProviders.map(p => ({
-          id: p.id,
-          slug: p.slug,
-          label: p.label,
-          endpoint: p.endpoint,
-          auth_style: p.authStyle,
-        }));
-
-        if (!isLocalRuntime && !isCodexOAuth && !isCliLogin && slug !== 'openhuman') {
-          await setCloudProviderKey(slug, trimmed);
-        } else if (isLocalRuntime && slug === 'ollama') {
+        if (isLocalRuntime && slug === 'ollama') {
           const baseUrl = endpoint.replace(/\/v1\/?$/, '');
           await openhumanUpdateLocalAiSettings({
             base_url: baseUrl,
@@ -167,17 +191,68 @@ export function useProviderConnect({
         }
 
         if (slug !== 'openhuman') {
+          const currentSettings = latestSettings.current;
+          const currentProvider = currentSettings.draft.cloudProviders.find(provider =>
+            isProviderSlug(provider.slug, slug)
+          );
+          const currentSavedProvider = currentSettings.saved.cloudProviders.find(provider =>
+            isProviderSlug(provider.slug, slug)
+          );
+          const currentUpserted = {
+            ...upserted,
+            caCertPem: currentProvider?.caCertPem ?? currentSavedProvider?.caCertPem,
+          };
+          const priorWireProviders = currentSettings.saved.cloudProviders.map(provider => ({
+            id: provider.id,
+            slug: normalizeProviderSlug(provider.slug),
+            label: provider.label,
+            endpoint: provider.endpoint,
+            ca_cert_pem: provider.caCertPem ?? '',
+            auth_style: provider.authStyle,
+          }));
           const nextWireProviders = [
-            ...priorWireProviders.filter(p => p.slug !== slug),
+            ...priorWireProviders.filter(provider => !isProviderSlug(provider.slug, slug)),
             {
-              id: upserted.id,
-              slug: upserted.slug,
-              label: upserted.label,
-              endpoint: upserted.endpoint,
-              auth_style: upserted.authStyle,
+              id: currentUpserted.id,
+              slug: currentUpserted.slug,
+              label: currentUpserted.label,
+              endpoint: currentUpserted.endpoint,
+              ca_cert_pem: currentUpserted.caCertPem ?? '',
+              auth_style: currentUpserted.authStyle,
             },
           ];
-          await flushCloudProviders(nextWireProviders);
+          let flushedProviders = nextWireProviders;
+          try {
+            await flushCloudProviders(flushedProviders);
+            if (!isLocalRuntime && !isCodexOAuth && !isCliLogin) {
+              await setCloudProviderKey(slug, trimmed);
+            }
+            const latestSettingsAfterKey = latestSettings.current;
+            const latestDraftProvider = latestSettingsAfterKey.draft.cloudProviders.find(provider =>
+              isProviderSlug(provider.slug, slug)
+            );
+            const latestSavedProvider = latestSettingsAfterKey.saved.cloudProviders.find(provider =>
+              isProviderSlug(provider.slug, slug)
+            );
+            const latestCaCertPem =
+              latestDraftProvider?.caCertPem ?? latestSavedProvider?.caCertPem ?? '';
+            if (latestCaCertPem !== (currentUpserted.caCertPem ?? '')) {
+              flushedProviders = flushedProviders.map(provider =>
+                isProviderSlug(provider.slug, slug)
+                  ? { ...provider, ca_cert_pem: latestCaCertPem }
+                  : provider
+              );
+              await flushCloudProviders(flushedProviders);
+            }
+          } catch (writeError) {
+            await flushCloudProviders(priorWireProviders).catch(rollbackErr =>
+              console.warn(
+                `[ai-settings] rollback flush after provider write failure slug=${slug}`,
+                rollbackErr
+              )
+            );
+            throw writeError;
+          }
           if (!isCodexOAuth && !isCliLogin) {
             try {
               await listProviderModels(slug);
@@ -215,11 +290,33 @@ export function useProviderConnect({
           }
         }
 
+        const currentSettings = latestSettings.current;
+        const currentProvider = currentSettings.draft.cloudProviders.find(provider =>
+          isProviderSlug(provider.slug, slug)
+        );
+        const currentSavedProvider = currentSettings.saved.cloudProviders.find(provider =>
+          isProviderSlug(provider.slug, slug)
+        );
+        const finalUpserted = {
+          ...upserted,
+          caCertPem: currentProvider?.caCertPem ?? currentSavedProvider?.caCertPem,
+        };
+        if (revision !== providerConnectRevisions.current.get(slug)) return;
         const nextDraft = {
-          ...draft,
-          cloudProviders: [...draft.cloudProviders.filter(p => p.slug !== slug), upserted],
+          ...currentSettings.draft,
+          cloudProviders: [
+            ...currentSettings.draft.cloudProviders.filter(
+              provider => !isProviderSlug(provider.slug, slug)
+            ),
+            finalUpserted,
+          ],
         };
         await persist(nextDraft);
+        // `persist` updates React state asynchronously. The next queued
+        // provider submission must still build its replacement list from
+        // this successfully published snapshot, even before React rerenders.
+        latestSettings.current = { draft: nextDraft, saved: nextDraft };
+        if (revision !== providerConnectRevisions.current.get(slug)) return;
         if (isCodexOAuth && slug === 'openai') {
           await clearCloudProviderKey(slug);
         }
@@ -229,6 +326,7 @@ export function useProviderConnect({
         onConnected();
       } finally {
         setBusyAction(null);
+        finishOperation();
       }
     },
     [draft, persist, saved.cloudProviders, t, onConnected]

@@ -2,12 +2,12 @@
 
 use anyhow::Context;
 
-use super::{AuthProfile, AuthProfilesStore, KeychainSecrets, KEYCHAIN_AUTH_PREFIX};
+use super::{AuthProfile, AuthProfilesStore, KeychainSecrets};
 
 impl AuthProfilesStore {
     /// Build a keychain key for an auth profile's combined secret payload.
     pub(super) fn keychain_key_for_profile(&self, profile_id: &str) -> String {
-        format!("{KEYCHAIN_AUTH_PREFIX}{profile_id}")
+        super::auth_profile_secret_key(profile_id)
     }
 
     /// Store auth secrets for a profile in the OS keychain.
@@ -24,7 +24,7 @@ impl AuthProfilesStore {
         });
         let payload = serde_json::to_string(&secrets)
             .context("Failed to serialize auth secrets for keychain")?;
-        crate::security::keyring::set(&self.user_id, &key, &payload).map_err(|e| {
+        crate::security::secret_storage::set(&self.user_id, &key, &payload).map_err(|e| {
             anyhow::anyhow!(
                 "Keychain set failed for profile {}: {e} | detail={}",
                 profile.id,
@@ -41,13 +41,14 @@ impl AuthProfilesStore {
 
     /// Load auth secrets for a profile from the OS keychain.
     ///
-    /// Returns `None` if no keychain entry exists for the profile.
+    /// Returns `None` if no keychain entry exists for the profile, and an error
+    /// when the keychain could not be read (locked, denied, unavailable).
     pub(super) fn keychain_load_secrets(
         &self,
         profile_id: &str,
     ) -> anyhow::Result<Option<KeychainSecrets>> {
         let key = self.keychain_key_for_profile(profile_id);
-        let payload = match crate::security::keyring::get(&self.user_id, &key) {
+        let payload = match crate::security::secret_storage::get(&self.user_id, &key) {
             Ok(Some(p)) => p,
             Ok(None) => {
                 log::debug!(
@@ -62,7 +63,9 @@ impl AuthProfilesStore {
                     self.user_id,
                     e.diagnostic()
                 );
-                return Ok(None);
+                // A read error is not a missing entry: the caller must not
+                // treat the profile as having no secrets.
+                anyhow::bail!("keychain read failed: {}", e.diagnostic());
             }
         };
         let secrets: KeychainSecrets = serde_json::from_str(&payload).map_err(|e| {
@@ -78,7 +81,7 @@ impl AuthProfilesStore {
     /// Delete keychain secrets for a profile (called on profile removal).
     pub(super) fn keychain_delete_secrets(&self, profile_id: &str) {
         let key = self.keychain_key_for_profile(profile_id);
-        if let Err(e) = crate::security::keyring::delete(&self.user_id, &key) {
+        if let Err(e) = crate::security::secret_storage::delete(&self.user_id, &key) {
             log::warn!(
                 "[auth] keychain_delete_secrets error profile_id={profile_id} user_id={}: {e} | detail={}",
                 self.user_id,

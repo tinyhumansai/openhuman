@@ -4,7 +4,7 @@ use crate::core::all::RegisteredController;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::handlers::{
-    handle_browse, handle_categories, handle_install, handle_schemas, handle_search,
+    handle_browse, handle_categories, handle_detail, handle_install, handle_schemas, handle_search,
     handle_sources, handle_uninstall,
 };
 
@@ -14,6 +14,7 @@ pub fn all_skill_registry_controller_schemas() -> Vec<ControllerSchema> {
         skill_registry_schemas("search"),
         skill_registry_schemas("sources"),
         skill_registry_schemas("categories"),
+        skill_registry_schemas("detail"),
         skill_registry_schemas("install"),
         skill_registry_schemas("uninstall"),
         skill_registry_schemas("schemas"),
@@ -39,6 +40,10 @@ pub fn all_skill_registry_registered_controllers() -> Vec<RegisteredController> 
             handler: handle_categories,
         },
         RegisteredController {
+            schema: skill_registry_schemas("detail"),
+            handler: handle_detail,
+        },
+        RegisteredController {
             schema: skill_registry_schemas("install"),
             handler: handle_install,
         },
@@ -58,50 +63,16 @@ pub fn skill_registry_schemas(function: &str) -> ControllerSchema {
         "browse" => ControllerSchema {
             namespace: "skill_registry",
             function: "browse",
-            description: "Browse the skill registry catalog (aggregated from HermesHub). Returns cached results unless force_refresh is true.",
-            inputs: vec![FieldSchema {
-                name: "force_refresh",
-                ty: TypeSchema::Bool,
-                comment: "Force re-fetch from the Hermes API, ignoring the local cache.",
-                required: false,
-            }],
-            outputs: vec![FieldSchema {
-                name: "entries",
-                ty: TypeSchema::Json,
-                comment: "Array of catalog entries.",
-                required: true,
-            }],
+            description: "Browse the skill registry catalog (aggregated from HermesHub). Serves the cached catalog and refreshes it in the background when stale; force_refresh refetches first. Pass page or page_size for one page; with neither, every entry is returned.",
+            inputs: catalog_inputs(false),
+            outputs: catalog_outputs("Catalog entries on this page."),
         },
         "search" => ControllerSchema {
             namespace: "skill_registry",
             function: "search",
-            description: "Search the registry catalog by query string. Matches against name, description, tags, category, and author.",
-            inputs: vec![
-                FieldSchema {
-                    name: "query",
-                    ty: TypeSchema::String,
-                    comment: "Search query string.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "source",
-                    ty: TypeSchema::String,
-                    comment: "Filter by upstream source (e.g. 'ClawHub', 'skills.sh', 'built-in').",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "category",
-                    ty: TypeSchema::String,
-                    comment: "Filter by category.",
-                    required: false,
-                },
-            ],
-            outputs: vec![FieldSchema {
-                name: "entries",
-                ty: TypeSchema::Json,
-                comment: "Matching catalog entries.",
-                required: true,
-            }],
+            description: "Search the registry catalog by query string. Matches against name, description, tags, category, and author. Pass page or page_size for one page; with neither, every match is returned.",
+            inputs: catalog_inputs(true),
+            outputs: catalog_outputs("Matching catalog entries on this page."),
         },
         "sources" => ControllerSchema {
             namespace: "skill_registry",
@@ -127,10 +98,27 @@ pub fn skill_registry_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "detail" => ControllerSchema {
+            namespace: "skill_registry",
+            function: "detail",
+            description: "Everything the registry knows about one catalog entry, by id (or a name exactly one entry carries).",
+            inputs: vec![FieldSchema {
+                name: "entry_id",
+                ty: TypeSchema::String,
+                comment: "Catalog entry id.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "entry",
+                ty: TypeSchema::Json,
+                comment: "The catalog entry fields plus registry, installable, category_label, overview and install_identifier.",
+                required: true,
+            }],
+        },
         "install" => ControllerSchema {
             namespace: "skill_registry",
             function: "install",
-            description: "Install a skill from the catalog by its entry id. Fetches the SKILL.md and installs to user scope.",
+            description: "Install a skill from the catalog by its entry id. Fetches the SKILL.md, runs the supply-chain scan (retrying once when it blocks or the fetch fails) and installs to user scope. A document whose scan still blocks is not installed: the result has status `scan_blocked` and the findings.",
             inputs: vec![
                 FieldSchema {
                     name: "entry_id",
@@ -138,33 +126,14 @@ pub fn skill_registry_schemas(function: &str) -> ControllerSchema {
                     comment: "Catalog entry id of the skill to install.",
                     required: true,
                 },
-            ],
-            outputs: vec![
                 FieldSchema {
-                    name: "url",
+                    name: "acknowledged_digest",
                     ty: TypeSchema::String,
-                    comment: "The URL that was fetched.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "stdout",
-                    ty: TypeSchema::String,
-                    comment: "Diagnostic summary.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "stderr",
-                    ty: TypeSchema::String,
-                    comment: "Parse warnings.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "new_skills",
-                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
-                    comment: "Slugs of skills that appeared post-install.",
-                    required: true,
+                    comment: "The `digest` of a `scan_blocked` result, sent by the Skills UI only after the user reviewed its findings and chose to install anyway. It installs that document only; a different document is scanned and refused afresh. Agent tools cannot set it.",
+                    required: false,
                 },
             ],
+            outputs: install_outputs("new_skills"),
         },
         "uninstall" => ControllerSchema {
             namespace: "skill_registry",
@@ -222,4 +191,194 @@ pub fn skill_registry_schemas(function: &str) -> ControllerSchema {
             }],
         },
     }
+}
+
+/// The outputs of an install that may stop at the supply-chain scan.
+pub(crate) fn install_outputs(new_field: &'static str) -> Vec<FieldSchema> {
+    vec![
+        FieldSchema {
+            name: "status",
+            ty: TypeSchema::String,
+            comment: "`installed`, or `scan_blocked` when the scan still blocks after a retry and nothing was installed.",
+            required: true,
+        },
+        FieldSchema {
+            name: "url",
+            ty: TypeSchema::String,
+            comment: "The URL that was fetched (installed).",
+            required: false,
+        },
+        FieldSchema {
+            name: "stdout",
+            ty: TypeSchema::String,
+            comment: "Diagnostic summary (installed).",
+            required: false,
+        },
+        FieldSchema {
+            name: "stderr",
+            ty: TypeSchema::String,
+            comment: "Parse warnings (installed).",
+            required: false,
+        },
+        FieldSchema {
+            name: new_field,
+            ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+            comment: "Slugs of skills that appeared post-install (installed).",
+            required: false,
+        },
+        FieldSchema {
+            name: "target",
+            ty: TypeSchema::String,
+            comment: "The entry id or URL that was refused (scan_blocked).",
+            required: false,
+        },
+        FieldSchema {
+            name: "fetched_from",
+            ty: TypeSchema::String,
+            comment: "The redacted URL the blocked document came from (scan_blocked).",
+            required: false,
+        },
+        FieldSchema {
+            name: "slug",
+            ty: TypeSchema::String,
+            comment: "The install slug the blocked document would have used (scan_blocked).",
+            required: false,
+        },
+        FieldSchema {
+            name: "digest",
+            ty: TypeSchema::String,
+            comment: "Digest of the blocked document, to send back as `acknowledged_digest` (scan_blocked).",
+            required: false,
+        },
+        FieldSchema {
+            name: "findings",
+            ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+            comment: "Scan findings: `check`, `verdict`, `field` and `message` (scan_blocked).",
+            required: false,
+        },
+        FieldSchema {
+            name: "message",
+            ty: TypeSchema::String,
+            comment: "Why the install was refused (scan_blocked).",
+            required: false,
+        },
+    ]
+}
+
+fn catalog_inputs(with_query: bool) -> Vec<FieldSchema> {
+    let mut inputs = Vec::new();
+    if with_query {
+        inputs.push(FieldSchema {
+            name: "query",
+            ty: TypeSchema::String,
+            comment: "Search query string.",
+            required: false,
+        });
+    }
+    inputs.extend([
+        FieldSchema {
+            name: "source",
+            ty: TypeSchema::String,
+            comment: "Filter by one upstream source (e.g. 'ClawHub', 'skills.sh', 'built-in').",
+            required: false,
+        },
+        FieldSchema {
+            name: "sources",
+            ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+            comment: "Filter by any of these upstream sources.",
+            required: false,
+        },
+        FieldSchema {
+            name: "category",
+            ty: TypeSchema::String,
+            comment: "Filter by category.",
+            required: false,
+        },
+        FieldSchema {
+            name: "categories",
+            ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+            comment: "Filter by any of these categories.",
+            required: false,
+        },
+        FieldSchema {
+            name: "page",
+            ty: TypeSchema::U64,
+            comment: "1-based page number.",
+            required: false,
+        },
+        FieldSchema {
+            name: "page_size",
+            ty: TypeSchema::U64,
+            comment: "Entries per page, 1-100 (default 25).",
+            required: false,
+        },
+        FieldSchema {
+            name: "force_refresh",
+            ty: TypeSchema::Bool,
+            comment: "Refetch the catalog before answering.",
+            required: false,
+        },
+    ]);
+    inputs
+}
+
+fn catalog_outputs(entries_comment: &'static str) -> Vec<FieldSchema> {
+    vec![
+        FieldSchema {
+            name: "entries",
+            ty: TypeSchema::Json,
+            comment: entries_comment,
+            required: true,
+        },
+        FieldSchema {
+            name: "total",
+            ty: TypeSchema::U64,
+            comment: "Matches across all pages.",
+            required: true,
+        },
+        FieldSchema {
+            name: "page",
+            ty: TypeSchema::U64,
+            comment: "The 1-based page served.",
+            required: true,
+        },
+        FieldSchema {
+            name: "page_size",
+            ty: TypeSchema::U64,
+            comment: "Entries per page after clamping.",
+            required: true,
+        },
+        FieldSchema {
+            name: "total_pages",
+            ty: TypeSchema::U64,
+            comment: "Number of pages; 0 when nothing matched.",
+            required: true,
+        },
+        FieldSchema {
+            name: "freshness",
+            ty: TypeSchema::Enum {
+                variants: vec!["live", "cached", "local_fallback"],
+            },
+            comment: "How fresh the catalog behind this page is.",
+            required: true,
+        },
+        FieldSchema {
+            name: "fetched_at",
+            ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+            comment: "Unix seconds of the oldest catalog fetch that answered.",
+            required: false,
+        },
+        FieldSchema {
+            name: "refreshing",
+            ty: TypeSchema::Bool,
+            comment: "Whether a background refresh is running.",
+            required: true,
+        },
+        FieldSchema {
+            name: "last_error",
+            ty: TypeSchema::Json,
+            comment: "The last refresh failure ({kind, message, retry_after_secs}), or null.",
+            required: false,
+        },
+    ]
 }

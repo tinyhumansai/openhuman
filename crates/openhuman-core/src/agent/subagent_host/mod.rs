@@ -1,10 +1,11 @@
 //! OpenHuman adapters for the neutral TinyAgents subagent lifecycle.
 //!
-//! Given an [`super::definition::AgentDefinition`] and a task prompt, the
+//! Given an [`crate::agent_registry::host_definition::AgentDefinition`] and a task prompt, the
 //! runner:
 //!
-//! 1. Reads the [`super::fork_context::ParentExecutionContext`] task-local
-//!    set by the parent [`crate::agent::OpenHumanSessionHost::turn`].
+//! 1. Reads the [`fork_context::ParentExecutionContext`] the parent
+//!    [`crate::agent::OpenHumanSessionHost::turn`] attached to the run context
+//!    (`OpenHumanRunContext::parent`).
 //! 2. Resolves the sub-agent's model name (inherit / hint / exact).
 //! 3. Filters the parent's tool registry per `definition.tools`,
 //!    `disallowed_tools`, and `skill_filter` (or, in `fork` mode,
@@ -13,7 +14,7 @@
 //!    definition asks to omit (`omit_identity`, `omit_memory_context`,
 //!    `omit_safety_preamble`).
 //! 5. Runs the child turn on the TinyAgents harness (`ops::graph` →
-//!    [`crate::agent::tinyagents::run_turn_via_tinyagents_shared`]) using
+//!    [`crate::agent::tinyagents::TurnSpec::run`]) using
 //!    the parent's [`crate::inference::provider::Provider`], then
 //!    mirrors the child transcript/progress and returns one compact tool result
 //!    to the parent.
@@ -32,10 +33,11 @@
 //! | File              | Contents                                                    |
 //! | ----------------- | ----------------------------------------------------------- |
 //! | `types.rs`        | `SubagentRun{Options,Outcome,Error}`, `SubagentMode`        |
-//! | `ops/`            | `run_subagent`, typed/fork mode, TinyAgents graph route     |
+//! | `ops/`            | typed/fork mode and orchestration route                    |
 //! | `tool_prep.rs`    | Tool filtering + prompt loading + prompt protocol block     |
 
 mod autonomous;
+mod fork_context;
 mod lifecycle;
 mod ops;
 mod tool_prep;
@@ -54,26 +56,25 @@ mod lifecycle_tests;
 mod persisted_compat_tests;
 
 // Public API — the entry point and the shapes it returns.
-pub use autonomous::{
-    autonomous_iter_cap, subagent_iter_cap_with_autonomous_lift, with_autonomous_iter_cap,
-};
+pub use autonomous::{definition_iter_cap, subagent_iter_cap_with_autonomous_lift};
+pub use fork_context::{AgentContextPreparedSource, ParentExecutionContext};
+pub(crate) use lifecycle::checkpoint_resume;
+pub(crate) use lifecycle::detached_subagent_parent;
 pub(crate) use lifecycle::load_subagent_checkpoint;
-pub use lifecycle::{
-    continue_subagent, continue_subagent_with_parent, run_subagent, run_subagent_with_parent,
-    OpenHumanSubagentHost,
-};
-pub(crate) use ops::is_safe_task_id;
+pub(crate) use lifecycle::load_terminal_outcome;
+pub(crate) use lifecycle::resume_async_via_driver_tool;
+pub(crate) use lifecycle::spawn_async_via_driver_tool;
+#[cfg(test)]
+pub(crate) use lifecycle::spawn_async_via_driver_tool_with_jobs;
+pub use lifecycle::OpenHumanSubagentHost;
+/// Token + cost totals for one sub-agent run. TinyAgents owns the type
+/// (`AgentProgress::SubagentCompleted` carries it); re-exported under its
+/// historical host path.
+pub use tinyagents_harness::progress::SubagentUsage;
 pub use types::{
     SubagentCheckpointData, SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
-    SubagentRunStatus, SubagentUsage,
+    SubagentRunStatus, SubagentUsageExt,
 };
 
-pub(crate) use ops::{append_subagent_role_contract, resolve_subagent_source};
-
-// `user_is_signed_in_to_composio` is the mode-aware "can the user call
-// composio at all?" probe added in Wave 2 (#1710). Re-exported here so
-// non-composio probe sites (registration gates, telemetry)
-// can call it as
-// `crate::agent::subagent_host::user_is_signed_in_to_composio`
-// without reaching into a private sibling module.
-pub(crate) use ops::user_is_signed_in_to_composio;
+pub(crate) use ops::resolve_subagent_source;
+pub(crate) use ops::{append_reuse_follow_up, create_worker_thread};

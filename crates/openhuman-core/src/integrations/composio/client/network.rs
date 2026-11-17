@@ -38,7 +38,16 @@ fn usable(url: Option<&String>) -> Option<String> {
 /// The network policy for a request to `base_url`, or `None` when it is the
 /// module's default (no proxy of the host's choosing, bundled roots).
 pub(crate) fn module_transport(base_url: &str) -> Option<ComposioTransportConfig> {
-    let proxy = runtime_proxy_config();
+    module_transport_with_proxy(base_url, &runtime_proxy_config())
+}
+
+/// [`module_transport`] against an explicit proxy policy instead of the
+/// process-global runtime one, so a caller (or a test) that already holds the
+/// policy does not race every config load that republishes the global.
+pub(crate) fn module_transport_with_proxy(
+    base_url: &str,
+    proxy: &crate::config::schema::ProxyConfig,
+) -> Option<ComposioTransportConfig> {
     let proxy_url = if proxy.should_apply_to_service(SERVICE_KEY) {
         let https = base_url.trim().to_ascii_lowercase().starts_with("https://");
         usable(proxy.all_proxy.as_ref()).or_else(|| {

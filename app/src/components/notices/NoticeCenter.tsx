@@ -95,6 +95,43 @@ export default function NoticeCenter() {
   const notices = useAppNotices();
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const wasOpenRef = useRef(false);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const containsFocusRef = useRef(false);
+
+  // Focus enters only when the user opens the non-modal panel. On close,
+  // return to the bell, or to a stable app control if the bell disappears.
+  useEffect(() => {
+    const visible = open && notices.length > 0;
+    if (visible && !wasOpenRef.current) {
+      closeRef.current?.focus();
+    } else if (!visible && wasOpenRef.current && containsFocusRef.current) {
+      // A focused notice item may unmount with a null relatedTarget, leaving
+      // the blur tracker stale. Preserve focus already moved to another app
+      // control rather than incorrectly restoring the notice trigger.
+      const active = document.activeElement;
+      const focusMovedElsewhere =
+        active instanceof HTMLElement &&
+        active !== document.body &&
+        active !== document.documentElement &&
+        !panelRef.current?.contains(active) &&
+        !triggerRef.current?.contains(active);
+      if (focusMovedElsewhere) {
+        wasOpenRef.current = false;
+        return;
+      }
+      const previous = previousFocusRef.current;
+      const target =
+        triggerRef.current ??
+        (previous?.isConnected
+          ? previous
+          : document.querySelector<HTMLElement>('[data-app-focus-fallback]'));
+      target?.focus();
+    }
+    wasOpenRef.current = visible;
+  }, [open, notices.length]);
 
   // Close on Escape while the panel is open. A fixed overlay with no dismissal
   // affordance beyond its own toggle is a trap for keyboard users.
@@ -121,7 +158,22 @@ export default function NoticeCenter() {
   return (
     <div
       className="fixed bottom-2 right-2 z-50 flex flex-col items-end gap-2"
-      data-testid="notice-center">
+      data-testid="notice-center"
+      onFocusCapture={event => {
+        const previous = event.relatedTarget;
+        if (previous instanceof HTMLElement && !event.currentTarget.contains(previous)) {
+          previousFocusRef.current = previous;
+        }
+        containsFocusRef.current = true;
+      }}
+      onBlurCapture={event => {
+        if (
+          event.relatedTarget instanceof Node &&
+          !event.currentTarget.contains(event.relatedTarget)
+        ) {
+          containsFocusRef.current = false;
+        }
+      }}>
       {open && (
         <div
           ref={panelRef}
@@ -135,6 +187,7 @@ export default function NoticeCenter() {
               iconOnly
               size="xs"
               variant="tertiary"
+              ref={closeRef}
               data-testid="notice-close"
               analyticsId="notice-center-close"
               aria-label={t('common.close')}
@@ -157,6 +210,7 @@ export default function NoticeCenter() {
       <Button
         iconOnly
         variant="secondary"
+        ref={triggerRef}
         data-testid="notice-trigger"
         analyticsId="notice-center-toggle"
         aria-label={t('notices.title')}

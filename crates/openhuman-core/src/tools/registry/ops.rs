@@ -4,13 +4,14 @@ use serde_json::{json, Map, Value};
 
 use crate::config::Config;
 use crate::core::all;
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::mcp::audit::McpWriteListQuery;
 use crate::mcp::server::McpToolSpec;
 
 use super::providers::capability_provider_diagnostics;
-use super::types::{
+use tinytools::{
     McpAllowlistDiagnostics, McpServerAllowlistSummary, McpWriteAuditHealth, ToolPolicyDiagnostics,
     ToolPolicyPosture, ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList,
     ToolRegistryTransport,
@@ -28,8 +29,8 @@ const POLICY_SURFACES: &[&str] = &[
 ];
 
 /// Return the current read-only tool registry snapshot.
-pub fn list_tools() -> Outcome<ToolRegistryList> {
-    let tools = registry_entries();
+pub fn list_tools(ctx: &DispatchCtx) -> Outcome<ToolRegistryList> {
+    let tools = registry_entries(ctx);
     log::debug!(
         "[tool_registry] list_tools completed entries={}",
         tools.len()
@@ -44,11 +45,11 @@ pub async fn diagnostics() -> Result<Outcome<ToolPolicyDiagnostics>, String> {
         log::warn!("[tool_registry] diagnostics config_load_failed error={err}");
         format!("failed to load config for tool registry diagnostics: {err}")
     })?;
-    Ok(diagnostics_for_config(&config))
+    Ok(diagnostics_for_config(&config).await)
 }
 
 /// Return redacted diagnostics using a specific config snapshot.
-pub fn diagnostics_for_config(config: &Config) -> Outcome<ToolPolicyDiagnostics> {
+pub async fn diagnostics_for_config(config: &Config) -> Outcome<ToolPolicyDiagnostics> {
     log::debug!("[tool_registry] diagnostics_for_config start");
 
     let tools = registry_entries_for_config(config);
@@ -70,8 +71,8 @@ pub fn diagnostics_for_config(config: &Config) -> Outcome<ToolPolicyDiagnostics>
     let policy_surfaces = policy_surface_ids();
     let posture = posture_from_config(config);
     let mcp_allowlists = mcp_allowlists_from_config(config);
-    let mcp_write_audit = mcp_write_audit_health(config);
-    let recent_denials = super::denials::list(25);
+    let mcp_write_audit = mcp_write_audit_health(config).await;
+    let recent_denials = tinytools::registry::denials::list(25);
     let capability_providers = capability_provider_diagnostics(config);
 
     log::trace!(
@@ -167,7 +168,7 @@ const RECENT_WRITE_SAMPLE: u64 = tinymcp_bus::MAX_LIST_LIMIT;
 /// writes in the last 24 hours on every install, indefinitely, while the log
 /// underneath it was healthy. A diagnostic that cannot fail loudly must at
 /// least read the same place the writer wrote.
-fn mcp_write_audit_health(config: &Config) -> McpWriteAuditHealth {
+async fn mcp_write_audit_health(config: &Config) -> McpWriteAuditHealth {
     let since_ms = chrono::Utc::now()
         .timestamp_millis()
         .saturating_sub(24 * 60 * 60 * 1000);
@@ -177,7 +178,9 @@ fn mcp_write_audit_health(config: &Config) -> McpWriteAuditHealth {
         since_ms: u64::try_from(since_ms).ok(),
         ..Default::default()
     };
-    let result = crate::mcp::audit::list_writes(config, &query).map(|writes| writes.len() as u64);
+    let result = crate::mcp::audit::list_writes(config, &query)
+        .await
+        .map(|writes| writes.len() as u64);
 
     match result {
         Ok(count) => McpWriteAuditHealth {
@@ -194,13 +197,13 @@ fn mcp_write_audit_health(config: &Config) -> McpWriteAuditHealth {
 }
 
 /// Look up one registry entry by stable `tool_id`.
-pub fn get_tool(tool_id: &str) -> Result<Outcome<ToolRegistryEntry>, String> {
+pub fn get_tool(ctx: &DispatchCtx, tool_id: &str) -> Result<Outcome<ToolRegistryEntry>, String> {
     let normalized = tool_id.trim();
     if normalized.is_empty() {
         return Err("tool_id must be a non-empty string".to_string());
     }
 
-    let tool = registry_entries()
+    let tool = registry_entries(ctx)
         .into_iter()
         .find(|entry| entry.tool_id == normalized)
         .ok_or_else(|| format!("tool not found in registry: {normalized}"))?;
@@ -223,9 +226,10 @@ pub fn get_tool(tool_id: &str) -> Result<Outcome<ToolRegistryEntry>, String> {
 /// The connected-client tools come from whichever workspace `mcp::init` claimed
 /// as the process default. That is right for the shipped app, which opens one;
 /// a caller that holds a `Config` should prefer
-/// [`registry_entries_for_config`], which names the workspace it means.
-pub fn registry_entries() -> Vec<ToolRegistryEntry> {
-    build_registry_entries(None)
+/// [`registry_entries_for_config`], which names the workspace it means. The
+/// connections are read for the context `ctx` the caller was handed.
+pub fn registry_entries(ctx: &DispatchCtx) -> Vec<ToolRegistryEntry> {
+    build_registry_entries(McpSource::Ctx(ctx))
 }
 
 /// The same snapshot, with connected-client tools read from `config`'s
@@ -238,11 +242,20 @@ pub fn registry_entries() -> Vec<ToolRegistryEntry> {
 /// `tool_registry_entries_include_connected_mcp_client_tools` came to pass
 /// alone and fail beside its neighbours.
 pub fn registry_entries_for_config(config: &Config) -> Vec<ToolRegistryEntry> {
-    build_registry_entries(Some(config))
+    build_registry_entries(McpSource::Config(config))
 }
 
-/// The shared body. `config` selects the MCP host; everything else is identical.
-fn build_registry_entries(config: Option<&Config>) -> Vec<ToolRegistryEntry> {
+/// Where the connected MCP client servers are read from.
+#[derive(Clone, Copy)]
+enum McpSource<'a> {
+    /// The workspace `config` names.
+    Config(&'a Config),
+    /// The process default host, as seen by the context handed in.
+    Ctx(&'a DispatchCtx),
+}
+
+/// The shared body. `source` selects the MCP host; everything else is identical.
+fn build_registry_entries(source: McpSource<'_>) -> Vec<ToolRegistryEntry> {
     let mut entries = BTreeMap::new();
 
     for spec in crate::mcp::server::tool_specs() {
@@ -268,11 +281,11 @@ fn build_registry_entries(config: Option<&Config>) -> Vec<ToolRegistryEntry> {
                 if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
                     tokio::task::block_in_place(|| {
                         handle.block_on(async {
-                            match config {
-                                Some(config) => {
+                            match source {
+                                McpSource::Config(config) => {
                                     connections::all_connected_tools_for_config(config).await
                                 }
-                                None => connections::all_connected_tools().await,
+                                McpSource::Ctx(ctx) => connections::all_connected_tools(ctx).await,
                             }
                         })
                     })

@@ -9,6 +9,160 @@ use tinyinference_llm::tool::ToolCall;
 use tinytools::Tool;
 use tinytools::ToolResult;
 
+/// Reads the transcript a sub-agent run wrote under `stem` back through the
+/// store it wrote to.
+fn read_stem(
+    locator: &dyn tinyagents_session::transcript::TranscriptLocator,
+    stem: &str,
+) -> tinyagents_session::transcript::SessionTranscript {
+    let seed = tinyagents_session::transcript::TranscriptMeta {
+        agent_name: String::new(),
+        agent_id: None,
+        agent_type: None,
+        dispatcher: String::new(),
+        provider: None,
+        model: None,
+        created: String::new(),
+        updated: String::new(),
+        turn_count: 0,
+        prefix_message_count: None,
+        prefix_reset: false,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+        thread_id: None,
+        task_id: None,
+        session_id: None,
+        parent_session_id: None,
+    };
+    locator
+        .open_stem(stem, seed)
+        .expect("open the child stem")
+        .read_session()
+        .expect("read the child transcript")
+        .expect("the child transcript was written")
+}
+
+#[test]
+fn a_subagent_writes_to_its_turn_trees_store_else_its_contexts() {
+    let workspace = tempfile::tempdir().unwrap();
+    let tree = crate::storage::sessions::transcripts_or_files("tree-key", workspace.path());
+    let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    run_context.transcripts = Some(tree.clone());
+    let chosen = super::transcript::subagent_transcripts(&run_context, workspace.path()).unwrap();
+    assert!(
+        Arc::ptr_eq(&chosen, &tree),
+        "the root session's store is used as is"
+    );
+
+    // No session handed a store over: the default agent's store of the run's
+    // (here unbound, desktop) tenant.
+    let unbound = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    let fallback = super::transcript::subagent_transcripts(&unbound, workspace.path())
+        .unwrap()
+        .destination_key()
+        .expect("a workspace store names its destination");
+    assert!(
+        fallback.ends_with(&format!(
+            "/local/agent:{}/transcripts",
+            crate::storage::sessions::DEFAULT_AGENT
+        )),
+        "{fallback}"
+    );
+}
+
+#[test]
+fn a_detached_subagent_uses_the_store_its_carried_context_selects() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+    use tinyagents_session::port::{InMemorySessionStores, SessionStoreProvider};
+    let workspace = tempfile::tempdir().unwrap();
+    let provider: Arc<dyn SessionStoreProvider> = Arc::new(InMemorySessionStores::new());
+    let mut overrides = crate::agent::host_overrides::HostOverrides::default();
+    overrides.session_store = Some(Arc::clone(&provider));
+    let overlay = ContextOverlay::new(
+        crate::config::Config::default(),
+        DomainSet::kernel(),
+        crate::tools::toolpacks::ToolGroups::none(),
+    )
+    .host_overrides(Arc::new(overrides));
+    let core = CoreContext::for_test(DomainSet::full(), None).derive_with(overlay);
+
+    let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    run_context.core = Some(Arc::downgrade(&core));
+    // No ambient context is in scope here, as on a bare `tokio::spawn`.
+    assert!(CoreContext::current().is_none());
+    let chosen =
+        super::transcript::subagent_transcripts_in(&run_context, workspace.path(), false).unwrap();
+    let expected = provider
+        .for_agent(crate::storage::sessions::DEFAULT_AGENT)
+        .transcripts
+        .destination_key();
+    assert_eq!(chosen.destination_key(), expected);
+}
+
+#[test]
+fn a_saas_subagent_without_a_context_or_tree_store_is_kept_in_memory() {
+    let workspace = tempfile::tempdir().unwrap();
+    let unbound = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    let chosen =
+        super::transcript::subagent_transcripts_in(&unbound, workspace.path(), true).unwrap();
+    let operator = crate::storage::sessions::transcripts_or_files(
+        crate::storage::sessions::DEFAULT_AGENT,
+        workspace.path(),
+    );
+    assert_ne!(chosen.destination_key(), operator.destination_key());
+    assert!(
+        !workspace.path().join("storage").exists(),
+        "nothing is written under the operator workspace"
+    );
+}
+
+#[test]
+fn subagent_transcript_keeps_cumulative_spend_separate_from_unknown_last_call() {
+    let workspace = tempfile::tempdir().unwrap();
+    let locator = crate::storage::sessions::transcripts_or_files("orchestrator", workspace.path());
+    let usage = AggregatedUsage {
+        input_tokens: 120,
+        output_tokens: 30,
+        cached_input_tokens: 40,
+        cost: tinyagents_harness::cost::CostTally {
+            known_usd: 0.01,
+            source: tinyagents_harness::cost::CostSource::Charged,
+        },
+    };
+    super::transcript::persist_subagent_transcript(
+        locator.as_ref(),
+        "root__usage",
+        "worker",
+        "task",
+        "mock",
+        "model",
+        &[TranscriptMessage::assistant("done")],
+        &usage,
+        None,
+        200_000,
+        "test",
+        2,
+    );
+    let transcript = read_stem(locator.as_ref(), "root__usage");
+    let recorded = &transcript
+        .messages
+        .last()
+        .unwrap()
+        .turn_usage
+        .as_ref()
+        .unwrap()
+        .usage;
+    assert_eq!(recorded.input, 120);
+    assert_eq!(recorded.output, 30);
+    assert_eq!(recorded.cached_input, 40);
+    assert_eq!(recorded.context_window, 200_000);
+    assert_eq!(recorded.cost_usd, 0.01);
+    assert_eq!(recorded.last_call_input, 0);
+    assert_eq!(recorded.last_call_output, 0);
+}
+
 fn native_tool_profile() -> &'static ModelProfile {
     static PROFILE: std::sync::LazyLock<ModelProfile> = std::sync::LazyLock::new(|| ModelProfile {
         provider: Some("subagent-graph-test".to_string()),
@@ -102,8 +256,10 @@ fn parallel_worker_without_thread_keeps_parent_transcript_affinity() {
 #[tokio::test]
 async fn explicit_worker_thread_replaces_parent_for_model_run_and_transcript() {
     let workspace = tempfile::tempdir().expect("workspace");
+    let locator = crate::storage::sessions::transcripts_or_files("orchestrator", workspace.path());
     let mut parent = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     parent.thread_id = Some("parent-thread".to_owned());
+    parent.transcripts = Some(locator.clone());
     let mut history = vec![TranscriptMessage::user("finish this")];
 
     run_subagent_via_graph(
@@ -118,7 +274,7 @@ async fn explicit_worker_thread_replaces_parent_for_model_run_and_transcript() {
         vec![],
         HashSet::new(),
         2,
-        None,
+        (None, None),
         None,
         "researcher",
         "worker-task",
@@ -134,17 +290,12 @@ async fn explicit_worker_thread_replaces_parent_for_model_run_and_transcript() {
         "test",
         AgentTokenjuiceCompression::Off,
         None,
+        None,
     )
     .await
     .expect("worker run");
 
-    let path = tinyagents_session::transcript::resolve_keyed_transcript_path(
-        workspace.path(),
-        "root__worker-thread",
-    )
-    .expect("transcript path");
-    let persisted =
-        tinyagents_session::transcript::read_transcript(&path).expect("worker transcript");
+    let persisted = read_stem(locator.as_ref(), "root__worker-thread");
     assert_eq!(persisted.meta.thread_id.as_deref(), Some("worker-thread"));
     assert_ne!(persisted.meta.thread_id.as_deref(), Some("parent-thread"));
 }
@@ -159,38 +310,40 @@ async fn subagent_runs_through_the_graph_engine_with_real_tools() {
     allowed.insert("echo".to_string());
     let mut history = vec![TranscriptMessage::user("please echo hi")];
 
-    let (output, iterations, usage, early_exit, hit_cap, _breaker) = run_subagent_via_graph(
-        crate::agent::tinyagents::TurnModelSource::from_model(provider),
-        "mock-model",
-        0.0,
-        &mut history,
-        parent_tools,
-        vec![],
-        vec![],
-        allowed,
-        10,
-        None,
-        None,
-        "researcher",
-        "task-1",
-        false,
-        None,
-        crate::agent::tinyagents::host::OpenHumanRunContext::new(),
-        None,
-        std::env::temp_dir(),
-        None,
-        1024,
-        false,
-        "root-session__real_tools",
-        "mock-channel",
-        AgentTokenjuiceCompression::Off,
-        // No host config in tests: the graph takes byte-cap-only
-        // context defaults instead of reading the developer machine's
-        // real config.toml, which is what the old in-graph load did.
-        None,
-    )
-    .await
-    .expect("graph subagent runs");
+    let (output, iterations, usage, early_exit, hit_cap, _breaker, _cause) =
+        run_subagent_via_graph(
+            crate::agent::tinyagents::TurnModelSource::from_model(provider),
+            "mock-model",
+            0.0,
+            &mut history,
+            parent_tools,
+            vec![],
+            vec![],
+            allowed,
+            10,
+            (None, None),
+            None,
+            "researcher",
+            "task-1",
+            false,
+            None,
+            crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+            None,
+            std::env::temp_dir(),
+            None,
+            1024,
+            false,
+            "root-session__real_tools",
+            "mock-channel",
+            AgentTokenjuiceCompression::Off,
+            // No host config in tests: the graph takes byte-cap-only
+            // context defaults instead of reading the developer machine's
+            // real config.toml, which is what the old in-graph load did.
+            None,
+            None,
+        )
+        .await
+        .expect("graph subagent runs");
 
     assert_eq!(output, "all done");
     assert_eq!(iterations, 2);
@@ -245,7 +398,7 @@ async fn child_text_and_thinking_deltas_are_scoped_to_the_subagent() {
     let parent_tools: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![]);
     let mut history = vec![TranscriptMessage::user("hi")];
 
-    let (output, _iters, _usage, _early, _hit_cap, _breaker) = run_subagent_via_graph(
+    let (output, _iters, _usage, _early, _hit_cap, _breaker, _cause) = run_subagent_via_graph(
         crate::agent::tinyagents::TurnModelSource::from_model(Arc::new(ThinkingStreamProvider)),
         "mock-model",
         0.0,
@@ -255,7 +408,7 @@ async fn child_text_and_thinking_deltas_are_scoped_to_the_subagent() {
         vec![],
         HashSet::new(),
         4,
-        None,
+        (None, None),
         Some(tx),
         "researcher",
         "task-7",
@@ -273,6 +426,7 @@ async fn child_text_and_thinking_deltas_are_scoped_to_the_subagent() {
         // No host config in tests: the graph takes byte-cap-only
         // context defaults instead of reading the developer machine's
         // real config.toml, which is what the old in-graph load did.
+        None,
         None,
     )
     .await
@@ -381,38 +535,40 @@ async fn ask_user_clarification_pauses_and_surfaces_the_question() {
     allowed.insert("ask_user_clarification".to_string());
     let mut history = vec![TranscriptMessage::user("help me")];
 
-    let (output, iterations, _usage, early_exit, _hit_cap, _breaker) = run_subagent_via_graph(
-        crate::agent::tinyagents::TurnModelSource::from_model(provider.clone()),
-        "mock-model",
-        0.0,
-        &mut history,
-        parent_tools,
-        vec![],
-        vec![],
-        allowed,
-        10,
-        None,
-        None,
-        "researcher",
-        "task-9",
-        false,
-        None,
-        crate::agent::tinyagents::host::OpenHumanRunContext::new(),
-        None,
-        std::env::temp_dir(),
-        None,
-        1024,
-        false,
-        "root-session__clarification",
-        "mock-channel",
-        AgentTokenjuiceCompression::Off,
-        // No host config in tests: the graph takes byte-cap-only
-        // context defaults instead of reading the developer machine's
-        // real config.toml, which is what the old in-graph load did.
-        None,
-    )
-    .await
-    .expect("ask-clarification subagent runs");
+    let (output, iterations, _usage, early_exit, _hit_cap, _breaker, _cause) =
+        run_subagent_via_graph(
+            crate::agent::tinyagents::TurnModelSource::from_model(provider.clone()),
+            "mock-model",
+            0.0,
+            &mut history,
+            parent_tools,
+            vec![],
+            vec![],
+            allowed,
+            10,
+            (None, None),
+            None,
+            "researcher",
+            "task-9",
+            false,
+            None,
+            crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+            None,
+            std::env::temp_dir(),
+            None,
+            1024,
+            false,
+            "root-session__clarification",
+            "mock-channel",
+            AgentTokenjuiceCompression::Off,
+            // No host config in tests: the graph takes byte-cap-only
+            // context defaults instead of reading the developer machine's
+            // real config.toml, which is what the old in-graph load did.
+            None,
+            None,
+        )
+        .await
+        .expect("ask-clarification subagent runs");
 
     // The loop paused after the tool round: the early-exit tool is surfaced
     // and the question is the returned text — the second model turn never ran.
@@ -473,38 +629,40 @@ async fn cap_hit_summarizes_a_resumable_checkpoint() {
     allowed.insert("noop".to_string());
     let mut history = vec![TranscriptMessage::user("do a big task")];
 
-    let (output, iterations, _usage, early_exit, hit_cap, _breaker) = run_subagent_via_graph(
-        crate::agent::tinyagents::TurnModelSource::from_model(Arc::new(LoopForeverProvider)),
-        "mock-model",
-        0.0,
-        &mut history,
-        parent_tools,
-        vec![],
-        vec![],
-        allowed,
-        2,
-        None,
-        None,
-        "researcher",
-        "task-cap",
-        false,
-        None,
-        crate::agent::tinyagents::host::OpenHumanRunContext::new(),
-        None,
-        std::env::temp_dir(),
-        None,
-        1024,
-        false,
-        "root-session__cap_hit",
-        "mock-channel",
-        AgentTokenjuiceCompression::Off,
-        // No host config in tests: the graph takes byte-cap-only
-        // context defaults instead of reading the developer machine's
-        // real config.toml, which is what the old in-graph load did.
-        None,
-    )
-    .await
-    .expect("cap-hit subagent runs");
+    let (output, iterations, _usage, early_exit, hit_cap, _breaker, _cause) =
+        run_subagent_via_graph(
+            crate::agent::tinyagents::TurnModelSource::from_model(Arc::new(LoopForeverProvider)),
+            "mock-model",
+            0.0,
+            &mut history,
+            parent_tools,
+            vec![],
+            vec![],
+            allowed,
+            2,
+            (None, None),
+            None,
+            "researcher",
+            "task-cap",
+            false,
+            None,
+            crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+            None,
+            std::env::temp_dir(),
+            None,
+            1024,
+            false,
+            "root-session__cap_hit",
+            "mock-channel",
+            AgentTokenjuiceCompression::Off,
+            // No host config in tests: the graph takes byte-cap-only
+            // context defaults instead of reading the developer machine's
+            // real config.toml, which is what the old in-graph load did.
+            None,
+            None,
+        )
+        .await
+        .expect("cap-hit subagent runs");
 
     // The loop paused at the 2-call budget and summarized instead of erroring.
     assert!(early_exit.is_none());

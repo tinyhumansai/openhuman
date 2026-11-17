@@ -12,6 +12,7 @@ use crate::skills::webhooks::WebhookResponseData;
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 use tinybus::EventHandler;
 
@@ -62,6 +63,9 @@ impl EventHandler<DomainEvent> for WebhookRequestSubscriber {
             return;
         };
 
+        // An inbound webhook arrives over the host's socket: its own tenant,
+        // and in SaaS none, so the triage fails closed.
+        let ctx = crate::core::runtime::DispatchCtx::host_default();
         let started_at = Instant::now();
 
         let correlation_id = request.correlation_id.clone();
@@ -118,74 +122,51 @@ impl EventHandler<DomainEvent> for WebhookRequestSubscriber {
                     (resp, None, Some(e.to_string()))
                 } else {
                     let payload = decoded.unwrap();
-                    let envelope = crate::agent::triage::TriggerEnvelope::from_webhook(
+                    let envelope = crate::triage::TriggerEnvelope::from_webhook(
                         &tunnel_uuid,
                         &method,
                         &path,
                         payload,
                     );
-                    // Spawn the triage pipeline so we don't block the
-                    // broadcast channel's dispatch task during LLM calls.
+                    // With the inbound event queues on, the request is queued
+                    // (persisted, deduplicated per request, paced) and triaged
+                    // when the module delivers it, a deferral retried then;
+                    // the 202 below is the only response. Off or unavailable,
+                    // triage runs directly as before and its result follows
+                    // as a second response. Its own task, so neither the
+                    // module's first load nor a resent ingest holds up this
+                    // subscriber's loop.
                     let corr = correlation_id.clone();
-                    tokio::spawn(async move {
-                        let result =
-                            tokio::time::timeout(std::time::Duration::from_secs(60), async {
-                                run_agent_trigger(&envelope).await
-                            })
-                            .await;
-                        let (resp, err) = match result {
-                            Ok(Ok(output)) => (build_agent_response(&corr, 200, &output), None),
-                            Ok(Err(e)) => {
-                                crate::core::observability::report_error(
-                                    e.as_str(),
-                                    "webhooks",
-                                    "agent_trigger",
-                                    &[
-                                        ("correlation_id", corr.as_str()),
-                                        ("failure", "agent_error"),
-                                    ],
-                                );
-                                (
-                                    build_agent_response(&corr, 500, &format!("Agent error: {e}")),
-                                    Some(e),
-                                )
-                            }
-                            Err(_) => {
-                                crate::core::observability::report_error(
-                                    "agent triage timed out after 60s",
-                                    "webhooks",
-                                    "agent_trigger",
-                                    &[("correlation_id", corr.as_str()), ("failure", "timeout")],
-                                );
-                                (
-                                    build_agent_response(&corr, 504, "Agent triage timed out"),
-                                    Some("timed out after 60s".to_string()),
-                                )
-                            }
-                        };
-                        // Emit response from the spawned task.
-                        if let Some(mgr) = global_socket_manager() {
-                            let response_data = serde_json::json!({
-                                "correlationId": resp.correlation_id,
-                                "statusCode": resp.status_code,
-                                "headers": resp.headers,
-                                "body": resp.body,
-                            });
-                            if let Err(e) = mgr.emit("webhook:response", response_data).await {
-                                tracing::error!("[webhook] failed to emit spawned response: {}", e);
-                            }
-                        }
-                        if let Some(e) = err {
-                            tracing::warn!("[webhook] agent trigger error: {}", e);
+                    let spawner = ctx.clone();
+                    spawner.spawn(async move {
+                        let config = ctx.load_config().await.ok();
+                        let routed = route_agent_trigger(
+                            config,
+                            &envelope,
+                            &corr,
+                            #[cfg(feature = "inbound-queues")]
+                            None,
+                        )
+                        .await;
+                        if let AgentRoute::Direct(on_handled) = routed {
+                            triage_agent_directly(
+                                ctx,
+                                envelope,
+                                corr,
+                                Arc::new(crate::triage::RemoteTriage),
+                                on_handled,
+                            );
                         }
                     });
                     // Return 202 Accepted immediately so the event handler
                     // doesn't block the broadcast channel.
+                    let message = "Agent triage accepted";
                     let resp = WebhookResponseData {
                         correlation_id: correlation_id.clone(),
                         status_code: 202,
                         headers: HashMap::new(),
-                        body: serde_json::json!({"status": "accepted", "message": "Agent triage started"}).to_string(),
+                        body: serde_json::json!({"status": "accepted", "message": message})
+                            .to_string(),
                     };
                     let skill_id = reg.agent_id.clone().or_else(|| Some(reg.skill_id.clone()));
                     (resp, skill_id, None)
@@ -281,6 +262,125 @@ impl EventHandler<DomainEvent> for WebhookRequestSubscriber {
     }
 }
 
+/// Told, when the direct path ends, whether it handled the webhook.
+pub(super) type OnHandled = Box<dyn FnOnce(bool) + Send>;
+
+/// Where an agent webhook went.
+pub(super) enum AgentRoute {
+    /// The inbound event queues own it.
+    Queued,
+    /// The caller triages it directly, telling `on_handled` (when the queues
+    /// may hold it too) whether it handled it.
+    Direct(Option<OnHandled>),
+}
+
+/// Queue an agent webhook in the inbound event queues, or say it is the
+/// caller's to triage directly. `client` reaches the queues module (`None`:
+/// the configured module client).
+pub(super) async fn route_agent_trigger(
+    config: Option<crate::config::Config>,
+    envelope: &crate::triage::TriggerEnvelope,
+    correlation_id: &str,
+    #[cfg(feature = "inbound-queues")] client: Option<tinybus::module::ModuleClient>,
+) -> AgentRoute {
+    #[cfg(feature = "inbound-queues")]
+    if let Some(config) = config.as_ref() {
+        match crate::inbound::events::webhook(envelope, correlation_id) {
+            Ok(event) => {
+                let client = client.unwrap_or_else(|| crate::modules::ops::client(config.clone()));
+                let (offered, claim) =
+                    crate::inbound::route::offer_or_direct(config, &client, event).await;
+                if offered.is_queued() {
+                    tracing::debug!(
+                        correlation_id = %correlation_id,
+                        "[webhook] handed to the inbound event queues"
+                    );
+                    return AgentRoute::Queued;
+                }
+                return AgentRoute::Direct(
+                    claim.map(|claim| Box::new(move |handled| claim.finish(handled)) as OnHandled),
+                );
+            }
+            Err(why) => tracing::info!(
+                correlation_id = %correlation_id,
+                reason = %why,
+                "[webhook] not queued; triaging directly"
+            ),
+        }
+    }
+    #[cfg(not(feature = "inbound-queues"))]
+    let _ = (config, envelope, correlation_id);
+    AgentRoute::Direct(None)
+}
+
+/// Triage an agent webhook in its own task and emit the result as a second
+/// webhook response: the direct path. `on_handled` hears whether the agent
+/// answered.
+pub(super) fn triage_agent_directly(
+    ctx: crate::core::runtime::DispatchCtx,
+    envelope: crate::triage::TriggerEnvelope,
+    corr: String,
+    runner: Arc<dyn crate::triage::TriageRunner>,
+    on_handled: Option<OnHandled>,
+) -> tokio::task::JoinHandle<()> {
+    // Spawn the triage pipeline so we don't block the broadcast channel's
+    // dispatch task during LLM calls.
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            run_agent_trigger(&ctx, &envelope, runner.as_ref()).await
+        })
+        .await;
+        if let Some(on_handled) = on_handled {
+            on_handled(matches!(result, Ok(Ok((_, true)))));
+        }
+        let (resp, err) = match result {
+            Ok(Ok((output, _))) => (build_agent_response(&corr, 200, &output), None),
+            Ok(Err(e)) => {
+                crate::core::observability::report_error(
+                    e.as_str(),
+                    "webhooks",
+                    "agent_trigger",
+                    &[
+                        ("correlation_id", corr.as_str()),
+                        ("failure", "agent_error"),
+                    ],
+                );
+                (
+                    build_agent_response(&corr, 500, &format!("Agent error: {e}")),
+                    Some(e),
+                )
+            }
+            Err(_) => {
+                crate::core::observability::report_error(
+                    "agent triage timed out after 60s",
+                    "webhooks",
+                    "agent_trigger",
+                    &[("correlation_id", corr.as_str()), ("failure", "timeout")],
+                );
+                (
+                    build_agent_response(&corr, 504, "Agent triage timed out"),
+                    Some("timed out after 60s".to_string()),
+                )
+            }
+        };
+        // Emit response from the spawned task.
+        if let Some(mgr) = global_socket_manager() {
+            let response_data = serde_json::json!({
+                "correlationId": resp.correlation_id,
+                "statusCode": resp.status_code,
+                "headers": resp.headers,
+                "body": resp.body,
+            });
+            if let Err(e) = mgr.emit("webhook:response", response_data).await {
+                tracing::error!("[webhook] failed to emit spawned response: {}", e);
+            }
+        }
+        if let Some(e) = err {
+            tracing::warn!("[webhook] agent trigger error: {}", e);
+        }
+    })
+}
+
 /// Decode a base64-encoded webhook request body into a JSON value.
 ///
 /// Returns an empty object when the body is absent, empty, or not valid
@@ -300,39 +400,46 @@ fn decode_webhook_body(base64_body: &str) -> Result<serde_json::Value, String> {
 }
 
 /// Run the triage pipeline for a trigger envelope and return the
-/// human-readable decision summary on success.
+/// human-readable decision summary on success, with whether it handled the
+/// webhook (a decision applied, or a terminal triage; not a deferral).
 async fn run_agent_trigger(
-    envelope: &crate::agent::triage::TriggerEnvelope,
-) -> Result<String, String> {
-    let outcome = crate::agent::triage::run_triage(envelope)
+    ctx: &crate::core::runtime::DispatchCtx,
+    envelope: &crate::triage::TriggerEnvelope,
+    runner: &dyn crate::triage::TriageRunner,
+) -> Result<(String, bool), String> {
+    let outcome = runner
+        .run(ctx, envelope)
         .await
         .map_err(|e| format!("triage evaluation failed: {e}"))?;
 
     match outcome {
-        crate::agent::triage::TriageOutcome::Decision(run) => {
+        crate::triage::TriageOutcome::Decision(run) => {
             // Remote payload: an inbound webhook body is
-            // attacker-influenceable, so the dispatch parks rather than running
-            // on a trust root (#5634).
-            let origin = crate::agent::triage::remote_trigger_origin(envelope);
-            crate::agent::turn_origin::with_origin(
-                origin,
-                crate::agent::triage::apply_decision(run.clone(), envelope),
-            )
-            .await
-            .map_err(|e| format!("apply_decision failed: {e}"))?;
+            // attacker-influenceable, so the runner applies the decision under
+            // the remote-trigger origin (#5634).
+            runner
+                .apply(ctx, run.clone(), envelope)
+                .await
+                .map_err(|e| format!("apply_decision failed: {e}"))?;
 
-            Ok(format!(
-                "Triage decision: {} (agent: {:?})",
-                run.decision.action.as_str(),
-                run.decision.target_agent
+            Ok((
+                format!(
+                    "Triage decision: {} (agent: {:?})",
+                    run.decision.action.as_str(),
+                    run.decision.target_agent
+                ),
+                true,
             ))
         }
-        crate::agent::triage::TriageOutcome::Deferred {
+        crate::triage::TriageOutcome::Deferred {
             defer_until_ms,
             reason,
-        } => Ok(format!("Triage deferred until {defer_until_ms}: {reason}")),
-        crate::agent::triage::TriageOutcome::Terminal { reason } => {
-            Ok(format!("Triage reached terminal state: {reason}"))
+        } => Ok((
+            format!("Triage deferred until {defer_until_ms}: {reason}"),
+            false,
+        )),
+        crate::triage::TriageOutcome::Terminal { reason } => {
+            Ok((format!("Triage reached terminal state: {reason}"), true))
         }
     }
 }

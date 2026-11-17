@@ -1,13 +1,33 @@
 use super::*;
-use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
-use crate::config::test_env::EnvVarGuard;
-use crate::security::{AutonomyLevel, CommandClass, SecurityPolicy};
+use crate::modules::tinybox::host_runtime::{NativeRuntime, RuntimeAdapter};
+use crate::security::{AutonomyLevel, SecurityPolicy};
+
+/// A private working folder for the tests that run a command through the
+/// native jail. `std::env::temp_dir()` is `/tmp` itself, and the jail's bwrap
+/// backend owns `/tmp` as a private mount, so a grant on `/tmp` is refused
+/// (`jail grant /tmp would replace a private sandbox mount`).
+fn test_workdir() -> std::path::PathBuf {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().expect("shell test working folder"))
+        .path()
+        .to_path_buf()
+}
+
+/// The module host serves a TinyBox resource's records from the process
+/// storage slot. A unit test does not boot the core, so it installs one (an
+/// absent backend answers `the host did not provide storage` and the command
+/// never starts).
+fn native_shell_storage() -> crate::storage::test_support::InstalledBackendGuard {
+    crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    )
+}
 
 fn test_security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
     Arc::new(SecurityPolicy {
         autonomy,
-        workspace_dir: std::env::temp_dir(),
-        action_dir: std::env::temp_dir(),
+        workspace_dir: test_workdir(),
+        action_dir: test_workdir(),
         ..SecurityPolicy::default()
     })
 }
@@ -16,50 +36,24 @@ fn test_runtime() -> Arc<dyn RuntimeAdapter> {
     Arc::new(NativeRuntime::new())
 }
 
-fn test_audit() -> Arc<AuditLogger> {
-    AuditLogger::disabled()
-}
-
-fn audit_with_tempdir() -> (Arc<AuditLogger>, tempfile::TempDir) {
-    use crate::config::AuditConfig;
-    let tmp = tempfile::tempdir().expect("create tempdir");
-    let logger = AuditLogger::new(
-        AuditConfig {
-            enabled: true,
-            log_path: "audit.log".into(),
-            max_size_mb: 10,
-        },
-        tmp.path().to_path_buf(),
-    )
-    .expect("create audit logger");
-    (Arc::new(logger), tmp)
-}
-
-/// Build a `ToolExecutionContext` carrying a `WorkspaceDescriptor` rooted
-/// at `root`, mirroring what the tinyagents harness threads into every tool
-/// call of a worktree-isolated worker (`RunContext::with_workspace` →
-/// `ToolExecutionContext::from_run_context`).
-fn tool_context_with_workspace(
-    root: &std::path::Path,
-) -> tinyagents_harness::tool::ToolExecutionContext {
-    use tinyagents_harness::context::{RunConfig, RunContext};
-    use tinyagents_harness::tool::ToolExecutionContext;
-    use tinytools::WorkspaceDescriptor;
-    let ws = WorkspaceDescriptor::new(root.to_path_buf()).with_policy_id("test-worktree");
-    let ctx: RunContext = RunContext::new(RunConfig::new("test-run"), ()).with_workspace(ws);
-    ToolExecutionContext::from_run_context(&ctx, tinyagents_harness::ids::CallId::new("test-call"))
+fn test_audit() -> Arc<AuditSink> {
+    AuditSink::disabled()
 }
 
 fn test_security_with_env_cmd() -> Arc<SecurityPolicy> {
     Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::Supervised,
-        workspace_dir: std::env::temp_dir(),
-        action_dir: std::env::temp_dir(),
+        workspace_dir: test_workdir(),
+        action_dir: test_workdir(),
         allowed_commands: vec!["echo".into(), "mkdir".into()],
         ..SecurityPolicy::default()
     })
 }
 
+#[path = "shell_tests_keep_running_tests.rs"]
+mod keep_running_tests;
+#[path = "shell_tests_platform_tests.rs"]
+mod platform_tests;
 #[path = "shell_tests_runtime_and_sandbox_tests.rs"]
 mod runtime_and_sandbox_tests;
 #[path = "shell_tests_schema_and_env_tests.rs"]

@@ -1,11 +1,11 @@
+use openhuman_embed::__host::core::runtime::DispatchCtx;
+use openhuman_embed::__host::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use openhuman_core::config::rpc as config_rpc;
-use openhuman_core::core::all::{ControllerFuture, RegisteredController};
-use openhuman_core::core::Outcome;
-use openhuman_core::core::{ControllerSchema, FieldSchema, TypeSchema};
+use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
+use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,7 +83,7 @@ pub fn channel_link_schemas(function: &str) -> ControllerSchema {
             }],
         },
         f if CHANNEL_FUNCTIONS.contains(&f) => {
-            openhuman_core::channels::contract_schema::contract_controller_schema(f)
+            openhuman_embed::__host::channels::contract_schema::contract_controller_schema(f)
         }
         _ => ControllerSchema {
             namespace: "auth",
@@ -100,9 +100,12 @@ pub fn channel_link_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_auth_create_channel_link_token(params: Map<String, Value>) -> ControllerFuture {
+fn handle_auth_create_channel_link_token(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<AuthCreateChannelLinkTokenParams>(params)?;
         to_json(
             crate::hosted::channel_link::auth_create_channel_link_token(
@@ -114,16 +117,16 @@ fn handle_auth_create_channel_link_token(params: Map<String, Value>) -> Controll
     })
 }
 
-fn handle_telegram_login_start(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_telegram_login_start(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::channel_link::telegram_login_start(&config).await?)
     })
 }
 
-fn handle_telegram_login_check(params: Map<String, Value>) -> ControllerFuture {
+fn handle_telegram_login_check(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let p = deserialize_params::<LinkCheckParams>(params)?;
         to_json(
             crate::hosted::channel_link::telegram_login_check(&config, p.link_token.trim()).await?,
@@ -131,16 +134,16 @@ fn handle_telegram_login_check(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_discord_link_start(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_discord_link_start(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::channel_link::discord_link_start(&config).await?)
     })
 }
 
-fn handle_discord_link_check(params: Map<String, Value>) -> ControllerFuture {
+fn handle_discord_link_check(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let p = deserialize_params::<LinkCheckParams>(params)?;
         to_json(
             crate::hosted::channel_link::discord_link_check(&config, p.link_token.trim()).await?,
@@ -150,12 +153,6 @@ fn handle_discord_link_check(params: Map<String, Value>) -> ControllerFuture {
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-/// Channel results serialize bare (no logs), exactly as the core's channel
-/// handlers answered.
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

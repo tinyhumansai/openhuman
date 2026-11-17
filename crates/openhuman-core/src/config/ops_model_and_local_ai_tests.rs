@@ -214,7 +214,6 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             endpoint: "https://api.tinyhumans.ai".into(),
             auth_style: AuthStyle::OpenhumanJwt,
             default_model: Some("reasoning-v1".into()),
-            ..Default::default()
         },
         CloudProviderCreds {
             id: "myopenai-1".into(),
@@ -223,7 +222,6 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             endpoint: "https://api.openai.com".into(),
             auth_style: AuthStyle::Bearer,
             default_model: Some("gpt-4o".into()),
-            ..Default::default()
         },
     ];
 
@@ -239,7 +237,6 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             endpoint: "https://api.openai.com/v1".into(),
             auth_style: AuthStyle::Bearer,
             default_model: Some("gpt-4o-mini".into()),
-            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -281,7 +278,6 @@ async fn apply_model_settings_does_not_double_add_reserved_entries() {
         endpoint: "https://api.tinyhumans.ai".into(),
         auth_style: AuthStyle::OpenhumanJwt,
         default_model: Some("reasoning-v1".into()),
-        ..Default::default()
     }];
 
     let patch = ModelSettingsPatch {
@@ -292,7 +288,6 @@ async fn apply_model_settings_does_not_double_add_reserved_entries() {
             endpoint: "https://api.tinyhumans.ai".into(),
             auth_style: AuthStyle::OpenhumanJwt,
             default_model: Some("reasoning-v1".into()),
-            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -365,6 +360,7 @@ async fn apply_runtime_settings_updates_kind_and_reasoning() {
         kind: Some("desktop".into()),
         reasoning_enabled: Some(true),
         reasoning_effort: Some("max".into()),
+        ..RuntimeSettingsPatch::default()
     };
     let _ = apply_runtime_settings(&mut cfg, patch)
         .await
@@ -391,6 +387,41 @@ async fn apply_runtime_settings_updates_kind_and_reasoning() {
 }
 
 #[tokio::test]
+async fn apply_runtime_settings_keeps_a_level_per_model() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.runtime.reasoning_effort = Some("low".into());
+    let per_model = RuntimeSettingsPatch {
+        reasoning_effort: Some("max".into()),
+        reasoning_effort_model: Some("anthropic/claude-opus".into()),
+        ..RuntimeSettingsPatch::default()
+    };
+    let _ = apply_runtime_settings(&mut cfg, per_model)
+        .await
+        .expect("apply per-model");
+    assert_eq!(
+        cfg.runtime
+            .reasoning_effort_by_model
+            .get("anthropic/claude-opus")
+            .map(String::as_str),
+        Some("xhigh")
+    );
+    // The global level is untouched by a per-model write.
+    assert_eq!(cfg.runtime.reasoning_effort.as_deref(), Some("low"));
+
+    let cleared = RuntimeSettingsPatch {
+        reasoning_effort: Some(String::new()),
+        reasoning_effort_model: Some("anthropic/claude-opus".into()),
+        ..RuntimeSettingsPatch::default()
+    };
+    let _ = apply_runtime_settings(&mut cfg, cleared)
+        .await
+        .expect("clear per-model");
+    assert!(cfg.runtime.reasoning_effort_by_model.is_empty());
+    assert_eq!(cfg.runtime.reasoning_effort.as_deref(), Some("low"));
+}
+
+#[tokio::test]
 async fn apply_browser_settings_updates_enabled_flag() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
@@ -406,6 +437,32 @@ async fn apply_browser_settings_updates_enabled_flag() {
     .await
     .expect("apply");
     assert!(cfg.browser.enabled);
+}
+
+#[tokio::test]
+async fn apply_browser_settings_switches_learning_from_tasks() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    assert!(cfg.browser.learn_from_tasks, "on by default");
+
+    apply_browser_settings(
+        &mut cfg,
+        BrowserSettingsPatch {
+            learn_from_tasks: Some(false),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply");
+    assert!(!cfg.browser.learn_from_tasks);
+
+    apply_browser_settings(&mut cfg, BrowserSettingsPatch::default())
+        .await
+        .expect("apply");
+    assert!(
+        !cfg.browser.learn_from_tasks,
+        "left as it was when not named"
+    );
 }
 
 #[tokio::test]
@@ -487,6 +544,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
         chat_model_id: Some(" local-chat ".into()),
         usage_embeddings: Some(true),
         api_key: None,
+        native_tool_calling: Some(true),
     };
 
     let outcome = apply_local_ai_settings(&mut cfg, patch)
@@ -503,6 +561,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert_eq!(cfg.local_ai.model_id, "local-default");
     assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
     assert!(cfg.local_ai.usage.embeddings);
+    assert!(cfg.local_ai.native_tool_calling);
     assert_eq!(outcome.value["config"]["local_ai"]["provider"], "lm_studio");
 
     let clear_and_fallback = LocalAiSettingsPatch {
@@ -629,4 +688,52 @@ async fn apply_analytics_settings_updates_enabled() {
     .await
     .expect("apply");
     assert!(!cfg.observability.analytics_enabled);
+}
+
+#[tokio::test]
+async fn apply_user_timezone_stores_the_canonical_name_refuses_junk_and_clears() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_user_timezone(&mut cfg, Some(" asia/kolkata ".into()))
+        .await
+        .expect("an IANA zone in any case is accepted");
+    assert_eq!(cfg.user_timezone.as_deref(), Some("Asia/Kolkata"));
+    assert_eq!(cfg.time_zone(), "Asia/Kolkata");
+    let saved = std::fs::read_to_string(&cfg.config_path).expect("config was saved");
+    assert!(saved.contains("Asia/Kolkata"), "{saved}");
+
+    let error = apply_user_timezone(&mut cfg, Some("IST".into()))
+        .await
+        .expect_err("an abbreviation is not a zone");
+    assert!(error.contains("IST"), "{error}");
+    assert_eq!(
+        cfg.user_timezone.as_deref(),
+        Some("Asia/Kolkata"),
+        "unchanged"
+    );
+
+    apply_user_timezone(&mut cfg, Some("  ".into()))
+        .await
+        .expect("blank clears");
+    assert_eq!(cfg.user_timezone, None);
+    let json = user_timezone_json(&cfg);
+    assert!(json["timezone"].is_null());
+    assert_eq!(json["effective"], cfg.time_zone());
+}
+
+#[tokio::test]
+async fn apply_user_timezone_restores_the_value_when_the_save_fails() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.user_timezone = Some("Europe/Berlin".into());
+    // A config path inside a regular file cannot be written.
+    let blocker = tmp.path().join("not-a-dir");
+    std::fs::write(&blocker, "x").unwrap();
+    cfg.config_path = blocker.join("config.toml");
+
+    apply_user_timezone(&mut cfg, Some("Asia/Kolkata".into()))
+        .await
+        .expect_err("the save cannot succeed");
+    assert_eq!(cfg.user_timezone.as_deref(), Some("Europe/Berlin"));
 }

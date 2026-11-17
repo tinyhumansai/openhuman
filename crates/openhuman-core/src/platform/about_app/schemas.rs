@@ -1,3 +1,5 @@
+use crate::core::runtime::DispatchCtx;
+use crate::util::params::{required_string, to_json};
 use std::str::FromStr;
 
 use serde::de::DeserializeOwned;
@@ -5,7 +7,6 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::platform::about_app::CapabilityCategory;
 
@@ -103,7 +104,7 @@ pub fn about_app_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_about_app_list(params: Map<String, Value>) -> ControllerFuture {
+fn handle_about_app_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<AboutAppListParams>(params)?;
         let category = payload
@@ -113,23 +114,29 @@ fn handle_about_app_list(params: Map<String, Value>) -> ControllerFuture {
             .transpose()?;
 
         tracing::debug!(?category, "[about_app] list capabilities");
-        to_json(crate::platform::about_app::list_capabilities(category))
+        to_json(crate::platform::about_app::list_capabilities(
+            &ctx, category,
+        ))
     })
 }
 
-fn handle_about_app_lookup(params: Map<String, Value>) -> ControllerFuture {
+fn handle_about_app_lookup(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<AboutAppLookupParams>(params)?;
         tracing::debug!(id = %payload.id, "[about_app] lookup capability");
-        to_json(crate::platform::about_app::lookup_capability(&payload.id)?)
+        to_json(crate::platform::about_app::lookup_capability(
+            &ctx,
+            &payload.id,
+        )?)
     })
 }
 
-fn handle_about_app_search(params: Map<String, Value>) -> ControllerFuture {
+fn handle_about_app_search(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<AboutAppSearchParams>(params)?;
         tracing::debug!(query = %payload.query, "[about_app] search capabilities");
         to_json(crate::platform::about_app::search_capabilities(
+            &ctx,
             &payload.query,
         ))
     })
@@ -137,19 +144,6 @@ fn handle_about_app_search(params: Map<String, Value>) -> ControllerFuture {
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
 }
 
 fn optional_category(name: &'static str, comment: &'static str) -> FieldSchema {

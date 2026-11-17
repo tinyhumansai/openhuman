@@ -24,11 +24,11 @@
 //! `update_browser_settings`, `update_local_ai_settings`, `resolve_api_url`,
 //! `get_runtime_flags`, `set_browser_allow_all`, `workspace_onboarding_flag_exists`,
 //! `workspace_onboarding_flag_set`, `update_analytics_settings`,
-//! `get_analytics_settings`, `get_dashboard_settings`, `agent_server_status`,
+//! `get_analytics_settings`, `update_user_timezone`, `get_user_timezone`,
+//! `get_dashboard_settings`, `agent_server_status`,
 //! `reset_local_data`, `get_data_paths`, `get_agent_paths`, `update_agent_paths`,
-//! `get_onboarding_completed`, `set_onboarding_completed`, `get_dictation_settings`,
-//! `update_dictation_settings`, `get_voice_server_settings`,
-//! `update_voice_server_settings`, `update_composio_trigger_settings`,
+//! `get_onboarding_completed`, `set_onboarding_completed`,
+//! `update_composio_trigger_settings`,
 //! `get_composio_trigger_settings`, `get_autonomy_settings`,
 //! `update_autonomy_settings`, `get_privacy_mode`, `set_privacy_mode`,
 //! `get_agent_settings`, `update_agent_settings`, `update_search_settings`,
@@ -44,8 +44,6 @@ pub use controllers::{all_controller_schemas, all_registered_controllers};
 // Re-export items that schemas_tests.rs accesses via `use super::*`.
 // The test module is `schemas::tests` so `super::` resolves to `schemas`.
 #[cfg(test)]
-use crate::core::Outcome;
-#[cfg(test)]
 use crate::core::TypeSchema;
 #[cfg(test)]
 use controllers::{
@@ -53,8 +51,7 @@ use controllers::{
 };
 #[cfg(test)]
 use helpers::{
-    deserialize_params, json_output, optional_bool, optional_json, optional_string,
-    required_string, to_json, AutonomySettingsUpdate, LocalAiSettingsUpdate, MemorySettingsUpdate,
+    deserialize_params, AutonomySettingsUpdate, LocalAiSettingsUpdate, MemorySettingsUpdate,
     ModelSettingsUpdate, OnboardingCompletedSetParams, SetBrowserAllowAllParams,
     WorkspaceOnboardingFlagParams, WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
 };

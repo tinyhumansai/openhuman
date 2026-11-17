@@ -1,35 +1,38 @@
 //! Document sources: the registry persisted in `[[memory.sources]]`, and sync.
 //!
 //! A source names something to read — a folder, a file, a web page, a GitHub
-//! repository, an RSS feed or a connected Composio toolkit — and how often.
-//! Sync reads it through `tinymemory-sources` (or, for Composio, the connector
-//! module) and stores each item as a `Document` whose `meta.source` is
+//! repository or an RSS feed — and how often. Sync reads it through
+//! `tinymemory-integrations`' readers and stores each item as a `Document` whose `meta.source` is
 //! `{kind, id: <source id>}`, so removing a source can forget exactly its
 //! items. Sync runs on demand ([`start_sync`]) and from the
 //! `memory_sources_sync` cron job ([`sync_due`]).
 
-pub mod composio;
 pub mod state;
 mod sync;
 
-use chrono::{DateTime, Utc};
-use tinymemory_api::{ForgetTarget, MetaFilter};
+use tinymemory_integrations::sources::SourceState;
+use tinymemory_integrations::sources::{Error as SourceError, SourceSpec};
+use tinymemory_tools::ops::MemoryOps;
 
 use crate::config::schema::{MemorySourceConfig, MemorySourceKind};
 use crate::config::Config;
 
 use super::engine;
-use super::error::{MemoryError, MemoryResult};
-use super::types::{SourceStatus, SourceView, SourcesAddParams};
+use super::types::{SourceView, SourcesAddParams};
+use tinymemory_api::{Error, Result};
 
 pub use sync::{start_sync, sync_due, sync_one};
 
-/// Fewest minutes between scheduled syncs of one source.
-pub const MIN_SCHEDULE_MINS: u32 = 15;
+fn source_spec_error(error: SourceError) -> Error {
+    match error {
+        SourceError::Invalid(message) => Error::InvalidRequest(message),
+        error => Error::InvalidRequest(error.to_string()),
+    }
+}
 
 /// The view of `source` with its sync state.
 #[must_use]
-pub fn view(source: &MemorySourceConfig, state: Option<&state::SourceState>) -> SourceView {
+pub fn view(source: &MemorySourceConfig, state: Option<&SourceState>) -> SourceView {
     let state = state.cloned().unwrap_or_default();
     SourceView {
         id: source.id.clone(),
@@ -57,93 +60,39 @@ pub fn list(config: &Config) -> Vec<SourceView> {
         .collect()
 }
 
-/// Normalises a target for `kind`: GitHub accepts `owner/repo` or a URL;
-/// network kinds must be http(s) URLs; a Composio target is a toolkit slug.
-pub fn normalize_target(kind: MemorySourceKind, target: &str) -> MemoryResult<String> {
-    let target = target.trim();
-    if target.is_empty() {
-        return Err(MemoryError::invalid("target must not be empty"));
-    }
-    match kind {
-        MemorySourceKind::Folder | MemorySourceKind::File => Ok(target.to_string()),
-        MemorySourceKind::Github => {
-            if target.starts_with("http://") || target.starts_with("https://") {
-                return http_url(target);
-            }
-            let mut parts = target.split('/');
-            match (parts.next(), parts.next(), parts.next()) {
-                (Some(owner), Some(repo), None) if !owner.is_empty() && !repo.is_empty() => {
-                    Ok(format!("https://github.com/{owner}/{repo}"))
-                }
-                _ => Err(MemoryError::invalid(
-                    "a GitHub target is `owner/repo` or a repository URL",
-                )),
-            }
-        }
-        MemorySourceKind::Link | MemorySourceKind::Rss => http_url(target),
-        MemorySourceKind::Composio => {
-            if target
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
-                Ok(target.to_ascii_lowercase())
-            } else {
-                Err(MemoryError::invalid("a Composio target is a toolkit slug"))
-            }
-        }
-    }
-}
-
-fn http_url(target: &str) -> MemoryResult<String> {
-    let url = url::Url::parse(target).map_err(|_| MemoryError::invalid("target is not a URL"))?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err(MemoryError::invalid("target must be an http(s) URL"));
-    }
-    Ok(url.to_string())
+/// Normalises a target for `kind` using TinyMemory's source rules.
+pub fn normalize_target(kind: MemorySourceKind, target: &str) -> Result<String> {
+    SourceSpec::normalize_target(kind, target).map_err(source_spec_error)
 }
 
 /// Builds a new source from `memory_sources_add` params and appends it to
 /// `config`; the caller persists `config`.
-pub fn apply_add(
-    config: &mut Config,
-    params: &SourcesAddParams,
-) -> MemoryResult<MemorySourceConfig> {
+pub fn apply_add(config: &mut Config, params: &SourcesAddParams) -> Result<MemorySourceConfig> {
     let kind = MemorySourceKind::parse(&params.kind).ok_or_else(|| {
-        MemoryError::invalid(format!(
-            "unknown source kind `{}` (folder, file, link, github, rss, composio)",
+        Error::InvalidRequest(format!(
+            "unknown source kind `{}` (folder, file, link, github, rss)",
             params.kind.trim()
         ))
     })?;
-    let target = normalize_target(kind, &params.target)?;
-    if let Some(mins) = params.schedule_mins {
-        if mins < MIN_SCHEDULE_MINS {
-            return Err(MemoryError::invalid(format!(
-                "schedule_mins must be at least {MIN_SCHEDULE_MINS}"
-            )));
-        }
-    }
-    if config
-        .memory
-        .sources
-        .iter()
-        .any(|source| source.kind == kind && source.target == target)
-    {
-        return Err(MemoryError::invalid("that source is already added"));
-    }
+    let spec = SourceSpec {
+        kind,
+        target: params.target.clone(),
+        schedule_mins: params.schedule_mins,
+        namespace: params.namespace.clone(),
+    };
+    let target = spec
+        .validate_new(&config.memory.sources)
+        .map_err(source_spec_error)?;
     let label = params
         .label
         .as_deref()
         .map(str::trim)
         .filter(|label| !label.is_empty())
         .map_or_else(|| target.clone(), str::to_string);
-    let namespace = match params.namespace.as_deref().map(str::trim) {
-        None | Some("") => None,
-        Some(raw) => Some(
-            raw.parse::<tinymemory_api::Namespace>()
-                .map_err(|error| MemoryError::invalid(error.to_string()))?
-                .to_string(),
-        ),
-    };
+    let namespace = spec
+        .namespace()
+        .map_err(source_spec_error)?
+        .map(|namespace| namespace.to_string());
     let source = MemorySourceConfig {
         id: format!("src-{}", uuid::Uuid::new_v4().simple()),
         kind,
@@ -152,7 +101,7 @@ pub fn apply_add(
         schedule_mins: params.schedule_mins,
         namespace,
     };
-    sync::reader_entry(&source)?;
+    sync::validate(&source)?;
     config.memory.sources.push(source.clone());
     tracing::info!(id = %source.id, kind = kind.as_str(), "[memory:sources] source added");
     Ok(source)
@@ -167,41 +116,27 @@ pub fn apply_remove(config: &mut Config, id: &str) -> Option<MemorySourceConfig>
     Some(removed)
 }
 
-/// Forgets every item source `id` stored. Memory off is not an error here:
-/// there is nothing reachable to forget.
-pub async fn forget_items(config: &Config, id: &str) -> MemoryResult<usize> {
-    let bound = match engine::resolve(config).engine() {
-        Ok(bound) => bound,
-        Err(MemoryError::Off(_)) => return Ok(0),
+/// Forgets, for good, every item source `id` stored (by `memory_ids`, with
+/// an explicit `redact_events` cascade). Memory off is not an error here:
+/// the deletion is queued ([`crate::memory::deletion`]) and runs on the next
+/// sign-in. A failure is queued the same way, and returned.
+pub async fn forget_items(config: &Config, id: &str) -> Result<usize> {
+    let bound = match engine::resolve(config).await.engine() {
+        Ok(bound) => Some(bound),
+        Err(Error::Off(_)) => None,
         Err(error) => return Err(error),
     };
-    let filter = MetaFilter {
-        source_id: Some(id.to_string()),
-        ..MetaFilter::default()
-    };
-    let report = bound.engine.forget(ForgetTarget::Filter(filter)).await?;
-    tracing::debug!(id = %id, forgotten = report.forgotten, "[memory:sources] items forgotten");
-    Ok(report.forgotten)
-}
-
-/// Whether `source` is due for a scheduled sync at `now`.
-#[must_use]
-pub fn is_due(
-    source: &MemorySourceConfig,
-    last: Option<&state::SourceState>,
-    now: DateTime<Utc>,
-) -> bool {
-    let Some(mins) = source.schedule_mins else {
-        return false;
-    };
-    match last {
-        Some(state) if state.status == SourceStatus::Syncing => false,
-        Some(state) => state.last_sync_at.is_none_or(|at| {
-            now.signed_duration_since(at)
-                >= chrono::Duration::minutes(i64::from(mins.max(MIN_SCHEDULE_MINS)))
-        }),
-        None => true,
-    }
+    // Source IDs span ordinary scopes; the engine's default root reach
+    // excludes service sandboxes without restricting cleanup to one profile.
+    let ops = MemoryOps::unconfined();
+    let engine = bound.as_ref().map(|bound| bound.engine.as_ref());
+    let forgotten = ops
+        .forget_source(engine, id, |deletion| {
+            crate::memory::deletion::enqueue(&config.workspace_dir, deletion);
+        })
+        .await?;
+    tracing::debug!(id = %id, forgotten, "[memory:sources] items forgotten");
+    Ok(forgotten)
 }
 
 /// The layout source `source` files into: its own `namespace` (a layout
@@ -211,44 +146,24 @@ pub fn layout_of_source(
     config: &Config,
     source: &MemorySourceConfig,
 ) -> tinymemory_tools::MemoryLayout {
-    let default = || {
-        crate::memory::scope::MemoryIdentity::root()
-            .resolve(config)
-            .layout
-    };
-    let Some(raw) = source
-        .namespace
-        .as_deref()
-        .filter(|raw| !raw.trim().is_empty())
-    else {
-        return default();
-    };
-    raw.parse::<tinymemory_api::Namespace>()
-        .map_err(|error| error.to_string())
-        .and_then(|root| tinymemory_tools::MemoryLayout::new(root).map_err(|error| error.to_string()))
-        .unwrap_or_else(|error| {
-            tracing::warn!(id = %source.id, %error, "[memory:sources] invalid root; using the configured one");
-            default()
-        })
+    tinymemory_integrations::sources::layout_of_source(&configured_layout(config), source)
 }
 
 /// The layout the configured source `source_id` files into; the configured
 /// root for an unknown id.
 #[must_use]
 pub fn layout_of(config: &Config, source_id: &str) -> tinymemory_tools::MemoryLayout {
-    config
-        .memory
-        .sources
-        .iter()
-        .find(|source| source.id == source_id)
-        .map_or_else(
-            || {
-                crate::memory::scope::MemoryIdentity::root()
-                    .resolve(config)
-                    .layout
-            },
-            |source| layout_of_source(config, source),
-        )
+    tinymemory_integrations::sources::layout_of(
+        &configured_layout(config),
+        &config.memory.sources,
+        source_id,
+    )
+}
+
+fn configured_layout(config: &Config) -> tinymemory_tools::MemoryLayout {
+    tinymemory_tools::layout::identity::Identity::root()
+        .resolve(&crate::memory::scope::identity_pins(config))
+        .layout
 }
 
 #[cfg(test)]

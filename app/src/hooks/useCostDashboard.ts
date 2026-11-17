@@ -9,6 +9,8 @@ export interface CostDashboardModelStats {
   cost_usd: number;
   total_tokens: number;
   request_count: number;
+  /** Requests with no known cost; absent from an older core. */
+  unpriced_request_count?: number;
   provider: string | null;
   percent_of_total: number;
 }
@@ -52,7 +54,11 @@ export interface CostUsageRecord {
   cache_creation_tokens: number;
   reasoning_tokens: number;
   cost_usd: number;
-  cost_source: 'estimated' | 'provider_charged';
+  /**
+   * `unknown`: no charge was reported and the model has no catalogued price,
+   * so `cost_usd` is `0` and must not be shown as free.
+   */
+  cost_source: 'estimated' | 'provider_charged' | 'unknown';
 }
 
 export interface CostUsageCategoryStats {
@@ -134,23 +140,29 @@ export function useCostDashboard(options: UseCostDashboardOptions = {}): UseCost
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const cancelledRef = useRef<boolean>(false);
 
+  const requestRef = useRef(0);
+  const pendingRequestRef = useRef<number | null>(null);
+
   const fetchOnce = useCallback(async () => {
+    const request = ++requestRef.current;
+    pendingRequestRef.current = request;
     setIsFetching(true);
     try {
       const response = await callCoreRpc<RpcEnvelope<CostDashboardPayload> | CostDashboardPayload>({
         method: 'openhuman.cost_get_dashboard',
         params: {},
       });
-      if (cancelledRef.current) return;
+      if (cancelledRef.current || request !== requestRef.current) return;
       const payload = unwrapRpcPayload(response);
       setData(payload);
       setError(null);
       setLastUpdated(Date.now());
     } catch (err) {
-      if (cancelledRef.current) return;
+      if (cancelledRef.current || request !== requestRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (!cancelledRef.current) {
+      if (pendingRequestRef.current === request) pendingRequestRef.current = null;
+      if (!cancelledRef.current && request === requestRef.current) {
         setIsLoading(false);
         setIsFetching(false);
       }
@@ -172,16 +184,18 @@ export function useCostDashboard(options: UseCostDashboardOptions = {}): UseCost
     if (paused) {
       return () => {
         cancelledRef.current = true;
+        requestRef.current++;
       };
     }
     const interval = window.setInterval(
       () => {
-        void fetchOnce();
+        if (pendingRequestRef.current === null) void fetchOnce();
       },
       Math.max(1000, refreshMs)
     );
     return () => {
       cancelledRef.current = true;
+      requestRef.current++;
       window.clearInterval(interval);
     };
   }, [fetchOnce, refreshMs, paused]);

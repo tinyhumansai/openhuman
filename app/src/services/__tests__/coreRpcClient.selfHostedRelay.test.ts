@@ -12,7 +12,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { rpcUrlNeedsShellRelay, testCoreRpcConnection } from '../coreRpcClient';
+import {
+  resolveCoreSocketEndpoint,
+  rpcUrlNeedsShellRelay,
+  testCoreRpcConnection,
+} from '../coreRpcClient';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => true) }));
 vi.mock('../../utils/tauriCommands/common', async importOriginal => {
@@ -45,6 +49,37 @@ describe('rpcUrlNeedsShellRelay', () => {
   test('malformed URLs do not trigger the relay', () => {
     expect(rpcUrlNeedsShellRelay('not a url')).toBe(false);
     expect(rpcUrlNeedsShellRelay('')).toBe(false);
+  });
+});
+
+describe('resolveCoreSocketEndpoint', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  test('relays private-LAN Socket.IO and live-voice WebSockets through loopback', async () => {
+    const endpoint = {
+      baseUrl: 'http://127.0.0.1:40000',
+      path: '/secret/socket.io/',
+      liveVoicePath: '/secret/ws/live-voice',
+      transports: ['websocket'],
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(endpoint);
+
+    await expect(resolveCoreSocketEndpoint('http://192.168.1.74:7788')).resolves.toEqual(endpoint);
+    expect(invoke).toHaveBeenCalledWith('relay_remote_socket', {
+      url: 'http://192.168.1.74:7788/rpc',
+    });
+  });
+
+  test('uses direct Socket.IO for loopback and HTTPS cores', async () => {
+    await expect(resolveCoreSocketEndpoint('http://127.0.0.1:7788')).resolves.toEqual({
+      baseUrl: 'http://127.0.0.1:7788',
+      path: '/socket.io/',
+    });
+    await expect(resolveCoreSocketEndpoint('https://core.example')).resolves.toEqual({
+      baseUrl: 'https://core.example',
+      path: '/socket.io/',
+    });
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
 

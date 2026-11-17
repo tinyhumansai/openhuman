@@ -300,27 +300,6 @@ for (const interpreter of interpreters) {
   );
 
   test(
-    `[${interpreter} ${version}] a motosan-owned Tauri TLS package fails the policy`,
-    SKIP,
-    () => {
-      const tree = makeTree({
-        tauri: "native-tls v0.2.14",
-        owners: {
-          "native-tls":
-            "native-tls v0.2.14\nmotosan-ai-oauth v0.1.0\nopenhuman-app v0.1.0",
-        },
-      });
-      const result = run(interpreter, tree);
-      assert.equal(result.status, 1);
-      assert.match(
-        result.stderr,
-        /motosan-ai-oauth owns native-tls in tauri/,
-      );
-      assert.match(tree.calls(), /--invert native-tls/);
-    },
-  );
-
-  test(
     `[${interpreter} ${version}] an early TLS match in a large tree still checks owners`,
     SKIP,
     () => {

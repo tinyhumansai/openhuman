@@ -6,16 +6,17 @@
 //!   agent and synthesise its delegation tool surface.
 //! * [`build_visible_tool_set`] — union of named tools + extra (delegation) tools.
 
-use crate::agent::harness::definition::{AgentDefinition, AgentDefinitionRegistry, ToolScope};
-use crate::agent::prompts::ConnectedIntegration;
+use crate::agent_registry::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use crate::config::Config;
+use crate::integrations::composio::orchestrator_actions;
 use crate::integrations::composio::{
-    cached_active_integrations_including_expired, fetch_connected_integrations_status,
+    cached_active_integrations, fetch_connected_integrations_status,
     FetchConnectedIntegrationsStatus,
 };
-use crate::tools::orchestrator_tools;
+use crate::integrations::ConnectedIntegration;
 use std::collections::HashSet;
 use std::time::Duration;
+use tinyagents_definition::ToolScope;
 use tinytools::Tool;
 
 /// Per-turn scoping fields derived from the active agent definition.
@@ -79,7 +80,7 @@ pub(super) async fn resolve_target_agent(channel: &str) -> AgentScoping {
         "[dispatch::routing] selected target agent"
     );
 
-    let registry = match AgentDefinitionRegistry::global() {
+    let registry = match AgentDefinitionRegistry::current() {
         Some(reg) => reg,
         None => {
             tracing::warn!(
@@ -141,20 +142,17 @@ pub(super) async fn resolve_target_agent(channel: &str) -> AgentScoping {
                 "[dispatch::routing] Composio unavailable/timed out — using cached integration snapshot instead of an empty set (keeps the integration action catalogue live)"
             );
         }
-        // Use the expiry-tolerant read for the fallback: a transient blip that
-        // lands just after the 60s cache TTL must still preserve the last-known
+        // A transient backend failure must preserve the last-known connected
         // integrations rather than collapse tool-calling to an empty set.
-        let connected = connected_with_fallback(
-            fetched,
-            cached_active_integrations_including_expired(&config),
-        );
+        // The credential-scoped cache has no idle-time expiry.
+        let connected = connected_with_fallback(fetched, cached_active_integrations(&config).await);
         tracing::debug!(
             channel = %channel,
             target_agent = target_id,
             connected_integration_count = connected.len(),
             "[dispatch::routing] fetched connected integrations for delegation expansion"
         );
-        orchestrator_tools::collect_orchestrator_tools(definition, registry, &connected)
+        orchestrator_actions::collect_orchestrator_tools(definition, &connected)
     } else {
         Vec::new()
     };

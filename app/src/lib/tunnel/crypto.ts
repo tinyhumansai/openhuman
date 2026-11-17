@@ -7,12 +7,12 @@
  *
  * Frames produced with the previous `version=0x01` shape (single shared
  * key, same key in both directions, no KDF) are no longer accepted. Peers
- * see a distinctive "re-pair required" error instead of a generic AEAD
+ * see a distinctive "client upgrade required" error instead of a generic AEAD
  * authentication failure.
  *
- * Sealed-handshake format (device → core, first frame) keeps the v1 byte
- * because that flow uses raw XChaCha20Poly1305 outside the post-pairing
- * `TunnelCipher` — it's the bootstrap, not the session.
+ * Sealed-handshake format (device → core, first frame) uses marker 0x03,
+ * an HKDF-derived key and authenticated header. The acknowledgement uses
+ * marker 0x04 and a separate key.
  *
  * Mirrors crates/openhuman-core/src/security/devices/crypto.rs — keep in sync.
  */
@@ -32,6 +32,8 @@ const cryptoErr = debug('crypto:error');
 export const FRAME_VERSION = 0x02;
 /** Previous frame version. Surfaced so callers can recognise the legacy shape. */
 export const LEGACY_FRAME_VERSION_V1 = 0x01;
+export const HANDSHAKE_VERSION = 0x03;
+export const HANDSHAKE_ACK_VERSION = 0x04;
 const NONCE_LEN = 24; // XChaCha20-Poly1305 nonce
 const EPH_PUB_LEN = 32; // X25519 public key
 const REPLAY_WINDOW = 128;
@@ -40,6 +42,14 @@ const REPLAY_WINDOW = 128;
  *  byte-identical values. */
 export const HKDF_INFO_C2S = new TextEncoder().encode('openhuman-tunnel/v1/c2s');
 export const HKDF_INFO_S2C = new TextEncoder().encode('openhuman-tunnel/v1/s2c');
+const HKDF_INFO_HANDSHAKE = new TextEncoder().encode('openhuman-tunnel/v3/handshake');
+const HKDF_INFO_HANDSHAKE_ACK = new TextEncoder().encode('openhuman-tunnel/v3/handshake-ack');
+const HKDF_COMPAT_SALT = new TextEncoder().encode('openhuman-tunnel/compat');
+const HKDF_INFO_COMPAT = new TextEncoder().encode('openhuman-tunnel/compat/symmetric');
+
+function bootstrapKey(dh: Uint8Array, salt: Uint8Array, info: Uint8Array): Uint8Array {
+  return hkdf(sha256, dh, salt, info, 32);
+}
 
 // -- base64url helpers -------------------------------------------------------
 
@@ -212,7 +222,7 @@ function openWithKey(key: Uint8Array, frame: Uint8Array, tracker: ReplayTracker)
   }
   if (frame[0] === LEGACY_FRAME_VERSION_V1) {
     throw new Error(
-      '[crypto] UnsupportedFrameVersion: legacy v1 frame rejected — peer must re-pair to upgrade to v2 directional subkeys'
+      '[crypto] UnsupportedFrameVersion: legacy v1 frame rejected — peer must upgrade to v2 directional subkeys before reconnecting'
     );
   }
   if (frame[0] !== FRAME_VERSION) {
@@ -242,19 +252,18 @@ function openWithKey(key: Uint8Array, frame: Uint8Array, tracker: ReplayTracker)
 }
 
 /**
- * Legacy single-key seal — kept for non-session bootstrap callers (e.g. the
- * device-pubkey handshake path in `transport.ts`). New session frames go
- * through `TunnelCipher#seal` so they pick up directional subkeys.
+ * Compatibility single-key helpers for local fixtures. Production session
+ * frames go through `TunnelCipher` with directional subkeys.
  */
 export function seal(key: Uint8Array, plaintext: Uint8Array): Uint8Array {
-  return sealWithKey(key, plaintext);
+  return sealWithKey(bootstrapKey(key, HKDF_COMPAT_SALT, HKDF_INFO_COMPAT), plaintext);
 }
 
 /**
  * Legacy single-key open. See {@link seal} for the rationale.
  */
 export function open(key: Uint8Array, frame: Uint8Array, tracker: ReplayTracker): Uint8Array {
-  return openWithKey(key, frame, tracker);
+  return openWithKey(bootstrapKey(key, HKDF_COMPAT_SALT, HKDF_INFO_COMPAT), frame, tracker);
 }
 
 // -- sealed handshake --------------------------------------------------------
@@ -263,26 +272,30 @@ export function open(key: Uint8Array, frame: Uint8Array, tracker: ReplayTracker)
  * Seal a handshake payload to the core's static public key using an ephemeral
  * X25519 keypair + XChaCha20-Poly1305.
  *
- * Output: 0x01 || eph_pub(32) || nonce(24) || ciphertext+tag
+ * Output: 0x03 || eph_pub(32) || nonce(24) || ciphertext+tag
  *
  * Mirrors the wire format expected by bus.rs handle_tunnel_frame.
  */
 export function sealHandshake(corePubkey: Uint8Array, payload: Uint8Array): Uint8Array {
+  if (corePubkey.length !== 32) {
+    throw new Error('[crypto] core public key must be 32 bytes');
+  }
   const eph = generateKeypair();
-  const sharedKey = deriveSharedSecret(eph.secretKey, corePubkey);
+  const dh = deriveSharedSecret(eph.secretKey, corePubkey);
+  const salt = new Uint8Array(64);
+  salt.set(eph.publicKey);
+  salt.set(corePubkey, 32);
+  const key = bootstrapKey(dh, salt, HKDF_INFO_HANDSHAKE);
   const nonce = randomBytes(NONCE_LEN);
-  const cipher = xchacha20poly1305(sharedKey, nonce);
+  const header = new Uint8Array(1 + EPH_PUB_LEN);
+  header[0] = HANDSHAKE_VERSION;
+  header.set(eph.publicKey, 1);
+  const cipher = xchacha20poly1305(key, nonce, header);
   const ciphertext = cipher.encrypt(payload);
 
-  // 0x01 || eph_pub(32) || nonce(24) || ciphertext+tag
-  // NOTE: the layer-2 sealed-handshake byte is intentionally pinned to
-  // 0x01 (LEGACY_FRAME_VERSION_V1), NOT the current FRAME_VERSION. The
-  // handshake lives outside the post-pairing session and uses raw
-  // XChaCha20Poly1305 on the device-pubkey-bearing first frame; the byte
-  // is a wire marker for `devices/bus.rs::handle_tunnel_frame`, not a
-  // signal of the post-session key schedule.
+  // 0x03 || eph_pub(32) || nonce(24) || ciphertext+tag
   const frame = new Uint8Array(1 + EPH_PUB_LEN + NONCE_LEN + ciphertext.length);
-  frame[0] = LEGACY_FRAME_VERSION_V1;
+  frame[0] = HANDSHAKE_VERSION;
   frame.set(eph.publicKey, 1);
   frame.set(nonce, 1 + EPH_PUB_LEN);
   frame.set(ciphertext, 1 + EPH_PUB_LEN + NONCE_LEN);
@@ -299,21 +312,72 @@ export function openHandshake(myPriv: Uint8Array, frame: Uint8Array): Uint8Array
   if (frame.length < 1 + EPH_PUB_LEN + NONCE_LEN + 16) {
     throw new Error('[crypto] sealed-handshake frame too short');
   }
-  // The layer-2 sealed-handshake byte is pinned to 0x01 — see sealHandshake.
-  if (frame[0] !== LEGACY_FRAME_VERSION_V1) {
+  if (frame[0] !== HANDSHAKE_VERSION) {
     throw new Error(`[crypto] bad handshake version: 0x${frame[0].toString(16)}`);
   }
   const ephPub = frame.slice(1, 1 + EPH_PUB_LEN);
   const nonce = frame.slice(1 + EPH_PUB_LEN, 1 + EPH_PUB_LEN + NONCE_LEN);
   const ciphertext = frame.slice(1 + EPH_PUB_LEN + NONCE_LEN);
 
-  const sharedKey = deriveSharedSecret(myPriv, ephPub);
+  const dh = deriveSharedSecret(myPriv, ephPub);
+  const salt = new Uint8Array(64);
+  salt.set(ephPub);
+  salt.set(x25519.getPublicKey(myPriv), 32);
+  const key = bootstrapKey(dh, salt, HKDF_INFO_HANDSHAKE);
   try {
-    const cipher = xchacha20poly1305(sharedKey, nonce);
+    const cipher = xchacha20poly1305(key, nonce, frame.slice(0, 1 + EPH_PUB_LEN));
     return cipher.decrypt(ciphertext);
   } catch {
     throw new Error('[crypto] handshake authentication failed');
   }
+}
+
+/** Open the core's bootstrap acknowledgement using a key distinct from both
+ * the device handshake key and the directional session keys. */
+export function openHandshakeAck(
+  staticDh: Uint8Array,
+  clientEphPub: Uint8Array,
+  frame: Uint8Array
+): Uint8Array {
+  if (staticDh.length !== 32 || clientEphPub.length !== 32) {
+    throw new Error('[crypto] acknowledgement key inputs must be 32 bytes');
+  }
+  if (frame.length < 1 + NONCE_LEN + 16 || frame[0] !== HANDSHAKE_ACK_VERSION) {
+    throw new Error('[crypto] unsupported handshake acknowledgement');
+  }
+  const aad = new Uint8Array(33);
+  aad[0] = HANDSHAKE_ACK_VERSION;
+  aad.set(clientEphPub, 1);
+  const key = bootstrapKey(staticDh, clientEphPub, HKDF_INFO_HANDSHAKE_ACK);
+  try {
+    return xchacha20poly1305(key, frame.slice(1, 1 + NONCE_LEN), aad).decrypt(
+      frame.slice(1 + NONCE_LEN)
+    );
+  } catch {
+    throw new Error('[crypto] handshake acknowledgement authentication failed');
+  }
+}
+
+/** Encode an acknowledgement for a core-side peer or local protocol fixture. */
+export function sealHandshakeAck(
+  staticDh: Uint8Array,
+  clientEphPub: Uint8Array,
+  plaintext: Uint8Array
+): Uint8Array {
+  if (staticDh.length !== 32 || clientEphPub.length !== 32) {
+    throw new Error('[crypto] acknowledgement key inputs must be 32 bytes');
+  }
+  const aad = new Uint8Array(33);
+  aad[0] = HANDSHAKE_ACK_VERSION;
+  aad.set(clientEphPub, 1);
+  const key = bootstrapKey(staticDh, clientEphPub, HKDF_INFO_HANDSHAKE_ACK);
+  const nonce = randomBytes(NONCE_LEN);
+  const ciphertext = xchacha20poly1305(key, nonce, aad).encrypt(plaintext);
+  const frame = new Uint8Array(1 + NONCE_LEN + ciphertext.length);
+  frame[0] = HANDSHAKE_ACK_VERSION;
+  frame.set(nonce, 1);
+  frame.set(ciphertext, 1 + NONCE_LEN);
+  return frame;
 }
 
 // -- replay tracker ----------------------------------------------------------

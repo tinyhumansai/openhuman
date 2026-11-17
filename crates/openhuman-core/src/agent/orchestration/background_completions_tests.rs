@@ -1,451 +1,611 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tinyagents_tasks::CompletionStatus;
 use tokio::sync::MutexGuard;
 
-/// Serializes every test that touches the global [`QUEUE`]. We reuse the
-/// crate-wide `TEST_ENV_LOCK` because `clear_all` is also reachable from the
-/// `threads::ops` purge test (which holds the same lock); a module-local
-/// mutex wouldn't prevent that cross-module race.
+/// The context these tests dispatch under: the calling task's own.
+fn cx() -> DispatchCtx {
+    DispatchCtx::ambient()
+}
+
+/// Serializes every test that touches the process-wide router registry. We reuse
+/// the crate-wide `TEST_ENV_LOCK` because `clear_all` sweeps every open
+/// workspace and is also reachable from the `threads::ops` purge test (which
+/// holds the same lock); a module-local mutex wouldn't prevent that cross-module
+/// race.
 fn test_guard() -> MutexGuard<'static, ()> {
     crate::config::TEST_ENV_LOCK.blocking_lock()
 }
 
-fn c(task: &str, agent: &str, summary: &str) -> CompletedBackgroundAgent {
-    CompletedBackgroundAgent {
-        task_id: task.into(),
-        agent_id: agent.into(),
-        summary: summary.into(),
-        parent_thread_id: Some("thread-1".into()),
-        outcome: BackgroundAgentOutcome::Completed,
-    }
+fn workspace() -> TestWorkspace {
+    TestWorkspace::new()
 }
 
-fn c_outcome(
-    task: &str,
-    agent: &str,
-    summary: &str,
-    outcome: BackgroundAgentOutcome,
-) -> CompletedBackgroundAgent {
-    CompletedBackgroundAgent {
-        outcome,
-        ..c(task, agent, summary)
-    }
+fn record(ws: &Path, session: &str, task: &str, summary: &str, thread: Option<&str>) {
+    futures::executor::block_on(record_completion(
+        &cx(),
+        ws,
+        session,
+        task,
+        "researcher",
+        summary,
+        thread.map(str::to_owned),
+    ));
+}
+
+fn record_admitted(ws: &Path, session: &str, task: &str, summary: &str, thread: &str) {
+    let target = CompletionTarget::new(
+        cx(),
+        ws.to_path_buf(),
+        session.to_owned(),
+        Some(thread.to_owned()),
+    )
+    .expect("the parent thread admits a new child");
+    futures::executor::block_on(target.completed(task, "researcher", summary.to_owned()));
+}
+
+fn pending_ids(ws: &Path, thread: &str) -> Vec<String> {
+    pending_for(ws, thread)
+        .into_iter()
+        .map(|r| r.task_id)
+        .collect()
 }
 
 #[test]
-fn record_and_drain_is_session_scoped_and_batches() {
+fn record_is_thread_scoped_and_batches_in_completion_order() {
     let _guard = test_guard();
-    let s = "sess-batch-A";
-    record_completion(s, "sub-1", "researcher", "eiffel", Some("thread-A".into()));
-    record_completion(s, "sub-2", "researcher", "liberty", Some("thread-A".into()));
-    record_completion("sess-other", "sub-9", "researcher", "x", None);
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-A", "sub-1", "eiffel", Some("thread-A"));
+    record(w, "sess-A", "sub-2", "liberty", Some("thread-A"));
+    record(w, "sess-B", "sub-9", "x", Some("thread-B"));
 
-    assert_eq!(pending_count(s), 2);
-    assert!(has_pending(s));
+    assert_eq!(pending_ids(w, "thread-A"), ["sub-1", "sub-2"]);
+    assert_eq!(pending_ids(w, "thread-B"), ["sub-9"]);
 
-    let drained = take_pending(s);
-    assert_eq!(
-        drained
-            .iter()
-            .map(|c| c.task_id.as_str())
-            .collect::<Vec<_>>(),
-        ["sub-1", "sub-2"]
-    );
-    assert_eq!(batch_thread_id(&drained).as_deref(), Some("thread-A"));
-    assert!(!has_pending(s));
-    assert_eq!(take_pending(s), vec![]);
-    assert_eq!(pending_count("sess-other"), 1);
-    take_pending("sess-other");
+    let router = router_for_workspace(w);
+    let claimed = router.claim_pending("thread-A", usize::MAX).unwrap();
+    assert_eq!(claimed.len(), 2, "everything ready is claimed as one batch");
+    assert_eq!(claimed[0].result.text, "eiffel");
+    assert!(router
+        .claim_pending("thread-A", usize::MAX)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
 fn record_is_idempotent_on_task_id() {
     let _guard = test_guard();
-    let s = "sess-dupe";
-    record_completion(s, "sub-1", "researcher", "first", None);
-    record_completion(s, "sub-1", "researcher", "second", None);
-    assert_eq!(pending_count(s), 1);
-    take_pending(s);
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-dupe", "sub-1", "first", Some("thread-dupe"));
+    record(w, "sess-dupe", "sub-1", "second", Some("thread-dupe"));
+    let pending = pending_for(w, "thread-dupe");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].result.text, "first", "the first record wins");
 }
 
 #[test]
-fn batched_notice_tags_each_with_process_id() {
-    let notice = build_batched_notice(&[
-        c("sub-abc", "researcher", "Eiffel Tower: built 1889 …"),
-        c("sub-def", "researcher", "Colosseum: AD 70–80 …"),
-    ])
-    .expect("non-empty batch");
-
-    assert!(notice.contains("2 background sub-agents finished"));
-    assert!(notice.contains("<background_agent_result id=\"sub-abc\" agent=\"researcher\">"));
-    assert!(notice.contains("Eiffel Tower: built 1889"));
-    assert!(notice.contains("<background_agent_result id=\"sub-def\" agent=\"researcher\">"));
-    assert!(notice.contains("</background_agent_result>"));
-}
-
-#[test]
-fn singular_wording_and_empty_summary_fallback() {
-    let notice = build_batched_notice(&[c("sub-x", "researcher", "   ")]).unwrap();
-    assert!(notice.contains("1 background sub-agent finished"));
-    assert!(notice.contains("(no output reported)"));
-}
-
-#[test]
-fn empty_batch_is_none() {
-    assert_eq!(build_batched_notice(&[]), None);
-}
-
-#[test]
-fn discard_for_thread_removes_matching_across_sessions() {
+fn headless_completion_is_dropped() {
     let _guard = test_guard();
-    // Two sessions, each with a completion for the doomed thread plus one
-    // for a thread that must survive.
-    record_completion(
-        "sess-d1",
-        "sub-a",
-        "researcher",
-        "x",
-        Some("thread-DEL".into()),
-    );
-    record_completion(
-        "sess-d1",
-        "sub-b",
-        "researcher",
-        "y",
-        Some("thread-KEEP".into()),
-    );
-    record_completion(
-        "sess-d2",
-        "sub-c",
-        "researcher",
-        "z",
-        Some("thread-DEL".into()),
-    );
-    // Headless completion (no parent thread) must survive.
-    record_completion("sess-d2", "sub-d", "researcher", "w", None);
-
-    let removed = discard_for_thread("thread-DEL");
-    assert_eq!(removed, 2, "both thread-DEL completions removed");
-
-    // thread-KEEP survives in sess-d1; sess-d2 keeps only the headless one.
-    assert_eq!(pending_count("sess-d1"), 1);
-    let d1 = take_pending("sess-d1");
-    assert_eq!(d1[0].task_id, "sub-b");
-
-    assert_eq!(pending_count("sess-d2"), 1);
-    let d2 = take_pending("sess-d2");
-    assert_eq!(d2[0].task_id, "sub-d");
-
-    // Idempotent: nothing left to discard.
-    assert_eq!(discard_for_thread("thread-DEL"), 0);
+    let ws = workspace();
+    record(ws.path(), "sess-headless", "sub-1", "x", None);
+    assert!(router_for_workspace(ws.path())
+        .claim_pending("", usize::MAX)
+        .unwrap()
+        .is_empty());
+    assert!(recover_pending_threads(&cx(), ws.path()).is_empty());
 }
 
 #[test]
-fn record_after_discard_is_dropped_by_tombstone() {
+fn the_session_is_mapped_to_its_thread_for_the_idle_gate() {
     let _guard = test_guard();
-    // Deleting the thread tombstones it...
-    discard_for_thread("thread-race");
-    // ...so a straggler completion that records *after* the sweep (the
-    // cooperative-abort race) is dropped rather than queued.
-    record_completion(
-        "sess-race",
-        "sub-late",
-        "researcher",
-        "stale",
-        Some("thread-race".into()),
-    );
+    let ws = workspace();
+    record(ws.path(), "sess-map", "sub-1", "x", Some("thread-map"));
     assert_eq!(
-        pending_count("sess-race"),
-        0,
-        "late completion for a cancelled thread must be dropped"
+        thread_for_session(&cx(), "sess-map").as_deref(),
+        Some("thread-map")
     );
-    // A completion for a different, live thread still records normally.
-    record_completion(
-        "sess-race",
-        "sub-ok",
-        "researcher",
-        "fresh",
-        Some("thread-live-race".into()),
-    );
-    assert_eq!(pending_count("sess-race"), 1);
-    take_pending("sess-race");
-}
-
-#[test]
-fn clear_all_empties_the_queue() {
-    let _guard = test_guard();
-    record_completion("sess-c1", "sub-1", "researcher", "a", Some("t1".into()));
-    record_completion("sess-c2", "sub-2", "researcher", "b", None);
-
-    let removed = clear_all();
-    assert!(
-        removed >= 2,
-        "clear_all should report at least the two just queued, got {removed}"
-    );
-    assert!(!has_pending("sess-c1"));
-    assert!(!has_pending("sess-c2"));
-    assert_eq!(clear_all(), 0);
-}
-
-#[test]
-fn mark_collected_sweeps_the_queued_entry() {
-    let _guard = test_guard();
-    let s = "sess-mc-sweep";
-    record_completion(s, "mc-sub-1", "researcher", "collected", None);
-    record_completion(s, "mc-sub-2", "researcher", "keep", None);
-
-    // The parent collected sub-1 inline, so it must not be delivered again;
-    // sub-2 (never waited on) survives for normal idle delivery.
-    assert!(mark_collected("mc-sub-1"), "swept the queued entry");
-    assert_eq!(pending_count(s), 1);
-    let drained = take_pending(s);
-    assert_eq!(drained[0].task_id, "mc-sub-2");
-}
-
-#[test]
-fn record_after_mark_collected_is_dropped_by_tombstone() {
-    let _guard = test_guard();
-    // Collecting inline tombstones the task id...
-    assert!(
-        !mark_collected("mc-late"),
-        "nothing queued yet, so nothing swept"
-    );
-    // ...so a completion that records *after* (the wait-before-record order)
-    // is dropped rather than queued for a duplicate delivery turn.
-    record_completion("sess-mc-race", "mc-late", "researcher", "stale", None);
+    // A web-channel session id carries its thread in the JSON body.
+    let web = r#"{"client_id":"c","thread_id":"thread-json"}"#;
     assert_eq!(
-        pending_count("sess-mc-race"),
-        0,
-        "a completion collected inline must not be re-delivered"
+        thread_for_session(&cx(), web).as_deref(),
+        Some("thread-json")
     );
+    assert_eq!(thread_for_session(&cx(), "cron:job-1"), None);
 }
 
 #[test]
-fn mark_collected_is_task_scoped() {
+fn discard_for_thread_removes_matching_and_drops_stragglers() {
     let _guard = test_guard();
-    let s = "sess-mc-scope";
-    // Only the collected task is suppressed; an un-waited sibling still
-    // surfaces (the genuinely-later fire-and-forget feature is preserved).
-    mark_collected("mc-scope-1");
-    record_completion(s, "mc-scope-2", "researcher", "later", None);
-    assert_eq!(pending_count(s), 1);
-    assert!(has_pending(s));
-    take_pending(s);
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-d1", "sub-a", "x", Some("thread-DEL"));
+    record(w, "sess-d1", "sub-b", "y", Some("thread-KEEP"));
+    record(w, "sess-d2", "sub-c", "z", Some("thread-DEL"));
+
+    assert_eq!(discard_for_thread(&cx(), w, "thread-DEL"), 2);
+    assert!(pending_ids(w, "thread-DEL").is_empty());
+    assert_eq!(pending_ids(w, "thread-KEEP"), ["sub-b"]);
 }
 
 #[test]
-fn collected_tombstone_is_bounded() {
+fn record_after_discard_is_dropped_by_the_cancelled_parent() {
     let _guard = test_guard();
-    for i in 0..(COLLECTED_TOMBSTONE_CAP + 50) {
-        mark_collected(&format!("mc-bound-{i}"));
-    }
-    let len = queue()
-        .lock()
-        .expect("queue poisoned")
-        .collected_tasks
-        .len();
-    assert!(
-        len <= COLLECTED_TOMBSTONE_CAP,
-        "collected tombstone must stay bounded, got {len}"
-    );
+    let ws = workspace();
+    let w = ws.path();
+    // The thread is deleted before this process ever saw a child of it: the
+    // delete still writes the cancelled-parent marker in the caller's workspace.
+    discard_for_thread(&cx(), w, "thread-race");
+    // A straggler that records after the sweep (the cooperative-abort race) is
+    // dropped rather than queued.
+    record(w, "sess-race", "sub-late", "stale", Some("thread-race"));
+    assert!(pending_ids(w, "thread-race").is_empty());
+    // A different, live thread still records normally.
+    record(w, "sess-race", "sub-ok", "fresh", Some("thread-live-race"));
+    assert_eq!(pending_ids(w, "thread-live-race"), ["sub-ok"]);
 }
 
-// ── #4896: failure / awaiting-user delivery ─────────────────────────────
+#[test]
+fn a_child_registering_after_its_thread_was_deleted_is_aborted_and_stays_dropped() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    assert!(!mark_stopped_task_if_thread_stopped(
+        &cx(),
+        w,
+        "thread-del-reg",
+        "sub-a"
+    ));
+    discard_for_thread(&cx(), w, "thread-del-reg");
+
+    // A child spawned before the delete registers after it: it must be aborted,
+    // and registering must not lift the delete (unlike a stopped thread, a
+    // deleted one never reopens).
+    assert!(mark_stopped_task_if_thread_stopped(
+        &cx(),
+        w,
+        "thread-del-reg",
+        "sub-b"
+    ));
+    record(w, "sess-del", "sub-a", "straggler", Some("thread-del-reg"));
+    record(w, "sess-del", "sub-b", "late child", Some("thread-del-reg"));
+    assert!(pending_ids(w, "thread-del-reg").is_empty());
+}
+
+#[test]
+fn clear_all_withdraws_every_pending_completion() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-c1", "sub-1", "a", Some("t1"));
+    record(w, "sess-c2", "sub-2", "b", Some("t2"));
+
+    let removed = clear_all(&cx(), w);
+    assert_eq!(removed, 2);
+    assert!(pending_ids(w, "t1").is_empty());
+    assert!(pending_ids(w, "t2").is_empty());
+    assert_eq!(clear_all(&cx(), w), 0);
+}
+
+#[test]
+fn clear_all_is_scoped_to_its_workspace() {
+    let _guard = test_guard();
+    let purged = workspace();
+    let other = workspace();
+    record(purged.path(), "sess-p", "sub-1", "a", Some("t-purged"));
+    record(other.path(), "sess-o", "sub-2", "b", Some("t-other"));
+
+    assert_eq!(clear_all(&cx(), purged.path()), 1);
+
+    assert!(pending_ids(purged.path(), "t-purged").is_empty());
+    assert_eq!(
+        pending_ids(other.path(), "t-other"),
+        ["sub-2"],
+        "another workspace's completions are untouched"
+    );
+    record(other.path(), "sess-o", "sub-3", "c", Some("t-other"));
+    assert_eq!(pending_ids(other.path(), "t-other").len(), 2);
+}
+
+#[test]
+fn recovery_is_claimed_once_per_workspace() {
+    let _guard = test_guard();
+    let ws = workspace();
+    assert!(claim_recovery(ws.path()));
+    assert!(!claim_recovery(ws.path()));
+    forget_workspace_for_test(ws.path());
+    assert!(claim_recovery(ws.path()), "a restart scans again");
+}
 
 #[test]
 fn record_failure_queues_a_framed_failure_for_delivery() {
     let _guard = test_guard();
-    let s = "sess-fail";
-    record_failure(
-        s,
-        "sub-f",
+    let ws = workspace();
+    let w = ws.path();
+    futures::executor::block_on(record_failure(
+        &cx(),
+        w,
+        "sess-fail",
+        "sub-bad",
         "researcher",
-        "provider 500: inference failed",
-        Some("thread-F".into()),
-    );
-    // The failure rode the SAME queue successes use → it will be delivered.
-    assert_eq!(pending_count(s), 1);
-    let drained = take_pending(s);
-    assert_eq!(drained[0].outcome, BackgroundAgentOutcome::Failed);
-    assert!(drained[0].summary.starts_with("[SUBAGENT_FAILED]"));
-    assert!(drained[0]
-        .summary
-        .contains("provider 500: inference failed"));
+        "provider exploded",
+        Some("thread-fail".into()),
+    ));
+    let pending = pending_for(w, "thread-fail");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, CompletionStatus::Failed);
+    assert!(pending[0].result.text.starts_with("[SUBAGENT_FAILED]"));
+    assert!(pending[0].result.text.contains("provider exploded"));
 }
 
 #[test]
-fn record_awaiting_input_queues_a_framed_needs_input_for_delivery() {
+fn the_outcome_survives_a_claim() {
     let _guard = test_guard();
-    let s = "sess-await";
-    record_awaiting_input(
-        s,
-        "sub-a",
+    let ws = workspace();
+    let w = ws.path();
+    futures::executor::block_on(record_outcome(
+        &cx(),
+        w,
+        "sess-out",
+        "sub-1",
         "researcher",
-        "Which repo should I open the PR against?",
-        true,
-        Some("thread-A".into()),
-    );
-    assert_eq!(pending_count(s), 1);
-    let drained = take_pending(s);
-    assert_eq!(drained[0].outcome, BackgroundAgentOutcome::AwaitingInput);
-    assert!(drained[0].summary.starts_with("[SUBAGENT_AWAITING_USER]"));
-    assert!(drained[0].summary.contains("Which repo"));
-}
-
-#[test]
-fn notice_renders_failure_and_awaiting_with_distinct_tags() {
-    let notice = build_batched_notice(&[
-        c_outcome(
-            "sub-ok",
-            "researcher",
-            "all good",
-            BackgroundAgentOutcome::Completed,
-        ),
-        c_outcome(
-            "sub-bad",
-            "researcher",
-            "[SUBAGENT_FAILED] boom",
-            BackgroundAgentOutcome::Failed,
-        ),
-        c_outcome(
-            "sub-ask",
-            "researcher",
-            "[SUBAGENT_NEEDS_INPUT] which repo?",
-            BackgroundAgentOutcome::AwaitingInput,
-        ),
-    ])
-    .expect("non-empty batch");
-
-    // The header now tells the agent to surface failures / awaiting-input.
-    assert!(notice.contains("FAILED or NEED INPUT"));
-    // Each outcome renders under its own tag so a failure is not presented
-    // as a normal completion.
-    assert!(notice.contains("<background_agent_result id=\"sub-ok\" agent=\"researcher\">"));
-    assert!(notice.contains("<background_agent_failure id=\"sub-bad\" agent=\"researcher\">"));
-    assert!(notice.contains("[SUBAGENT_FAILED] boom"));
-    assert!(notice.contains("<background_agent_needs_input id=\"sub-ask\" agent=\"researcher\">"));
-    assert!(notice.contains("[SUBAGENT_NEEDS_INPUT] which repo?"));
-}
-
-#[test]
-fn empty_summary_fallback_is_outcome_specific() {
-    let failed = build_batched_notice(&[c_outcome(
-        "sub-e",
-        "r",
-        "   ",
+        "[SUBAGENT_FAILED] boom",
+        Some("thread-out".into()),
         BackgroundAgentOutcome::Failed,
-    )])
-    .unwrap();
-    assert!(failed.contains("(failed with no detail reported)"));
-
-    let awaiting = build_batched_notice(&[c_outcome(
-        "sub-e",
-        "r",
-        "",
-        BackgroundAgentOutcome::AwaitingInput,
-    )])
-    .unwrap();
-    assert!(awaiting.contains("(the sub-agent paused awaiting user input)"));
-}
-
-#[test]
-fn record_outcome_preserves_the_outcome_through_a_drain() {
-    // Guards the requeue path (background_delivery::requeue re-enqueues via
-    // record_outcome): a failed batch that fails delivery must not be
-    // downgraded to a success on retry.
-    let _guard = test_guard();
-    let s = "sess-preserve";
-    record_outcome(
-        s,
-        "sub-p",
-        "researcher",
-        "[SUBAGENT_FAILED] x",
-        None,
-        BackgroundAgentOutcome::Failed,
+    ));
+    let claimed = router_for_workspace(w)
+        .claim_pending("thread-out", usize::MAX)
+        .unwrap();
+    assert_eq!(
+        BackgroundAgentOutcome::of(&claimed[0]),
+        BackgroundAgentOutcome::Failed
     );
-    let drained = take_pending(s);
-    assert_eq!(drained[0].outcome, BackgroundAgentOutcome::Failed);
 }
 
 #[test]
 fn discard_pending_for_thread_blocks_late_results_until_the_next_turn() {
     let _guard = test_guard();
-    record_completion(
+    let ws = workspace();
+    let w = ws.path();
+    record(
+        w,
         "sess-stop",
         "sub-stop-a",
-        "researcher",
         "finished before Stop",
-        Some("thread-stop-live".into()),
+        Some("thread-stop-live"),
     );
-    record_completion(
+    record(
+        w,
         "sess-stop",
         "sub-stop-keep",
-        "researcher",
         "other thread",
-        Some("thread-stop-other".into()),
+        Some("thread-stop-other"),
     );
 
     // Stop drops the undelivered result so it can't start a delivery turn...
-    assert_eq!(discard_pending_for_thread("thread-stop-live"), 1);
-    assert_eq!(pending_count("sess-stop"), 1);
-    assert_eq!(take_pending("sess-stop")[0].task_id, "sub-stop-keep");
+    assert_eq!(discard_pending_for_thread(&cx(), "thread-stop-live"), 1);
+    assert!(pending_ids(w, "thread-stop-live").is_empty());
+    assert_eq!(pending_ids(w, "thread-stop-other"), ["sub-stop-keep"]);
 
     // A late completion from the stopped generation loses the cooperative
     // abort race and is rejected.
-    record_completion(
+    record(
+        w,
         "sess-stop",
         "sub-stop-later",
-        "researcher",
-        "late stopped result",
-        Some("thread-stop-live".into()),
+        "late",
+        Some("thread-stop-live"),
     );
-    assert_eq!(pending_count("sess-stop"), 0);
+    assert!(pending_ids(w, "thread-stop-live").is_empty());
 
     // Completing Stop keeps the thread gate until a new user turn begins, so a
     // child that registers after the cancellation sweep is still rejected.
-    finish_stop_for_thread("thread-stop-live", &["sub-stop-later".into()]);
-    record_completion(
+    finish_stop_for_thread(&cx(), "thread-stop-live", &["sub-stop-later".into()]);
+    record(
+        w,
         "sess-stop",
         "sub-stop-later",
-        "researcher",
-        "late stopped result after the next turn starts",
-        Some("thread-stop-live".into()),
+        "again",
+        Some("thread-stop-live"),
     );
-    assert_eq!(pending_count("sess-stop"), 0);
+    assert!(pending_ids(w, "thread-stop-live").is_empty());
 
     // A child that was spawned before Stop but registers after the registry
     // sweep gets its own tombstone before the thread can be reopened.
     assert!(mark_stopped_task_if_thread_stopped(
+        &cx(),
+        w,
         "thread-stop-live",
         "sub-stop-registered-late"
     ));
 
-    resume_stopped_thread("thread-stop-live");
-    record_completion(
+    resume_stopped_thread(&cx(), "thread-stop-live");
+    record(
+        w,
         "sess-stop",
         "sub-stop-registered-late",
-        "researcher",
-        "late registration result",
-        Some("thread-stop-live".into()),
+        "late reg",
+        Some("thread-stop-live"),
     );
-    assert_eq!(pending_count("sess-stop"), 0);
-    record_completion(
+    assert!(
+        pending_ids(w, "thread-stop-live").is_empty(),
+        "the stopped generation's task ids stay tombstoned after the thread reopens"
+    );
+    record_admitted(
+        w,
         "sess-stop",
         "sub-stop-new-turn",
-        "researcher",
-        "next turn's result",
-        Some("thread-stop-live".into()),
+        "next turn",
+        "thread-stop-live",
     );
-    assert_eq!(pending_count("sess-stop"), 1);
-    let _ = take_pending("sess-stop");
+    assert_eq!(pending_ids(w, "thread-stop-live"), ["sub-stop-new-turn"]);
 }
 
 #[test]
-fn resuming_a_thread_removes_its_stop_order_entry() {
-    let mut state = QueueState::default();
-    state.stop("thread-resume");
+fn a_stop_before_a_restart_is_lifted_by_the_first_new_spawn() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-rs", "sub-1", "x", Some("thread-restart-stop"));
+    assert_eq!(discard_pending_for_thread(&cx(), "thread-restart-stop"), 1);
 
-    state.resume_thread("thread-resume");
-
-    assert!(!state.stopped_threads.contains("thread-resume"));
-    assert!(state.stopped_order.is_empty());
+    // A restart: the in-memory gate is gone, the durable cancelled-parent
+    // marker is not.
+    forget_workspace_for_test(w);
+    assert!(!mark_stopped_task_if_thread_stopped(
+        &cx(),
+        w,
+        "thread-restart-stop",
+        "sub-new"
+    ));
+    record_admitted(
+        w,
+        "sess-rs",
+        "sub-new",
+        "after restart",
+        "thread-restart-stop",
+    );
+    assert_eq!(
+        pending_ids(w, "thread-restart-stop"),
+        ["sub-new"],
+        "a new spawn proves the user re-engaged the thread"
+    );
 }
+
+#[test]
+fn undelivered_completions_are_found_again_after_a_restart() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(
+        w,
+        "sess-boot",
+        "sub-1",
+        "unseen result",
+        Some("thread-boot"),
+    );
+    record(
+        w,
+        "sess-boot",
+        "sub-2",
+        "delivered result",
+        Some("thread-boot-done"),
+    );
+    let router = router_for_workspace(w);
+    let claimed = router
+        .claim_pending("thread-boot-done", usize::MAX)
+        .unwrap();
+    let receipts: Vec<_> = claimed
+        .iter()
+        .map(|record| record.receipt().expect("claimed record has receipt"))
+        .collect();
+    router.mark_delivered(&receipts).unwrap();
+    drop(router);
+
+    forget_workspace_for_test(w);
+    let threads = recover_pending_threads(&cx(), w);
+
+    assert_eq!(
+        threads,
+        ["thread-boot"],
+        "only the undelivered thread is recovered"
+    );
+    assert_eq!(
+        pending_for(w, "thread-boot")[0].result.text,
+        "unseen result"
+    );
+    assert!(router_for_thread(&cx(), "thread-boot").is_some());
+}
+
+#[test]
+fn a_delete_survives_a_restart_and_is_not_lifted_by_a_new_spawn() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-dr", "sub-1", "x", Some("thread-del-restart"));
+    assert_eq!(discard_for_thread(&cx(), w, "thread-del-restart"), 1);
+
+    // A restart: memory is gone, the durable markers are not. A late child for
+    // the deleted thread must be aborted rather than treated as a user returning
+    // to a stopped thread, and its result must stay dropped.
+    forget_workspace_for_test(w);
+    assert!(mark_stopped_task_if_thread_stopped(
+        &cx(),
+        w,
+        "thread-del-restart",
+        "sub-late"
+    ));
+    record(
+        w,
+        "sess-dr",
+        "sub-late",
+        "stale",
+        Some("thread-del-restart"),
+    );
+    assert!(pending_ids(w, "thread-del-restart").is_empty());
+}
+
+#[test]
+fn in_memory_gates_drop_a_result_even_without_a_durable_marker() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    // The gates are what protects the process if the durable cancel write fails.
+    state().deleted_threads.insert("thread-gate-del".into());
+    state().stopped_threads.insert("thread-gate-stop".into());
+    record(w, "sess-g", "sub-1", "x", Some("thread-gate-del"));
+    record(w, "sess-g", "sub-2", "y", Some("thread-gate-stop"));
+    assert!(pending_ids(w, "thread-gate-del").is_empty());
+    assert!(pending_ids(w, "thread-gate-stop").is_empty());
+    state().deleted_threads.remove("thread-gate-del");
+    state().stopped_threads.remove("thread-gate-stop");
+}
+
+#[test]
+fn clear_all_also_withdraws_a_completion_a_delivery_has_leased() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-l", "sub-1", "x", Some("thread-leased"));
+    let router = router_for_workspace(w);
+    // A delivery claimed it: the record is leased but still pending in the store.
+    let claimed = router.claim_pending("thread-leased", usize::MAX).unwrap();
+    assert_eq!(claimed.len(), 1);
+    let receipts: Vec<_> = claimed
+        .iter()
+        .map(|record| record.receipt().expect("claimed record has receipt"))
+        .collect();
+
+    assert_eq!(clear_all(&cx(), w), 1);
+
+    assert!(pending_ids(w, "thread-leased").is_empty());
+    assert_eq!(
+        router.mark_delivered(&receipts).unwrap(),
+        0,
+        "nothing left to settle"
+    );
+}
+
+#[test]
+fn the_session_cache_evicts_its_oldest_mapping_only() {
+    let _guard = test_guard();
+    for i in 0..(SESSION_THREADS_CAP + 5) {
+        note_session_thread(
+            &cx(),
+            &format!("evict-sess-{i}"),
+            &format!("evict-thread-{i}"),
+        );
+    }
+    assert_eq!(
+        thread_for_session(&cx(), "evict-sess-0"),
+        None,
+        "oldest evicted"
+    );
+    for survivor in [5, SESSION_THREADS_CAP / 2, SESSION_THREADS_CAP + 4] {
+        assert_eq!(
+            thread_for_session(&cx(), &format!("evict-sess-{survivor}")).as_deref(),
+            Some(format!("evict-thread-{survivor}").as_str()),
+            "a surviving session still resolves to its own thread"
+        );
+    }
+}
+
+#[test]
+fn a_delete_marker_outlives_compaction() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-cm", "sub-1", "x", Some("thread-compact"));
+    discard_for_thread(&cx(), w, "thread-compact");
+
+    // Settled records expire; the deletion must not.
+    router_for_workspace(w)
+        .compact(std::time::Duration::ZERO)
+        .unwrap();
+    forget_workspace_for_test(w);
+    assert!(mark_stopped_task_if_thread_stopped(
+        &cx(),
+        w,
+        "thread-compact",
+        "sub-late"
+    ));
+}
+
+#[test]
+fn deleting_a_thread_with_only_compacted_completion_history_stays_durable() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(
+        w,
+        "sess-cm-history",
+        "sub-1",
+        "x",
+        Some("thread-cm-history"),
+    );
+    let router = router_for_workspace(w);
+    let claimed = router
+        .claim_pending("thread-cm-history", usize::MAX)
+        .unwrap();
+    let receipts: Vec<_> = claimed
+        .iter()
+        .map(|record| record.receipt().expect("claimed record has receipt"))
+        .collect();
+    assert_eq!(router.mark_delivered(&receipts).unwrap(), 1);
+    router.compact(std::time::Duration::ZERO).unwrap();
+
+    // Simulate a restart before the delete request. The completion row is
+    // compacted, but the owner's parent lifecycle marker still records that
+    // this thread had background work.
+    forget_workspace_for_test(w);
+    assert_eq!(discard_for_thread(&cx(), w, "thread-cm-history"), 0);
+    forget_workspace_for_test(w);
+    assert!(mark_stopped_task_if_thread_stopped(
+        &cx(),
+        w,
+        "thread-cm-history",
+        "sub-late"
+    ));
+}
+
+#[test]
+fn deleting_a_thread_that_never_used_background_work_writes_nothing() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    assert_eq!(discard_for_thread(&cx(), w, "thread-plain"), 0);
+    assert!(
+        entry_for(w).store.list(None).is_empty(),
+        "no marker is persisted for an ordinary thread"
+    );
+    // The in-memory gate still holds for this process.
+    record(w, "sess-pl", "sub-1", "x", Some("thread-plain"));
+    assert!(pending_ids(w, "thread-plain").is_empty());
+}
+
+#[test]
+fn a_late_record_for_a_deleted_thread_is_dropped_by_the_durable_marker_alone() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let w = ws.path();
+    record(w, "sess-dm", "sub-1", "x", Some("thread-dm"));
+    discard_for_thread(&cx(), w, "thread-dm");
+    // A restart empties the in-memory gates; the marker on disk still decides.
+    forget_workspace_for_test(w);
+    record(w, "sess-dm", "sub-late", "stale", Some("thread-dm"));
+    assert!(pending_ids(w, "thread-dm").is_empty());
+}
+
+#[test]
+fn a_completion_for_a_removed_workspace_does_not_recreate_it() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let gone = ws.path().join("reset-away");
+    record(&gone, "sess-gone", "sub-1", "x", Some("thread-gone"));
+    assert!(!gone.exists(), "the workspace directory is not recreated");
+}
+
+#[path = "background_completions_migration_tests.rs"]
+mod migration_tests;

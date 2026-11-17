@@ -44,11 +44,11 @@ export function MemoryChips({
   return (
     <div
       data-slot="memory-chips"
-      className={cn('flex w-full max-w-sm flex-col gap-2', className)}
+      className={cn('flex w-full flex-col gap-2', className)}
       {...props}>
       <div className="flex items-center gap-1.5">
-        <BrainIcon className="text-foreground/30 size-3.5" />
-        <span className={cn(mono, 'text-foreground/35')}>
+        <BrainIcon className="text-muted-foreground size-3.5" />
+        <span className={cn(mono, 'text-muted-foreground')}>
           {fresh > 0 ? headingRememberedLabel(fresh) : headingIdleLabel}
         </span>
       </div>
@@ -60,7 +60,7 @@ export function MemoryChips({
             className={cn(
               'fade-in zoom-in-95 animate-in fill-mode-both group flex items-center gap-1 rounded-full py-1 pr-1 pl-2.5 text-xs duration-300',
               chip.change === 'existing'
-                ? cn(field, 'text-foreground/55')
+                ? cn(field, 'text-muted-foreground')
                 : 'bg-blue-500/12 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300'
             )}>
             {chip.text}

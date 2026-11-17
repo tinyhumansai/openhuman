@@ -89,7 +89,7 @@ pub async fn reset_local_data(
     // below to fail with `ERROR_SHARING_VIOLATION` (os error 32). Drop
     // the writer guard now so the background flushing thread exits and
     // the file handle is closed before the removal walks the tree.
-    let log_guard_dropped = openhuman_core::core::logging::shutdown_file_guard();
+    let log_guard_dropped = openhuman_rpc::embed::process::shutdown_file_guard();
     log::info!("[core] reset_local_data: shutdown_file_guard dropped guard = {log_guard_dropped}");
 
     // ── 4. Remove the paths ─────────────────────────────────────────────
@@ -319,17 +319,21 @@ async fn fetch_data_paths(user_id: Option<String>) -> Result<ResolvedDataPaths, 
         .send()
         .await
         .map_err(|e| format!("config_get_data_paths request failed: {e}"))?;
-    if !res.status().is_success() {
-        return Err(format!("config_get_data_paths http {}", res.status()));
-    }
-    let envelope: serde_json::Value = res
-        .json()
+    let status = res.status().as_u16();
+    let body = res
+        .text()
         .await
-        .map_err(|e| format!("config_get_data_paths decode failed: {e}"))?;
-    // JSON-RPC envelope wraps the `Outcome` result twice:
-    // `{ "result": { "result": { ...paths... }, "logs": [...] } }`.
-    let inner = envelope
-        .pointer("/result/result")
+        .map_err(|e| format!("config_get_data_paths read failed: {e}"))?;
+    parse_data_paths(status, &body)
+}
+
+/// Decodes a `config_get_data_paths` response. A refusal arrives as a JSON-RPC
+/// error on `200 OK`; `decode_response` surfaces its message to the toast.
+fn parse_data_paths(status: u16, body: &str) -> Result<ResolvedDataPaths, String> {
+    let outcome = openhuman_rpc::decode_response(status, body)?;
+    // The `Outcome` is wrapped once more: `{ "result": { ...paths... }, "logs": [...] }`.
+    let inner = outcome
+        .get("result")
         .ok_or_else(|| "config_get_data_paths missing /result/result".to_string())?;
     let current = inner
         .get("current_openhuman_dir")

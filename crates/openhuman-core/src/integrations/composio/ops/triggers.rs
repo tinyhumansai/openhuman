@@ -13,16 +13,16 @@
 use crate::config::Config;
 use crate::core::Outcome;
 
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::{
     ComposioActiveTriggersResponse, ComposioAvailableTriggersResponse,
     ComposioCreateTriggerRequest, ComposioCreateTriggerResponse, ComposioDisableTriggerRequest,
     ComposioDisableTriggerResponse, ComposioEnableTriggerRequest, ComposioEnableTriggerResponse,
     ComposioGithubReposResponse, ComposioListAvailableTriggersRequest,
-    ComposioListGithubReposRequest, ComposioListTriggerHistoryRequest, ComposioListTriggersRequest,
-    ComposioTriggerHistoryResult,
+    ComposioListGithubReposRequest, ComposioListTriggersRequest, ComposioTriggerHistoryResult,
 };
 use super::error_utils::{report_composio_op_error, OpResult};
+use tinyconnectors_bus::names::methods;
 
 pub async fn composio_list_github_repos(
     config: &Config,
@@ -145,22 +145,38 @@ pub async fn composio_enable_trigger(
             trigger_config,
         },
     )
-    .await
-    .map_err(|e| {
-        report_composio_op_error("enable_trigger", &anyhow::anyhow!("{e}"));
-        // Enabling is the one trigger call a user drives directly from a
-        // settings screen, so its failures are mapped to something a person can
-        // act on ("reconnect GitHub") rather than the provider's own wording.
-        let class = tinyconnectors::execute::classify_composio_error(slug, &e);
-        let mapped = tinyconnectors::execute::format_provider_error(slug, &e);
-        tracing::warn!(
-            slug = %slug,
-            connection_id = %connection_id,
-            class = class.as_str(),
-            "[composio] enable_trigger failed; surfacing mapped error"
-        );
-        mapped
-    })?;
+    .await;
+    let resp = match resp {
+        Ok(response) => response,
+        Err(e) => {
+            if e.contains("MODULE_CALL_REPORTED:") {
+                return Err(e);
+            }
+            report_composio_op_error("enable_trigger", &anyhow::anyhow!("{e}"));
+            // Enabling is the one trigger call a user drives directly from a
+            // settings screen, so its failures are mapped to something a person can
+            // act on ("reconnect GitHub") rather than the provider's own wording.
+            let classified: tinyconnectors_bus::ProviderError =
+                crate::modules::client(config.clone())
+                    .call(
+                        "tinyconnectors",
+                        methods::CLASSIFY_ERROR,
+                        (tinyconnectors_bus::ClassifyErrorRequest {
+                            tool: slug.to_owned(),
+                            message: e,
+                        },),
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+            tracing::warn!(
+                slug = %slug,
+                connection_id = %connection_id,
+                class = classified.class.as_str(),
+                "[composio] enable_trigger failed; surfacing mapped error"
+            );
+            return Err(classified.message);
+        }
+    };
     let trigger_id = resp.trigger_id.clone();
     Ok(Outcome::new(
         resp,
@@ -194,6 +210,7 @@ pub async fn composio_disable_trigger(
 }
 
 pub async fn composio_list_trigger_history(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     limit: Option<usize>,
 ) -> OpResult<Outcome<ComposioTriggerHistoryResult>> {
@@ -209,15 +226,13 @@ pub async fn composio_list_trigger_history(
         "[composio] rpc list_trigger_history"
     );
 
-    let history = connectors::call::<_, ComposioTriggerHistoryResult>(
-        config,
-        methods::LIST_TRIGGER_HISTORY,
-        ComposioListTriggerHistoryRequest {
-            limit: Some(requested_limit),
-        },
-    )
-    .await
-    .map_err(|error| format!("[composio] list_trigger_history failed: {error}"))?;
+    let store = super::super::trigger_history::global().ok_or_else(|| {
+        "[composio] list_trigger_history failed: trigger archive owner unavailable".to_owned()
+    })?;
+    let history = store
+        .read(ctx, config, Some(requested_limit))
+        .await
+        .map_err(|error| format!("[composio] list_trigger_history failed: {error}"))?;
     let count = history.entries.len();
 
     Ok(Outcome::new(

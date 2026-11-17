@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::super::ops_types::WorkflowScope;
+use tinyskills::SkillScope as WorkflowScope;
 
 /// Input for [`uninstall_workflow`]. Mirrors the `skills.uninstall` JSON-RPC payload.
 #[derive(Debug, Clone, Deserialize)]
@@ -54,11 +54,21 @@ pub fn uninstall_workflow(
     // uninstalled). Slug validation and the symlink/containment/bundle checks
     // are owned by `tinyskills::remove_bundle`.
     let openhuman_dir = home.join(".openhuman");
-    let roots = [
-        openhuman_dir.join("workflows"),
-        openhuman_dir.join("skills"),
-        home.join(".agents").join("skills"),
-    ];
+    let roots: Vec<_> = match crate::skills::write_root::current_agent_skill_home() {
+        Some(agent_home) => crate::skills::write_root::agent_user_roots(&agent_home)
+            .into_iter()
+            .rev()
+            .collect(),
+        // A SaaS task with no tenant scope must not reach the operator's home.
+        None if crate::core::runtime::is_saas() => {
+            return Err("no tenant scope for a workflow uninstall".to_string());
+        }
+        None => vec![
+            openhuman_dir.join("workflows"),
+            openhuman_dir.join("skills"),
+            home.join(".agents").join("skills"),
+        ],
+    };
 
     let removed = tinyskills::remove_bundle(&roots, &trimmed).map_err(|e| {
         log::warn!("[skills] uninstall_workflow: refused name={trimmed:?} error={e}");

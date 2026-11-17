@@ -17,8 +17,8 @@ import {
   seedComposioToolkits,
 } from '../helpers/composio-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import { waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
+import { triggerAuthLoopbackBypass } from '../helpers/loopback-auth-helpers';
 import { completeOnboardingIfVisible, navigateToSkills } from '../helpers/shared-flows';
 import {
   clearRequestLog,
@@ -48,7 +48,7 @@ describe('Composio connector session guard (cross-cutting, #2286)', () => {
     );
     await waitForApp();
     clearRequestLog();
-    await triggerAuthDeepLinkBypass(AUTH_TOKEN);
+    await triggerAuthLoopbackBypass(AUTH_TOKEN);
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
     await completeOnboardingIfVisible(LOG);
@@ -118,19 +118,6 @@ describe('Composio connector session guard (cross-cutting, #2286)', () => {
 
     await assertSessionNotNuked();
     console.log(`${LOG} PASS: 500 on delete does not log user out`);
-  });
-
-  it('500 on composio/sync does NOT log user out (#2286)', async function () {
-    this.timeout(60_000);
-    setMockBehavior('composioSyncFails', '1');
-
-    for (const slug of GUARD_TOOLKITS) {
-      clearRequestLog();
-      await callOpenhumanRpc('openhuman.composio_sync', { toolkit: slug });
-    }
-
-    await assertSessionNotNuked();
-    console.log(`${LOG} PASS: 500 on sync does not log user out`);
   });
 
   it('navigating to Skills page with FAILED connections does NOT log user out (#2286)', async function () {

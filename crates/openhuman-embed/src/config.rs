@@ -6,12 +6,20 @@
 //! 1. A borrowed newtype over `&Arc<CoreRuntime>` — zero-cost, no state.
 //! 2. Facade-owned serde types, so hosts never name a domain's internal type
 //!    and never touch `serde_json::Value`.
-//! 3. Two-line methods delegating to [`call`](super::call::call).
+//! 3. Two-line methods delegating to `call`.
 //!
 //! Config is deliberately first because it is registered under
 //! `DomainGroup::Platform`, which every preset enables — so a failure here is
 //! unambiguously a facade bug rather than a gating question.
+//!
+//! # Host helpers
+//!
+//! Beside the [`Config`] sub-facade, this module carries the few free
+//! functions a host needs *before* (or outside) a runtime: locating the
+//! OpenHuman root, reading the active user marker, and loading the config the
+//! way the core does. The core's full config type is [`RuntimeConfig`].
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -45,7 +53,7 @@ impl Config<'_> {
     ///
     /// Note this method always travels wrapped in the `{"result", "logs"}`
     /// envelope, because its handler emits a log unconditionally. That is
-    /// handled in [`call`](super::call::call) and is invisible here — which is
+    /// handled in `call` and is invisible here — which is
     /// the entire point of routing every method through one helper.
     pub async fn runtime_flags(&self) -> Result<RuntimeFlags, CoreError> {
         call(
@@ -57,6 +65,61 @@ impl Config<'_> {
     }
 }
 
+/// Shared declarative tool-rule vocabulary used by the typed runtime builder.
+pub use tinytools::{
+    DefaultEffect, Patterns, RuleEffect, Surface, ToolMatcher, ToolRule, ToolRules,
+};
+
+/// Typed runtime builder policy groups from the core configuration contract.
+pub use openhuman_core::config::schema::{
+    AutonomyConfig, CronConfig, JudgeMode, PrivacyConfig, PrivacyMode, PromptScreenConfig,
+    PromptScreenMode, SecretsConfig, SecurityJudgeDialect, SecurityJudgeRoute, SecurityMode,
+    SecurityModeConfig,
+};
+/// The core's config type, as [`crate::RuntimeConfig`].
+pub use openhuman_core::config::Config as RuntimeConfig;
+
+/// Load `config.toml` (creating defaults when absent) with the environment
+/// overlay and per-user scoping — what a core with no supplied config boots
+/// from.
+pub async fn load_or_init() -> anyhow::Result<RuntimeConfig> {
+    log::debug!("[embed][config] load_or_init");
+    RuntimeConfig::load_or_init().await
+}
+
+/// [`load_or_init`] under the core's RPC load timeout, for a host entry that
+/// runs outside any turn (a desktop command, gateway activation): it reads the
+/// host's own context ([`DispatchCtx::host_default`]), honouring an
+/// embedder-supplied config on it. The error is user-presentable.
+///
+/// [`DispatchCtx::host_default`]: openhuman_core::core::runtime::DispatchCtx::host_default
+pub async fn load_host_config() -> Result<RuntimeConfig, String> {
+    openhuman_core::config::ops::load_config_in(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+    )
+    .await
+}
+
+/// The OpenHuman root (`~/.openhuman`, or `OPENHUMAN_WORKSPACE`'s root) that
+/// holds `active_user.toml` and the per-user trees.
+pub fn default_root_openhuman_dir() -> anyhow::Result<PathBuf> {
+    openhuman_core::config::default_root_openhuman_dir()
+}
+
+/// The signed-in user id recorded under `root` (see
+/// [`default_root_openhuman_dir`]), if any. Best-effort: an unreadable marker
+/// reads as `None`.
+pub fn read_active_user_id(root: &Path) -> Option<String> {
+    openhuman_core::config::read_active_user_id(root)
+}
+
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+/// Operator search policy and direct-route credential vocabulary.
+pub use openhuman_core::config::{
+    PresentationMode, ProviderRoute, SearchConfig, SearchEngineCredentials, SearchProviderSettings,
+};
+/// The three native search capabilities whose names an operator can present.
+pub use openhuman_core::profiles::provider_settings::SearchRole;

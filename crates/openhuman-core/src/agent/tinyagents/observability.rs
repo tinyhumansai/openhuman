@@ -8,29 +8,24 @@
 //! live tool timeline, streaming text, and the cost/token footer on the
 //! tinyagents path — and feeds per-call usage into the global cost tracker.
 
-mod cap_pauser;
-mod compaction_log;
+mod bridge_types;
+mod cache_layout;
 mod event_bridge;
 mod event_projection;
-mod graph_tracing;
+mod tool_progress_projection;
 
 #[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
-use tinyagents_harness::events::AgentEvent;
-#[cfg(test)]
 use tinyinference_llm::usage::Usage;
 
 #[cfg(test)]
-use crate::agent::progress::AgentProgress;
+use crate::progress::AgentProgress;
 
-pub(crate) use cap_pauser::{
-    CapPauser, IterationCursor, ProviderUsageCarry, SubagentScope, ToolFailureMap, ToolNameMap,
-};
+pub(crate) use bridge_types::{ProviderUsageCarry, SubagentScope, ToolFailureMap, ToolNameMap};
+pub(crate) use cache_layout::surface_cache_layout_events;
 pub(crate) use event_bridge::OpenhumanEventBridge;
-pub(crate) use event_projection::surface_cache_layout_events;
-pub(crate) use graph_tracing::GraphTracingSink;
 
 #[cfg(test)]
 #[path = "observability_tests.rs"]

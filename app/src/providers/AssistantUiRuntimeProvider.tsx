@@ -20,9 +20,9 @@ const AuiThreadIdContext = createContext<string | null>(null);
 /**
  * The OpenHuman thread this assistant-ui runtime represents.
  *
- * assistant-ui's own context carries its internal thread identity, not ours, so
- * a component rendered *inside* the transcript (a tool part, say) has no other
- * way to name the thread it belongs to. Reading `selectedThreadId` from Redux
+ * The runtime adapter carries this identity into assistant-ui. This context
+ * also preserves the host's nullable identity for tool parts and surfaces that
+ * have not created a conversation yet. Reading `selectedThreadId` from Redux
  * instead would be wrong on any surface whose thread is not the selected one —
  * the Workflow Copilot mounts a runtime on its own builder thread — which is
  * the same trap {@link AssistantUiRuntimeProvider} documents for messages.

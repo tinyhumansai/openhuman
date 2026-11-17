@@ -1,6 +1,6 @@
 /**
  * Memory → Brain → Synced sources: the registry of synced sources (folders, files, links,
- * GitHub repos, RSS feeds, Composio toolkits). Lists them with status, item
+ * GitHub repos, RSS feeds). Lists them with status, item
  * count, last sync and any error; adds, syncs one or all, and removes (with an
  * opt-in to forget the items the source stored).
  *
@@ -17,12 +17,14 @@ import {
   memorySourcesList,
   memorySourcesRemove,
   memorySourcesSync,
+  memoryStatusError,
   type Source,
   type SourceAddRequest,
 } from '../../services/api/memoryApi';
-import { Alert, AlertDescription, Badge, Button, Card, Checkbox, ConfirmDialog } from '../ui';
+import { Badge, Button, Card, Checkbox, ConfirmDialog } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
 import MemoryAddSourceDialog from './MemoryAddSourceDialog';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import { fill, formatTimestamp } from './memoryFormat';
 import { SOURCE_STATUS_VARIANT, sourceKindLabel, sourceStatusLabel } from './memorySourceLabels';
 
@@ -148,9 +150,7 @@ export default function MemorySyncedSources() {
   return (
     <div className="space-y-4" data-testid="memory-synced-sources">
       {error !== null && (
-        <Alert variant="destructive" data-testid="memory-synced-sources-error">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <MemoryErrorAlert message={error} data-testid="memory-synced-sources-error" />
       )}
 
       <Card
@@ -223,7 +223,7 @@ export default function MemorySyncedSources() {
                       <p
                         className="text-xs text-coral-600 dark:text-coral-300"
                         data-testid={`memory-source-${source.id}-error`}>
-                        {source.error}
+                        {memoryStatusError(source.error, t)}
                       </p>
                     )}
                   </div>

@@ -174,6 +174,17 @@ describe('MemoryBrainTab', () => {
     expect(screen.getByTestId('memory-brain-ingest')).toBeInTheDocument();
   });
 
+  it('prompts a top-up in the ingest dialog when the account is out of credits', async () => {
+    hoisted.ingest.mockRejectedValue(new Error('INSUFFICIENT_CREDITS: HTTP 402'));
+    renderWithProviders(<MemoryBrainTab />);
+    fireEvent.click(await screen.findByTestId('memory-brain-add'));
+    fireEvent.change(screen.getByTestId('memory-brain-ingest-text'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByTestId('memory-brain-ingest-submit'));
+    const prompt = await screen.findByTestId('memory-brain-ingest-error');
+    expect(prompt).toHaveAttribute('data-kind', 'out-of-credits');
+    expect(screen.getByTestId('memory-top-up')).toBeInTheDocument();
+  });
+
   it('shows a load error', async () => {
     hoisted.sources.mockRejectedValue(new Error('MEMORY_OFF'));
     renderWithProviders(<MemoryBrainTab />);

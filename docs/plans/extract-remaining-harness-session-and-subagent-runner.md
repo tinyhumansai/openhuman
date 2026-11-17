@@ -1,11 +1,9 @@
 # Extract the remaining session and sub-agent runtime from OpenHuman
 
-**Status:** Phases 0–5 are landed on the migration branch. Phase 6 is in
-progress: the old `harness/subagent_runner` tree is being replaced directly by
-`agent/subagent_host`, whose lifecycle is driven by
-`tinyagents_orchestration::subagent`. The branch must not be described as
-complete until its host persistence, caller migration, deletion audit, and
-validation gates have passed.
+> **Status, verified 2026-10-07: landed.** `agent/harness/{session,subagent_runner,run_queue}/`
+> and `agent/task_dispatcher/` are deleted, and `agent/session_host/` and
+> `agent/subagent_host/` replaced them. Kept as the record of what moved and
+> why. See [`README.md`](README.md) for the whole set and how to re-check it.
 
 ## End state and rules
 
@@ -43,7 +41,7 @@ tinyagents-harness <--- tinyagents-session
    |                       |
 tinyagents-runtime --------+
    ^
-tinyagents-orchestration::{subagent,teams,workflow}
+tinyagents-orchestration::{subagent,workflow}
    ^
 OpenHuman agent/{session_host,subagent_host,orchestration/**}
 ```
@@ -283,7 +281,7 @@ Its codec converts `ChatMessage`; its hooks own prompt/memory/experience,
 security, BUS/progress, post-turn work, usage and finalization. It creates the
 runtime builder with explicit `OpenHumanRunContext`, resolved tool snapshot and
 session locator. Migrate callers in `agent/mod.rs`,
-`inference/host_runtime/ops/agent_chat.rs`, `web_chat/**`, `channels/**`,
+`agent_runs/agent_chat/session_turn.rs`, `web_chat/**`, `channels/**`,
 `flows/**`, `skills/runtime/**`, `voice/realtime_harness/agent.rs`,
 `openhuman-embed/**`, `openhuman-tui/**`, and session import. Delete the old
 session tree, harness exports, stale README links and tests; locator/history
@@ -327,7 +325,7 @@ where no neutral session adapter exists. Its durable identity is the complete
 that original key instead of deriving one from a fresh turn. Migrate
 `agent/orchestration/{ops.rs,delegation.rs,running_subagents/**,
 spawn_parallel_graph/**,subagent_sessions/**,tools/**}`, `agent/triage/**`,
-`agent/registry/**`, `tools/orchestrator_tools.rs` and integration/raw tests.
+`agent_registry/**`, `integrations/composio/orchestrator_actions.rs` and integration/raw tests.
 `agent/task_dispatcher/**` is obsolete after upstream removed tasks: remove its
 poller, executor, public module, callers and tests rather than carrying it into
 the new host layer.

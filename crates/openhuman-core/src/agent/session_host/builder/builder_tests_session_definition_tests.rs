@@ -7,10 +7,11 @@
 //! builder caller had no equivalent, and fell back to the process registry.
 //! These tests pin the route that closes that gap.
 
-use crate::agent::harness::definition::{AgentDefinition, AgentDefinitionRegistry, ToolScope};
 use crate::agent::tinyagents::host::OpenHumanDefinitionRegistry;
+use crate::agent_registry::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use std::sync::Arc;
 use tinyagents_definition::DefinitionRegistry;
+use tinyagents_definition::ToolScope;
 
 /// An id no built-in definition uses, so a hit can only have come from the
 /// caller's own definition.
@@ -35,6 +36,7 @@ fn bare() -> crate::agent::SessionHostBuilder {
         Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
     crate::agent::SessionHostBuilder::new()
         .chat_model(model)
+        .model_name("test/session-fixture".to_string())
         .tools(Vec::new())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
 }
@@ -79,7 +81,7 @@ async fn a_definition_the_builder_was_given_resolves_for_the_turn() {
         .expect("the caller's own definition answers the lookup");
 
     assert_eq!(resolved.id, SEAT);
-    assert_eq!(resolved.name, "Library host seat");
+    assert_eq!(resolved.display_name(), "Library host seat");
     assert!(
         resolved.is_valid(),
         "a hosted turn refuses an invalid definition: {:?}",
@@ -100,7 +102,10 @@ async fn the_definition_carries_the_belt_the_turn_is_allowed_to_call() {
         .expect("resolution never errors")
         .expect("resolves");
 
-    assert_eq!(resolved.tools, vec!["desk_say", "publish_artifact"]);
+    assert_eq!(
+        resolved.tools,
+        tinyagents_definition::ToolScope::Named(vec!["desk_say".into(), "publish_artifact".into()])
+    );
 }
 
 #[tokio::test]
@@ -121,8 +126,11 @@ async fn the_sessions_own_definition_outranks_a_registry_entry_sharing_its_id() 
         .expect("resolution never errors")
         .expect("resolves");
 
-    assert_eq!(resolved.name, "Library host seat");
-    assert_eq!(resolved.tools, vec!["desk_say"]);
+    assert_eq!(resolved.display_name(), "Library host seat");
+    assert_eq!(
+        resolved.tools,
+        tinyagents_definition::ToolScope::Named(vec!["desk_say".into()])
+    );
 }
 
 #[tokio::test]
@@ -174,8 +182,8 @@ async fn the_session_is_stamped_with_the_definitions_own_id() {
     );
 }
 
-#[test]
-fn a_name_the_definition_contradicts_fails_the_build() {
+#[tokio::test]
+async fn a_name_the_definition_contradicts_fails_the_build() {
     // Silently preferring either one would leave a session that resolves to
     // nothing, and every turn refused for want of a definition.
     // `OpenHumanSessionHost` is not `Debug`, so the `Ok` arm cannot be
@@ -212,4 +220,24 @@ async fn a_padded_name_is_stored_as_the_definitions_own_id() {
         .await
         .expect("resolution never errors")
         .is_some());
+}
+
+/// TS-E2E-027: a caller that already built the session's policy hands it to
+/// the hosted base, so `build` makes no stand-in from a default config. That
+/// stand-in logged "autonomy policy DISABLED" on every turn, whatever the
+/// user's config said.
+#[tokio::test]
+async fn the_hosted_base_carries_the_policy_the_caller_built() {
+    let policy = Arc::new(crate::security::SecurityPolicy::default());
+    let agent = bare()
+        .agent_definition_name(SEAT)
+        .security_policy(Arc::clone(&policy))
+        .build()
+        .expect("a session with its own policy is a legal build");
+
+    let base = agent.hosted_base.as_ref().expect("a hosted base");
+    assert!(
+        Arc::ptr_eq(&base.security_policy, &policy),
+        "the hosted base must carry the caller's policy, not a stand-in"
+    );
 }

@@ -176,7 +176,7 @@ export default function TriggerToggles({
                 variant="secondary"
                 size="xs"
                 className="shrink-0"
-                onClick={() => void clearSession()}>
+                onClick={() => void clearSession().catch(() => undefined)}>
                 {t('settings.embeddings.signInAgain')}
               </Button>
             </div>

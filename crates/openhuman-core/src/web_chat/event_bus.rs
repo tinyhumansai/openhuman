@@ -3,34 +3,17 @@
 //! domain events onto it for Socket.IO and the JSON-RPC `/events` stream.
 
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use std::sync::{Arc, OnceLock};
-use tokio::sync::broadcast;
 
+use super::channel_event::event_context;
 use crate::core::events::DomainEvent;
 use crate::web_chat::WebChannelEvent;
 use tinybus::EventHandler;
 use tinybus::SubscriptionHandle;
 
-static EVENT_BUS: Lazy<broadcast::Sender<WebChannelEvent>> = Lazy::new(|| {
-    let (tx, _rx) = broadcast::channel(512);
-    tx
-});
-
-pub fn subscribe_web_channel_events() -> broadcast::Receiver<WebChannelEvent> {
-    EVENT_BUS.subscribe()
-}
-
-/// Publish `event` to every subscribed socket bridge and the JSON-RPC
-/// `/events` stream, stamping `ts` (epoch ms) when the caller left it unset
-/// so every emitted event carries a wall-clock time the frontend can use for
-/// ordering/latency display without guessing at receive time.
-pub fn publish_web_channel_event(mut event: WebChannelEvent) {
-    if event.ts.is_none() {
-        event.ts = Some(crate::web_chat::progress_bridge::unix_epoch_ms());
-    }
-    let _ = EVENT_BUS.send(event);
-}
+pub use super::event_bus_channel::{
+    publish_web_channel_event, publish_web_channel_event_in, subscribe_web_channel_events,
+};
 
 static APPROVAL_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -110,21 +93,13 @@ const MEMORY_ACTIVITY_QUERY_PREVIEW_CHARS: usize = 40;
 /// event so the chat surface can show a brief "remembered"/"recalled N"
 /// indicator.
 ///
-/// Routing: these domain events carry no `thread_id`/`client_id` of their
-/// own (unlike the artifact events), so this subscriber reads the current
-/// turn's chat context off the same
-/// [`crate::security::approval::APPROVAL_CHAT_CONTEXT`] task-local the
-/// artifact producers use, and drops the event when it is absent (CLI /
-/// cron / sub-agent paths — no client to fan out to). Only ever carries
+/// Routing: the events carry the `thread_id`/`client_id` of the turn whose tool
+/// call raised them (taken from that turn's explicit approval context), and the
+/// subscriber drops an event that has none (CLI / cron / sub-agent paths — no
+/// client to fan out to). Only ever carries
 /// `key`/`category`/`namespace` (never stored content) and a short, clipped
 /// preview of the recall query (never the full query text).
 struct MemoryActivitySurfaceSubscriber;
-
-fn current_chat_context() -> Option<(String, String)> {
-    crate::security::approval::APPROVAL_CHAT_CONTEXT
-        .try_with(|ctx| (ctx.thread_id.clone(), ctx.client_id.clone()))
-        .ok()
-}
 
 #[async_trait]
 impl EventHandler<DomainEvent> for MemoryActivitySurfaceSubscriber {
@@ -137,13 +112,17 @@ impl EventHandler<DomainEvent> for MemoryActivitySurfaceSubscriber {
     }
 
     async fn handle(&self, event: &DomainEvent) {
-        let (event_name, args) = match event {
+        let (event_name, thread_id, client_id, args) = match event {
             DomainEvent::MemoryStored {
                 key,
                 category,
                 namespace,
+                thread_id,
+                client_id,
             } => (
                 "stored",
+                thread_id,
+                client_id,
                 serde_json::json!({
                     "kind": "stored",
                     "key": key,
@@ -151,7 +130,12 @@ impl EventHandler<DomainEvent> for MemoryActivitySurfaceSubscriber {
                     "namespace": namespace,
                 }),
             ),
-            DomainEvent::MemoryRecalled { query, hit_count } => {
+            DomainEvent::MemoryRecalled {
+                query,
+                hit_count,
+                thread_id,
+                client_id,
+            } => {
                 let preview: String = query
                     .chars()
                     .take(MEMORY_ACTIVITY_QUERY_PREVIEW_CHARS)
@@ -159,6 +143,8 @@ impl EventHandler<DomainEvent> for MemoryActivitySurfaceSubscriber {
                 let truncated = query.chars().count() > MEMORY_ACTIVITY_QUERY_PREVIEW_CHARS;
                 (
                     "recalled",
+                    thread_id,
+                    client_id,
                     serde_json::json!({
                         "kind": "recalled",
                         "query_preview": if truncated { format!("{preview}…") } else { preview },
@@ -168,19 +154,16 @@ impl EventHandler<DomainEvent> for MemoryActivitySurfaceSubscriber {
             }
             _ => return,
         };
-        let Some((thread_id, client_id)) = current_chat_context() else {
+        let (Some(thread_id), Some(client_id)) = (thread_id.clone(), client_id.clone()) else {
             log::debug!("[web-channel] memory-activity-surface skip {event_name}: no chat context");
             return;
         };
         log::debug!(
             "[web-channel] memory-activity-surface emitting memory_activity kind={event_name} thread_id={thread_id} client_id={client_id}"
         );
-        publish_web_channel_event(WebChannelEvent {
-            event: "memory_activity".to_string(),
-            client_id,
-            thread_id,
+        publish_web_channel_event(WebChannelEvent::MemoryActivity {
+            context: event_context(client_id, thread_id, ""),
             args: Some(args),
-            ..Default::default()
         });
     }
 }
@@ -237,47 +220,35 @@ impl EventHandler<DomainEvent> for AgentSurfaceSubscriber {
                 log::debug!(
                     "[web-channel] agent-surface emitting thread_goal_updated thread_id={thread_id}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "thread_goal_updated".to_string(),
-                    client_id: String::new(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::ThreadGoalUpdated {
+                    context: event_context("", thread_id, ""),
                     goal: goal.clone(),
-                    ..Default::default()
                 });
             }
             DomainEvent::ThreadGoalCleared { thread_id } => {
                 log::debug!(
                     "[web-channel] agent-surface emitting thread_goal_cleared thread_id={thread_id}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "thread_goal_cleared".to_string(),
-                    client_id: String::new(),
-                    thread_id: thread_id.clone(),
-                    ..Default::default()
+                publish_web_channel_event(WebChannelEvent::ThreadGoalCleared {
+                    context: event_context("", thread_id, ""),
                 });
             }
             DomainEvent::ThreadTodosChanged { thread_id, todos } => {
                 log::debug!(
                     "[web-channel] agent-surface emitting thread_todos_changed thread_id={thread_id}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "thread_todos_changed".to_string(),
-                    client_id: String::new(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::ThreadTodosChanged {
+                    context: event_context("", thread_id, ""),
                     todos: Some(todos.clone()),
-                    ..Default::default()
                 });
             }
             DomainEvent::ThreadRunModeChanged { thread_id, mode } => {
                 log::debug!(
                     "[web-channel] agent-surface emitting run_mode_changed thread_id={thread_id} mode={mode}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "run_mode_changed".to_string(),
-                    client_id: String::new(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::RunModeChanged {
+                    context: event_context("", thread_id, ""),
                     message: Some(mode.clone()),
-                    ..Default::default()
                 });
             }
             DomainEvent::RunQueueMessageQueued {
@@ -298,16 +269,13 @@ impl EventHandler<DomainEvent> for AgentSurfaceSubscriber {
                 log::debug!(
                     "[web-channel] agent-surface emitting queue_item_queued thread_id={thread_id} item_id={item_id}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "queue_item_queued".to_string(),
-                    client_id: String::new(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::QueueItemQueued {
+                    context: event_context("", thread_id, ""),
                     queue_item: Some(crate::web_chat::QueueItemPayload {
                         id: item_id,
                         lane: None,
                         text_preview: text_preview.clone(),
                     }),
-                    ..Default::default()
                 });
             }
             DomainEvent::RunQueueMessageDelivered {
@@ -324,16 +292,13 @@ impl EventHandler<DomainEvent> for AgentSurfaceSubscriber {
                 log::debug!(
                     "[web-channel] agent-surface emitting queue_item_delivered thread_id={thread_id} item_id={item_id}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "queue_item_delivered".to_string(),
-                    client_id: String::new(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::QueueItemDelivered {
+                    context: event_context("", thread_id, ""),
                     queue_item: Some(crate::web_chat::QueueItemPayload {
                         id: item_id,
                         lane,
                         text_preview: text_preview.clone(),
                     }),
-                    ..Default::default()
                 });
             }
             DomainEvent::RunQueueFollowupDispatched {
@@ -355,16 +320,13 @@ impl EventHandler<DomainEvent> for AgentSurfaceSubscriber {
                 log::debug!(
                     "[web-channel] agent-surface emitting queue_item_delivered thread_id={thread_id} item_id={item_id}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "queue_item_delivered".to_string(),
-                    client_id: String::new(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::QueueItemDelivered {
+                    context: event_context("", thread_id, ""),
                     queue_item: Some(crate::web_chat::QueueItemPayload {
                         id: item_id,
                         lane,
                         text_preview: text_preview.clone(),
                     }),
-                    ..Default::default()
                 });
             }
             _ => {}
@@ -407,21 +369,23 @@ impl EventHandler<DomainEvent> for ArtifactSurfaceSubscriber {
                 log::info!(
                     "[web-channel] artifact-surface emitting artifact_ready id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id} tool_call_id={tool_call_id:?}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "artifact_ready".to_string(),
-                    client_id: client_id.clone(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::ArtifactReady {
+                    context: {
+                        let mut context = event_context(client_id, thread_id, "");
+                        context.turn_request_id = request_id.clone();
+                        context
+                    },
                     tool_call_id: tool_call_id.clone(),
-                    turn_request_id: request_id.clone(),
-                    args: Some(serde_json::json!({
-                        "artifact_id": artifact_id,
-                        "kind": kind,
-                        "title": title,
-                        "workspace_dir": workspace_dir,
-                        "path": path,
-                        "size_bytes": size_bytes,
-                    })),
-                    ..Default::default()
+                    args: Some(serde_json::json!(
+                        crate::artifacts::types::ArtifactReadyPayload {
+                            artifact_id: artifact_id.clone(),
+                            kind: kind.clone(),
+                            title: title.clone(),
+                            workspace_dir: workspace_dir.clone(),
+                            path: path.clone(),
+                            size_bytes: *size_bytes,
+                        }
+                    )),
                 });
             }
             DomainEvent::ArtifactFailed {
@@ -445,20 +409,22 @@ impl EventHandler<DomainEvent> for ArtifactSurfaceSubscriber {
                     "[web-channel] artifact-surface emitting artifact_failed id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id} tool_call_id={tool_call_id:?} error_len={}",
                     error.len()
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "artifact_failed".to_string(),
-                    client_id: client_id.clone(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::ArtifactFailed {
+                    context: {
+                        let mut context = event_context(client_id, thread_id, "");
+                        context.turn_request_id = request_id.clone();
+                        context
+                    },
                     tool_call_id: tool_call_id.clone(),
-                    turn_request_id: request_id.clone(),
-                    args: Some(serde_json::json!({
-                        "artifact_id": artifact_id,
-                        "kind": kind,
-                        "title": title,
-                        "workspace_dir": workspace_dir,
-                        "error": error,
-                    })),
-                    ..Default::default()
+                    args: Some(serde_json::json!(
+                        crate::artifacts::types::ArtifactFailedPayload {
+                            artifact_id: artifact_id.clone(),
+                            kind: kind.clone(),
+                            title: title.clone(),
+                            workspace_dir: workspace_dir.clone(),
+                            error: error.clone(),
+                        }
+                    )),
                 });
             }
             DomainEvent::ArtifactPending {
@@ -481,20 +447,22 @@ impl EventHandler<DomainEvent> for ArtifactSurfaceSubscriber {
                 log::info!(
                     "[web-channel] artifact-surface emitting artifact_pending id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id} tool_call_id={tool_call_id:?}"
                 );
-                publish_web_channel_event(WebChannelEvent {
-                    event: "artifact_pending".to_string(),
-                    client_id: client_id.clone(),
-                    thread_id: thread_id.clone(),
+                publish_web_channel_event(WebChannelEvent::ArtifactPending {
+                    context: {
+                        let mut context = event_context(client_id, thread_id, "");
+                        context.turn_request_id = request_id.clone();
+                        context
+                    },
                     tool_call_id: tool_call_id.clone(),
-                    turn_request_id: request_id.clone(),
-                    args: Some(serde_json::json!({
-                        "artifact_id": artifact_id,
-                        "kind": kind,
-                        "title": title,
-                        "workspace_dir": workspace_dir,
-                        "path": path,
-                    })),
-                    ..Default::default()
+                    args: Some(serde_json::json!(
+                        crate::artifacts::types::ArtifactPendingPayload {
+                            artifact_id: artifact_id.clone(),
+                            kind: kind.clone(),
+                            title: title.clone(),
+                            workspace_dir: workspace_dir.clone(),
+                            path: path.clone(),
+                        }
+                    )),
                 });
             }
             _ => {}
@@ -548,18 +516,16 @@ pub fn approval_request_event(
     client_id: &str,
     tool_call_id: Option<&str>,
     expires_at: Option<&str>,
+    detached: bool,
 ) -> WebChannelEvent {
-    WebChannelEvent {
-        event: "approval_request".to_string(),
-        client_id: client_id.to_string(),
-        thread_id: thread_id.to_string(),
-        request_id: request_id.to_string(),
+    WebChannelEvent::ApprovalRequest {
+        context: event_context(client_id, thread_id, request_id),
         tool_name: Some(tool_name.to_string()),
         message: Some(format!("Run `{tool_name}` — {action_summary}")),
         args: Some(args_redacted.clone()),
         tool_call_id: tool_call_id.map(str::to_string),
         expires_at: expires_at.map(str::to_string),
-        ..Default::default()
+        detached: detached.then_some(true),
     }
 }
 
@@ -577,17 +543,13 @@ pub fn plan_review_request_event(
     tool_call_id: Option<&str>,
     expires_at: Option<&str>,
 ) -> WebChannelEvent {
-    WebChannelEvent {
-        event: "plan_review_request".to_string(),
-        client_id: client_id.to_string(),
-        thread_id: thread_id.to_string(),
-        request_id: request_id.to_string(),
+    WebChannelEvent::PlanReviewRequest {
+        context: event_context(client_id, thread_id, request_id),
         tool_name: Some("request_plan_review".to_string()),
         message: Some(summary.to_string()),
         args: Some(serde_json::json!({ "steps": steps })),
         tool_call_id: tool_call_id.map(str::to_string),
         expires_at: expires_at.map(str::to_string),
-        ..Default::default()
     }
 }
 
@@ -614,6 +576,7 @@ impl EventHandler<DomainEvent> for ApprovalSurfaceSubscriber {
                 client_id,
                 tool_call_id,
                 expires_at,
+                agent_id: _,
             } => match (thread_id, client_id) {
                 (Some(thread_id), Some(client_id)) => {
                     log::info!(
@@ -628,6 +591,7 @@ impl EventHandler<DomainEvent> for ApprovalSurfaceSubscriber {
                         client_id,
                         tool_call_id.as_deref(),
                         expires_at.as_deref(),
+                        crate::security::approval::is_detached_request(request_id),
                     ));
                 }
                 _ => {
@@ -646,21 +610,18 @@ impl EventHandler<DomainEvent> for ApprovalSurfaceSubscriber {
                 client_id,
                 tool_call_id,
                 resolution,
+                agent_id: _,
             } => match (thread_id, client_id) {
                 (Some(thread_id), Some(client_id)) => {
                     log::info!(
                         "[web-channel] approval-surface emitting approval_decided request_id={request_id} thread_id={thread_id} client_id={client_id} tool={tool_name} decision={decision}"
                     );
-                    publish_web_channel_event(WebChannelEvent {
-                        event: "approval_decided".to_string(),
-                        client_id: client_id.clone(),
-                        thread_id: thread_id.clone(),
-                        request_id: request_id.clone(),
+                    publish_web_channel_event(WebChannelEvent::ApprovalDecided {
+                        context: event_context(client_id, thread_id, request_id),
                         tool_name: Some(tool_name.clone()),
                         message: Some(decision.clone()),
                         tool_call_id: tool_call_id.clone(),
                         cancel_reason: resolution.clone(),
-                        ..Default::default()
                     });
                 }
                 _ => {
@@ -713,16 +674,12 @@ impl EventHandler<DomainEvent> for ApprovalSurfaceSubscriber {
                     log::info!(
                         "[web-channel] plan-review-surface emitting plan_review_decided request_id={request_id} thread_id={thread_id} client_id={client_id} decision={decision}"
                     );
-                    publish_web_channel_event(WebChannelEvent {
-                        event: "plan_review_decided".to_string(),
-                        client_id: client_id.clone(),
-                        thread_id: thread_id.clone(),
-                        request_id: request_id.clone(),
+                    publish_web_channel_event(WebChannelEvent::PlanReviewDecided {
+                        context: event_context(client_id, thread_id, request_id),
                         tool_name: Some("request_plan_review".to_string()),
                         message: Some(decision.clone()),
                         tool_call_id: tool_call_id.clone(),
                         cancel_reason: resolution.clone(),
-                        ..Default::default()
                     });
                 }
                 _ => {
@@ -739,3 +696,11 @@ impl EventHandler<DomainEvent> for ApprovalSurfaceSubscriber {
 #[cfg(test)]
 #[path = "event_bus_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plan_review_event_tests.rs"]
+mod plan_review_event_tests;
+
+#[cfg(test)]
+#[path = "event_bus_surface_tests.rs"]
+mod surface_tests;

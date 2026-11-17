@@ -61,7 +61,7 @@ describe('layoutSlice', () => {
 
   describe('selectPanelLayout', () => {
     it('falls back to defaults for an unseen id', () => {
-      const root = { layout: { panels: {} } };
+      const root = { layout: { panels: {}, welcomeSeen: {} } };
       expect(selectPanelLayout('chat')(root)).toEqual(DEFAULT_PANEL_LAYOUT);
       expect(selectPanelLayout('chat', { sidebarVisible: true })(root)).toEqual({
         ...DEFAULT_PANEL_LAYOUT,
@@ -70,7 +70,9 @@ describe('layoutSlice', () => {
     });
 
     it('returns persisted geometry when present', () => {
-      const root = { layout: { panels: { chat: { sidebarVisible: true, sidebarWidth: 333 } } } };
+      const root = {
+        layout: { panels: { chat: { sidebarVisible: true, sidebarWidth: 333 } }, welcomeSeen: {} },
+      };
       expect(selectPanelLayout('chat')(root)).toEqual({ sidebarVisible: true, sidebarWidth: 333 });
     });
   });

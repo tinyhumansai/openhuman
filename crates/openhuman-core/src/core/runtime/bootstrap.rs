@@ -6,6 +6,7 @@
 //! [`CoreRuntime::start_services`](super::CoreRuntime::start_services)
 //! once a transport has bound, or directly when there is none.
 
+use crate::core::runtime::DispatchCtx;
 /// Initializes long-lived socket/event-bus infrastructure.
 ///
 /// `host_kind` identifies the embedding process (Tauri desktop shell vs
@@ -18,9 +19,9 @@ pub(crate) async fn bootstrap_core_runtime(
     host_kind: crate::core::types::HostKind,
     config: Option<crate::config::Config>,
     domains: crate::core::runtime::DomainSet,
+    ctx: &DispatchCtx,
+    defer_credentials: bool,
 ) {
-    use crate::platform::socket::{set_global_socket_manager, SocketManager};
-    use std::sync::Arc;
     // `embedded_core` derived from host_kind so the rest of the function (which
     // already keys behavior off the boolean) stays unchanged.
     let embedded_core = host_kind.is_desktop_shell();
@@ -31,6 +32,26 @@ pub(crate) async fn bootstrap_core_runtime(
         return;
     };
     let workspace_dir = cfg.workspace_dir.clone();
+
+    // The workflow metadata loader is synchronous. Start module-owned resource
+    // acquisition before any subscriber or session snapshots it, but keep the
+    // optional download outside the critical bootstrap path.
+    #[cfg(all(feature = "flows", feature = "skills"))]
+    crate::skills::schedule_flow_authoring_prewarm(ctx, &cfg, Some(domains));
+
+    // --- Legacy store import ---------------------------------------------
+    // With a storage backend installed, bring the workspace's per-domain
+    // SQLite files (approvals, devices, notifications, task sources) into it
+    // once, read-only, before anything below opens those stores. A no-op
+    // without a backend; failures are logged and retried at the next boot.
+    for report in crate::storage::import::run(ctx, &cfg).await {
+        if let Err(error) = report.outcome {
+            log::warn!(
+                "[runtime] legacy {} store import failed: {error:#}",
+                report.domain
+            );
+        }
+    }
 
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
@@ -45,7 +66,7 @@ pub(crate) async fn bootstrap_core_runtime(
         if guard_disabled {
             log::debug!("[file_state] guard disabled via OPENHUMAN_FILE_STATE_GUARD");
         }
-        tinytools_std::file_state::init_global(!guard_disabled);
+        tinyagents_harness_tools::fs::file_state::init_global(!guard_disabled);
     } else {
         log::debug!("[boot] agent file-state coordinator SKIPPED — Agent domain disabled");
     }
@@ -59,6 +80,8 @@ pub(crate) async fn bootstrap_core_runtime(
         cfg.clone(),
         embedded_core,
         domains,
+        ctx,
+        defer_credentials,
     );
 
     // Latch the config-corruption recovery signal (#5167) so `app_state_snapshot`
@@ -72,19 +95,28 @@ pub(crate) async fn bootstrap_core_runtime(
     // meant to gate the first tool call of the first turn has to be loaded
     // before any session exists, and the alternative — loading lazily on the
     // first event — would let that first call through while the file is read.
-    crate::hooks::init(&cfg).await;
+    crate::hooks::init(ctx, &cfg).await;
 
     // --- Turn-state recovery -------------------------------------------
     // Any per-thread turn snapshots left on disk from a previous process
     // are stale by definition — there is no live driver to resume them.
     // Stamp them as `Interrupted` so the UI can offer a retry without
     // confusing a stale `Streaming` lifecycle for an in-flight turn.
-    {
+    //
+    // An installed host session store repairs itself, once; with none, the
+    // workspace default store is swept.
+    let host_store = crate::storage::sessions::installed_in(ctx);
+    if let Some(provider) = &host_store {
+        match provider.recover() {
+            Ok(()) => log::info!("[runtime] host session store recovered"),
+            Err(err) => log::warn!("[runtime] host session store recovery failed: {err:#}"),
+        }
+    }
+    if host_store.is_none() {
         let now = chrono::Utc::now().to_rfc3339();
-        match tinyagents_session::turn_state::store::mark_all_interrupted(
-            workspace_dir.clone(),
-            &now,
-        ) {
+        match crate::storage::sessions::default_turn_states_for(&workspace_dir)
+            .mark_all_interrupted(&now)
+        {
             Ok(0) => {}
             Ok(count) => {
                 log::info!("[runtime] marked {count} stale turn snapshot(s) as interrupted")
@@ -96,22 +128,27 @@ pub(crate) async fn bootstrap_core_runtime(
     }
 
     // --- Run-ledger recovery -------------------------------------------
-    // Detached sub-agent runs (`spawn_async_subagent`) from a previous process
+    // Detached sub-agent runs (`spawn_subagent`) from a previous process
     // are gone with that process. Any `agent_runs` row still marked `running`
     // at boot is orphaned — its driver died without firing a terminal event, so
     // the finalizer never settled it. Stamp such rows `interrupted` so they stop
     // rendering as perpetual "running" timeline entries on thread reopen.
     if agent_enabled {
-        match tinyagents_session::run_ledger::interrupt_orphaned_agent_runs(&cfg.workspace_dir) {
-            Ok(0) => {}
-            Ok(count) => log::info!("[runtime] settled {count} orphaned agent run(s) on startup"),
-            Err(err) => log::warn!("[runtime] failed to settle orphaned agent runs: {err}"),
+        if !crate::storage::installed_is_shared() {
+            match crate::storage::sessions::with_ledger(&cfg.workspace_dir, |ledger| async move {
+                ledger.interrupt_orphaned_agent_runs().await
+            }) {
+                Ok(0) => {}
+                Ok(count) => {
+                    log::info!("[runtime] settled {count} orphaned agent run(s) on startup")
+                }
+                Err(err) => log::warn!("[runtime] failed to settle orphaned agent runs: {err}"),
+            }
         }
 
         // --- Detached sub-agent TaskStore reconciliation -------------------
-        // The durable orchestration TaskStore (`<workspace>/.openhuman/
-        // orchestration_tasks.jsonl`) can hold non-terminal sub-agent records left
-        // by a previous process — their detached executor (abort handle +
+        // The durable orchestration TaskStore can hold non-terminal sub-agent
+        // records left by a previous process — their detached executor (abort handle +
         // cooperative CancellationToken) died with that process, so they cannot be
         // re-attached. Reconcile each orphan to a terminal state and emit the typed
         // terminal lifecycle event so the run ledger finalizes. Best-effort and
@@ -123,6 +160,20 @@ pub(crate) async fn bootstrap_core_runtime(
         if reconciled > 0 {
             log::info!(
                 "[runtime] reconciled {reconciled} orphaned detached sub-agent task(s) on startup"
+            );
+        }
+
+        // --- Undelivered background completions ----------------------------
+        // A detached sub-agent that finished in a previous process but whose
+        // result never reached its chat thread is still pending in the durable
+        // completion store.
+        // Schedule its delivery turn through the normal idle-gated path.
+        let redelivering =
+            crate::agent::orchestration::background_delivery::recover_on_boot(ctx, &workspace_dir);
+        if redelivering > 0 {
+            log::info!(
+                "[runtime] scheduled redelivery of undelivered background completions for \
+                 {redelivering} thread(s) on startup"
             );
         }
     } else {
@@ -137,26 +188,15 @@ pub(crate) async fn bootstrap_core_runtime(
     // share one JSONL-backed store. Idempotent.
     crate::platform::cost::init_global(cfg.cost.clone(), &workspace_dir);
 
-    // --- x402 payment ledger ---
-    // Initializes the JSONL-backed spending ledger for machine-payable API
-    // payments (x402 protocol). Budget defaults can be overridden via
-    // the `openhuman.x402_update_budget` RPC. Gated on the Web3 domain (#4808
-    // review): under `harness()`/`none()` the x402 controllers are absent, so
-    // their ledger must not initialize either.
-    if domains.allows(crate::core::all::DomainGroup::Web3) {
-        let x402_session = format!("x402-{}", uuid::Uuid::new_v4());
-        crate::web3::x402::init_ledger(&workspace_dir, &x402_session);
-    } else {
-        log::debug!("[boot] x402 payment ledger SKIPPED — Web3 domain disabled");
-    }
-
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
     // under `<workspace>/agents/*.toml`. Idempotent — safe to call
     // multiple times. Uses the per-user scoped workspace_dir.
     if agent_enabled {
         if let Err(err) =
-            crate::agent::harness::AgentDefinitionRegistry::init_global(&workspace_dir)
+            crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global(
+                &workspace_dir,
+            )
         {
             log::warn!(
                 "[runtime] AgentDefinitionRegistry::init_global failed: {err} — \
@@ -213,7 +253,7 @@ pub(crate) async fn bootstrap_core_runtime(
     // Gated on the Skills domain (#4808 review): under `harness()`/`none()` the
     // skills controllers are absent, so their trigger subscriber must not install.
     if domains.allows(crate::core::all::DomainGroup::Skills) {
-        crate::skills::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
+        crate::skills::bus::ensure_triggered_workflow_subscriber_for(ctx, &cfg, Some(domains));
     } else {
         log::debug!("[boot] triggered-workflow subscriber SKIPPED — Skills domain disabled");
     }
@@ -257,6 +297,7 @@ pub(crate) async fn bootstrap_core_runtime(
                 crate::core::types::HostKind::Cli => "cli",
                 crate::core::types::HostKind::Docker => "docker",
                 crate::core::types::HostKind::Library => "library",
+                crate::core::types::HostKind::Saas => "saas",
             },
         },
     );
@@ -310,6 +351,7 @@ pub(crate) async fn bootstrap_core_runtime(
         // (The approval/plan-review surface bridge is registered unconditionally
         // above — it must run even when this gate-install branch is skipped.)
         crate::web_chat::register_artifact_surface_subscriber();
+        crate::threads::artifact_rows::register_artifact_row_subscriber();
     } else {
         log::info!(
             "[runtime] approval gate DISABLED (OPENHUMAN_APPROVAL_GATE=0 honored on host={}) — \
@@ -328,18 +370,14 @@ pub(crate) async fn bootstrap_core_runtime(
     // sets OPENHUMAN_APPROVAL_GATE=0 (CR #3328947323 on PR #3026). Idempotent
     // (OnceLock-guarded inside register_artifact_surface_subscriber).
     crate::web_chat::register_artifact_surface_subscriber();
+    crate::threads::artifact_rows::register_artifact_row_subscriber();
     // Memory-activity surface bridges DomainEvent::MemoryStored/Recalled onto
     // the web channel's `memory_activity` event (C5) — same unconditional
     // placement rationale as the bridges above. Idempotent (OnceLock-guarded).
     crate::web_chat::register_memory_activity_surface_subscriber();
 
-    // --- Workspace migrations --------------------------------------------
-    crate::platform::startup::run_workspace_migrations(&workspace_dir);
-
-    // --- Socket manager bootstrap ---
-    let socket_mgr = Arc::new(SocketManager::new());
-    set_global_socket_manager(socket_mgr.clone());
-    log::info!("[socket] SocketManager initialized and registered globally");
+    // Socket.IO is installed by the host layer (TinyHumans); core owns only
+    // the port and keeps boot independent of the SDK implementation.
 }
 
 /// Starts selected background jobs after the runtime has entered `serve()`.
@@ -360,12 +398,6 @@ pub(crate) async fn start_core_runtime_services(
     };
 
     // Long-lived bootstrap loops selected by ServiceSet.
-    // One-time first-run initialization (managed Python runtime, Kompress,
-    // managed Node runtime). Spawned AFTER subscribers are live but does NOT
-    // block the ready signal — the core becomes RPC-ready immediately and the
-    // frontend watches per-step progress via `openhuman.harness_init_status`.
-    // On a warm host every step's `is_done` probe passes and this settles
-    // instantly. See `crate::agent::harness_init`.
     crate::core::runtime::services::start_boot_once_jobs(services, cfg).await;
 
     // Long-lived bootstrap loops selected by ServiceSet. These start only
@@ -378,7 +410,7 @@ pub(crate) async fn start_core_runtime_services(
         }
         None => {
             log::warn!(
-                "[socket] SocketManager unavailable during runtime service startup; auto-connect skipped"
+                "[socket] SocketPort unavailable during runtime service startup; auto-connect skipped"
             );
         }
     }

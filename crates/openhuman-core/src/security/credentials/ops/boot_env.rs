@@ -12,6 +12,7 @@
 //! stored one first (`openhuman-core auth clear_credential`).
 
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::security::credentials::api_key;
 use crate::security::credentials::session_support::{get_session_token, CredentialKind};
 
@@ -30,15 +31,17 @@ fn env_secret(name: &str) -> Option<String> {
 /// Install the API key from `OPENHUMAN_BACKEND_API_KEY` when none is stored.
 /// Synchronous (a plain profile write) so it can run before the scheduler
 /// gate is seeded from the store.
-pub fn seed_api_key_from_env(config: &Config) {
+pub async fn seed_api_key_from_env(config: &Config) {
     let Some(key) = env_secret(BACKEND_API_KEY_ENV) else {
         return;
     };
-    if api_key::has_api_key(config) {
-        log::debug!("[auth][boot] {BACKEND_API_KEY_ENV} set but an api key is already stored; keeping the stored one");
+    if api_key::has_api_key(config).await {
+        log::debug!(
+            "[auth][boot] {BACKEND_API_KEY_ENV} set but an api key is already stored; keeping the stored one"
+        );
         return;
     }
-    match api_key::store_api_key(config, &key) {
+    match api_key::store_api_key(config, &key).await {
         Ok(_) => log::info!("[auth][boot] api key installed from {BACKEND_API_KEY_ENV}"),
         Err(error) => {
             log::warn!("[auth][boot] failed to install api key from {BACKEND_API_KEY_ENV}: {error}")
@@ -49,12 +52,14 @@ pub fn seed_api_key_from_env(config: &Config) {
 /// Install the session JWT from `OPENHUMAN_BACKEND_SESSION_TOKEN` when no
 /// session is stored. Runs the full `set_credential` path (user-dir
 /// activation, gated services, scheduler gate), so it is async.
-pub async fn seed_session_from_env(config: &Config) {
+pub async fn seed_session_from_env(ctx: &DispatchCtx, config: &Config) {
     let Some(token) = env_secret(BACKEND_SESSION_TOKEN_ENV) else {
         return;
     };
-    if matches!(get_session_token(config), Ok(Some(_))) {
-        log::debug!("[auth][boot] {BACKEND_SESSION_TOKEN_ENV} set but a session is already stored; keeping the stored one");
+    if matches!(get_session_token(config).await, Ok(Some(_))) {
+        log::debug!(
+            "[auth][boot] {BACKEND_SESSION_TOKEN_ENV} set but a session is already stored; keeping the stored one"
+        );
         return;
     }
     let request = SetCredentialRequest {
@@ -62,8 +67,9 @@ pub async fn seed_session_from_env(config: &Config) {
         kind: Some(CredentialKind::Session.as_str().to_string()),
         user_id: None,
         user: None,
+        issuing_backend: None,
     };
-    match set_credential(config, request).await {
+    match set_credential(ctx, config, request).await {
         Ok(outcome) => log::info!(
             "[auth][boot] session installed from {BACKEND_SESSION_TOKEN_ENV} (user_id={})",
             outcome.value.user_id.as_deref().unwrap_or("?")

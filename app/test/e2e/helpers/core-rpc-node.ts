@@ -92,7 +92,7 @@ function coreHost(): string {
 
 /** Ports to try when OPENHUMAN_CORE_PORT is unset.
  *
- * Keep this exactly aligned with connectivity::rpc's desktop fallback range.
+ * Keep this exactly aligned with openhuman-rpc's `server/listen_port.rs` desktop fallback range.
  * A data reset restarts the embedded core; on Windows the preferred socket can
  * remain unavailable briefly, so the replacement listener may bind as high as
  * 7798. Stopping at 7793 makes every later RPC test wait out the full probe

@@ -142,7 +142,7 @@ export function ConversationMap({
           )}>
           <p className="line-clamp-2 text-[13px] leading-snug font-medium">{previewEntry.title}</p>
           {previewEntry.preview && (
-            <p className="text-foreground/60 mt-1 line-clamp-4 text-[13px] leading-relaxed">
+            <p className="text-muted-foreground mt-1 line-clamp-3 text-[13px] leading-relaxed">
               {previewEntry.preview}
             </p>
           )}

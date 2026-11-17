@@ -3,32 +3,41 @@
 //! Separates three concerns:
 //! - **Where** tools run (this module — sandbox backend selection)
 //! - **Which** tools are allowed (security policy / tool policy)
-//! - **Whether** a tool needs host access (elevated ops)
 //!
 //! The gateway/core always runs on the host. Selected tool families
 //! (shell, filesystem, process) execute inside a sandbox with controlled
 //! workspace mounts, network policy, environment passthrough, and
 //! explicit elevated escape paths.
 
-/// The CWD jail (Landlock / Seatbelt / AppContainer / noop) is owned by
-/// `tinybox-jail`; re-exported here so host call sites stay stable. Deciding
-/// WHEN to jail stays in [`ops`].
-pub use tinybox_jail as cwd_jail;
+pub mod agent37;
+pub mod boxes;
 pub mod docker;
-pub mod grants;
+pub(crate) mod local_grants;
+pub(crate) mod native_jail;
+pub(crate) mod operator;
 pub mod ops;
+#[cfg(feature = "security-module")]
+pub mod plan;
+pub mod policy;
 pub mod schemas;
+pub(crate) mod shell_exec;
+pub(crate) mod shell_live;
+pub(crate) mod shell_processes;
+pub(crate) mod shell_progress;
+#[cfg(feature = "security-module")]
+pub(crate) mod spawn_plan;
 pub mod types;
 
-pub use ops::{
-    build_elevated_op, create_sandbox_backend, execute_in_sandbox, is_elevated_op,
-    resolve_sandbox_policy,
+pub use boxes::{
+    read_file as read_box_file, write_file as write_box_file, BoxError,
+    MAX_FILE_BYTES as MAX_BOX_FILE_BYTES,
 };
+pub use ops::{create_sandbox_backend, execute_in_sandbox};
 pub use schemas::{
     all_controller_schemas as all_sandbox_controller_schemas,
     all_registered_controllers as all_sandbox_registered_controllers,
 };
 pub use types::{
-    DockerOverrides, ElevatedOp, SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest,
-    SandboxExecResult, SandboxPolicy, SandboxStatus,
+    DockerOverrides, SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest,
+    SandboxExecResult, SandboxIsolation, SandboxPolicy, SandboxStatus,
 };

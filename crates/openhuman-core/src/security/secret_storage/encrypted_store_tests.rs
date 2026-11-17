@@ -1,0 +1,95 @@
+use super::*;
+use tempfile::TempDir;
+
+#[tokio::test]
+async fn encrypted_operations_fail_closed_without_tinysecurity() {
+    let temp = TempDir::new().unwrap();
+    let mut config = crate::config::Config::default();
+    config.modules.enabled = false;
+    let store = SecretStore::new_with_config(temp.path(), true, &config);
+
+    let error = store
+        .encrypt_via_security("must-not-use-host-crypto")
+        .await
+        .expect_err("enabled encryption requires TinySecurity");
+
+    assert!(error.to_string().contains("unavailable"));
+}
+
+#[tokio::test]
+async fn existing_key_decryption_fails_closed_without_tinysecurity() {
+    let temp = TempDir::new().unwrap();
+    let mut config = crate::config::Config::default();
+    config.modules.enabled = false;
+    let store = SecretStore::new_with_config(temp.path(), true, &config);
+
+    let error = store
+        .decrypt_with_existing_key_via_security(
+            &format!("enc2:{}", "00".repeat(32)),
+            &"ab".repeat(32),
+        )
+        .await
+        .expect_err("explicit-key decryption requires TinySecurity");
+
+    assert!(error.to_string().contains("unavailable"));
+}
+
+#[tokio::test]
+async fn disabled_encryption_preserves_plaintext() {
+    let temp = TempDir::new().unwrap();
+    let store = SecretStore::new(temp.path(), false);
+
+    assert_eq!(store.encrypt_via_security("plain").await.unwrap(), "plain");
+    assert_eq!(store.decrypt_via_security("plain").await.unwrap(), "plain");
+}
+
+#[tokio::test]
+async fn disabled_encryption_keeps_legacy_migration_as_a_plaintext_noop() {
+    let temp = TempDir::new().unwrap();
+    let store = SecretStore::new(&temp.path(), false);
+
+    let (plaintext, replacement) = store
+        .decrypt_and_migrate_via_security("legacy plaintext")
+        .await
+        .unwrap();
+
+    assert_eq!(plaintext, "legacy plaintext");
+    assert_eq!(replacement, None);
+}
+
+#[test]
+fn encrypted_prefixes_remain_compatible() {
+    assert!(SecretStore::is_encrypted("enc2:ciphertext"));
+    assert!(SecretStore::is_encrypted("enc:legacy"));
+    assert!(SecretStore::needs_migration("enc:legacy"));
+    assert!(!SecretStore::needs_migration("enc2:ciphertext"));
+    assert!(!SecretStore::is_encrypted("plaintext"));
+}
+
+#[test]
+fn keyring_user_id_uses_directory_name_or_stable_hash() {
+    assert_eq!(keyring_user_id_from_dir(Path::new("/users/alice")), "alice");
+    let first = keyring_user_id_from_dir(Path::new("/"));
+    assert_eq!(first, keyring_user_id_from_dir(Path::new("/")));
+    assert!(first.starts_with("secretstore-path-"));
+}
+
+/// The first cipher call in a process must admit the module itself. Reading the
+/// secret scope first reported an unavailable scope on every embedder that had
+/// not loaded TinySecurity some other way (`--example profiles`).
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_first_cipher_call_admits_the_module_before_it_reads_the_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    let store = SecretStore::new_with_config(dir.path(), true, &config);
+
+    let outcome = store.encrypt_via_security("first-call").await;
+
+    if let Err(error) = outcome {
+        assert!(
+            !error.to_string().contains("secret scope is unavailable"),
+            "{error}"
+        );
+    }
+}

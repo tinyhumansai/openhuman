@@ -3,8 +3,8 @@ use serde_json::json;
 use std::sync::Arc;
 
 use super::rpc_handler;
+use crate::core_host::core::invoke::default_state;
 use crate::server::testing::EnvVarGuard;
-use openhuman_core::core::invoke::default_state;
 
 #[tokio::test(flavor = "current_thread")]
 async fn structured_rpc_error_envelope_passes_through_generic_dispatch() {
@@ -29,7 +29,7 @@ async fn structured_rpc_error_envelope_passes_through_generic_dispatch() {
         method: "openhuman.threads_generate_title".to_string(),
         params: json!({ "thread_id": "thread-ghost" }),
     };
-    let response = rpc_handler(State(default_state()), Json(stale_thread_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(stale_thread_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -80,7 +80,8 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
             // `report_error_message` are captured directly via
             // `sentry::capture_message` and must not be picked up here too
             // (otherwise this test sees double events).
-            if metadata.target() == openhuman_core::core::observability::REPORT_ERROR_TRACING_TARGET
+            if metadata.target()
+                == crate::core_host::core::observability::REPORT_ERROR_TRACING_TARGET
             {
                 return sentry::integrations::tracing::EventFilter::Ignore;
             }
@@ -109,7 +110,7 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
             }
         }),
     };
-    let response = rpc_handler(State(default_state()), Json(stale_thread_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(stale_thread_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -126,7 +127,7 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
         method: "core.not_a_real_method".to_string(),
         params: json!({}),
     };
-    let response = rpc_handler(State(default_state()), Json(unrelated_error_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(unrelated_error_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -198,7 +199,8 @@ async fn unknown_method_severity_split_by_probe_allow_list() {
             // Mirror production: diagnostics from the report_* helpers are
             // captured directly via `sentry::capture_message`, so the bridge
             // must ignore their marker target to avoid double events.
-            if metadata.target() == openhuman_core::core::observability::REPORT_ERROR_TRACING_TARGET
+            if metadata.target()
+                == crate::core_host::core::observability::REPORT_ERROR_TRACING_TARGET
             {
                 return sentry::integrations::tracing::EventFilter::Ignore;
             }
@@ -218,7 +220,7 @@ async fn unknown_method_severity_split_by_probe_allow_list() {
         method: "rpc.discover".to_string(),
         params: json!({}),
     };
-    let response = rpc_handler(State(default_state()), Json(probe_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(probe_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -242,7 +244,7 @@ async fn unknown_method_severity_split_by_probe_allow_list() {
         method: "totally.made.up.method".to_string(),
         params: json!({}),
     };
-    let response = rpc_handler(State(default_state()), Json(unknown_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(unknown_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -308,7 +310,8 @@ async fn invalid_memory_ingest_is_not_reported_to_sentry() {
 
     let subscriber = tracing_subscriber::registry().with(
         sentry::integrations::tracing::layer().event_filter(|metadata| {
-            if metadata.target() == openhuman_core::core::observability::REPORT_ERROR_TRACING_TARGET
+            if metadata.target()
+                == crate::core_host::core::observability::REPORT_ERROR_TRACING_TARGET
             {
                 return sentry::integrations::tracing::EventFilter::Ignore;
             }
@@ -330,7 +333,7 @@ async fn invalid_memory_ingest_is_not_reported_to_sentry() {
         method: "openhuman.memory_brain_ingest".to_string(),
         params: json!({ "path": "/openhuman-test/missing-memory-ingest-file" }),
     };
-    let response = rpc_handler(State(default_state()), Json(request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");

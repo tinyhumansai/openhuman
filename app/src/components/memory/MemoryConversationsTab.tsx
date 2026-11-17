@@ -21,9 +21,10 @@ import {
   memoryPolicyGet,
   memoryPolicySet,
 } from '../../services/api/memoryApi';
-import { Alert, AlertDescription, Button, Card, Switch } from '../ui';
+import { Button, Card, Switch } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
 import MemoryConversationsBackfill from './MemoryConversationsBackfill';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import { fill } from './memoryFormat';
 import MemoryHitRow from './MemoryHitRow';
 
@@ -121,9 +122,7 @@ export default function MemoryConversationsTab() {
   return (
     <div className="space-y-4 animate-fade-up" data-testid="memory-conversations-tab">
       {error !== null && (
-        <Alert variant="destructive" data-testid="memory-conversations-error">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <MemoryErrorAlert message={error} data-testid="memory-conversations-error" />
       )}
 
       {policy !== null && (

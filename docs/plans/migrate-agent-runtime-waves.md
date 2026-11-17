@@ -1,5 +1,9 @@
 # Agent runtime migration waves
 
+> **Status, verified 2026-10-07:** live. Gate 4 is unmet; the boundary
+> baseline is still checked in. See [`README.md`](README.md) for the whole set
+> and how to re-check it.
+
 This is the execution and validation companion to
 [`migrate-agent-runtime-to-tinyagents.md`](migrate-agent-runtime-to-tinyagents.md).
 The boundary remains normative in

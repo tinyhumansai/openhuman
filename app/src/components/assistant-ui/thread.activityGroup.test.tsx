@@ -58,6 +58,33 @@ function Harness({ messages, isRunning }: { messages: ThreadMessageLike[]; isRun
 }
 
 describe('activity group', () => {
+  it('renders persisted channel reactions and read receipts on the source message', () => {
+    render(
+      <Harness
+        messages={[
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'incoming channel message' }],
+            metadata: {
+              custom: {
+                extraMetadata: {
+                  channelActivity: {
+                    reactions: { 'reaction-key': { actorId: 'alice', value: '🔥' } },
+                    readReceipts: { 'receipt-key': { actorId: 'bob', timestamp: 123 } },
+                  },
+                },
+              },
+            },
+          },
+        ]}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.getByTestId('channel-message-reaction')).toHaveTextContent('🔥 1');
+    expect(screen.getByTestId('channel-message-read-receipts')).toHaveTextContent('✓✓ 1');
+  });
+
   it('puts interleaved reasoning and tool calls under one trigger, answer outside', () => {
     render(
       <Harness messages={interleaved({ type: 'complete', reason: 'stop' })} isRunning={false} />
@@ -174,10 +201,26 @@ describe('activity group', () => {
 });
 
 describe('activityGroupLabel', () => {
+  const EN: Record<string, string> = {
+    'chat.tools.callOne': '{count} tool call',
+    'chat.tools.callOther': '{count} tool calls',
+    'chat.tools.reasoningWithCalls': 'Reasoning · {calls}',
+    'chat.tools.reasoning': 'Reasoning',
+    'chat.tools.activity': 'Activity',
+    'chat.tools.workedFor': 'Worked for {duration} · {calls}',
+  };
+  const t = (key: string) => EN[key] ?? key;
+
   it('names reasoning and counts tool calls', () => {
-    expect(activityGroupLabel(2, 1)).toBe('Reasoning · 1 tool call');
-    expect(activityGroupLabel(1, 0)).toBe('Reasoning');
-    expect(activityGroupLabel(0, 3)).toBe('3 tool calls');
-    expect(activityGroupLabel(0, 0)).toBe('Activity');
+    expect(activityGroupLabel(2, 1, t)).toBe('Reasoning · 1 tool call');
+    expect(activityGroupLabel(1, 0, t)).toBe('Reasoning');
+    expect(activityGroupLabel(0, 3, t)).toBe('3 tool calls');
+    expect(activityGroupLabel(0, 0, t)).toBe('Activity');
+  });
+
+  it('reads as a receipt once the turn time is known', () => {
+    expect(activityGroupLabel(1, 3, t, 42_000)).toBe('Worked for 42s · 3 tool calls');
+    // Without a tool call there is nothing to credit the time to.
+    expect(activityGroupLabel(1, 0, t, 42_000)).toBe('Reasoning');
   });
 });

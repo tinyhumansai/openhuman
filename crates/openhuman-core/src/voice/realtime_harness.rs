@@ -2,7 +2,7 @@
 //!
 //! The backend relays each turn of an ElevenLabs Agents session down the socket
 //! as `voice:harness { correlationId, messages }` (see the backend's
-//! `/voice-agent/chat/completions` Custom-LLM relay). We run the **local
+//! voice-agent Custom-LLM relay). We run the **local
 //! orchestrator agent** — the same brain the chat UI and meet bot use, with the
 //! user's tools/memory/MCP — and stream the reply back up as
 //! `voice:harness:delta` / `voice:harness:done` (or `:error`). This is what
@@ -29,12 +29,12 @@ pub use prompt::extract_prompt;
 pub use turn_handler::handle_voice_harness_turn;
 
 #[cfg(test)]
-use crate::agent::progress::AgentProgress;
-#[cfg(test)]
 use prompt::{
     is_answerable_prompt, is_content_free, messages_to_history_pairs, readback_payload,
     should_arm_speak_back, spoken_delta, VOICE_READBACK_PREFIX,
 };
+#[cfg(test)]
+use tinyagents_harness::progress::AgentProgress;
 #[cfg(test)]
 use turn_handler::{next_handoff_line, VOICE_HANDOFF_LINES};
 

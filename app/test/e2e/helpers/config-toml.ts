@@ -7,7 +7,7 @@
  * need to confirm UI mutations land in the persisted config.
  *
  * Intentionally minimal: a regex-based reader, not a full TOML parser. The
- * keys we care about (`onboarding_completed`, `voice_server.auto_start`,
+ * keys we care about (`onboarding_completed`, `voice_server.stt_engine`,
  * etc.) are simple `key = value` lines at the top-level or inside a flat
  * `[section]` table.
  */

@@ -2,19 +2,21 @@ import type { ToolCallMessagePartComponent } from '@assistant-ui/react';
 
 import {
   type TodoItem,
-  TodoList,
+  todoProgress,
+  TodoReceipt,
   type TodoStatus,
 } from '../../../components/assistant-ui/elements/todo-list';
+import { useDisclosure } from '../../../components/assistant-ui/lib/useDisclosure';
 import { useT } from '../../../lib/i18n/I18nContext';
-import type { CoreTodoStatus } from '../../../store/threadTodosSlice';
+import type { TodoItem as CoreTodoItemWire } from '../../../types/threadWire.generated';
 
 /**
- * Adapts the core wire shape of a `todo` tool call — `{content, status}` with
- * `status: 'pending'|'in_progress'|'completed'` — onto the vendored
- * `TodoList` element's `TodoItem` shape (`{id, text, status}` with
- * `status: 'pending'|'active'|'done'|'failed'`). The core never sends
- * `'failed'` today, so that status never maps — kept here anyway so the
- * mapping stays honest if the core ever adds it.
+ * Adapts the core wire shape of a `todo` tool call — `{content, status,
+ * reason?}` with `status: 'pending'|'in_progress'|'completed'|'cancelled'` —
+ * onto the vendored `TodoList` element's `TodoItem` shape (`{id, text, status,
+ * reason?}` with `status: 'pending'|'active'|'done'|'failed'|'skipped'`). A
+ * cancelled step shows as skipped, never as pending. The core never sends
+ * `'failed'`, so that status never maps.
  */
 export function mapCoreTodoStatus(status: unknown): TodoStatus {
   switch (status) {
@@ -22,6 +24,8 @@ export function mapCoreTodoStatus(status: unknown): TodoStatus {
       return 'active';
     case 'completed':
       return 'done';
+    case 'cancelled':
+      return 'skipped';
     case 'pending':
       return 'pending';
     default:
@@ -29,12 +33,7 @@ export function mapCoreTodoStatus(status: unknown): TodoStatus {
   }
 }
 
-interface CoreTodoItem {
-  content?: unknown;
-  status?: unknown;
-}
-
-function isCoreTodoItem(value: unknown): value is CoreTodoItem {
+function isCoreTodoItem(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
@@ -50,6 +49,9 @@ export function toAuiTodoItems(raw: unknown): TodoItem[] {
       id: `${index}-${content}`,
       text: content,
       status: mapCoreTodoStatus(candidate.status),
+      ...(typeof candidate.reason === 'string' && candidate.reason
+        ? { reason: candidate.reason }
+        : {}),
     });
   });
   return items;
@@ -57,21 +59,38 @@ export function toAuiTodoItems(raw: unknown): TodoItem[] {
 
 /** Args/result shape the core sends for the `todo` tool call. */
 interface TodoToolArgs {
-  todos?: Array<{ content: string; status: CoreTodoStatus }>;
+  todos?: Array<Pick<CoreTodoItemWire, 'content' | 'status'>>;
 }
 
 /**
- * Toolkit render for the `todo` tool call — a standalone element in the
- * transcript showing the todo list snapshot as of THIS call (args carry the
- * write while in flight; result echoes it back once settled). The pinned,
- * always-current list above the composer is a separate render, driven by
- * {@link useThreadTodos} off the live `thread_todos_changed` event, not this
- * per-call snapshot.
+ * Toolkit render for the `todo` tool call — a one-line receipt in the
+ * transcript ("Progress updated — 3/7 · current step") that expands to the
+ * todo list snapshot as of THIS call (args carry the write while in flight;
+ * result echoes it back once settled). A run updates its list many times, and
+ * repeating the whole list after every update buried the conversation. The
+ * pinned, always-current list above the composer is a separate render
+ * (`PinnedTodoCard`), driven by {@link useThreadTodos} off the live
+ * `thread_todos_changed` event, not this per-call snapshot.
  */
-export const TodoListPart: ToolCallMessagePartComponent = ({ args, result }) => {
+export const TodoListPart: ToolCallMessagePartComponent = ({ args, result, toolCallId }) => {
   const { t } = useT();
-  const payload = (result ?? args) as TodoToolArgs | undefined;
+  const [open, setOpen] = useDisclosure(toolCallId ? `todo:${toolCallId}` : undefined, false);
+  const resultPayload = result as TodoToolArgs | undefined;
+  const argsPayload = args as TodoToolArgs | undefined;
+  const payload = Array.isArray(resultPayload?.todos) ? resultPayload : argsPayload;
   const items = toAuiTodoItems(payload?.todos);
   if (items.length === 0) return null;
-  return <TodoList items={items} title={t('conversations.todos.title')} />;
+  const progress = todoProgress(items);
+  return (
+    <div data-testid="todo-receipt">
+      <TodoReceipt
+        items={items}
+        open={open}
+        onOpenChange={setOpen}
+        label={t('chat.todos.receipt')
+          .replace('{done}', String(progress.done))
+          .replace('{total}', String(progress.total))}
+      />
+    </div>
+  );
 };

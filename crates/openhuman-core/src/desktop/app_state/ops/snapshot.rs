@@ -17,11 +17,9 @@ use super::state_file::{
 };
 use super::types::{AppStateSnapshot, StoredAppState, StoredAppStatePatch};
 use super::LOG_PREFIX;
-use crate::config::rpc as config_rpc;
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
-use crate::security::credentials::session_support::{
-    load_app_session_profile, session_state_from_profile, session_token_from_profile,
-};
+use crate::credentials::session_state::{load_app_session_profile, session_state_from_profile};
 use log::{debug, warn};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,12 +36,12 @@ pub(super) fn sanitize_snapshot_user(user: Option<Value>) -> Option<Value> {
     }
 }
 
-pub async fn snapshot() -> Result<Outcome<AppStateSnapshot>, String> {
+pub async fn snapshot(ctx: &DispatchCtx) -> Result<Outcome<AppStateSnapshot>, String> {
     let req_id = SNAPSHOT_REQ_COUNTER.fetch_add(1, Ordering::Relaxed);
     let t_total = Instant::now();
 
     let t_config = Instant::now();
-    let config = config_rpc::load_config_with_timeout().await?;
+    let config = ctx.load_config().await?;
     // Latch corruption recovery from *this* poll's load, not only from boot.
     // `load_config_with_timeout` re-reads config.toml on every snapshot, so a
     // config that becomes corrupt after boot is healed here — carrying a fresh
@@ -59,16 +57,14 @@ pub async fn snapshot() -> Result<Outcome<AppStateSnapshot>, String> {
     // lock per snapshot (the "Timed out waiting for auth profile lock" Sentry
     // failure on Windows came from taking it twice).
     //
-    // `load_app_session_profile` busy-waits with `thread::sleep` for up to
-    // ~35s when the lock is contended, so it runs on the blocking pool rather
-    // than a tokio worker thread.
-    let config_for_profile = config.clone();
-    let session_profile =
-        tokio::task::spawn_blocking(move || load_app_session_profile(&config_for_profile))
-            .await
-            .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
+    let session_profile = load_app_session_profile(&config).await?;
     let mut auth = session_state_from_profile(session_profile.as_ref());
-    let session_token = session_token_from_profile(session_profile.as_ref());
+    let session_token = crate::credentials::session_state::session_token_for_config(
+        &config,
+        session_profile.as_ref(),
+    )
+    .ok()
+    .flatten();
     let current_user = sanitize_snapshot_user(auth.user.clone());
     auth.user = current_user.clone();
     let auth_ms = t_auth.elapsed().as_millis();
@@ -136,9 +132,10 @@ pub async fn snapshot() -> Result<Outcome<AppStateSnapshot>, String> {
 }
 
 pub async fn update_local_state(
+    ctx: &DispatchCtx,
     patch: StoredAppStatePatch,
 ) -> Result<Outcome<StoredAppState>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
+    let config = ctx.load_config().await?;
     let _guard = APP_STATE_FILE_LOCK.lock();
     let mut current = load_stored_app_state_unlocked(&config)?;
 

@@ -42,10 +42,10 @@ where
 
 /// Box a cleanup function without registering it.
 ///
-/// For a caller that wants to run a hook through [`run_hook_list`] itself —
-/// a test above all, which must not reach into the process-wide registry: in
-/// a test binary that registry holds every other test's hooks, the shared
-/// memory engine's shutdown among them.
+/// For a caller that wants to hold a hook itself — a test above all, which
+/// must not reach into the process-wide registry: in a test binary that
+/// registry holds every other test's hooks, the shared memory engine's
+/// shutdown among them.
 pub fn boxed_hook<F, Fut>(hook: F) -> ShutdownHook
 where
     F: Fn() -> Fut + Send + Sync + 'static,
@@ -70,20 +70,6 @@ async fn run_hooks() {
     for hook in &take_hooks() {
         hook().await;
     }
-}
-
-/// Run `hooks` side by side.
-///
-/// For the embedded server's exit, whose graceful path is a cancellation token
-/// rather than SIGTERM: [`signal`] never resolves there, so the hooks it would
-/// have run — the memory engine releasing its queue leases, above all — never
-/// ran on a normal quit. Concurrent, unlike the signal path, because the caller
-/// runs this under a deadline, and in sequence one hook that never answers
-/// would keep every hook after it — the lease release among them — from so
-/// much as starting before the deadline dropped the lot. Run together, a
-/// hanging hook costs only itself.
-pub async fn run_hook_list(hooks: Vec<ShutdownHook>) {
-    futures::future::join_all(hooks.iter().map(|hook| hook())).await;
 }
 
 /// Returns a future that resolves when the process receives a termination

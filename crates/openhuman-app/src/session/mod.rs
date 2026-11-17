@@ -13,7 +13,7 @@ mod link;
 
 use std::sync::Arc;
 
-use openhuman_tinyhumans::{ClientHeaders, SessionEvent, SessionManager};
+use openhuman_rpc::tinyhumans::{ClientHeaders, SessionEvent, SessionManager};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::core_process::CoreProcessHandle;
@@ -22,7 +22,7 @@ use crate::AppRuntime;
 pub(crate) use link::HttpCoreLink;
 
 /// Tauri event emitted whenever the credential or the current user changes.
-/// Payload: `openhuman_tinyhumans::SessionState`.
+/// Payload: `openhuman_rpc::tinyhumans::SessionState`.
 pub const AUTH_CHANGED_EVENT: &str = "auth://changed";
 /// Tauri event emitted when the backend rejected the stored credential and it
 /// has been cleared. Payload: `{ source }`.
@@ -37,7 +37,7 @@ impl SessionHost {
     pub fn new(desktop: CoreProcessHandle) -> Self {
         // The shell and the core ship as one release, so one version answers
         // for both `x-core-version` and `x-tauri-version`.
-        let headers = ClientHeaders::new(openhuman_tinyhumans::product_identity().as_str())
+        let headers = ClientHeaders::new(openhuman_rpc::tinyhumans::product_identity().as_str())
             .with_core_version(env!("CARGO_PKG_VERSION"))
             .with_tauri_version(env!("CARGO_PKG_VERSION"));
         let link = Arc::new(HttpCoreLink::new(desktop));
@@ -89,5 +89,5 @@ pub fn install(app: &AppHandle<AppRuntime>, desktop: CoreProcessHandle) {
 
 /// The signed-in user id, for synchronous callers (Sentry `before_send`).
 pub fn peek_user_id() -> Option<String> {
-    openhuman_tinyhumans::identity::peek_user_id()
+    openhuman_rpc::tinyhumans::identity::peek_user_id()
 }

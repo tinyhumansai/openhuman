@@ -1,0 +1,10 @@
+api_url = "__MOCK_BACKEND_URL__"
+default_model = "e2e-mock-model"
+default_temperature = 0.2
+chat_provider = "nope"
+
+[secrets]
+encrypt = false
+
+[storage]
+url = "memory"

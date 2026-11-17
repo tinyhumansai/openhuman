@@ -1,7 +1,7 @@
 /**
  * Cross-platform WebView element helpers for E2E tests.
  *
- * Two backends are supported:
+ * Desktop backends and the Playwright web harness are supported:
  *
  * ## Appium Mac2 (macOS)
  * The mac2 driver exposes WKWebView content through the macOS accessibility
@@ -17,6 +17,7 @@
  * - `browser.execute()` runs JS inside the WebView
  * - `browser.getPageSource()` returns HTML (not accessibility XML)
  */
+import type { Page } from '@playwright/test';
 import type { ChainablePromiseElement } from 'webdriverio';
 
 import { isTauriDriver } from './platform';
@@ -395,6 +396,63 @@ export async function waitForTestId(
   return el;
 }
 
+/** Wait for an indexed match when a conversation contains repeated controls. */
+export async function waitForTestIdAtIndex(
+  testId: string,
+  index: number,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  if (!isTauriDriver()) {
+    throw new Error(`waitForTestIdAtIndex is only supported on tauri-driver: ${testId}`);
+  }
+
+  const selector = testIdSelector(testId);
+  await browser.waitUntil(async () => (await (await browser.$$(selector)).length) > index, {
+    timeout,
+    timeoutMsg: `data-testid="${testId}" index ${index} not found within ${timeout}ms`,
+  });
+  return (await browser.$$(selector))[index];
+}
+
+/** Count matching test-id elements through the DOM-backed driver. */
+export async function countTestId(testId: string): Promise<number> {
+  if (!isTauriDriver()) {
+    throw new Error(`countTestId is only supported on tauri-driver: ${testId}`);
+  }
+  return await (
+    await browser.$$(testIdSelector(testId))
+  ).length;
+}
+
+/** Wait until an audio element captured by an E2E Audio constructor has decoded data. */
+export async function waitForDecodedAudioAtIndex(
+  index: number,
+  timeout: number = 5_000
+): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      await browser.execute((audioIndex: number) => {
+        const audio = (window as Window & { __E2E_AUDIO_ELEMENTS?: HTMLAudioElement[] })
+          .__E2E_AUDIO_ELEMENTS?.[audioIndex];
+        return Boolean(
+          audio && audio.readyState >= 2 && Number.isFinite(audio.duration) && audio.duration > 0
+        );
+      }, index),
+    { timeout, timeoutMsg: `Audio ${index} did not decode before ${timeout}ms` }
+  );
+}
+
+/** Click an indexed repeated test-id control through the shared click path. */
+export async function clickTestIdAtIndex(
+  testId: string,
+  index: number,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  const el = await waitForTestIdAtIndex(testId, index, timeout);
+  await clickAtElement(el);
+  return el;
+}
+
 /** Wait until a selector is absent from the DOM. */
 export async function waitForElementAbsence(
   selector: string,
@@ -695,4 +753,40 @@ export async function dumpAccessibilityTree(): Promise<string> {
   } catch (err: unknown) {
     return `[dumpAccessibilityTree] Failed: ${err}`;
   }
+}
+
+// Playwright web-lane adapter. Keep platform locator types and locale-storage
+// decoding here so web specs use the same shared element-helper boundary.
+export type BrowserPage = Page;
+
+export function browserElements(page: BrowserPage) {
+  const language = (name: string) => page.getByRole('combobox', { name, exact: true });
+  return {
+    textbox: (name: string) => page.getByRole('textbox', { name, exact: true }),
+    button: (name: string) => page.getByRole('button', { name, exact: true }),
+    testId: (id: string) => page.getByTestId(id),
+    slot: (slot: string) => page.locator(`[data-slot="${slot}"]`),
+    language,
+    selectLanguage: (name: string, value: string | { label: string }) =>
+      language(name).selectOption(value),
+    document: page.locator('html'),
+    chatTab: page.locator('[data-walkthrough="tab-chat"]'),
+    text: (value: string) => page.getByText(value, { exact: true }),
+  };
+}
+
+export async function persistedBrowserLocale(page: BrowserPage): Promise<string | null> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('persist:locale');
+    if (!raw) return null;
+    try {
+      // Redux Persist JSON-encodes each reducer property inside its outer JSON.
+      const persisted = JSON.parse(raw) as { current?: string };
+      if (!persisted.current) return null;
+      const locale = JSON.parse(persisted.current);
+      return typeof locale === 'string' ? locale : null;
+    } catch {
+      return null;
+    }
+  });
 }

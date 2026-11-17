@@ -2,6 +2,12 @@ import debug from 'debug';
 
 import { trackAnalyticsEvent } from '../analytics';
 import { callCoreRpc } from '../coreRpcClient';
+import {
+  isScanBlocked,
+  normalizeScanBlocked,
+  type RawScanBlocked,
+  type ScanBlocked,
+} from './skillRegistryApi';
 
 const log = debug('skillsApi');
 
@@ -147,6 +153,8 @@ interface RawWorkflowsCreateResult {
 interface InstallWorkflowFromUrlInput {
   url: string;
   timeoutSecs?: number;
+  /** The `digest` of the blocked document the user chose "Install anyway" on. */
+  acknowledgedDigest?: string;
 }
 
 /**
@@ -165,7 +173,12 @@ export interface InstallWorkflowFromUrlResult {
   newWorkflows: string[];
 }
 
+export type InstallWorkflowFromUrlOutcome =
+  | ({ status: 'installed' } & InstallWorkflowFromUrlResult)
+  | { status: 'scan_blocked'; scan: ScanBlocked };
+
 interface RawInstallWorkflowFromUrlResult {
+  status?: 'installed';
   url: string;
   stdout: string;
   stderr: string;
@@ -381,19 +394,29 @@ export const skillsApi = {
    */
   installWorkflowFromUrl: async (
     input: InstallWorkflowFromUrlInput
-  ): Promise<InstallWorkflowFromUrlResult> => {
-    log('installWorkflowFromUrl: request url=%s', input.url);
+  ): Promise<InstallWorkflowFromUrlOutcome> => {
+    const digest = input.acknowledgedDigest?.trim();
+    log('installWorkflowFromUrl: request url=%s acknowledged=%s', input.url, Boolean(digest));
     const response = await callCoreRpc<
-      Envelope<RawInstallWorkflowFromUrlResult> | RawInstallWorkflowFromUrlResult
+      | Envelope<RawInstallWorkflowFromUrlResult | RawScanBlocked>
+      | RawInstallWorkflowFromUrlResult
+      | RawScanBlocked
     >({
       method: 'openhuman.skills_install_from_url',
       params: {
         url: input.url,
         ...(input.timeoutSecs !== undefined ? { timeout_secs: input.timeoutSecs } : {}),
+        ...(digest ? { acknowledged_digest: digest } : {}),
       },
     });
     const raw = unwrapEnvelope(response);
-    const normalized: InstallWorkflowFromUrlResult = {
+    if (isScanBlocked(raw)) {
+      const scan = normalizeScanBlocked(raw);
+      log('installWorkflowFromUrl: scan_blocked findings=%d', scan.findings.length);
+      return { status: 'scan_blocked', scan };
+    }
+    const normalized: InstallWorkflowFromUrlOutcome = {
+      status: 'installed',
       url: raw.url,
       stdout: raw.stdout,
       stderr: raw.stderr,
@@ -460,7 +483,7 @@ export const skillsApi = {
    * immediately with the new background run's `run_id`, the canonical
    * skill/workflow id, and the log path the run is streaming into; the actual
    * autonomous work continues in the background and finishes with
-   * status `DONE` / `DEGENERATE` / `FAILED` in the run log.
+   * status `DONE` / `STOPPED` / `DEGENERATE` / `FAILED` in the run log.
    */
   runWorkflow: async (
     workflowId: string,
@@ -544,11 +567,7 @@ export const skillsApi = {
     return raw.runs;
   },
 
-  /**
-   * Resolve the reusable Node/Python runtimes backing script-based skills.
-   * The backend reuses `runtime_node` and `runtime_python`; this call is a
-   * cheap UI/prod-smoke probe unless it has to bootstrap a missing managed runtime.
-   */
+  /** Probe whether the host Node.js and Python executables are available on PATH. */
   resolveRuntimes: async (
     runtime: 'all' | 'node' | 'python' = 'all'
   ): Promise<ResolveSkillRuntimesResult> => {
@@ -636,15 +655,16 @@ export interface RunLogSlice {
  * One run entry returned by `openhuman.skill_runtime_recent_runs`. Wire shape
  * mirrors `crate::skills::run_log::ScannedRun`. `status` is
  * `"RUNNING"` while the run hasn't written its `--- result ---` footer
- * yet; after the footer lands it becomes `"DONE"` / `"DEGENERATE"` /
- * `"FAILED"`.
+ * yet; after the footer lands it becomes `"DONE"` / `"STOPPED"` /
+ * `"DEGENERATE"` / `"FAILED"`. `"STOPPED"` means the harness ended the run
+ * early (failure breaker, deadline wind-down or iteration cap).
  */
 export interface ScannedRun {
   run_id: string;
   workflow_id: string;
   /** RFC3339-with-trailing-`UTC` timestamp from the log header. */
   started: string;
-  status: 'RUNNING' | 'DONE' | 'DEGENERATE' | 'FAILED' | string;
+  status: 'RUNNING' | 'DONE' | 'STOPPED' | 'DEGENERATE' | 'FAILED' | string;
   /** Footer `duration: <ms> ms`. Null while running. */
   duration_ms: number | null;
   /** Footer `finished:` timestamp. Null while running. */

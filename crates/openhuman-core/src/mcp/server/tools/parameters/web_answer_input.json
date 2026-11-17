@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The question to answer."
+    },
+    "depth": {
+      "type": "string",
+      "enum": [
+        "quick",
+        "deep"
+      ],
+      "description": "quick (default) or deep."
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "additionalProperties": false
+}

@@ -9,7 +9,6 @@ import {
   listConnections,
   listToolkits,
   listTriggers,
-  syncConnection,
 } from './composioApi';
 
 const mockCallCoreRpc = vi.fn();
@@ -106,67 +105,6 @@ describe('composioApi trigger wrappers', () => {
       params: { trigger_id: 'ti_1' },
     });
     expect(out.deleted).toBe(true);
-  });
-
-  it('deleteConnection forwards clear_memory only when requested', async () => {
-    mockCallCoreRpc.mockResolvedValue({
-      result: { deleted: true, memory_chunks_deleted: 3 },
-      logs: [],
-    });
-
-    const out = await deleteConnection('conn-1', { clearMemory: true });
-
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.composio_delete_connection',
-      params: { connection_id: 'conn-1', clear_memory: true },
-    });
-    expect(out.memory_chunks_deleted).toBe(3);
-  });
-});
-
-describe('syncConnection', () => {
-  beforeEach(() => {
-    mockCallCoreRpc.mockReset();
-  });
-
-  it('dispatches composio_sync with the connection id and default reason=manual', async () => {
-    mockCallCoreRpc.mockResolvedValue({
-      result: { toolkit: 'gmail', connectionId: 'conn-1', items_ingested: 4 },
-      logs: ['stub'],
-    });
-
-    const out = await syncConnection('conn-1');
-
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.composio_sync',
-      params: { connection_id: 'conn-1', reason: 'manual' },
-    });
-    // Outcome envelope is unwrapped to the bare provider payload.
-    expect(out).toMatchObject({ toolkit: 'gmail', connectionId: 'conn-1' });
-  });
-
-  it('forwards an explicit reason verbatim (periodic / connection_created)', async () => {
-    mockCallCoreRpc.mockResolvedValue({});
-
-    await syncConnection('conn-2', 'periodic');
-    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
-      method: 'openhuman.composio_sync',
-      params: { connection_id: 'conn-2', reason: 'periodic' },
-    });
-
-    await syncConnection('conn-3', 'connection_created');
-    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
-      method: 'openhuman.composio_sync',
-      params: { connection_id: 'conn-3', reason: 'connection_created' },
-    });
-  });
-
-  it('returns non-object outcomes verbatim (unwrap is a no-op for primitives)', async () => {
-    // Defensive: a future Rust handler returning a bare scalar / null
-    // shouldn't trip the unwrap path.
-    mockCallCoreRpc.mockResolvedValue(null);
-    const out = await syncConnection('conn-null');
-    expect(out).toBeNull();
   });
 });
 
@@ -275,15 +213,6 @@ describe('deleteConnection', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.composio_delete_connection',
       params: { connection_id: 'conn-abc' },
-    });
-  });
-
-  it('forwards clearMemory=true to the RPC', async () => {
-    mockCallCoreRpc.mockResolvedValue({ result: { deleted: true }, logs: [] });
-    await deleteConnection('conn-abc', { clearMemory: true });
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.composio_delete_connection',
-      params: { connection_id: 'conn-abc', clear_memory: true },
     });
   });
 });

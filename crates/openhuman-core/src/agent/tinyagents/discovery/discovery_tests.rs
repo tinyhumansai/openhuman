@@ -26,6 +26,60 @@ fn default_policy_is_jev_with_no_ranker_and_top_three() {
 }
 
 #[test]
+fn an_agent_with_no_new_keys_runs_with_todays_policy() {
+    let _g = guard();
+    apply_tool_search_config(&ToolSearchConfig::default());
+    let policy = discovery_policy();
+    assert!(policy.promote_found_tools);
+    assert!(!policy.compact_search_results);
+    assert!(!policy.collapse_search_results);
+    assert!(policy.repair_tool_call_wrapper);
+    assert_eq!(policy.max_limit, 20);
+}
+
+#[test]
+fn each_tool_search_key_maps_onto_the_harness_policy() {
+    let _g = guard();
+    apply_tool_search_config(&ToolSearchConfig {
+        top_k: 9,
+        max_limit: 5,
+        promote_found_tools: false,
+        compact_search_results: true,
+        collapse_search_results: true,
+        repair_tool_call_wrapper: false,
+        ..ToolSearchConfig::default()
+    });
+    let policy = discovery_policy();
+    assert!(!policy.promote_found_tools);
+    assert!(policy.compact_search_results);
+    assert!(policy.collapse_search_results);
+    assert!(!policy.repair_tool_call_wrapper);
+    assert_eq!(policy.max_limit, 5);
+    assert_eq!(policy.default_limit, 5, "top_k is clamped to max_limit");
+    apply_tool_search_config(&ToolSearchConfig::default());
+}
+
+#[test]
+fn tool_search_keys_read_from_toml_and_default_when_absent() {
+    let absent: ToolSearchConfig = toml::from_str("top_k = 4").expect("parses");
+    assert_eq!(
+        absent,
+        ToolSearchConfig {
+            top_k: 4,
+            ..ToolSearchConfig::default()
+        }
+    );
+    let set: ToolSearchConfig = toml::from_str(
+        "max_limit = 8\npromote_found_tools = false\ncompact_search_results = true\n\
+         collapse_search_results = true\nrepair_tool_call_wrapper = false",
+    )
+    .expect("parses");
+    assert_eq!(set.max_limit, 8);
+    assert!(!set.promote_found_tools && !set.repair_tool_call_wrapper);
+    assert!(set.compact_search_results && set.collapse_search_results);
+}
+
+#[test]
 fn settings_select_the_mode_and_clamp_top_k() {
     let _g = guard();
     let ranker: Arc<dyn ToolRanker> = Arc::new(Bm25Ranker);
@@ -140,4 +194,32 @@ fn discovery_policy_renders_no_manifest() {
     clear_tool_ranker();
     apply_tool_search_config(&ToolSearchConfig::default());
     assert_eq!(discovery_policy().manifest_token_budget, 0);
+}
+
+#[test]
+fn a_turn_without_a_chat_gives_the_ranker_an_empty_context() {
+    assert_eq!(rank_context_for(None), tinytools::RankContext::empty());
+}
+
+#[test]
+fn a_chat_turn_names_its_thread_client_and_request_to_the_ranker() {
+    let chat = crate::security::approval::ApprovalChatContext {
+        thread_id: "thread-7".to_owned(),
+        client_id: "client-3".to_owned(),
+        request_id: Some("req-1".to_owned()),
+    };
+    let context = rank_context_for(Some(&chat));
+    let routed = context.chat.expect("chat is carried");
+    assert_eq!(routed.thread_id, "thread-7");
+    assert_eq!(routed.client_id, "client-3");
+    assert_eq!(routed.request_id.as_deref(), Some("req-1"));
+
+    let without_request = crate::security::approval::ApprovalChatContext {
+        request_id: None,
+        ..chat
+    };
+    let routed = rank_context_for(Some(&without_request))
+        .chat
+        .expect("chat is carried");
+    assert_eq!(routed.request_id, None);
 }

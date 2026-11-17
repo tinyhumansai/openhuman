@@ -1,18 +1,26 @@
 import { Command } from 'cmdk';
 import { Dialog } from 'radix-ui';
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 
 import { GROUP_LABEL_KEYS } from '../../lib/commands/globalActions';
 import { hotkeyManager } from '../../lib/commands/hotkeyManager';
 import { registry } from '../../lib/commands/registry';
 import type { RegisteredAction } from '../../lib/commands/types';
 import { useT } from '../../lib/i18n/I18nContext';
+import type { Thread } from '../../types/thread';
 import Kbd from './Kbd';
+import ThreadSearchGroups from './ThreadSearchGroups';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Conversations searchable by title; their messages are searched in the core. */
+  threads?: Thread[];
+  /** Open a conversation picked from the search. Thread search is off without it. */
+  onOpenThread?: (threadId: string) => void;
 }
+
+const NO_THREADS: Thread[] = [];
 
 function subscribe(listener: () => void): () => void {
   const u1 = registry.subscribe(listener);
@@ -27,9 +35,22 @@ function getSnapshot(): RegisteredAction[] {
   return registry.getActiveActions(hotkeyManager.getStackSymbols());
 }
 
-export default function CommandPalette({ open, onOpenChange }: Props) {
+export default function CommandPalette({
+  open,
+  onOpenChange,
+  threads = NO_THREADS,
+  onOpenThread,
+}: Props) {
   const { t } = useT();
   const actions = useSyncExternalStore(subscribe, getSnapshot);
+  const [search, setSearch] = useState('');
+  // Every opening starts from an empty query: cleared as the palette closes,
+  // during render rather than in an effect.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (!open) setSearch('');
+  }
 
   const groups = useMemo(() => {
     const byGroup = new Map<string, RegisteredAction[]>();
@@ -57,6 +78,11 @@ export default function CommandPalette({ open, onOpenChange }: Props) {
     });
   }
 
+  function openThread(threadId: string): void {
+    onOpenChange(false);
+    onOpenThread?.(threadId);
+  }
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -71,6 +97,8 @@ export default function CommandPalette({ open, onOpenChange }: Props) {
           <Command label={t('commandPalette.label')} shouldFilter={true}>
             <Command.Input
               autoFocus
+              value={search}
+              onValueChange={setSearch}
               placeholder={t('commandPalette.placeholder')}
               className="w-full px-4 py-3 bg-transparent outline-hidden border-b border-cmd-border text-cmd-foreground placeholder:text-cmd-foreground-muted"
               aria-label={t('commandPalette.searchAria')}
@@ -110,6 +138,9 @@ export default function CommandPalette({ open, onOpenChange }: Props) {
                   })}
                 </Command.Group>
               ))}
+              {onOpenThread && (
+                <ThreadSearchGroups query={search} threads={threads} onOpenThread={openThread} />
+              )}
             </Command.List>
             <div className="flex items-center gap-1.5 px-4 py-2 border-t border-cmd-border text-xs text-cmd-foreground-muted">
               {/* Advertise ⌘/ (allowed while this search box is focused) rather

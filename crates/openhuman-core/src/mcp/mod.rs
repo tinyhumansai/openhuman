@@ -1,24 +1,29 @@
 //! MCP family — the host half of Model Context Protocol support.
 //!
-//! The client moved out to `tinymcp`: both transports, the static
-//! config-declared server set, the dynamic registry with its store, supervisor
-//! and browser sign-in, and the write-audit log all live there now.
+//! MCP protocol and client behavior run in the TinyMCP module. This family is
+//! the OpenHuman host adapter for configuration, product policy, lifecycle,
+//! events, audit RPCs, and the local MCP server entry points.
 //!
 //! What is here is what belongs to this application.
 //!
 //! # Members
 //!
-//! - [`host`] — the one `tinymcp` service this process holds, and the
-//!   conversion from this application's configuration into what it takes.
+//! - [`host`] — conversion from this application's configuration into the
+//!   TinyMCP bus contract and host-owned proxy policy.
 //! - [`registry`] — the `mcp_clients` RPC surface, the
 //!   agent-facing tools, and the prompt-injection scan over remote tool
 //!   definitions.
 //! - [`audit`] — the RPC surface over the write-audit log.
-//! - [`server`] — the `openhuman mcp` stdio and HTTP server that exposes this
-//!   application's own tools to external MCP hosts. This is the *server* side
-//!   and did not move: it is bound to the tool registry, the permission model
-//!   and the agent turn machinery, none of which a client library should know
-//!   about.
+//! - [`server`] — the `openhuman mcp` host adapter for stdio and HTTP entry
+//!   points. The tool catalog, permission model, and agent dispatch stay here;
+//!   TinyMCP owns protocol sessions and transport behavior.
+//! - `tools` — the generic configured-server bridge as agent tools
+//!   (`mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`), one file each.
+//! - `server_tools` — each configured server's tools as direct
+//!   `mcp_<server>_<tool>` agent tools.
+//! - `gitbooks_tools` — `gitbooks_search` / `gitbooks_get_page`, the
+//!   OpenHuman docs over TinyMCP's one-shot call. Not gated on `mcp`: it is a
+//!   docs tool that only borrows the module's transport.
 //!
 //! # Where the boundary fell
 //!
@@ -45,27 +50,34 @@
 //! and `audit` keep their own gate and their `stub`, so a build without the
 //! feature still serves `/rpc` without those namespaces.
 
-/// Brings this domain up: its lifecycle subscriber and its service.
+/// Registers the host-side MCP lifecycle integration.
 ///
-/// The one entry point core startup calls. It exists so that `crates/openhuman-core/src/core/` — which
-/// is transport, and carries no business logic — does not have to know that this
-/// domain has a service, that opening one can fail, or what to do when it does.
+/// Core startup calls this without knowing the MCP adapter details. This
+/// remembers the process default configuration and registers cleanup for the
+/// configured module client; opening the module remains lazy until a caller
+/// needs it.
 ///
-/// Never fails. MCP being unavailable must not stop the core coming up, and
-/// every caller in the domain already handles an absent service, so a failure is
-/// logged here and the process continues without it.
-///
-/// Idempotent: the subscriber registers once and the service opens once, so the
-/// two startup paths that call this — the RPC domain enable point and the
-/// boot-jobs path, which are gated separately — can both call it.
+/// Idempotent: the configured-client shutdown hook registers at most once, so
+/// the RPC domain enable point and boot-jobs path can both call this
+/// function.
 #[cfg(feature = "mcp")]
 pub fn start(config: &crate::config::Config) {
-    registry::bus::init();
+    host::set_default_config(config);
 
-    if let Err(error) = host::init(config) {
-        log::warn!("[mcp] the service could not be opened; continuing without it: {error}");
-    }
+    #[cfg(feature = "modules")]
+    module_client::McpConfiguredClient::register_shutdown_hook();
 }
+
+#[cfg(feature = "mcp")]
+pub(crate) mod module_client;
+
+#[cfg(all(test, feature = "mcp"))]
+#[path = "test_module_port.rs"]
+mod test_module_port;
+#[cfg(all(test, feature = "mcp"))]
+pub(crate) use test_module_port::install as install_test_module_port;
+
+mod host_cleanup;
 
 /// Brings this domain up — the build without it, where there is nothing to do.
 #[cfg(not(feature = "mcp"))]
@@ -73,12 +85,11 @@ pub fn start(_config: &crate::config::Config) {}
 
 /// Boots the domain from the runtime's startup path.
 ///
-/// This is MCP's one entry in `start_boot_once_jobs`, the way `harness_init`
-/// and the skill-catalog refresh each have theirs. The orchestration here —
-/// that the service must exist before installed servers can dial it, and that
-/// the reconnect supervisor must run until the process ends — is this domain's
-/// own, and the `Once` guard on the supervisor keeps a repeated boot from
-/// spawning a second one. `src/core` only knows it should call one function.
+/// This is MCP's one entry in `start_boot_once_jobs`, alongside the
+/// skill-catalog refresh. It asks TinyMCP to open the configured module object
+/// and start its installed-server and reconnect work. The `Once` guard keeps
+/// the host's poll task from spawning twice; `src/core` only knows it should
+/// call one function.
 #[cfg(feature = "mcp")]
 pub fn start_boot_jobs(config: &crate::config::Config) {
     start(config);
@@ -102,43 +113,90 @@ pub fn start_boot_jobs(config: &crate::config::Config) {
 /// Lists every configured server and rewrites its cached tools.
 #[cfg(feature = "mcp")]
 pub(crate) async fn refresh_configured_tool_cache(config: &crate::config::Config) {
-    let registry = host::static_registry(config);
-    if registry.is_empty() {
-        return;
-    }
-    let service = match host::for_config(config) {
-        Ok(service) => service,
+    let client = match module_client::McpConfiguredClient::for_config(config) {
+        Ok(client) => client,
         Err(error) => {
-            tracing::debug!(?error, "[mcp] no host; configured tool cache not refreshed");
+            tracing::debug!(
+                ?error,
+                "[mcp] no module; configured tool cache not refreshed"
+            );
             return;
         }
     };
-    for (server, outcome) in registry.refresh_tool_cache(service.dynamic().store()).await {
+    let client_config = host::client_config(config).await;
+    let servers: Vec<String> = match client
+        .call(&client_config, tinymcp_bus::names::methods::STATIC_LIST, ())
+        .await
+    {
+        Ok(servers) => servers,
+        Err(error) => {
+            tracing::debug!(?error, "[mcp] static server list unavailable");
+            return;
+        }
+    };
+    for server in servers {
+        let outcome: Result<Vec<tinymcp_bus::McpRemoteTool>, _> = client
+            .call(
+                &client_config,
+                tinymcp_bus::names::methods::STATIC_LIST_TOOLS,
+                (server.clone(),),
+            )
+            .await;
         match outcome {
-            Ok(count) => {
-                tracing::debug!(server = %server, tools = count, "[mcp] refreshed configured tool cache")
+            Ok(tools) => {
+                tracing::debug!(
+                    server = %server,
+                    tools = tools.len(),
+                    "[mcp] refreshed configured tool cache"
+                );
+                ui::discovery::log_configured_server(&server, &tools);
             }
-            Err(error) => {
-                tracing::debug!(server = %server, "[mcp] configured tool cache not refreshed: {error}")
-            }
+            Err(error) => tracing::debug!(
+                server = %server,
+                ?error,
+                "[mcp] configured tool cache not refreshed"
+            ),
         }
     }
 }
 
 /// Spawns the reconnect supervisor exactly once per process.
 ///
-/// The supervisor walks every workspace host the process has opened, so the
-/// single task covers a host opened after boot — a workspace switch, a second
-/// embedder — as well as the one booted against. It takes no configuration
-/// because it reads the host map each tick rather than binding to one
-/// workspace.
+/// The supervisor polls every configured module client the process has opened,
+/// so the one task covers later workspace switches as well as the initial
+/// workspace. It takes no configuration because it reads the client map each
+/// tick rather than binding to one workspace.
 #[cfg(feature = "mcp")]
 fn spawn_reconnect_supervisor() {
-    static SUPERVISOR_SPAWNED: std::sync::Once = std::sync::Once::new();
-    SUPERVISOR_SPAWNED.call_once(|| {
-        tokio::spawn(async move {
-            registry::supervisor::run().await;
-        });
+    static SUPERVISOR_SPAWNED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    static SUPERVISOR_TASK: std::sync::OnceLock<
+        tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    > = std::sync::OnceLock::new();
+    use std::sync::atomic::Ordering;
+
+    if SUPERVISOR_SPAWNED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let task = tokio::spawn(async move {
+        registry::supervisor::run().await;
+    });
+    let task_slot = SUPERVISOR_TASK.get_or_init(|| tokio::sync::Mutex::new(None));
+    if let Ok(mut slot) = task_slot.try_lock() {
+        *slot = Some(task);
+    } else {
+        task.abort();
+        SUPERVISOR_SPAWNED.store(false, Ordering::Release);
+        return;
+    }
+    crate::core::shutdown::register(|| async {
+        if let Some(task) = SUPERVISOR_TASK.get() {
+            if let Some(task) = task.lock().await.take() {
+                task.abort();
+                let _ = task.await;
+            }
+        }
+        SUPERVISOR_SPAWNED.store(false, Ordering::Release);
     });
 }
 
@@ -147,57 +205,42 @@ fn spawn_reconnect_supervisor() {
 #[cfg(not(feature = "mcp"))]
 pub fn start_boot_jobs(_config: &crate::config::Config) {}
 
+/// Every `mcp_*` controller this build serves: the client registry and, with
+/// the `mcp` feature, tool UI.
+pub fn all_registered_controllers() -> Vec<crate::core::all::RegisteredController> {
+    #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
+    let mut controllers = registry::all_mcp_registry_registered_controllers();
+    #[cfg(feature = "mcp")]
+    controllers.extend(ui::all_mcp_ui_registered_controllers());
+    controllers
+}
+
+/// Built-in runtime entries, binding registry_get to its shared parser while
+/// preserving the legacy catalogue above for existing callers.
+pub(crate) fn all_controller_entries() -> Vec<crate::core::all::ControllerEntry> {
+    all_registered_controllers()
+        .into_iter()
+        .map(|controller| {
+            #[cfg(feature = "mcp")]
+            if controller.schema.method_name() == "mcp_clients.registry_get" {
+                return registry::registry_get_controller_entry();
+            }
+            crate::core::all::ControllerEntry::legacy(controller)
+        })
+        .collect()
+}
+
 pub mod audit;
-// Ungated, like the transport below and for the same reason: `tinymcp` is an
-// ordinary dependency, and the startup path calls `host::init` without a `cfg`
+pub(crate) mod gitbooks_tools;
+// Ungated: `tinymcp` is an ordinary dependency, and the startup path calls `host::init` without a `cfg`
 // of its own. Gating this would break the build with the domain turned off.
 pub mod host;
+pub(crate) mod host_sandbox;
 pub mod registry;
 pub mod server;
-
-/// The Streamable HTTP transport, from the wire contract's implementation.
-///
-/// Re-exported under the path this module used to define it at. The bespoke
-/// documentation tool and the observability classifier both name these, and
-/// neither is gated — so this is not either, exactly as before the extraction.
-pub mod http_client {
-    pub use tinymcp::transport::http::{McpHttpClient, McpHttpClientBuilder};
-    /// The transport's error, re-exported so a caller can inspect a failure
-    /// structurally rather than by its rendered text.
-    ///
-    /// The variant that motivates it is [`McpError::Unauthorized`], whose
-    /// `resource_metadata` is what separates a server that wants OAuth from one
-    /// that wants a static credential — the difference between offering a sign-in
-    /// path and asking for a token. That field is deliberately absent from the
-    /// message, so a caller wanting it must have the type.
-    ///
-    /// Note this crate's own `core::observability` classifier does **not** use
-    /// it: it reads rendered text, because it classifies failures that have
-    /// already crossed an RPC boundary and arrive as strings. This re-export is
-    /// for an in-process consumer, which holds the real error and should not be
-    /// reduced to matching on wording that upstream is free to reword.
-    pub use tinymcp::Error as McpError;
-    pub use tinymcp::{redact_endpoint, render_tool_result};
-    pub use tinymcp_bus::{
-        AuthorizationServerMetadata, McpAuthChallenge, McpAuthorizationContext,
-        McpInitializeResult, McpRemoteTool, McpServerToolResult, McpSseEvent,
-        ProtectedResourceMetadata,
-    };
-}
-
-/// The statically declared server set, from the wire contract's
-/// implementation.
 #[cfg(feature = "mcp")]
-pub mod config_servers {
-    pub use tinymcp::transport::stdio::McpStdioClient;
-    pub use tinymcp::{
-        McpRegistrySource, McpServerDefinition, McpServerRegistry, McpTransportClient,
-    };
-    /// The auth shape a *definition in this registry* carries.
-    ///
-    /// Distinct from `config::McpAuthConfig`, which is the shape this
-    /// application's own TOML declares — the two were one type before the
-    /// extraction. A caller reading `McpServerDefinition::auth` needs this one,
-    /// and without the re-export cannot name it at all.
-    pub use tinymcp_bus::McpAuthConfig as McpDefinitionAuth;
-}
+pub(crate) mod server_tools;
+#[cfg(feature = "mcp")]
+pub(crate) mod tools;
+#[cfg(feature = "mcp")]
+pub mod ui;

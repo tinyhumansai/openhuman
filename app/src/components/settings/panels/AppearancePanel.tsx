@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { cn } from '../../../lib/cn';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { selectChatMascotDismissed, setChatMascotDismissed } from '../../../store/mascotSlice';
 import {
   FONT_SIZE_PX,
   type FontSize,
@@ -13,7 +14,7 @@ import {
   setCustomFontSizePx,
   setFontSize,
 } from '../../../store/themeSlice';
-import { Card, Slider } from '../../ui';
+import { Card, Slider, Switch } from '../../ui';
 import { SettingsNumberField } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 import LayoutSettings from './theme/LayoutSettings';
@@ -30,6 +31,7 @@ const AppearancePanel = () => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const effectiveFontSizePx = useAppSelector(selectEffectiveFontSizePx);
+  const chatMascotDismissed = useAppSelector(selectChatMascotDismissed);
   const location = useLocation();
 
   // Local draft for the numeric px field so partial typing doesn't thrash the
@@ -183,6 +185,19 @@ const AppearancePanel = () => {
       {body}
       {/* Corner rounding, border contrast, and which areas draw borders. */}
       <LayoutSettings />
+      <Card title={t('settings.appearance.chatHeading')}>
+        <div className="flex items-center justify-between gap-3 p-4">
+          <label htmlFor="show-chat-mascot" className="text-sm font-medium text-content">
+            {t('settings.appearance.showChatMascot')}
+          </label>
+          <Switch
+            id="show-chat-mascot"
+            aria-label={t('settings.appearance.showChatMascot')}
+            checked={!chatMascotDismissed}
+            onCheckedChange={shown => dispatch(setChatMascotDismissed(!shown))}
+          />
+        </div>
+      </Card>
     </SettingsPanel>
   );
 };

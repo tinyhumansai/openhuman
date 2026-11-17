@@ -5,7 +5,7 @@ fn is_wallet_not_configured_error_matches_wallet_constant() {
     // The classifier keys off the wallet layer's exact "not configured"
     // message so wallet-backed RPCs stay out of Sentry.
     assert!(is_wallet_not_configured_error(
-        openhuman_core::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE
+        crate::core_host::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE
     ));
 }
 
@@ -15,7 +15,7 @@ fn is_wallet_not_configured_error_is_coupled_to_the_wallet_constant() {
     // constant the classifier matches, this fails — preventing the noise from
     // silently returning to Sentry. Mirrors the param-validation prefix locks.
     assert_eq!(
-        openhuman_core::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE,
+        crate::core_host::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE,
         "wallet is not configured; run wallet setup first"
     );
 }
@@ -49,16 +49,19 @@ fn classify_failure_expected_user_state_flag_wins() {
 
 #[test]
 fn classify_failure_routes_each_boundary_class() {
+    // The backend's 401 shape is classified by the predicate the TinyHumans
+    // layer installs at boot.
+    openhuman_tinyhumans::observability::register();
     assert_eq!(
         classify_failure(
-            openhuman_core::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE,
+            crate::core_host::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE,
             false
         ),
         FailureDisposition::WalletNotConfigured
     );
     assert_eq!(
         classify_failure(
-            &openhuman_core::core::params::unknown_param_message(
+            &crate::core_host::core::params::unknown_param_message(
                 "api_key",
                 "config",
                 "update_model_settings"
@@ -75,7 +78,7 @@ fn classify_failure_routes_each_boundary_class() {
         classify_failure(
             &format!(
                 "{}totally.made.up.method",
-                openhuman_core::core::dispatch::UNKNOWN_METHOD_PREFIX
+                crate::core_host::core::dispatch::UNKNOWN_METHOD_PREFIX
             ),
             false
         ),
@@ -94,7 +97,7 @@ fn classify_failure_param_validation_outranks_session_expiry() {
     // could have expired anything.
     assert_eq!(
         classify_failure(
-            &openhuman_core::core::params::missing_required_param_message(
+            &crate::core_host::core::params::missing_required_param_message(
                 "token",
                 "Session expired token"
             ),
@@ -102,4 +105,25 @@ fn classify_failure_param_validation_outranks_session_expiry() {
         ),
         FailureDisposition::ParamValidation
     );
+}
+
+#[test]
+fn classify_failure_does_not_page_on_a_cached_module_load_failure() {
+    // TAURI-RUST-117K et al.: a module that failed to load is cached and the
+    // same failure is returned on every call. The load was reported once when
+    // it resolved, so each RPC re-report must not be an error-level event.
+    for message in [
+        "module 'tinyconnectors' could not be loaded from the installer bundle: module \
+         `windows-2022-x86_64` refused: module directory is writable by another user. Restart \
+         the app after repairing the installation. This is terminal for the running process; \
+         restart the app to try again.",
+        "store_stats: backend failed: memory is unavailable: the memory module failed to load. \
+         Restart the app to retry; the reason is in the log.",
+    ] {
+        assert_eq!(
+            classify_failure(message, false),
+            FailureDisposition::ModuleUnavailable,
+            "{message}"
+        );
+    }
 }

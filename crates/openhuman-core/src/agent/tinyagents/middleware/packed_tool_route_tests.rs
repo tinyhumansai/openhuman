@@ -1,7 +1,13 @@
 use super::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::tools::agent_policy::ToolPolicyEngine;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use tinyagents_harness::context::{RunConfig, RunContext};
+use tinyagents_harness::middleware::Middleware;
+use tinyinference_llm::tool::ToolCall as TaToolCall;
+
+use tinytools::ToolPolicyEngine;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 /// `skill_registry_search` with a chosen permission level.
@@ -53,11 +59,18 @@ fn open_session() -> Option<ToolPolicySession> {
     Some(session(PermissionLevel::ReadOnly, None))
 }
 
-fn middleware(
-    registered: &[&str],
-    session: Option<ToolPolicySession>,
-) -> PackedToolRouteMiddleware {
-    PackedToolRouteMiddleware::new(registered.iter().map(|n| n.to_string()), session)
+type Mw = PackedToolRouteMiddleware<OpenHumanRunContext, SessionPackRouter>;
+
+fn middleware(registered: &[&str], session: Option<ToolPolicySession>) -> Mw {
+    packed_tool_route_middleware(registered.iter().map(|n| n.to_string()), session)
+}
+
+/// Run `before_tool`; `true` when the call was rewritten.
+fn route(mw: &Mw, call: &mut TaToolCall) -> bool {
+    let before = call.clone();
+    let mut ctx = RunContext::new(RunConfig::new("route-test"), OpenHumanRunContext::new());
+    futures::executor::block_on(mw.before_tool(&mut ctx, &(), call)).unwrap();
+    *call != before
 }
 
 #[test]
@@ -65,7 +78,7 @@ fn a_bare_packed_call_becomes_the_use_skill_call_that_reaches_it() {
     let mw = middleware(&["use_skill", "shell"], open_session());
     let mut call = TaToolCall::new("c1", "skill_registry_search", json!({ "query": "x" }));
 
-    assert!(mw.route(&mut call));
+    assert!(route(&mw, &mut call));
     assert_eq!(call.name, "use_skill");
     assert_eq!(
         call.arguments,
@@ -121,7 +134,7 @@ fn calls_the_crate_should_answer_are_left_alone() {
     ];
     for (mw, mut call, why) in cases {
         let before = call.clone();
-        assert!(!mw.route(&mut call), "{why}: must not route");
+        assert!(!route(&mw, &mut call), "{why}: must not route");
         assert_eq!(call, before, "{why}: call must be untouched");
     }
 }

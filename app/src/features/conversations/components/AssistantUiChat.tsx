@@ -15,6 +15,9 @@ import { AgentRunningStatus } from '../aui/AgentRunningStatus';
 import { ChatConversationMap } from '../aui/ChatConversationMap';
 import { ComposerTriggers } from '../aui/ComposerTriggers';
 import { ContextUsage } from '../aui/ContextUsage';
+import { InterruptedTurnNotice } from '../aui/InterruptedTurnNotice';
+import { MessageArtifactCards } from '../aui/MessageArtifactCards';
+import { ActiveTurnTaskCards, TurnTaskCards, TurnTaskProvider } from '../aui/TurnTaskCards';
 import { ChatSources } from './aui/ChatSources';
 import { ChatToolFallback } from './ChatToolParts';
 
@@ -98,8 +101,8 @@ export function ComposerTextBridge({
 /**
  * The assistant-ui `Thread`, projected from OpenHuman's Redux transcript.
  *
- * The runtime is a read-only projection; Redux and the core remain authoritative
- * for messages, streaming and persistence. Composer sends are forwarded through
+ * The library runtime manages UI interaction; Redux and the core remain
+ * authoritative for messages, streaming and persistence. Composer sends go through
  * the chat-surface registration owned by `Conversations`, so this uses the same
  * send/cancel path as the legacy composer.
  */
@@ -110,9 +113,12 @@ export function AssistantUiChat({
   composerHeader,
   composerFooterExtras,
   composerReplacement,
+  afterMessages,
   inputValue,
   onInputValueChange,
   onEscape,
+  onRecallLastPrompt,
+  composerPlaceholder,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
@@ -140,9 +146,15 @@ export function AssistantUiChat({
    * normal composer.
    */
   composerReplacement?: ReactNode;
+  afterMessages?: ReactNode;
   inputValue: string;
   onInputValueChange: (value: string) => void;
-  onEscape?: () => void;
+  /** Returns whether Escape acted (stopped a run); `false` lets the key through. */
+  onEscape?: () => boolean | void;
+  /** ArrowUp in an empty composer: recall the last prompt; returns whether it did. */
+  onRecallLastPrompt?: () => boolean;
+  /** State-aware placeholder (running / waiting on the user); default otherwise. */
+  composerPlaceholder?: string;
   attachments: Attachment[];
   onAttachFiles: (files: FileList | File[] | null) => Promise<void>;
   onRemoveAttachment: (id: string) => void;
@@ -225,6 +237,13 @@ export function AssistantUiChat({
   composerReplacementRef.current = composerReplacement;
   const hasComposerReplacement = composerReplacement !== undefined;
   const ComposerReplacement = useCallback(() => <>{composerReplacementRef.current}</>, []);
+  // Artifact cards from versioned tools render as part of the transcript
+  // (after the last message), not in the composer header — the cards are
+  // messages' content, not attachments. Stable type through a ref, same
+  // pattern as composerHeader above.
+  const afterMessagesRef = useRef(afterMessages);
+  afterMessagesRef.current = afterMessages;
+  const AfterMessages = useCallback(() => <>{afterMessagesRef.current}</>, []);
   const ComposerAttachments = useCallback(() => {
     const { attachments, attachmentInteractionBlocked, onRemoveAttachment } = slotPropsRef.current;
     return (
@@ -303,6 +322,8 @@ export function AssistantUiChat({
   const components: ThreadComponents = useMemo(
     () => ({
       ToolFallback: ChatToolFallback,
+      MessageTasks: TurnTaskCards,
+      ActiveTasks: ActiveTurnTaskCards,
       // `/` commands (builtins + core `commands_list` + registry actions) and
       // `@` mentions (memory recall, thread files); see `aui/ComposerTriggers`.
       ComposerTriggers,
@@ -314,6 +335,17 @@ export function AssistantUiChat({
       // Phase / reasoning round / active tool for the turn in flight. Reads the
       // runtime's `extras`, so it needs no props and no dependency here.
       RunningStatus: AgentRunningStatus,
+      // A crashed turn's partial reply and its "Interrupted" marker.
+      TranscriptFooter: InterruptedTurnNotice,
+      // Versioned-artifact cards live in the transcript after the last
+      // message (see `AfterMessages` slot in thread.tsx).
+      AfterMessages,
+      // Artifact cards render INSIDE the message that produced them
+      // (matched by requestId), not just at the end of the transcript.
+      // Pass the component itself: an inline arrow is a new component type
+      // each time this memo recomputes (e.g. when a turn starts or ends), which
+      // remounts every card and replays its fade-in, so the cards flicker.
+      MessageArtifacts: MessageArtifactCards,
       // The web pages the turn fetched, grouped from its `source` parts into
       // one collapsed disclosure under the answer.
       SourceGroup: ChatSources,
@@ -360,15 +392,19 @@ export function AssistantUiChat({
   return (
     <AssistantUiRuntimeProvider>
       <ComposerTextBridge value={inputValue} onChange={onInputValueChange} />
-      <ChatConversationMap>
-        <Thread
-          components={components}
-          model={model}
-          onModelChange={onModelChange}
-          loadError={loadError}
-          onEscape={onEscape}
-        />
-      </ChatConversationMap>
+      <TurnTaskProvider>
+        <ChatConversationMap>
+          <Thread
+            components={components}
+            model={model}
+            onModelChange={onModelChange}
+            loadError={loadError}
+            onEscape={onEscape}
+            onRecallLastPrompt={onRecallLastPrompt}
+            composerPlaceholder={composerPlaceholder}
+          />
+        </ChatConversationMap>
+      </TurnTaskProvider>
     </AssistantUiRuntimeProvider>
   );
 }

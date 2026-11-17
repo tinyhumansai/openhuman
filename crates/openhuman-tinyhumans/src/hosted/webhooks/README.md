@@ -14,7 +14,7 @@ tunnel provisioning, ownership and bandwidth quotas.
 | `webhooks_get_bandwidth` | none | `GET /webhooks/core/bandwidth` |
 
 The `webhooks` namespace is shared with the core: the local webhook router
-(`crates/openhuman-core/src/skills/webhooks/` — `list_registrations`,
+([`crates/openhuman-core/src/skills/webhooks/`](../../../../openhuman-core/src/skills/webhooks/): `list_registrations`,
 `register_echo`, `register_agent`, `trigger_agent`, the debug log ring) stays
 in the core because it routes inbound deliveries to skills and agents and
 needs no TinyHumans account. These six arrive with
@@ -22,3 +22,9 @@ needs no TinyHumans account. These six arrive with
 
 Credentials, error mapping and the no-account short-circuit come from
 `hosted::client::HostedClient` (see `../client.rs`).
+
+## Further reading
+
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`crates/openhuman-tinyhumans/src/hosted/README.md`](../README.md): hosted proxies.
+- [`vendor/tinyhumans-sdk/README.md`](../../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

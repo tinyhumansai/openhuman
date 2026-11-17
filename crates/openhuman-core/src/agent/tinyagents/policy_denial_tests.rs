@@ -67,6 +67,21 @@ fn policy_denied_carries_reason_and_alternative() {
 }
 
 #[test]
+fn host_denial_renderer_preserves_product_labels_and_punctuation() {
+    let rendered = PolicyDenial::PolicyDenied {
+        tool: "send_email",
+        policy: "approval_gate",
+        reason: "approval is required",
+    }
+    .render();
+
+    assert_eq!(
+        rendered,
+        "Blocked: Tool 'send_email' was denied by policy 'approval_gate'. Reason: approval is required. Workaround: Address the reason above, or reach the goal with a permitted alternative tool / path. If this action is genuinely required, ask the user to adjust the policy. The tool did not run and produced no output — do NOT invent or report any result for it. Relay this to the user: explain what was blocked and why, then offer the workaround as the next step. Do not stop silently."
+    );
+}
+
+#[test]
 fn security_policy_block_keeps_marker_and_adds_workaround_and_relay() {
     let raw = "[policy-blocked] Security policy: read-only mode — only read commands are allowed";
     let msg = PolicyDenial::SecurityPolicyBlocked {

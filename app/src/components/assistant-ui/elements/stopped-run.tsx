@@ -7,6 +7,9 @@
  * - `cn` import path (`@/components/assistant-ui/lib/utils`).
  * - "Continue"/"Discard" are `continueLabel`/`discardLabel` props with
  *   English defaults, for `useT()`.
+ * - No `words` paragraph: the stopped reply's text renders through the
+ *   message's normal markdown part, so this element is only the reason chip
+ *   and the Continue/Discard actions (#7729).
  */
 import { cn } from '@/components/assistant-ui/lib/utils';
 import { ArrowRightIcon, SquareIcon } from 'lucide-react';
@@ -15,7 +18,6 @@ import type { ComponentProps } from 'react';
 import { field, mono } from './surfaces';
 
 export function StoppedRun({
-  words,
   reason,
   onContinue,
   onDiscard,
@@ -23,8 +25,7 @@ export function StoppedRun({
   discardLabel = 'Discard',
   className,
   ...props
-}: Omit<ComponentProps<'div'>, 'children' | 'words' | 'reason' | 'onContinue' | 'onDiscard'> & {
-  words: readonly string[];
+}: Omit<ComponentProps<'div'>, 'children' | 'reason' | 'onContinue' | 'onDiscard'> & {
   reason: string;
   onContinue?: () => void;
   onDiscard?: () => void;
@@ -32,24 +33,13 @@ export function StoppedRun({
   discardLabel?: string;
 }) {
   return (
-    <div
-      data-slot="stopped-run"
-      className={cn('flex w-full max-w-sm flex-col gap-3', className)}
-      {...props}>
-      <p className="text-foreground/80 text-[13.5px] leading-relaxed">
-        {words.join(' ')}
-        <span
-          aria-hidden
-          className="bg-foreground/20 ms-1 inline-block h-[1em] w-[2px] translate-y-[0.15em] rounded-full"
-        />
-      </p>
-
+    <div data-slot="stopped-run" className={cn('flex w-full flex-col gap-3', className)} {...props}>
       <div className="flex items-center gap-2">
         <span
           className={cn(
             field,
             mono,
-            'text-foreground/45 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1'
+            'text-muted-foreground inline-flex items-center gap-1.5 rounded-full px-2.5 py-1'
           )}>
           <SquareIcon className="size-2.5 fill-current" />
           {reason}
@@ -58,14 +48,14 @@ export function StoppedRun({
         <button
           type="button"
           onClick={onContinue}
-          className="text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground/95 ms-auto flex h-7 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]">
+          className="text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground/95 ms-auto flex h-7 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]">
           {continueLabel}
           <ArrowRightIcon className="size-3" />
         </button>
         <button
           type="button"
           onClick={onDiscard}
-          className="text-foreground/45 hover:bg-foreground/[0.06] hover:text-foreground/90 flex h-7 items-center rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]">
+          className="text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground/90 flex h-7 items-center rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]">
           {discardLabel}
         </button>
       </div>

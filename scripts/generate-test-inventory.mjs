@@ -28,8 +28,7 @@
 //   (b) CONTROLLER-DOMAIN CHECK — every controller domain registered in
 //       `crates/openhuman-core/src/core/all.rs` (via `crate::<domain>::all_*_controllers`)
 //       is referenced by >=1 file under `tests/`. Catches RPC domains that
-//       ship with zero integration/E2E coverage (recall_calendar,
-//       devices, …).
+//       ship with zero integration/E2E coverage (devices, …).
 //
 // Known-current offenders are seeded into the allowlists below so the check
 // lands green; the intent is to burn those lists down over time. Any NEW
@@ -78,7 +77,6 @@ const DOMAIN_ALLOWLIST = new Set([
   'agent_experience',
   'agent_meetings',
   'announcements',
-  'audio_toolkit',
   'devices',
   'harness_init',
   'http_host',
@@ -88,13 +86,20 @@ const DOMAIN_ALLOWLIST = new Set([
   'people',
   'plan_review',
   'provider_surfaces',
-  'recall_calendar',
   'referral',
   'session_import',
   'skill_runtime',
   'task_sources',
   'text_input',
   'thread_goals',
+  // NOT a coverage gap. ea3fbfb61a moved these controllers from `agent` to
+  // `agent_runs` without changing their wire names, and
+  // tests/in_process/agent_approval_memory_coverage_e2e.rs still round-trips
+  // agent_run_events / agent_run_status / agent_runs_active. None of those
+  // method names match `\bagent_runs\b`, so the guard cannot see them.
+  // Remove this entry once a test under tests/ names the domain, or once this
+  // script matches domains by RPC method name instead of module path.
+  'agent_runs',
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────

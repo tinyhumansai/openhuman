@@ -60,7 +60,6 @@ impl Drop for EnvVarGuard {
 }
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-static FILE_KEYRING_INIT: OnceLock<()> = OnceLock::new();
 
 /// The process-wide env lock for this target, taken from a synchronous test.
 /// It is a `tokio::sync::Mutex` (never poisoned, so one panicking test cannot
@@ -68,30 +67,21 @@ static FILE_KEYRING_INIT: OnceLock<()> = OnceLock::new();
 /// a tokio runtime: `#[tokio::test]` bodies use [`env_lock_async`] so the guard
 /// can be held across `.await`.
 pub fn env_lock() -> MutexGuard<'static, ()> {
+    init_keyring_workspace();
     ENV_LOCK.blocking_lock()
 }
 
 /// Async form of [`env_lock`] for `#[tokio::test]` bodies.
 pub async fn env_lock_async() -> MutexGuard<'static, ()> {
+    init_keyring_workspace();
     ENV_LOCK.lock().await
 }
 
-fn init_file_keyring() {
-    FILE_KEYRING_INIT.get_or_init(|| {
-        std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
-    });
-}
-
-/// [`env_lock`] after pinning `OPENHUMAN_KEYRING_BACKEND=file` once per
-/// process (the suites that read or write secrets need the file keyring so
-/// they never touch the host's real one).
-pub fn env_lock_with_file_keyring() -> MutexGuard<'static, ()> {
-    init_file_keyring();
-    env_lock()
-}
-
-/// Async form of [`env_lock_with_file_keyring`] for `#[tokio::test]` bodies.
-pub async fn env_lock_with_file_keyring_async() -> MutexGuard<'static, ()> {
-    init_file_keyring();
-    env_lock_async().await
+/// Retain an isolated key workspace for the binary's lifetime. The core caches
+/// its key and backend process-wide, so a per-case TempDir must not own them.
+/// No backend or master-key environment override is needed.
+pub fn init_keyring_workspace() {
+    static WORKSPACE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let workspace = WORKSPACE.get_or_init(|| tempfile::tempdir().expect("test key workspace"));
+    openhuman_core::security::secret_storage::init_workspace(workspace.path());
 }

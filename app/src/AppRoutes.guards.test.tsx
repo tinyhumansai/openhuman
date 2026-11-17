@@ -75,9 +75,6 @@ vi.mock('./pages/Notifications', () => ({
 vi.mock('./pages/onboarding/Onboarding', () => ({
   default: () => <div data-testid="page-onboarding" />,
 }));
-vi.mock('./pages/PttOverlayPage', () => ({
-  PttOverlayPage: () => <div data-testid="page-ptt-overlay" />,
-}));
 vi.mock('./pages/Settings', () => ({ default: () => <div /> }));
 vi.mock('./pages/Skills', () => ({ default: () => <div /> }));
 vi.mock('./pages/Welcome', () => ({ default: () => <div data-testid="page-welcome" /> }));
@@ -103,7 +100,6 @@ const OWNED: Array<{ path: string; page: string; guard: Guard }> = [
   { path: '/onboarding/profile', page: 'page-onboarding', guard: 'protected' },
   { path: '/invites', page: 'page-invites', guard: 'protected' },
   { path: '/notifications', page: 'page-notifications', guard: 'protected' },
-  { path: '/ptt-overlay', page: 'page-ptt-overlay', guard: 'none' },
   { path: '/dev/ui', page: 'page-ui-gallery', guard: 'none' },
   { path: '/dev/tools', page: 'page-tool-call-gallery', guard: 'none' },
 ];
@@ -201,7 +197,6 @@ describe('AppRoutes — the whole route table stays classified', () => {
     '/workflows': 'protected',
     '/webhooks': 'redirect',
     '/settings/*': 'protected',
-    '/ptt-overlay': 'none',
     '/dev/agent-insights': 'none',
     '/dev/ui': 'none',
     '/dev/tools': 'none',

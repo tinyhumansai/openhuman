@@ -9,8 +9,9 @@ import { type FormEvent, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { type Hit, memoryBrainSearch, memoryErrorMessage } from '../../services/api/memoryApi';
-import { Alert, AlertDescription, Button, Card, NativeSelect, TextField } from '../ui';
+import { Button, Card, NativeSelect, TextField } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import MemoryHitRow from './MemoryHitRow';
 import { brainSourceLabel } from './memoryLifecycleLabels';
 
@@ -95,9 +96,7 @@ export default function MemoryBrainSearch({ sources }: MemoryBrainSearchProps) {
 
       {error !== null && (
         <div className="px-4 pb-3">
-          <Alert variant="destructive" data-testid="memory-brain-search-error">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <MemoryErrorAlert message={error} data-testid="memory-brain-search-error" />
         </div>
       )}
 

@@ -24,11 +24,6 @@
 //!   connection-created and config-changed subscribers keep the
 //!   integrations cache fresh.
 //!
-//! - **Memory sync** (`ops::sync`) — `composio_sync` / `run_sync_pass` read a
-//!   connection through the connector module and store the records via
-//!   `memory::sources::composio`. Scheduling is memory's (v2 source
-//!   schedules); this domain has no periodic loop.
-//!
 //! ## Socket.IO trigger flow
 //!
 //! ```text
@@ -43,6 +38,9 @@
 //! crate::core::events::DomainEvent::ComposioTriggerReceived
 
 pub mod action_tool;
+mod auth_probe;
+#[cfg(any(feature = "flows", test))]
+pub(crate) mod builder_tools;
 pub mod bus;
 pub mod catalog;
 pub mod client;
@@ -52,30 +50,39 @@ pub mod contract_gate;
 pub(crate) mod direct_auth;
 pub mod execute_dispatch;
 pub(crate) mod file_store;
+mod file_store_documents;
+pub(crate) mod flow_backend;
+pub mod flow_gate;
 pub mod googlecalendar_args;
 pub mod identity;
 pub mod identity_store;
 pub mod module_client;
 pub mod ops;
-pub mod providers;
+pub mod orchestrator_actions;
+pub(crate) mod processing;
 pub mod schemas;
+#[cfg(test)]
+pub(crate) mod test_backend_route;
 pub mod tools;
-pub mod trigger_history;
+pub(crate) mod trigger_history;
 pub mod types;
 
-pub use crate::agent::prompts::types::ConnectedIntegration;
-pub use crate::integrations::composio::providers::{ProviderUserProfile, SyncOutcome, SyncReason};
+pub use crate::agent::prompts::ConnectedIntegration;
+pub use crate::integrations::composio::contract::ProviderUserProfile;
 pub use action_tool::ComposioActionTool;
+pub(crate) use auth_probe::user_is_signed_in_to_composio;
 pub use bus::{
     register_composio_trigger_subscriber, ComposioConfigChangedSubscriber,
     ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
 };
 pub use identity::connection_identity;
 pub use ops::{
-    cached_active_integrations, cached_active_integrations_including_expired, connected_set_hash,
-    fetch_connected_integrations, fetch_connected_integrations_status,
-    invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
+    cached_active_integrations, clear_composio_api_key, connected_set_hash,
+    fetch_connected_integrations, fetch_connected_integrations_status, get_composio_api_key,
+    invalidate_connected_integrations_cache, rpc_store_composio_api_key, store_composio_api_key,
+    FetchConnectedIntegrationsStatus, COMPOSIO_DIRECT_PROVIDER,
 };
+pub(crate) use schemas::all_controller_entries as all_composio_controller_entries;
 pub use schemas::{
     all_controller_schemas as all_composio_controller_schemas,
     all_registered_controllers as all_composio_registered_controllers,

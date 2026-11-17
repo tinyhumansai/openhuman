@@ -3,6 +3,7 @@
 //! budget it is left verbatim; past it TinyJuice compacts it deterministically.
 
 use super::*;
+use crate::agent::tinyagents::middleware::tool_output::ToolOutputMiddleware;
 
 /// Run one shell call with `command` through `before_tool` and `after_tool`.
 async fn run_shell(
@@ -10,10 +11,7 @@ async fn run_shell(
     id: &str,
     command: &str,
     output: &str,
-) -> (
-    String,
-    Vec<crate::inference::tokenjuice::types::CompactRequest>,
-) {
+) -> (String, Vec<tinyjuice_bus::wire::CompactRequest>) {
     let mut ctx = ctx();
     let mut call = TaToolCall::new(id, "shell", json!({ "command": command }));
     mw.before_tool(&mut ctx, &(), &mut call).await.unwrap();

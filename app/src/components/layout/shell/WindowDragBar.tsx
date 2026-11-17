@@ -36,8 +36,17 @@ const GLOBAL_DRAG_BAR_LEFT = SIDEBAR_MAX_WIDTH + 8;
  * Windows uses the same drag band with room left for its custom controls.
  * Linux keeps its native decorated title bar. Outside Tauri it renders nothing.
  */
+/**
+ * Whether the drag band is drawn on this platform. Content whose controls sit
+ * at the top of the window (like the artifact panel header) must clear
+ * `WINDOW_DRAG_BAR_HEIGHT` when this is true, or the band eats their clicks.
+ */
+export function hasWindowDragBar(): boolean {
+  return isTauri() && (isMac() || isWindowsDesktop());
+}
+
 export default function WindowDragBar() {
-  if (!isTauri() || (!isMac() && !isWindowsDesktop())) return null;
+  if (!hasWindowDragBar()) return null;
   const windows = isWindowsDesktop();
   return (
     <div

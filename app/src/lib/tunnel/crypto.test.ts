@@ -146,10 +146,10 @@ describe('sealHandshake / openHandshake', () => {
     expect(Array.from(recovered)).toEqual(Array.from(payload));
   });
 
-  it('frame starts with version byte 0x01', () => {
+  it('frame starts with version byte 0x03', () => {
     const core = generateKeypair();
     const frame = sealHandshake(core.publicKey, new Uint8Array(16));
-    expect(frame[0]).toBe(0x01);
+    expect(frame[0]).toBe(0x03);
   });
 
   it('rejects tampered handshake frame', () => {
@@ -248,13 +248,15 @@ describe('TunnelCipher (directional v2)', () => {
     expect(() => serverOpener.open(frame)).toThrow(/authentication failed/i);
   });
 
-  it('legacy v1 frames are explicitly rejected with re-pair hint', () => {
+  it('legacy v1 frames are explicitly rejected with protocol upgrade hint', () => {
     // Hand-roll a v1-shaped frame: 0x01 || nonce(24) || ct(16 bytes).
     const v1Frame = new Uint8Array(1 + 24 + 16);
     v1Frame[0] = LEGACY_FRAME_VERSION_V1;
     const client = new TunnelCipher('client', keys);
     expect(() => client.open(v1Frame)).toThrow(/UnsupportedFrameVersion/);
-    expect(() => client.open(v1Frame)).toThrow(/re-pair/);
+    expect(() => client.open(v1Frame)).toThrow(
+      /upgrade to v2 directional subkeys before reconnecting/
+    );
   });
 });
 

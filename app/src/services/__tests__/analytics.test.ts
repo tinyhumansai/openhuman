@@ -17,6 +17,8 @@ const hoisted = vi.hoisted(() => ({
   browserApiErrorsIntegration: vi.fn(() => ({ name: 'BrowserApiErrors' })),
   globalHandlersIntegration: vi.fn(() => ({ name: 'GlobalHandlers' })),
   httpContextIntegration: vi.fn(() => ({ name: 'HttpContext' })),
+  browserTracingIntegration: vi.fn(() => ({ name: 'BrowserTracing' })),
+  browserProfilingIntegration: vi.fn(() => ({ name: 'BrowserProfiling' })),
   // Config state
   analyticsEnabled: false,
   appEnvironment: 'staging' as 'staging' | 'production' | 'development',
@@ -37,6 +39,8 @@ vi.mock('@sentry/react', () => ({
   browserApiErrorsIntegration: hoisted.browserApiErrorsIntegration,
   globalHandlersIntegration: hoisted.globalHandlersIntegration,
   httpContextIntegration: hoisted.httpContextIntegration,
+  browserTracingIntegration: hoisted.browserTracingIntegration,
+  browserProfilingIntegration: hoisted.browserProfilingIntegration,
 }));
 
 // `initSentry()` reads `getCoreStateSnapshot().snapshot.analyticsEnabled` to
@@ -326,16 +330,20 @@ describe('initSentry beforeSend manual-staging bypass', () => {
     const opts = hoisted.init.mock.calls[0][0] as {
       release: string;
       tracesSampleRate: number;
+      profileSessionSampleRate: number;
       replaysSessionSampleRate: number;
       replaysOnErrorSampleRate: number;
       integrations: Array<{ name?: string }>;
     };
     expect(opts.release).toBe('openhuman@test+abc');
-    expect(opts.tracesSampleRate).toBe(0);
+    expect(opts.tracesSampleRate).toBe(0.1);
+    expect(opts.profileSessionSampleRate).toBe(0.1);
     expect(opts.replaysSessionSampleRate).toBe(0);
     expect(opts.replaysOnErrorSampleRate).toBe(0);
     const names = opts.integrations.map(i => i.name).filter(Boolean);
     expect(names).toContain('HttpContext');
+    expect(names).toContain('BrowserTracing');
+    expect(names).toContain('BrowserProfiling');
   });
 
   test('registers inboundFiltersIntegration so ignoreErrors is not inert (#3963)', async () => {

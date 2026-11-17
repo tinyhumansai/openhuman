@@ -1,11 +1,15 @@
-//! Persisting a sub-agent turn's (or a failed run's) raw transcript to
-//! `session_raw`, mirroring the removed `SubagentObserver::persist_transcript`.
+//! Persisting a sub-agent turn's (or a failed run's) raw transcript to the
+//! turn tree's transcript store, mirroring the removed
+//! `SubagentObserver::persist_transcript`.
+
+use std::sync::Arc;
 
 use crate::agent::subagent_host::types::SubagentRunError;
-use tinyagents_session::transcript::TranscriptMessage;
+use crate::agent::tinyagents::host::OpenHumanRunContext;
+use tinyagents_session::transcript::{TranscriptLocator, TranscriptMessage, TranscriptTurn};
 
 use super::dispatch::AggregatedUsage;
-use super::worker_mirror::mirror_worker_thread_from_history;
+use crate::agent::subagent_host::ops::mirror_worker_thread_from_history;
 
 /// The history a failed sub-agent run persists, plus the unanswered steps as
 /// text (#6281).
@@ -18,7 +22,7 @@ use super::worker_mirror::mirror_worker_thread_from_history;
 /// before.
 pub(super) fn failed_run_history(
     original: &[TranscriptMessage],
-    snapshot: &crate::agent::tinyagents::TranscriptSnapshot,
+    snapshot: &crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot,
 ) -> (Vec<TranscriptMessage>, Option<String>) {
     if snapshot.messages.is_empty() {
         return (Vec::new(), None);
@@ -26,22 +30,111 @@ pub(super) fn failed_run_history(
     let base = snapshot.request_base_len.min(snapshot.messages.len());
     let end = snapshot.accepted_end();
     let mut recovered = original.to_vec();
-    recovered.extend(crate::agent::message_convert::messages_to_history(
-        &snapshot.messages[base..end],
-    ));
+    recovered.extend(
+        snapshot.messages[base..end]
+            .iter()
+            .filter_map(tinyagents_runtime::transcript::message_to_native_transcript),
+    );
     (
         recovered,
-        crate::agent::tinyagents::render_unanswered_steps(&snapshot.messages[end..]),
+        crate::agent::tinyagents::middleware::turn_context::render_unanswered_steps(
+            &snapshot.messages[end..],
+        ),
     )
 }
 
-/// Persist a sub-agent turn's raw transcript to `session_raw`, mirroring the
-/// removed `SubagentObserver::persist_transcript`: `agent_type:"subagent"`, the
+/// The store a sub-agent's transcript goes to: the turn tree's own
+/// ([`OpenHumanRunContext::transcripts`], set by the root session), so it lands
+/// beside its parent's under the same key. A run no session started falls
+/// back to the store its own carried context selects, keyed like the parent
+/// session's (its definition id, or the default agent). That context's store
+/// is used explicitly: a detached run is a bare `tokio::spawn` with no ambient
+/// one.
+///
+/// A SaaS process whose carried context is gone has no tenant to scope to, so
+/// the run gets an isolated in-memory store instead of the operator's.
+pub(super) fn subagent_transcripts(
+    run_context: &OpenHumanRunContext,
+    workspace_dir: &std::path::Path,
+) -> anyhow::Result<Arc<dyn TranscriptLocator>> {
+    subagent_transcripts_in(run_context, workspace_dir, crate::core::runtime::is_saas())
+}
+
+pub(super) fn subagent_transcripts_in(
+    run_context: &OpenHumanRunContext,
+    workspace_dir: &std::path::Path,
+    saas: bool,
+) -> anyhow::Result<Arc<dyn TranscriptLocator>> {
+    if let Some(transcripts) = run_context.transcripts.clone() {
+        return Ok(transcripts);
+    }
+    let core = run_context.core.as_ref().and_then(std::sync::Weak::upgrade);
+    let fallback = run_context
+        .parent
+        .as_ref()
+        .map_or(crate::storage::sessions::DEFAULT_AGENT, |parent| {
+            parent.agent_definition_id.as_str()
+        });
+    let Some(core) = core else {
+        if saas {
+            tracing::warn!(
+                "[subagent_host:graph] no turn-tree store and no carried context in SaaS mode; \
+                 transcript kept in memory only"
+            );
+            return detached_memory_transcripts(fallback);
+        }
+        let key = crate::storage::sessions::agent_key_for(
+            &crate::core::runtime::Tenant::default(),
+            fallback,
+        );
+        return Ok(crate::storage::sessions::transcripts_or_files(
+            &key,
+            workspace_dir,
+        ));
+    };
+    let tenant = crate::core::runtime::Tenant::of(&core);
+    let key = crate::storage::sessions::agent_key_for(&tenant, fallback);
+    tracing::debug!(
+        profile = tenant.profile.is_some(),
+        "[subagent_host:graph] no turn-tree transcript store; using the carried context's"
+    );
+    Ok(crate::storage::sessions::transcripts_or_files_in(
+        &core,
+        &key,
+        workspace_dir,
+    ))
+}
+
+/// Creates an intentionally isolated, process-lifetime transcript store for
+/// a detached SaaS task whose carried tenant context has already been dropped.
+/// It never opens the installed operator/profile backend.
+fn detached_memory_transcripts(fallback_agent: &str) -> anyhow::Result<Arc<dyn TranscriptLocator>> {
+    let backend =
+        crate::storage::block_on(crate::storage::open("memory")).map_err(anyhow::Error::msg)?;
+    let factory_backend = Arc::clone(&backend);
+    let factory: tinyagents_session::port::AgentStorageFactory = Arc::new(move |agent_id| {
+        let scope = crate::storage::scope_for_agent(agent_id);
+        let storage = factory_backend.for_scope(&scope)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(
+            storage,
+            (*scope).clone(),
+        ))
+    });
+    let provider =
+        tinyagents_session::DriverSessionStores::new(factory).map_err(anyhow::Error::msg)?;
+    Ok(provider
+        .try_for_agent(fallback_agent)
+        .map_err(anyhow::Error::msg)?
+        .transcripts)
+}
+
+/// Persist a sub-agent turn's raw transcript to `transcripts` under
+/// `transcript_stem`, mirroring the removed `SubagentObserver::persist_transcript`: `agent_type:"subagent"`, the
 /// `task_id`, and the provider/model + usage carried on the last assistant
 /// message so per-thread usage reads price the sub-agent at its own model.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn persist_subagent_transcript(
-    workspace_dir: &std::path::Path,
+    transcripts: &dyn TranscriptLocator,
     transcript_stem: &str,
     agent_id: &str,
     task_id: &str,
@@ -56,17 +149,6 @@ pub(super) fn persist_subagent_transcript(
 ) {
     use tinyagents_session::transcript;
 
-    let path = match transcript::resolve_keyed_transcript_path(workspace_dir, transcript_stem) {
-        Ok(p) => p,
-        Err(err) => {
-            tracing::debug!(
-                agent_id,
-                error = %err,
-                "[subagent_host:graph] failed to resolve child transcript path"
-            );
-            return;
-        }
-    };
     let now = chrono::Utc::now().to_rfc3339();
     let turn_usage = transcript::TurnUsage {
         provider: provider_label.to_string(),
@@ -76,7 +158,21 @@ pub(super) fn persist_subagent_transcript(
             output: usage.output_tokens,
             cached_input: usage.cached_input_tokens,
             context_window,
-            cost_usd: usage.charged_amount_usd,
+            cost_usd: usage.cost.known_usd,
+            cost_source: Some(match usage.cost.source {
+                tinyagents_harness::cost::CostSource::Charged => {
+                    transcript::UsageCostSource::Charged
+                }
+                tinyagents_harness::cost::CostSource::Estimated => {
+                    transcript::UsageCostSource::Estimated
+                }
+                tinyagents_harness::cost::CostSource::Unknown => {
+                    transcript::UsageCostSource::Unknown
+                }
+            }),
+            // No per-call figure reaches here; readers fall back to the mean
+            // request size (`spend::context_tokens_of`).
+            ..Default::default()
         },
         ts: now.clone(),
         reasoning_content: None,
@@ -96,14 +192,47 @@ pub(super) fn persist_subagent_transcript(
         updated: now,
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cached_input_tokens: usage.cached_input_tokens,
-        charged_amount_usd: usage.charged_amount_usd,
+        charged_amount_usd: usage.cost.known_usd,
         thread_id: thread_id.map(str::to_owned),
         task_id: Some(task_id.to_string()),
     };
-    if let Err(err) = transcript::write_transcript(&path, history, &meta, Some(&turn_usage)) {
+    let handle = match transcripts.open_stem(transcript_stem, meta.clone()) {
+        Ok(handle) => handle,
+        Err(err) => {
+            tracing::debug!(
+                agent_id,
+                error = %err,
+                "[subagent_host:graph] failed to open child transcript"
+            );
+            return;
+        }
+    };
+    // What the stem already holds (a resumed sub-agent session) is the
+    // baseline: an extension appends, anything else is recorded as a
+    // compaction, so nothing written before is erased.
+    let prev = match handle.messages() {
+        Ok(prev) => prev,
+        Err(err) => {
+            tracing::debug!(
+                agent_id,
+                error = %err,
+                "[subagent_host:graph] failed to read child transcript"
+            );
+            return;
+        }
+    };
+    if let Err(err) = handle.append_turn(TranscriptTurn {
+        prev: &prev,
+        next: history,
+        meta: &meta,
+        turn_usage: Some(&turn_usage),
+        request_id: None,
+        tools: None,
+    }) {
         tracing::debug!(
             agent_id,
             error = %err,
@@ -113,8 +242,8 @@ pub(super) fn persist_subagent_transcript(
 }
 
 /// Persist a **failed** sub-agent run (#4466): write whatever rounds the live
-/// transcript-snapshot middleware captured before the harness error to
-/// `session_raw` (so `learning/transcript_ingest` can still ingest a failed run,
+/// transcript-snapshot middleware captured before the harness error to the
+/// turn tree's transcript store (so `learning/transcript_ingest` can still ingest a failed run,
 /// not skip an absent file), mirror those rounds onto the worker thread, and
 /// append a trailing failure marker so the record is self-describing. `recovered`
 /// holds only what a provider accepted; steps only the failing request carried
@@ -123,6 +252,8 @@ pub(super) fn persist_subagent_transcript(
 /// number of model calls a provider answered.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn persist_failed_run(
+    ctx: &crate::core::runtime::DispatchCtx,
+    transcripts: &dyn TranscriptLocator,
     workspace_dir: &std::path::Path,
     transcript_stem: &str,
     agent_id: &str,
@@ -147,7 +278,7 @@ pub(super) fn persist_failed_run(
     history.push(TranscriptMessage::assistant(marker.clone()));
 
     persist_subagent_transcript(
-        workspace_dir,
+        transcripts,
         transcript_stem,
         agent_id,
         task_id,
@@ -163,6 +294,7 @@ pub(super) fn persist_failed_run(
 
     if let Some(thread_id) = worker_thread_id {
         mirror_worker_thread_from_history(
+            ctx,
             workspace_dir,
             thread_id,
             agent_id,

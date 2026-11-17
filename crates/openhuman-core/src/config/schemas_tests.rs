@@ -1,14 +1,17 @@
 use super::schema_defs::schemas;
 use super::*;
+use crate::core::all::assert_schema_controller_parity;
 
 #[test]
-fn all_schemas_use_config_namespace_and_have_descriptions() {
-    for s in all_controller_schemas() {
-        assert_eq!(s.namespace, "config", "function {}", s.function);
-        assert!(!s.description.is_empty(), "function {} desc", s.function);
-        assert!(!s.outputs.is_empty(), "function {} outputs", s.function);
-    }
+fn config_schema_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "config");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "get",
+    );
 }
+use crate::core::runtime::DispatchCtx;
 
 #[test]
 fn every_registered_key_resolves_to_non_unknown_schema() {
@@ -26,6 +29,8 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "workspace_onboarding_flag_set",
         "update_analytics_settings",
         "get_analytics_settings",
+        "update_user_timezone",
+        "get_user_timezone",
         "update_autonomy_settings",
         "get_autonomy_settings",
         "get_agent_settings",
@@ -34,77 +39,11 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "reset_local_data",
         "get_onboarding_completed",
         "set_onboarding_completed",
-        "get_dictation_settings",
-        "update_dictation_settings",
-        "get_voice_server_settings",
-        "update_voice_server_settings",
     ];
     for k in keys {
         let s = schemas(k);
         assert_ne!(s.function, "unknown", "`{k}` fell through to unknown");
         assert_eq!(s.namespace, "config");
-    }
-}
-
-#[test]
-fn registered_controllers_all_use_config_namespace() {
-    for h in all_registered_controllers() {
-        assert_eq!(h.schema.namespace, "config");
-        assert!(!h.schema.function.is_empty());
-    }
-}
-
-#[test]
-fn json_output_helper_builds_required_json_field() {
-    let f = json_output("result", "desc");
-    assert!(f.required);
-    assert!(matches!(f.ty, TypeSchema::Json));
-}
-
-#[test]
-fn to_json_wraps_rpc_outcome() {
-    let v = to_json(Outcome::single_log(serde_json::json!({"ok": true}), "l")).expect("serialize");
-    assert!(v.get("logs").is_some() || v.get("result").is_some());
-}
-
-// ── Field builder helpers ────────────────────────────────────
-
-#[test]
-fn required_string_builds_required_string_field() {
-    let f = required_string("api_key", "Auth key");
-    assert_eq!(f.name, "api_key");
-    assert_eq!(f.comment, "Auth key");
-    assert!(f.required);
-    assert!(matches!(f.ty, TypeSchema::String));
-}
-
-#[test]
-fn optional_string_builds_option_string_field() {
-    let f = optional_string("model", "model name");
-    assert!(!f.required);
-    match &f.ty {
-        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
-        other => panic!("expected Option<String>, got {other:?}"),
-    }
-}
-
-#[test]
-fn optional_json_builds_option_json_field() {
-    let f = optional_json("payload", "json payload");
-    assert!(!f.required);
-    match &f.ty {
-        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
-        other => panic!("expected Option<Json>, got {other:?}"),
-    }
-}
-
-#[test]
-fn optional_bool_builds_option_bool_field() {
-    let f = optional_bool("enabled", "Whether enabled");
-    assert!(!f.required);
-    match &f.ty {
-        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Bool)),
-        other => panic!("expected Option<Bool>, got {other:?}"),
     }
 }
 
@@ -296,6 +235,7 @@ async fn handle_get_autonomy_settings_returns_current_value() {
     }
     // Seed a known value before reading.
     let _ = crate::config::ops::load_and_apply_autonomy_settings(
+        &DispatchCtx::process_default(),
         crate::config::ops::AutonomySettingsPatch {
             max_actions_per_hour: Some(123),
             ..Default::default()
@@ -304,9 +244,10 @@ async fn handle_get_autonomy_settings_returns_current_value() {
     .await
     .expect("seed");
 
-    let out = super::handle_get_autonomy_settings(serde_json::Map::new())
-        .await
-        .expect("handler");
+    let out =
+        super::handle_get_autonomy_settings(DispatchCtx::process_default(), serde_json::Map::new())
+            .await
+            .expect("handler");
     // into_cli_compatible_json wraps data under "result" when logs are present.
     let inner = out.get("result").unwrap_or(&out);
     let value = inner.get("max_actions_per_hour").and_then(|v| v.as_u64());
@@ -327,7 +268,7 @@ async fn handle_update_autonomy_settings_rejects_invalid_value() {
     let mut params = serde_json::Map::new();
     params.insert("max_actions_per_hour".into(), serde_json::json!(0));
 
-    let err = super::handle_update_autonomy_settings(params)
+    let err = super::handle_update_autonomy_settings(DispatchCtx::process_default(), params)
         .await
         .unwrap_err();
     assert!(err.contains("at least 1"), "got: {err}");
@@ -363,7 +304,7 @@ async fn handle_get_agent_paths_returns_action_workspace_and_projects() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
 
-    let out = super::handle_get_agent_paths(serde_json::Map::new())
+    let out = super::handle_get_agent_paths(DispatchCtx::process_default(), serde_json::Map::new())
         .await
         .expect("get_agent_paths handler must succeed");
     // into_cli_compatible_json wraps data under "result" when logs are present.
@@ -416,7 +357,7 @@ async fn handle_get_agent_paths_reflects_openhuman_action_dir_env_override() {
         std::env::set_var("OPENHUMAN_ACTION_DIR", &custom_actions);
     }
 
-    let out = super::handle_get_agent_paths(serde_json::Map::new())
+    let out = super::handle_get_agent_paths(DispatchCtx::process_default(), serde_json::Map::new())
         .await
         .expect("get_agent_paths handler must succeed");
     let inner = out.get("result").unwrap_or(&out);

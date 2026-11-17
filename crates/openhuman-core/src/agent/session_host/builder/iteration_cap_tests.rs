@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::harness::definition::IterationPolicy;
+use tinyagents_definition::IterationPolicy;
 
 fn def_with_cap(max_iterations: usize) -> AgentDefinition {
     let mut def: AgentDefinition = toml::from_str(

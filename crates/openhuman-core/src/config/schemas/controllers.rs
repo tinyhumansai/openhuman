@@ -8,11 +8,12 @@ mod agent;
 mod inference;
 mod integrations;
 mod registry;
-mod voice;
 mod workspace;
 
 pub use registry::{all_controller_schemas, all_registered_controllers};
 
+#[cfg(test)]
+use agent::handle_update_computer_settings;
 #[cfg(test)]
 pub(super) use agent::{handle_get_autonomy_settings, handle_update_autonomy_settings};
 #[cfg(test)]

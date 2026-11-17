@@ -5,12 +5,12 @@
 //! process and the variable is process-wide, so they take a lock rather than
 //! racing each other's workspace.
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::MutexGuard;
+
+use crate::test_env::env_lock;
 
 use super::store;
 use super::types::{Confinement, Gateway, GatewaySpec, Reach, DESKTOP_ID};
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// A temporary workspace, restored when the guard drops.
 struct Workspace {
@@ -29,7 +29,7 @@ impl Drop for Workspace {
 }
 
 fn workspace() -> Workspace {
-    let lock = ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    let lock = env_lock();
     let dir = tempfile::TempDir::new().expect("a temporary directory");
     let prior = std::env::var("OPENHUMAN_WORKSPACE").ok();
     std::env::set_var("OPENHUMAN_WORKSPACE", dir.path());

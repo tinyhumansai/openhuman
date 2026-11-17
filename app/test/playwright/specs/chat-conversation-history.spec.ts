@@ -1,5 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { selectedThreadTranscript } from '../helpers/chat-transcript';
+import { persistedThreadMessages } from '../helpers/chat-transcript';
 import {
   bootAuthenticatedPage,
   callCoreRpc,
@@ -131,7 +133,7 @@ test.describe('Chat Conversation History', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await openChat(page);
-    await createNewThread(page);
+    const threadId = await createNewThread(page);
 
     await sendMessage(page, FIRST_PROMPT);
     // The assistant bubble's Tailwind class carries an opacity modifier
@@ -152,20 +154,82 @@ test.describe('Chat Conversation History', () => {
     await sendMessage(page, SECOND_PROMPT);
     await expect(page.getByText(TURN_TWO_CANARY)).toBeVisible({ timeout: 30_000 });
 
-    // One chat-completion POST for the second turn: the orchestrator no longer
-    // eagerly spawns the memory agent before the turn (memory is on-demand now),
-    // so there is a single LLM call rather than the prior memory+main pair.
-    const llmLog = await expect
+    // Background and integration work can issue other completions while this
+    // turn is settling. Identify the request carrying this user message, then
+    // assert that its model context includes the prior exchange.
+    await expect
       .poll(async () => {
         const log = await requests();
-        return log.filter(
-          entry => entry.method === 'POST' && entry.url.includes('/openai/v1/chat/completions')
-        );
+        return log.filter(entry => {
+          if (entry.method !== 'POST' || !entry.url.includes('/openai/v1/chat/completions')) {
+            return false;
+          }
+          try {
+            const payload = JSON.parse(entry.body ?? '{}') as {
+              messages?: Array<{ content?: unknown }>;
+            };
+            return (
+              payload.messages?.some(
+                message =>
+                  typeof message.content === 'string' && message.content.includes(SECOND_PROMPT)
+              ) &&
+              payload.messages?.some(
+                message =>
+                  typeof message.content === 'string' && message.content.includes(FIRST_PROMPT)
+              )
+            );
+          } catch {
+            return false;
+          }
+        }).length;
       })
-      .toHaveLength(1);
+      .toBeGreaterThan(0);
 
-    void llmLog;
+    const secondTurnRequest = (await requests())
+      .filter(entry => {
+        if (entry.method !== 'POST' || !entry.url.includes('/openai/v1/chat/completions')) {
+          return false;
+        }
+        try {
+          const payload = JSON.parse(entry.body ?? '{}') as {
+            messages?: Array<{ content?: unknown }>;
+          };
+          return (
+            payload.messages?.some(
+              message =>
+                typeof message.content === 'string' && message.content.includes(SECOND_PROMPT)
+            ) &&
+            payload.messages?.some(
+              message =>
+                typeof message.content === 'string' && message.content.includes(FIRST_PROMPT)
+            )
+          );
+        } catch {
+          return false;
+        }
+      })
+      .slice(-1)[0];
+    expect(secondTurnRequest?.body).toBeDefined();
+    const payload = JSON.parse(secondTurnRequest!.body!);
+    const modelContext = JSON.stringify(payload.messages ?? []);
+    expect(modelContext).toContain(FIRST_PROMPT);
+    expect(modelContext).toContain(FIRST_RESPONSE);
+    expect(modelContext).toContain(SECOND_PROMPT);
 
     await expect(page.getByText(TURN_TWO_CANARY)).toBeVisible();
+    const transcript = await selectedThreadTranscript(page);
+    expect(transcript.content).toContain(FIRST_PROMPT);
+    expect(transcript.content).toContain(FIRST_RESPONSE);
+    expect(transcript.content).toContain(SECOND_PROMPT);
+    expect(transcript.content).toContain(TURN_TWO_CANARY);
+    await expect
+      .poll(async () => {
+        const messages = await persistedThreadMessages(threadId);
+        const content = messages.map(message => message.content).join('\n');
+        return [FIRST_PROMPT, FIRST_RESPONSE, SECOND_PROMPT, TURN_TWO_CANARY].every(text =>
+          content.includes(text)
+        );
+      })
+      .toBe(true);
   });
 });

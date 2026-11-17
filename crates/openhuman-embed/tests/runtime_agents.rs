@@ -14,30 +14,33 @@ mod common;
 use common::{chat_completion, offline_config, runtime, stub_backend};
 use openhuman_embed::{
     Access, AgentDefinitionSpec, AgentError, AgentSpec, HostTurnTools, MemoryBinding, Provider,
-    Runtime, SandboxModeSpec, ToolScopeSpec, Workspace,
+    Runtime, SandboxModeSpec, SessionStoreProvider, ToolScopeSpec, Workspace,
 };
+use tinyagents_session::InMemorySessionStores;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 const API_KEY: &str = "th_test_key";
 
 struct RecordingBudgetStopHook {
-    inner: openhuman_core::agent::stop_hooks::BudgetStopHook,
+    inner: tinyagents_hooks::stop::BudgetStopHook,
     reason: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 #[async_trait::async_trait]
-impl openhuman_core::agent::stop_hooks::StopHook for RecordingBudgetStopHook {
+impl openhuman_embed::seams::StopHook<openhuman_embed::seams::TurnCost>
+    for RecordingBudgetStopHook
+{
     fn name(&self) -> &str {
         "budget"
     }
 
     async fn check(
         &self,
-        state: &openhuman_core::agent::stop_hooks::TurnState<'_>,
-    ) -> openhuman_core::agent::stop_hooks::StopDecision {
-        let decision = openhuman_core::agent::stop_hooks::StopHook::check(&self.inner, state).await;
-        if let openhuman_core::agent::stop_hooks::StopDecision::Stop { reason } = &decision {
+        state: &openhuman_embed::seams::TurnState<'_>,
+    ) -> openhuman_embed::seams::StopDecision {
+        let decision = openhuman_embed::seams::StopHook::check(&self.inner, state).await;
+        if let openhuman_embed::seams::StopDecision::Stop { reason } = &decision {
             *self.reason.lock().expect("stop reason lock") = Some(reason.clone());
         }
         decision
@@ -102,8 +105,10 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .mount(&provider_b)
                 .await;
             let mut budget_completion = chat_completion("budget-metered");
-            budget_completion["usage"]["prompt_tokens"] = serde_json::json!(1_000_000);
-            budget_completion["usage"]["total_tokens"] = serde_json::json!(1_000_001);
+            // Below gpt-5.5's 272K long-context step, so the call bills at the
+            // standard $5/MTok input rate: $1.25 against the $1 cap.
+            budget_completion["usage"]["prompt_tokens"] = serde_json::json!(250_000);
+            budget_completion["usage"]["total_tokens"] = serde_json::json!(250_001);
             Mock::given(method("POST"))
                 .and(path("/v1/chat/completions"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(budget_completion))
@@ -112,6 +117,11 @@ fn one_runtime_hosts_independently_configured_agents() {
             #[allow(unused_variables)]
             let skills = skills_fixture();
             let beta_action = tempfile::tempdir().expect("beta action dir");
+            let session_store = std::sync::Arc::new(InMemorySessionStores::new());
+
+            // The core carries no hosted provider; supply the managed one the
+            // way the TinyHumans layer does, pointed at the mock.
+            common::PointedInference::install(&format!("{}/openai/v1", backend.uri()));
 
             let runtime = std::sync::Arc::new(
                 Runtime::builder()
@@ -119,11 +129,12 @@ fn one_runtime_hosts_independently_configured_agents() {
                     .workspace(Workspace::Ephemeral)
                     .backend_url(backend.uri())
                     .api_key(API_KEY)
+                    .session_store(session_store.clone())
                     .build()
                     .await
                     .expect("runtime builds"),
             );
-            assert!(runtime.has_api_key());
+            assert!(runtime.has_api_key().await);
 
             // Regression: `has_api_key()` must read the credential store live,
             // not a snapshot taken when the runtime was built — a host that
@@ -136,7 +147,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("clear api key");
             assert!(
-                !runtime.has_api_key(),
+                !runtime.has_api_key().await,
                 "has_api_key() must observe a live clear, not a build-time snapshot"
             );
             runtime
@@ -146,7 +157,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("restore api key");
             assert!(
-                runtime.has_api_key(),
+                runtime.has_api_key().await,
                 "has_api_key() must observe a live store, not a build-time snapshot"
             );
 
@@ -240,13 +251,18 @@ fn one_runtime_hosts_independently_configured_agents() {
                             AgentDefinitionSpec::new()
                                 .tools(ToolScopeSpec::Named(vec!["shell".to_string()])),
                         )
-                        .tools(|turn| HostTurnTools {
-                            withheld: if turn.session_id() == Some("hidden-turn") {
+                        .tools(|turn| {
+                            let withheld = if turn.session_id() == Some("hidden-turn") {
                                 std::collections::HashSet::from(["shell".to_string()])
                             } else {
                                 std::collections::HashSet::new()
-                            },
-                            ..Default::default()
+                            };
+                            Box::pin(async move {
+                                HostTurnTools {
+                                    withheld,
+                                    ..Default::default()
+                                }
+                            })
                         }),
                 )
                 .expect("withholding agent instantiates");
@@ -283,25 +299,28 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .expect("visible turn runs");
 
             let stop_reason = std::sync::Arc::new(std::sync::Mutex::new(None));
-            let budgeted_turn = openhuman_core::agent::stop_hooks::with_stop_hooks(
-                vec![std::sync::Arc::new(RecordingBudgetStopHook {
-                    inner: openhuman_core::agent::stop_hooks::BudgetStopHook::new(1.0),
+            let budgeted_turn = budget_agent
+                .turn("report a metered response")
+                .stop_hook(std::sync::Arc::new(RecordingBudgetStopHook {
+                    inner: tinyagents_hooks::stop::BudgetStopHook::new(1.0),
                     reason: std::sync::Arc::clone(&stop_reason),
-                })],
-                budget_agent.run("report a metered response"),
-            )
-            .await
-            .expect("budgeted runtime-owned agent turn returns");
+                }))
+                .send()
+                .await
+                .expect("budgeted runtime-owned agent turn returns");
             assert_eq!(common::chat_requests(&budget_provider).await.len(), 1);
             assert_eq!(
                 stop_reason.lock().expect("stop reason lock").as_deref(),
-                Some("turn cost $5.0000 reached cap $1.0000")
+                Some("turn cost $1.2500 reached cap $1.0000")
             );
             let usage = budgeted_turn
                 .usage
                 .expect("runtime-owned agent reports turn usage");
-            assert_eq!(usage.input_tokens, 1_000_000);
-            assert!(usage.cost_usd >= 1.0, "budgeted usage: {usage:?}");
+            assert_eq!(usage.input_tokens, 250_000);
+            assert!(
+                usage.cost_usd.is_some_and(|usd| usd >= 1.0),
+                "budgeted usage: {usage:?}"
+            );
             let withholding_requests = common::chat_requests(&withholding_provider).await;
             assert_eq!(withholding_requests.len(), 2);
             let hidden_request: serde_json::Value =
@@ -335,7 +354,10 @@ fn one_runtime_hosts_independently_configured_agents() {
 
             // Layout: every agent has its own home, transcripts and action dir.
             assert_eq!(alpha.home_dir(), workspace_dir.join("agents/alpha"));
-            assert_eq!(alpha.transcripts_dir(), workspace_dir.join("session_raw"));
+            assert_eq!(
+                alpha.transcripts_dir(),
+                workspace_dir.join("agents/alpha/session_raw")
+            );
             assert_eq!(alpha.action_dir(), root_dir.join("agents/alpha/action"));
             assert!(alpha.action_dir().is_dir());
             assert_eq!(beta.action_dir(), beta_action.path());
@@ -396,12 +418,23 @@ fn one_runtime_hosts_independently_configured_agents() {
             let b_body: serde_json::Value = serde_json::from_slice(&b_reqs[0].body).unwrap();
             assert_eq!(a_body["model"], "alpha-model");
             assert_eq!(b_body["model"], "beta-model");
-            // Transcripts are keyed by agent, and a thread resumes its own history.
-            let transcripts: Vec<String> = std::fs::read_dir(alpha.transcripts_dir())
-                .expect("transcript dir")
-                .flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect();
+            // Transcripts are keyed by agent and live in the agent's own store
+            // under the workspace, and a thread resumes its own history.
+            let listing = |agent_id: &str, session_id: &str| -> Vec<String> {
+                session_store
+                    .for_agent(agent_id)
+                    .transcripts
+                    .thread_transcripts(session_id, None)
+                    .map(|found| found.roots.into_iter().map(|root| root.stem).collect())
+                    .unwrap_or_default()
+            };
+            assert!(
+                !workspace_dir.join("session_raw").exists()
+                    || std::fs::read_dir(workspace_dir.join("session_raw"))
+                        .map(|mut entries| entries.next().is_none())
+                        .unwrap_or(true),
+                "no agent writes to the shared transcript directory"
+            );
             // Asserted against names the writer itself produced, not a shape
             // of our own. A turn's `session_id` is the raw session key the
             // runtime minted; TinyAgents derives the transcript stem from it
@@ -409,7 +442,9 @@ fn one_runtime_hosts_independently_configured_agents() {
             // component carrying a disambiguating digest). The previous
             // `_alpha.jsonl` expectation predates that encoding — hosts used
             // to mint `{unix_ts}_{agent}` stems — so it can no longer match.
-            for (agent_id, session_id) in [("alpha", &a1.session_id), ("beta", &b0.session_id)] {
+            for (agent, session_id) in [(&alpha, &a1.session_id), (&beta, &b0.session_id)] {
+                let agent_id = agent.id();
+                let transcripts = listing(agent_id, session_id);
                 let transcript = transcripts
                     .iter()
                     .find(|f| f.starts_with(&format!("{session_id}-")))
@@ -425,10 +460,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 // a substring would also be satisfied by an agent id that
                 // happened to appear in the session key, and would not fail if
                 // the agent scope were dropped from the stem altogether.
-                let stem = transcript
-                    .strip_suffix(".jsonl")
-                    .expect("a transcript file name ends in .jsonl");
-                let component = stem
+                let component = transcript
                     .rsplit('.')
                     .next()
                     .expect("rsplit always yields at least one component");
@@ -480,23 +512,28 @@ fn one_runtime_hosts_independently_configured_agents() {
             );
 
             // Interleaved concurrency across agents keeps their providers apart.
+            // Batch the turns so this isolation check does not flood one
+            // runtime with fifty simultaneous requests while Nextest runs the
+            // other integration binaries beside it.
             let mut turns = tokio::task::JoinSet::new();
-            for index in 0..25 {
-                let alpha = alpha.clone();
-                let beta = beta.clone();
-                turns.spawn(async move { alpha.turn(format!("a{index}")).send().await });
-                turns.spawn(async move { beta.turn(format!("b{index}")).send().await });
-            }
             let mut a_count = 0;
             let mut b_count = 0;
-            while let Some(outcome) = turns.join_next().await {
-                let outcome = outcome.expect("no panic").expect("turn runs");
-                if outcome.reply.contains("alpha-ok") {
-                    a_count += 1;
-                } else if outcome.reply.contains("beta-ok") {
-                    b_count += 1;
-                } else {
-                    panic!("unexpected reply {:?}", outcome.reply);
+            for start in (0..25).step_by(5) {
+                for index in start..start + 5 {
+                    let alpha = alpha.clone();
+                    let beta = beta.clone();
+                    turns.spawn(async move { alpha.turn(format!("a{index}")).send().await });
+                    turns.spawn(async move { beta.turn(format!("b{index}")).send().await });
+                }
+                while let Some(outcome) = turns.join_next().await {
+                    let outcome = outcome.expect("no panic").expect("turn runs");
+                    if outcome.reply.contains("alpha-ok") {
+                        a_count += 1;
+                    } else if outcome.reply.contains("beta-ok") {
+                        b_count += 1;
+                    } else {
+                        panic!("unexpected reply {:?}", outcome.reply);
+                    }
                 }
             }
             assert_eq!((a_count, b_count), (25, 25));
@@ -525,10 +562,14 @@ fn one_runtime_hosts_independently_configured_agents() {
             // unbound agent keeps the runtime's defaults.
             let bound = runtime
                 .agent(
-                    AgentSpec::new("employee")
-                        .memory(MemoryBinding::new("employee-7").root("team:acme")),
+                    AgentSpec::new("employee").memory(
+                        MemoryBinding::new("employee-7")
+                            .root("team:acme")
+                            .memory_block_deadline(std::time::Duration::from_millis(300)),
+                    ),
                 )
                 .expect("a bound agent instantiates");
+            assert_eq!(bound.config().memory.memory_block_deadline_ms, Some(300));
             assert_eq!(
                 bound.config().memory.agent_id.as_deref(),
                 Some("employee-7")
@@ -552,10 +593,13 @@ fn one_runtime_hosts_independently_configured_agents() {
             drop(withholding_agent);
             drop(gamma);
             drop(budget_agent);
-            assert_eq!(
-                runtime.agent_ids(),
-                vec!["alpha".to_string(), "beta".to_string()]
-            );
+            // The id is released once the dropped agent's deferred MCP cleanup
+            // completes (see `Agent`), so wait for it rather than assuming the
+            // drop is synchronous.
+            common::eventually("dropped agents to release their ids", || {
+                (runtime.agent_ids() == vec!["alpha".to_string(), "beta".to_string()]).then_some(())
+            })
+            .await;
             let _gamma_again = runtime
                 .agent(AgentSpec::new("gamma"))
                 .expect("id reusable after drop");
@@ -567,10 +611,14 @@ fn one_runtime_hosts_independently_configured_agents() {
                 panic!("the test is the runtime's sole owner once every agent is dropped");
             };
             drop(runtime);
-            assert!(
-                !workspace_dir.exists(),
-                "an ephemeral workspace must be removed with its runtime"
-            );
+            // The workspace goes with the last holder of the runtime's guard:
+            // the runtime, or a dropped agent's deferred MCP cleanup, which keeps
+            // the files until the module acknowledges its close (`EphemeralRoot`).
+            common::eventually(
+                "the ephemeral workspace to be removed with its runtime",
+                || (!workspace_dir.exists()).then_some(()),
+            )
+            .await;
         })
         .await
         .expect("library host task did not panic");

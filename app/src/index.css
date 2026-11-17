@@ -299,10 +299,6 @@
   --animate-float: float 3s ease-in-out infinite;
   --animate-ticker: ticker 30s linear infinite;
   --animate-wiggle: wiggle 0.5s ease-in-out;
-  /* The composer's ambient shadow orbit — see the `composerShadowOrbit`
-     keyframes below. `linear`, not an ease: the offset traces a circle, and an
-     ease would make the light appear to speed up and stall twice per lap. */
-  --animate-composer-shadow: composerShadowOrbit 18s linear infinite;
   /* Same clockwise light model as the composer, reduced for the much larger
      sidebar surface so it reads as quiet separation rather than a glow. */
   --animate-sidebar-shadow: sidebarShadowOrbit 24s linear infinite;
@@ -420,76 +416,7 @@
       opacity: 0.5;
     }
   }
-  /* Orbits the composer's shadow clockwise, as though the light above it
-     circles the room. Deliberately slow (18s a lap) and small: the point is
-     that you never catch it moving, only notice the composer feels lit rather
-     than stamped on.
 
-     The offset traces a CIRCLE, so both x and y move — that is the difference
-     between this and a sideways drift. Each layer orbits a centre that stays
-     below the box (y=8 near, y=30 far) with a radius smaller than that centre
-     (4 and 8), so the shadow swings but never rises above the composer, which
-     would read as light from underneath.
-
-     Eight stops, not four. Four corners interpolate as a diamond — the shadow
-     visibly tracks straight lines and turns hard at the compass points. The
-     45-degree stops (x and y both at 0.707 of the radius) round it into an
-     actual circle. Clockwise on screen: top, right, bottom, left, with y
-     growing downward.
-
-     The two layers orbit with different radii (4px near, 8px far) in phase.
-     That is parallax — a shadow cast further moves more for the same change in
-     light angle. Equal radii would read as one flat sheet swinging.
-
-     Blur and spread are identical in every frame. Animating blur would pulse
-     the shadow in and out of focus, which no light source does.
-
-     Paired with `motion-reduce:animate-none` at the call site, which falls back
-     to the static `shadow-[…]` utility beside it — so the composer keeps its
-     elevation when motion is off, it just stops moving. */
-  @keyframes composerShadowOrbit {
-    0%,
-    100% {
-      box-shadow:
-        0 4px 12px -4px rgb(0 0 0 / 0.09),
-        0 22px 44px -16px rgb(0 0 0 / 0.12);
-    }
-    12.5% {
-      box-shadow:
-        3px 5px 12px -4px rgb(0 0 0 / 0.09),
-        6px 24px 44px -16px rgb(0 0 0 / 0.12);
-    }
-    25% {
-      box-shadow:
-        4px 8px 12px -4px rgb(0 0 0 / 0.09),
-        8px 30px 44px -16px rgb(0 0 0 / 0.12);
-    }
-    37.5% {
-      box-shadow:
-        3px 11px 12px -4px rgb(0 0 0 / 0.09),
-        6px 36px 44px -16px rgb(0 0 0 / 0.12);
-    }
-    50% {
-      box-shadow:
-        0 12px 12px -4px rgb(0 0 0 / 0.09),
-        0 38px 44px -16px rgb(0 0 0 / 0.12);
-    }
-    62.5% {
-      box-shadow:
-        -3px 11px 12px -4px rgb(0 0 0 / 0.09),
-        -6px 36px 44px -16px rgb(0 0 0 / 0.12);
-    }
-    75% {
-      box-shadow:
-        -4px 8px 12px -4px rgb(0 0 0 / 0.09),
-        -8px 30px 44px -16px rgb(0 0 0 / 0.12);
-    }
-    87.5% {
-      box-shadow:
-        -3px 5px 12px -4px rgb(0 0 0 / 0.09),
-        -6px 24px 44px -16px rgb(0 0 0 / 0.12);
-    }
-  }
   @keyframes sidebarShadowOrbit {
     0%,
     100% {
@@ -757,49 +684,10 @@
   html[data-window='overlay'] #root,
   html[data-window='mascot'],
   html[data-window='mascot'] body,
-  html[data-window='mascot'] #root,
-  html[data-window='notch'],
-  html[data-window='notch'] body,
-  html[data-window='notch'] #root {
+  html[data-window='mascot'] #root {
     background: transparent;
     overflow: hidden;
     user-select: none;
-  }
-
-  @keyframes notch-pill-in {
-    from {
-      opacity: 0;
-      transform: scaleX(0.4) scaleY(0.7);
-    }
-    to {
-      opacity: 1;
-      transform: scaleX(1) scaleY(1);
-    }
-  }
-
-  @keyframes notch-bar {
-    0%,
-    100% {
-      transform: scaleY(0.5);
-      opacity: 0.6;
-    }
-    50% {
-      transform: scaleY(1.2);
-      opacity: 1;
-    }
-  }
-
-  @keyframes notch-dot {
-    0%,
-    80%,
-    100% {
-      transform: scale(0.6);
-      opacity: 0.4;
-    }
-    40% {
-      transform: scale(1);
-      opacity: 1;
-    }
   }
 
   @keyframes overlay-bubble-in {

@@ -1,53 +1,35 @@
 use super::*;
-use serde_json::json;
 
-fn same_named_catalog() -> Vec<CatalogEntry> {
-    [
-        json!({ "name": "AI Code Review", "source": "ClawHub", "identifier": "qf-code-review" }),
-        json!({ "name": "AI Code Review", "source": "ClawHub", "identifier": "ai-code-review-ops" }),
-        json!({ "name": "apple-notes", "source": "built-in", "docsPath": "bundled/apple/apple-apple-notes" }),
-        json!({ "name": "apple-notes", "source": "ClawHub", "identifier": "apple-notes" }),
-        json!({ "name": "Apple Design", "source": "ClawHub", "identifier": "apple-design" }),
-    ]
-    .iter()
-    .map(|item| parse_hermes_entry(item).expect("entry"))
-    .collect()
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+use serde_json::{json, Value};
+use tinyskills::{Clock, Freshness};
+
+use crate::skills::catalog::test_fixtures::{hermes_item, Fixture};
+
+#[derive(Clone)]
+struct ManualClock(Arc<Mutex<SystemTime>>);
+
+impl Clock for ManualClock {
+    fn now(&self) -> SystemTime {
+        *self.0.lock().unwrap()
+    }
 }
 
-#[test]
-fn find_catalog_entry_not_found_suggests_real_ids_instead_of_a_refresh() {
-    let err = find_catalog_entry(&same_named_catalog(), "ai-code-review").unwrap_err();
-    assert!(
-        err.starts_with("no catalog entry has id 'ai-code-review'"),
-        "{err}"
-    );
-    assert!(err.contains("clawhub/ai-code-review-ops"), "{err}");
-    assert!(!err.contains("refresh"), "{err}");
+fn numbered(count: usize) -> Vec<Value> {
+    (0..count)
+        .map(|i| hermes_item(&format!("review-{i:02}"), "built-in"))
+        .collect()
 }
 
-#[tokio::test]
-async fn install_from_catalog_errors_for_portal_skill_without_download() {
-    // A portal-only entry (empty download_url) must fail fast with an
-    // actionable message naming the source + page — never fetch a 404. (#3741)
-    let tmp = tempfile::tempdir().unwrap();
-    let entry = parse_hermes_entry(&json!({
-        "name": "code-audit",
-        "description": "x",
-        "category": "other",
-        "source": "ClawHub",
-        "sourceUrl": "https://clawhub.ai/skills/agentkilox-code-audit"
-    }))
-    .expect("entry");
-    assert_eq!(entry.download_url, "");
-
-    let err = install_from_catalog(tmp.path(), &entry)
-        .await
-        .expect_err("portal skill cannot install");
-    assert!(err.contains("ClawHub"), "names the source: {err}");
-    assert!(
-        err.contains("https://clawhub.ai/skills/agentkilox-code-audit"),
-        "links the source page: {err}"
-    );
+fn paged(page: usize, page_size: usize) -> CatalogQuery {
+    CatalogQuery {
+        page: Some(page),
+        page_size: Some(page_size),
+        ..CatalogQuery::default()
+    }
 }
 
 #[test]
@@ -62,200 +44,286 @@ fn refresh_on_boot_enabled_defaults_on_and_accepts_common_false_values() {
     assert!(!refresh_on_boot_enabled(Some("OFF")));
 }
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::Arc;
-
-const CACHE_DIR_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_CACHE_DIR";
-
-fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    crate::skills::catalog::TEST_ENV_LOCK.blocking_lock()
+#[test]
+fn every_error_kind_renders_a_typed_prefix() {
+    let cases = [
+        (
+            RegistryError::Timeout {
+                operation: "catalog",
+                budget: Duration::from_secs(180),
+            },
+            "SKILL_REGISTRY_TIMEOUT: ",
+        ),
+        (
+            RegistryError::Unavailable { status: 503 },
+            "SKILL_REGISTRY_UNAVAILABLE: ",
+        ),
+        (
+            RegistryError::RateLimited {
+                retry_after: Some(Duration::from_secs(42)),
+            },
+            "SKILL_REGISTRY_RATE_LIMITED: rate limited: retry after 42s",
+        ),
+        (
+            RegistryError::NotFound {
+                id: "nope".into(),
+                closest: vec!["clawhub/nope-ops".into()],
+            },
+            "SKILL_REGISTRY_NOT_FOUND: ",
+        ),
+        (
+            RegistryError::UpstreamAmbiguous {
+                name: "AI Code Review".into(),
+            },
+            "SKILL_REGISTRY_UPSTREAM_AMBIGUOUS: ",
+        ),
+        (
+            RegistryError::Malformed {
+                what: "catalog",
+                detail: "expected an array".into(),
+            },
+            "SKILL_REGISTRY_MALFORMED: ",
+        ),
+    ];
+    for (error, prefix) in cases {
+        let message = registry_error_message(&error);
+        assert!(message.starts_with(prefix), "{message} vs {prefix}");
+    }
 }
 
-async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
-    crate::skills::catalog::TEST_ENV_LOCK.lock().await
+#[test]
+fn a_skill_without_a_download_links_its_source_page() {
+    let message = registry_error_message(&RegistryError::NoDirectDownload {
+        name: "code-audit".into(),
+        source_url: Some("https://clawhub.ai/skills/agentkilox-code-audit".into()),
+    });
+    assert!(message.starts_with("SKILL_REGISTRY_NO_DIRECT_DOWNLOAD: "));
+    assert!(message.contains("https://clawhub.ai/skills/agentkilox-code-audit"));
 }
 
-fn sample_entry() -> CatalogEntry {
-    parse_hermes_entry(&json!({
-        "name": "apple-notes",
-        "description": "Manage Apple Notes",
-        "category": "apple",
-        "source": "built-in",
-        "docsPath": "bundled/apple/apple-apple-notes"
-    }))
-    .expect("entry")
+#[test]
+fn only_registry_defects_are_reportable() {
+    assert!(is_reportable(RegistryErrorKind::TransportContract, true));
+    assert!(is_reportable(RegistryErrorKind::Malformed, true));
+    assert!(!is_reportable(RegistryErrorKind::TransportContract, false));
+    assert!(!is_reportable(RegistryErrorKind::Malformed, false));
+    for kind in [
+        RegistryErrorKind::Timeout,
+        RegistryErrorKind::Unavailable,
+        RegistryErrorKind::RateLimited,
+        RegistryErrorKind::Transport,
+        RegistryErrorKind::NotFound,
+        RegistryErrorKind::NoDirectDownload,
+    ] {
+        assert!(!is_reportable(kind, true), "{kind:?}");
+    }
+}
+
+#[test]
+fn queries_page_only_when_asked_and_clamp_the_page_size() {
+    let unpaged = skill_query(&CatalogQuery::default());
+    assert_eq!(unpaged.page, 1);
+    assert_eq!(unpaged.page_size, usize::MAX);
+
+    let defaulted = skill_query(&CatalogQuery {
+        page: Some(0),
+        ..CatalogQuery::default()
+    });
+    assert_eq!(defaulted.page, 1);
+    assert_eq!(defaulted.page_size, DEFAULT_PAGE_SIZE);
+
+    let clamped = skill_query(&paged(3, 10_000));
+    assert_eq!(clamped.page, 3);
+    assert_eq!(clamped.page_size, MAX_PAGE_SIZE);
+    assert_eq!(clamped.read, ReadPolicy::AllowStale);
 }
 
 #[tokio::test]
-async fn fresh_cache_skips_fetch() {
-    let _env = env_lock_async().await;
-    let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var(CACHE_DIR_ENV, tmp.path());
-    store::save_catalog_cache(&[sample_entry()]);
+async fn pages_split_the_matches_and_carry_full_entries() {
+    let fixture = Fixture::start(numbered(30)).await;
+    let registry = fixture.registry();
 
-    let called = Arc::new(AtomicBool::new(false));
-    let called_in = called.clone();
-    let entries = browse_catalog_with(false, StaleMode::Allow, move || async move {
-        called_in.store(true, AtomicOrdering::SeqCst);
-        Ok(Vec::new())
-    })
-    .await
-    .unwrap();
-
-    assert_eq!(entries.len(), 1);
-    assert!(
-        !called.load(AtomicOrdering::SeqCst),
-        "fetcher must not run when the cache is fresh"
-    );
-
-    store::clear_cache();
-    std::env::remove_var(CACHE_DIR_ENV);
-}
-
-#[tokio::test]
-async fn concurrent_cache_miss_coalesces_to_single_fetch() {
-    let _env = env_lock_async().await;
-    let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var(CACHE_DIR_ENV, tmp.path());
-    store::clear_cache();
-
-    let calls = Arc::new(AtomicUsize::new(0));
-    let mut handles = Vec::new();
-    for _ in 0..4 {
-        let calls = calls.clone();
-        handles.push(tokio::spawn(async move {
-            browse_catalog_with(false, StaleMode::Allow, move || async move {
-                calls.fetch_add(1, AtomicOrdering::SeqCst);
-                // Mimic the slow upstream so the other callers queue on the
-                // single-flight lock instead of each starting a fetch.
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                let entries = vec![sample_entry()];
-                store::save_catalog_cache(&entries);
-                Ok(entries)
-            })
-            .await
-        }));
-    }
-
-    for handle in handles {
-        let entries = handle.await.unwrap().unwrap();
-        assert_eq!(entries.len(), 1, "every caller receives the catalog");
-    }
+    let first = catalog_page_in(&registry, &paged(1, 25)).await.unwrap();
+    assert_eq!(first.total, 30);
+    assert_eq!(first.total_pages, 2);
+    assert_eq!(first.entries.len(), 25);
+    assert_eq!(first.freshness, Freshness::Live);
+    assert!(first.fetched_at.is_some());
+    assert!(first.last_error.is_none());
+    let entry = &first.entries[0];
+    assert_eq!(entry.registry, "hermes");
+    assert!(entry.installable);
     assert_eq!(
-        calls.load(AtomicOrdering::SeqCst),
-        1,
-        "four concurrent cache-miss callers must trigger exactly one fetch"
+        entry.entry.download_url,
+        format!("{}/skills/{}/SKILL.md", fixture.base, entry.entry.name)
     );
+    assert!(entry.entry.docs_path.is_some());
 
-    store::clear_cache();
-    std::env::remove_var(CACHE_DIR_ENV);
+    let second = catalog_page_in(&registry, &paged(2, 25)).await.unwrap();
+    assert_eq!(second.page, 2);
+    assert_eq!(second.entries.len(), 5);
+    assert_eq!(fixture.catalog_hits.load(Ordering::SeqCst), 1);
 }
 
-/// Write a cache file with an explicit `fetched_at_epoch` (epoch 1 => stale).
-fn write_cache_at(dir: &std::path::Path, entries: Vec<CatalogEntry>, epoch: u64) {
-    let cache = store::CatalogCache {
-        entries,
-        fetched_at_epoch: epoch,
+#[tokio::test]
+async fn an_unpaged_read_returns_every_match_on_one_page() {
+    let fixture = Fixture::start(numbered(30)).await;
+    let page = catalog_page_in(&fixture.registry(), &CatalogQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(page.entries.len(), 30);
+    assert_eq!(page.total_pages, 1);
+    assert!(page.entries.iter().all(|entry| entry.installable));
+}
+
+#[tokio::test]
+async fn several_sources_filter_together() {
+    let fixture = Fixture::start(vec![
+        hermes_item("alpha", "ClawHub"),
+        hermes_item("beta", "skills.sh"),
+        hermes_item("gamma", "built-in"),
+    ])
+    .await;
+    let query = CatalogQuery {
+        upstreams: vec!["clawhub".into(), "built-in".into()],
+        ..paged(1, 25)
     };
-    std::fs::write(
-        dir.join("cache.json"),
-        serde_json::to_string(&cache).unwrap(),
-    )
-    .unwrap();
-}
-
-#[tokio::test]
-async fn browse_serves_stale_without_a_foreground_fetch() {
-    let _env = env_lock_async().await;
-    let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var(CACHE_DIR_ENV, tmp.path());
-    write_cache_at(tmp.path(), vec![sample_entry()], 1); // epoch 1 => stale
-
-    // Pin REFRESHING so the background revalidation no-ops (no real network).
-    REFRESHING.store(true, AtomicOrdering::SeqCst);
-    let called = Arc::new(AtomicBool::new(false));
-    let called_in = called.clone();
-    let entries = browse_catalog_with(false, StaleMode::Allow, move || async move {
-        called_in.store(true, AtomicOrdering::SeqCst);
-        Ok(Vec::new())
-    })
-    .await
-    .unwrap();
-    REFRESHING.store(false, AtomicOrdering::SeqCst);
-
-    assert_eq!(entries.len(), 1, "browse returns the stale entry");
+    let page = catalog_page_in(&fixture.registry(), &query).await.unwrap();
+    let names: Vec<&str> = page.entries.iter().map(|e| e.entry.name.as_str()).collect();
+    assert_eq!(page.total, 2);
     assert!(
-        !called.load(AtomicOrdering::SeqCst),
-        "browse must serve stale without a foreground fetch"
+        names.contains(&"alpha") && names.contains(&"gamma"),
+        "{names:?}"
     );
-
-    store::clear_cache();
-    std::env::remove_var(CACHE_DIR_ENV);
-}
-
-#[tokio::test]
-async fn search_rejects_stale_and_fetches_fresh() {
-    let _env = env_lock_async().await;
-    let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var(CACHE_DIR_ENV, tmp.path());
-    write_cache_at(tmp.path(), vec![sample_entry()], 1); // stale: 1 entry
-
-    let called = Arc::new(AtomicBool::new(false));
-    let called_in = called.clone();
-    let entries = browse_catalog_with(false, StaleMode::Reject, move || async move {
-        called_in.store(true, AtomicOrdering::SeqCst);
-        let fresh = vec![sample_entry(), sample_entry()];
-        store::save_catalog_cache(&fresh);
-        Ok(fresh)
-    })
-    .await
-    .unwrap();
-
-    assert!(
-        called.load(AtomicOrdering::SeqCst),
-        "a fresh (search) read must not be satisfied by a stale cache"
-    );
-    assert_eq!(
-        entries.len(),
-        2,
-        "returns the freshly fetched catalog, not the stale one"
-    );
-
-    store::clear_cache();
-    std::env::remove_var(CACHE_DIR_ENV);
 }
 
 #[tokio::test]
 async fn search_ranks_installable_entries_before_uninstallable_ones() {
-    let _env = env_lock_async().await;
-    let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var(CACHE_DIR_ENV, tmp.path());
-    let agent = parse_hermes_entry(&json!({
-        "name": "review-agent",
-        "description": "x",
-        "source": "LobeHub",
-        "identifier": "lobehub/review-agent",
-        "sourceUrl": "https://lobehub.com/agent/review-agent"
-    }))
-    .unwrap();
-    let skill = parse_hermes_entry(&json!({
-        "name": "review-skill",
-        "description": "x",
-        "source": "ClawHub",
-        "identifier": "review-skill"
-    }))
-    .unwrap();
-    store::save_catalog_cache(&[agent, skill]);
-
-    let hits = search_catalog("review", None, None).await.unwrap();
-
-    let ids: Vec<&str> = hits.iter().map(|e| e.id.as_str()).collect();
+    let fixture = Fixture::start(vec![
+        json!({
+            "name": "review-agent",
+            "description": "x",
+            "source": "LobeHub",
+            "identifier": "lobehub/review-agent",
+            "sourceUrl": "https://lobehub.com/agent/review-agent"
+        }),
+        json!({
+            "name": "review-skill",
+            "description": "x",
+            "source": "ClawHub",
+            "identifier": "review-skill"
+        }),
+    ])
+    .await;
+    let query = CatalogQuery {
+        text: "review".into(),
+        ..paged(1, 25)
+    };
+    let page = catalog_page_in(&fixture.registry_without_download_base(), &query)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = page.entries.iter().map(|e| e.entry.id.as_str()).collect();
+    assert_eq!(ids, ["clawhub/review-skill", "lobehub/review-agent"]);
+    assert!(!page.entries[1].installable);
     assert_eq!(
-        ids,
-        ["clawhub/review-skill", "lobehub/review-agent"],
-        "an installable hit must come before one install will reject"
+        page.entries[1].entry.source_url.as_deref(),
+        Some("https://lobehub.com/agent/review-agent")
+    );
+}
+
+#[tokio::test]
+async fn concurrent_cold_reads_share_one_upstream_fetch() {
+    let fixture = Fixture::start(numbered(5)).await;
+    let registry = fixture.registry();
+    let mut handles = Vec::new();
+    for _ in 0..6 {
+        let registry = Arc::clone(&registry);
+        handles.push(tokio::spawn(async move {
+            catalog_page_in(&registry, &paged(1, 25)).await
+        }));
+    }
+    for handle in handles {
+        assert_eq!(handle.await.unwrap().unwrap().total, 5);
+    }
+    assert_eq!(fixture.catalog_hits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_failed_refresh_keeps_serving_the_held_catalog_with_its_error() {
+    let fixture = Fixture::start(numbered(3)).await;
+    let clock = ManualClock(Arc::new(Mutex::new(SystemTime::now())));
+    let registry = fixture.registry_with_clock(clock.clone());
+    assert_eq!(
+        catalog_page_in(&registry, &paged(1, 25))
+            .await
+            .unwrap()
+            .freshness,
+        Freshness::Live
     );
 
-    store::clear_cache();
-    std::env::remove_var(CACHE_DIR_ENV);
+    fixture.catalog_status.store(503, Ordering::SeqCst);
+    let refreshed = catalog_page_in(
+        &registry,
+        &CatalogQuery {
+            force_refresh: true,
+            ..paged(1, 25)
+        },
+    )
+    .await
+    .expect("the held catalog still answers");
+    assert_eq!(refreshed.total, 3);
+    let error = refreshed.last_error.expect("the failure is reported");
+    assert_eq!(error.kind, RegistryErrorKind::Unavailable);
+
+    *clock.0.lock().unwrap() += Duration::from_secs(2 * 3600);
+    let stale = catalog_page_in(&registry, &paged(1, 25)).await.unwrap();
+    assert_eq!(stale.freshness, Freshness::Cached);
+    assert!(stale.last_error.is_some());
+}
+
+#[tokio::test]
+async fn a_cold_registry_with_an_unreachable_upstream_returns_the_typed_error() {
+    let fixture = Fixture::start(Vec::new()).await;
+    fixture.catalog_status.store(502, Ordering::SeqCst);
+    let error = catalog_page_in(&fixture.registry(), &paged(1, 25))
+        .await
+        .expect_err("nothing is held");
+    assert_eq!(error.kind(), RegistryErrorKind::Unavailable);
+    assert!(registry_error_message(&error).starts_with("SKILL_REGISTRY_UNAVAILABLE: "));
+}
+
+#[tokio::test]
+async fn facets_list_upstreams_and_categories_most_entries_first() {
+    let fixture = Fixture::start(vec![
+        hermes_item("a", "ClawHub"),
+        hermes_item("b", "ClawHub"),
+        hermes_item("c", "built-in"),
+    ])
+    .await;
+    let facets = catalog_facets_in(&fixture.registry()).await.unwrap();
+    let upstreams: Vec<(&str, usize)> = facets
+        .upstreams
+        .iter()
+        .map(|facet| (facet.value.as_str(), facet.count))
+        .collect();
+    assert_eq!(upstreams, [("ClawHub", 2), ("built-in", 1)]);
+    assert_eq!(facets.categories[0].value, "productivity");
+}
+
+#[tokio::test]
+async fn detail_carries_the_overview_and_an_unknown_id_suggests_real_ones() {
+    let mut item = hermes_item("git-helper", "built-in");
+    item["overview"] = json!("Longer text about git-helper.");
+    let fixture = Fixture::start(vec![item, hermes_item("notes", "built-in")]).await;
+    let registry = fixture.registry();
+
+    let detail = catalog_detail_in(&registry, "git-helper").await.unwrap();
+    assert_eq!(detail.overview, "Longer text about git-helper.");
+    assert_eq!(detail.entry.entry.name, "git-helper");
+
+    let error = catalog_detail_in(&registry, "git-helpr")
+        .await
+        .expect_err("unknown id");
+    assert_eq!(error.kind(), RegistryErrorKind::NotFound);
+    assert!(error.to_string().contains("git-helper"), "{error}");
 }

@@ -1,380 +1,118 @@
-# `openhuman-embed`
-
-`openhuman-embed` is the host-facing library package for products that run the
-OpenHuman core in-process, including OpenCompany. It re-exports the
-runtime builder from `openhuman-core` and owns the typed embedding facade. See
-[`gitbooks/developing/embedding.md`](../../gitbooks/developing/embedding.md)
-for the narrative walkthrough this README's reference material supports.
-
-Use the default contributor feature set:
-
-```toml
-[dependencies]
-openhuman-embed = { git = "https://github.com/tinyhumansai/openhuman", package = "openhuman-embed" }
-```
-
-Or select a narrow host build:
-
-```toml
-[dependencies]
-openhuman-embed = { git = "https://github.com/tinyhumansai/openhuman", package = "openhuman-embed", default-features = false, features = ["inference", "mcp"] }
-```
-
-```rust,no_run
-use std::sync::Arc;
-
-use openhuman_embed::{Core, CoreBuilder, DomainSet, HostKind, ServiceSet};
-
-# async fn run() -> Result<(), Box<dyn std::error::Error>> {
-let runtime = CoreBuilder::new(HostKind::Library)
-    .domains(DomainSet::embedded())
-    .services(ServiceSet::none())
-    .build()
-    .await?;
-let core = Core::from_runtime(Arc::new(runtime));
-let flags = core.config().runtime_flags().await?;
-println!("log_prompts={}", flags.log_prompts);
-# Ok(())
-# }
-```
-
-Embedding products should set their product identity once during startup,
-before constructing backend clients:
-
-```rust
-use openhuman_tinyhumans::{set_product_identity, ProductIdentity};
-
-if let Some(identity) = ProductIdentity::new("opencompany") {
-    set_product_identity(identity);
-}
-```
-
-Use `Core::raw()` only as a temporary escape hatch when the typed facade does
-not yet model a required call. A repeated raw call is a candidate for a typed
-embedding method in `openhuman-embed`.
-
-## Two steps: a `Runtime`, then any number of `Agent`s
-
-The library API. Initialize one runtime (features, services, backend URL,
-the TinyHumans API key), then instantiate agents on it, each fully described
-and independent of the others:
-
-For hosted TinyHumans inference and services, use
-[`openhuman_tinyhumans::RuntimeBuilder`](../openhuman-tinyhumans/README.md),
-which binds the backend transport during startup. The
-[minimal library recipe](../../docs/library-minimal-recipe.md) covers the
-dependency and feature selection. The plain embed builder supports standalone
-hosts with their own providers; hosted requests require an installed transport
-and otherwise return `BACKEND_UNAVAILABLE:`.
-
-```rust,no_run
-use openhuman_tinyhumans::{
-    embed::{Access, AgentSpec, McpServer, Provider, Workspace},
-    RuntimeBuilder,
-};
-
-# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-let runtime = RuntimeBuilder::new()
-    .workspace(Workspace::dir("/var/lib/my-product/openhuman"))
-    .api_key("th_live_…")                     // the only credential in library mode
-    .build()
-    .await?;
-
-let reviewer = runtime.agent(
-    AgentSpec::new("reviewer")
-        .system_prompt("You review pull requests and never edit files.")
-        .access(Access::readonly())
-        .skills_dir("./skills/review")        // copied into this agent's own skills root
-        .action_dir("/srv/checkouts/pr-42"),
-)?;
-
-let fixer = runtime.agent(
-    AgentSpec::new("fixer")
-        .provider(Provider::openai_compatible("https://api.example/v1", "sk-…").model("gpt-5"))
-        .access(Access::full())
-        .mcp(McpServer::stdio("github", "gh-mcp", ["stdio"]))
-        .action_dir("/srv/checkouts/pr-42"),
-)?;
-
-let review = reviewer.run("Summarise the risks in this change.").await?;
-let fix = fixer
-    .turn(format!("Address these findings:\n{}", review.reply))
-    .send()
-    .await?;
-println!("{}", fix.reply);
-
-// Continue a conversation with the same agent.
-let again = fixer.turn("Now run the tests.").session(&fix.session_id).send().await?;
-println!("{}", again.reply);
-# Ok(())
-# }
-```
-
-What each agent owns: its provider route and model, its access tier and
-turn origin, its `action_dir`, its MCP servers, its skills root
-(`<workspace>/agents/<id>/skills/`), its system prompt, tool scope and
-sandbox mode (`AgentDefinitionSpec`), and a narrowed `DomainSet` /
-`ToolGroups`. Every turn is
-dispatched under the agent's own `CoreContext`, so the core's config loader,
-domain gate, tool-group filter and skill discovery all read that agent's
-settings and never another's. Transcripts are keyed by agent id and a turn
-resumes only its own thread.
-
-What the runtime owns: the workspace and credential store, the event bus,
-the keyring, the background `ServiceSet`, the registered `DomainSet` (agents
-can only narrow it, so enable `mcp` / `skills` at runtime build time if any
-agent will use them; the default does), and the API key.
-
-Layout under a runtime-owned root:
-
-```text
-<root>/config.toml, auth-profiles.json, core.token
-<root>/workspace/session_db/, session_raw/<ts>_<agent>.jsonl, agents/<agent>/skills/
-<root>/agents/<agent>/action/                  default action_dir
-```
-
-### Backend connection
-
-The core knows the hosted TinyHumans backend only through
-`BackendTransport` (re-exported here). `openhuman-embed` alone installs
-none: agents, memory, skills, tools and RPC run without any TinyHumans
-connection, and calls to hosted-backend surfaces answer with a typed
-`BACKEND_UNAVAILABLE:` error. This includes managed inference, billing,
-`/agent-integrations/*` tools, cloud voice, and session-bound surfaces such as
-channel relay. Use `openhuman-tinyhumans`, whose
-`RuntimeBuilder` mirrors this one and installs the SDK-backed transport on
-`build()`, or pass your own to `RuntimeBuilder::backend_transport`. See
-[`gitbooks/developing/tinyhumans-api-key.md`](../../gitbooks/developing/tinyhumans-api-key.md)
-for what that one key then unlocks.
-
-### Authentication
-
-Library mode has no user login. `RuntimeBuilder::api_key` installs a
-TinyHumans API key into the runtime's credential store before the core boots;
-managed inference then sends it as `Authorization: Bearer <key>` to the
-TinyHumans OpenAI-compatible endpoint, backend REST calls send it as
-`x-api-key`, and the scheduler gate treats the runtime as signed in. No
-`/auth/me` round trip, no session JWT, nothing to expire. An agent that names
-its own `Provider` (BYOK) never touches the key.
-
-The key covers every hosted feature the core reaches: managed inference, cloud
-embeddings, voice (STT and TTS), web search, media generation, the Jev ranker,
-Composio and the other `/agent-integrations/*` tools, referral, and webhooks.
-The realtime voice agent and Socket.IO relay require a signed-in user session. Callers that
-can only send a bearer (the vendored STT and embedding clients, the connector
-module's proxy route, the memory engine's sync) send the key as
-`Authorization: Bearer`, which the backend accepts because it recognises the
-`tiny_live_` / `tiny_test_` prefix. What a key may reach is decided by its
-scopes on the backend: `inference`, `voice`, `search`, `media`, `storage`,
-`account` and `connections` (Composio). A key minted through the grant flow
-omits `connections` unless it is asked for; a missing scope answers `403`.
-The session-bound `/auth/*` flows (OAuth connect, channel link tokens, login
-tokens), the realtime voice agent, and the Socket.IO relay still need a
-signed-in user.
-
-`HarnessBuilder::session`
-remains for hosts that drive backend features on behalf of a signed-in user;
-the core stores that session as handed over (`auth.set_credential`) and never
-validates it: obtaining and validating a JWT is the host's job (see
-`openhuman_tinyhumans::session`).
-
-### `Harness`: the one-agent shorthand
-
-`Harness` is a `Runtime` plus exactly one `Agent` (id `harness`), built from
-one set of inputs. Existing callers keep working; `harness.runtime()` and
-`harness.agent()` hand out the two halves, so a host that outgrows one agent
-creates more on the same runtime.
-
-```rust,no_run
-use openhuman_embed::{Access, Harness, Provider, Workspace};
-
-# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-let harness = Harness::builder()
-    .provider(Provider::openai_compatible("https://api.example/v1", "sk-…").model("gpt-5"))
-    .workspace(Workspace::Ephemeral)
-    .access(Access::readonly())
-    .build()
-    .await?;
-
-let first = harness.run("Summarize what you can see.").await?;
-let second = harness
-    .turn("Now list the risks.")
-    .session(&first.session_id)
-    .send()
-    .await?;
-println!("{}", second.reply);
-# Ok(())
-# }
-```
-
-`Core` is the typed facade shown at the top: a host that already built a
-`CoreRuntime` wraps it with `Core::from_runtime` and reaches sub-facades
-through it: `config()`, `auth()`, and `agent()` (a `CoreAgent` running the
-orchestrator).
-
-### One runtime per process
-
-The keyring master key, the RPC bearer, the global event bus and the
-`Once`-guarded domain subscribers are process-scoped
-(`openhuman_core::core::runtime::context::CoreContext::init` runs that
-sequence), so a second runtime would silently share them while believing it
-had a separate workspace. `RuntimeBuilder::build` returns
-`RuntimeError::AlreadyRunning` instead; agents are the unit of multiplicity.
-`Core::from_runtime` is not guarded (it only wraps a runtime the host
-already built), but the same constraint applies to the `CoreRuntime` beneath
-it.
-
-Build the tokio runtime yourself. A turn is a large async state machine that
-overflows tokio's default 2 MiB worker stack once a sub-agent nests inside it,
-so use `AGENT_WORKER_STACK_BYTES` and `MAX_BLOCKING_THREADS` from
-[`openhuman_core::core::runtime`](../openhuman-core/src/core/runtime/README.md):
-
-```rust,no_run
-use openhuman_core::core::runtime::{AGENT_WORKER_STACK_BYTES, MAX_BLOCKING_THREADS};
-
-let runtime = tokio::runtime::Builder::new_multi_thread()
-    .enable_all()
-    .thread_stack_size(AGENT_WORKER_STACK_BYTES)
-    .max_blocking_threads(MAX_BLOCKING_THREADS)
-    .build()
-    .expect("tokio runtime");
-```
-
-### Memory per tenant
-
-Bind each agent with `AgentSpec::memory(MemoryBinding::new(agent_id).root("team:acme"))`
-and its turns run TinyMemory's lifecycle under `team:acme/agent:<agent_id>`.
-`Runtime::memory("team:acme")` is the operator's view of that tenant: its
-agents, items, learnings and brain. Every call stays inside the root's subtree.
-`RuntimeBuilder::memory_engine` installs a host-supplied engine in place of the
-configured one. See `docs/specs/memory-v2.md`.
-
-### Still runtime-wide
-
-These are read from the runtime's boot config by every agent today. They
-are documented rather than hidden; each is a candidate follow-up in the core.
-
-- `autonomy.auto_approve` / `auto_approve_all` and the memory guard's
-  autonomy tier come from the runtime's boot config (`security::live_policy`),
-  not the agent's. Path and command policy _do_ use the agent's own tier.
-- The approval gate is on or off process-wide; parked approvals are not
-  labelled with the agent id. A per-agent "no approvals" is `Access::full()`,
-  whose `TrustedAutomation` origin the gate honours per turn.
-- The sub-agent catalogue is runtime-wide (built-ins plus
-  `<workspace>/agents/*.toml`). Embedded agents cannot be `delegate_*`
-  targets of one another. Do not reuse built-in ids (`orchestrator`,
-  `summarizer`, …) for your agents.
-- Sub-agents an agent spawns, the tinyagents journal and the experience store
-  re-read the runtime's on-disk config rather than the agent's overlay.
-- Agents sharing a workspace share the dynamic (`mcp_registry_*`) MCP
-  registry; `[[mcp_client.servers]]` declared through `AgentSpec::mcp` are
-  per agent. The host-seeded documentation server is visible to every agent.
-- `install_skill` / `create_skill` still write to `~/.openhuman`. With
-  `include_user_skills(false)` (the default) an agent does not _discover_ the
-  operator's skills, but an install by the agent lands there.
-- One API key (or session) is shared by all agents.
-- `IntegrationClient` (backend-proxied Composio/search/media tools) accepts
-  the runtime's TinyHumans API key or an app-session JWT through
-  `security::credentials::session_support::resolve_backend_credential`.
-  API keys use `x-api-key`; session JWTs use `Authorization: Bearer`.
-  With the backend transport installed and the integration feature and runtime
-  gates enabled, an API-key-only runtime can register integration tools.
-
-Other invariants worth knowing before wiring any entry point:
-
-- When building a `CoreRuntime` yourself, set `config_path` together with
-  `workspace_dir` (`CoreBuilder::workspace(dir)` does both). Credentials,
-  auth profiles and the keyring file resolve beside `config_path`, so a
-  workspace-only override reads the operator's real credentials. `Runtime`
-  and `Harness` set both for `Workspace::Ephemeral` and `Workspace::Dir`.
-- A turn runs under the access tier _and_ the turn origin. `Access::full()`
-  sets both (`AutonomyLevel::Full` plus a `TrustedAutomation` origin);
-  `Access::readonly()` and `Access::supervised()` set no origin and leave the
-  approval gate on.
-- Supply skills through `AgentSpec::skills_dir` / `HarnessBuilder::skills_dir`,
-  which copy the bundles. Skill discovery rejects symlinked bundles, so
-  linking them in does not work.
-
-## Feature flags
-
-Every feature on this crate is a pass-through to the same-named feature on
-`openhuman-core` (package `openhuman`): `default`, `http-server`,
-`inference`, `documents`, `hosting`, `modules`, `voice`, `web3`,
-`runtime-node`, `contacts`, `media`, `flows`, `skills`, `mcp`,
-`crash-reporting`, `channels`,
-`sandbox-bubblewrap`, `browser-native`, `whatsapp-web`,
-`file-logging`, `scheduler-gate`.
-
-Two of them also gate items on this crate's own public surface:
-
-- `mcp`: `HttpHeader`, `McpAuthConfig`, `McpServer`, `AgentSpec::mcp` and
-  `HarnessBuilder::mcp`.
-- `skills`: `AgentSpec::skills_dir` and `HarnessBuilder::skills_dir`.
-
-See [`docs/library-minimal-recipe.md`](../../docs/library-minimal-recipe.md)
-for a measured minimal-footprint feature set, and
-[`gitbooks/developing/performance.md`](../../gitbooks/developing/performance.md)
-for the resulting binary sizes and per-agent memory numbers.
-
-## Examples and tests
-
-```bash
-# Against any OpenAI-compatible endpoint:
-OPENHUMAN_EXAMPLE_BASE_URL=https://api.openai.com/v1 \
-OPENHUMAN_EXAMPLE_API_KEY=sk-… \
-OPENHUMAN_EXAMPLE_MODEL=gpt-5 \
-  cargo run -p openhuman-embed --example run_turn -- "What can you see in this directory?"
-
-# Or against the machine's own configured inference, in its real workspace:
-OPENHUMAN_EXAMPLE_INHERIT=1 cargo run -p openhuman-embed --example run_turn -- "Hello."
-```
-
-Optional: `OPENHUMAN_EXAMPLE_BACKEND_URL` points non-inference backend calls
-somewhere specific, and `OPENHUMAN_EXAMPLE_SKILLS_DIR` supplies skill bundles.
-
-Two agents on one runtime, either BYOK with the same variables as above, or
-managed inference with `OPENHUMAN_EXAMPLE_TINYHUMANS_API_KEY`:
-
-```bash
-OPENHUMAN_EXAMPLE_BASE_URL=https://api.openai.com/v1 \
-OPENHUMAN_EXAMPLE_API_KEY=sk-… \
-OPENHUMAN_EXAMPLE_MODEL=gpt-5 \
-  cargo run -p openhuman-embed --example two_agents -- "Describe this directory."
-
-# Or managed inference, no BYOK endpoint needed:
-OPENHUMAN_EXAMPLE_TINYHUMANS_API_KEY=th_… \
-  cargo run -p openhuman-embed --example two_agents -- "Describe this directory."
-```
-
-The repository-root `examples/embed_headless.rs` (`DomainSet::harness()`,
-`ServiceSet::none()`, RPC through `CoreRuntime::invoke`) and
-`examples/embed_kernel.rs` (`DomainSet::kernel()`, then opt one family back
-in) drive `CoreBuilder` from `openhuman_core` directly, without this crate;
-they are `[[example]]` entries of the `openhuman` package, so run them with
-`cargo run --example embed_headless`.
-
-`tests/harness_embed.rs` is the end-to-end proof that `Harness` runs a real
-turn against a `wiremock` provider with nothing bound;
-`tests/runtime_agents.rs` runs three agents with different providers, access
-tiers, skills, MCP servers and working directories on one runtime and shows
-the API key reaching a mocked managed backend as a bearer;
-`tests/public_api.rs` pins the host-facing embedding contract at compile
-time. Run them with `cargo test -p openhuman-embed --features inference,mcp,skills`.
-
-## Relationship to other crates
-
-Its only in-repo dependency is `openhuman-core` (package `openhuman`) with
-`default-features = false`: every capability comes from a feature forwarded
-above. It does not depend on `openhuman-rpc`; `Outcome` and `StructuredRpcError`
-are core types (`openhuman_core::core`). `openhuman-app` and `openhuman-tui`
-depend on `openhuman-rpc` for its client (and the app on its server) and on
-`openhuman-core`; neither uses `openhuman-embed`.
-
-## Permanent tools on supplied agents
-
-Hosts can pass an existing configured `Agent` to another library, which adds
-its tools through `Agent::attach_tools` without constructing a replacement.
-Attachments are shared by clones, always directly advertised, and update only
-their managed system catalogue when a continuing conversation gains tools.
-See [agent attachment semantics and example](src/agent/README.md#attach-tools-to-an-existing-agent)
-for source identity, collision errors, policy composition, and runtime identity.
+# OpenHuman Embed
+
+A typed Rust facade for running the OpenHuman core inside your application: one Runtime per process, with independently configured Agents.
+
+Read the [embedding documentation](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/README.md), [installation](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/installation.md), and [quickstart](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/quickstart.md).
+
+The [cookbook](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/cookbook.md) is generated from executable examples. Generate complete local API docs with `cargo doc -p openhuman-embed --all-features --no-deps --open`; this workspace crate is currently unpublished.
+
+Hosts supply transport, credentials and application resources. Runtime settings establish shared defaults; agents narrow provider, access, prompt and tool behavior. Use ProfileRuntime when users require separate credentials and workspaces.
+
+## Cancelling one turn
+
+Acquire `Turn::cancellation_handle()` before sending a turn. The handle is
+cloneable and `cancel().await` waits for the turn to stop and for tracked
+commands to be reaped. The agent remains available for later turns:
+
+
+
+Cancellation is scoped to this turn, including while waiting for inference.
+Turns with a cancellation handle use owned interpreter subprocesses rather
+than the Node/Python pool, which has no acknowledged per-job abort API. This
+trades warm-worker reuse for awaited cleanup; ordinary turns retain pooling.
+The `meter` callback fires once on cancellation or a dropped send future,
+with `None` when dispatch has not supplied usage yet.
+
+Before send, cancellation prevents dispatch; after completion it is a no-op.
+On Unix, the built-in shell, Node, Python and npm commands kill their process
+group, including descendants. Other platforms stop the direct command. Host
+tools that spawn independent tasks or processes must provide their own cleanup;
+MCP server lifecycles remain owned by the agent. Keep polling `send()` while
+awaiting cancellation, for example in a spawned task.
+
+## Observing provider dispatches
+
+Attach `Completer::physical_observer` to receive one content-free terminal event
+for each admitted provider `ChatModel` invocation. Structured JSON repairs
+produce separate events, while request and response content remains private.
+Transport-level compatibility retries performed inside one provider invocation
+remain within that event, and its latency includes those retries. With a model
+budget, the explicit and turn-scoped observers run inside admission and after
+gateway charge normalization, so they see the same authoritative amount the
+ledger settles. A budget refusal before provider invocation creates no event.
+The existing `CompletionObserver` remains a once-per-logical-call callback.
+
+## Steering one turn
+
+Acquire `Turn::steering_handle()` before sending a turn to add messages to it
+while it runs. The handle is cloneable and `Send + Sync`; `steer(text)` queues
+a user message that the agent loop applies at its next safe checkpoint:
+before the first model call, after a tool batch has settled, or when the model
+has just written its final answer. In that last case the draft stays on the
+transcript, the steer follows it, and the model is called once more, so a
+message that arrives during a plain chat turn's only model call still shapes
+that turn's reply. Nothing interrupts a model call or a tool already running.
+The model sees each steer as `[User steering message]: <text>`.
+
+Nothing is dropped silently. Steers the turn ended without applying come back
+on `TurnOutcome::unapplied_steers`, or from `TurnSteering::take_unapplied()`
+when the turn failed or was cancelled. A steer sent after the turn ended is
+refused with `SteerRefused`, which carries its text (`into_text()`). The host
+decides whether to run what came back as the next turn.
+
+## Scoped worker hooks
+
+Hooks can be supplied at three levels: `RuntimeBuilder::tool_hook` /
+`post_turn_hook` for all agents, `AgentSpec::tool_hook` / `post_turn_hook`
+for one agent, and `Turn::tool_hook` / `post_turn_hook` for one dispatch.
+Tool callbacks run in that order. Named agent updates replace only that agent’s callback; per-turn callbacks are additional.
+`ToolHookContext` carries the agent/session identity when known, and `cwd`
+follows the execution workspace descriptor (including `Turn::cwd`), falling
+back to the embedding context's configured action root.
+The agent and turn hooks are never installed in the global registry, so
+concurrent workers and later turns do not pick up one another's callbacks.
+Post-turn callbacks run asynchronously with an owned session snapshot.
+Independently spawned tasks that build sessions must explicitly inherit
+`tinyagents_hooks::scope::HookScope` to carry scoped hooks.
+
+Gateway attribution headers can be attached to `Route::header(name, value)`
+and used with `Turn::route`, or with `Provider::routed(route)` on an agent.
+They follow only that route's endpoint and are never saved to configuration,
+sent to background providers, or included as values in `Route`'s `Debug`.
+
+### Inline permission and usage policy
+
+`AgentSpec::can_use_tool` and `Turn::can_use_tool` await a host callback before
+executing each tool. The callback can wait for an approval UI and return
+`ToolHookDecision::Proceed`, `Deny`, or `ProceedWith`. It owns that wait;
+returning `Ask` denies execution. These callbacks add to existing tool policies,
+and a turn callback cannot override an agent denial.
+
+`AgentSpec::stop_hook` and `Turn::stop_hook` receive cumulative usage after each
+completed model call. Return `StopDecision::Continue` to observe usage, or
+`Stop` to prevent subsequent calls. Completed tool rounds may still execute;
+this is an after-call budget boundary, so hosts must refuse an already exhausted
+budget before sending a turn. Provider-reported charges remain authoritative,
+including known zero; missing charges remain unknown unless pricing is known.
+A policy stop uses a deterministic partial summary rather than spending on
+final-answer repair calls.
+
+### Per-turn tools and subprocess environment
+
+`Turn::tools` replaces this turn's host tool belt, including attached sources.
+An empty belt revokes host tools; the next turn returns to the agent's belt.
+Builtin tools still follow the agent definition. This supplies dynamic tools for
+in-process hosts; statically declared MCP servers retain their creation-time
+configuration.
+
+`Turn::tool_env` supplies the base environment of owned builtin subprocesses.
+Variables absent from it are not inherited from the daemon. The builtin command
+builders retain their own security/runtime additions, including Git restrictions,
+managed interpreter paths and scratch directories. Scoped turns bypass Node and
+Python pools, which cannot acknowledge per-job cancellation or swap a job's
+process environment. A host tool that spawns a separate Tokio task must explicitly
+carry the command environment and cleanup scopes into that task.
+
+Standalone exact source pins and generated Cargo patches: [consumer setup](CONSUMERS.md).
+Ordered fallbacks and required exploration: [routing](ROUTING.md).
+Host telemetry and the existing exporter: [observers](OBSERVERS.md).

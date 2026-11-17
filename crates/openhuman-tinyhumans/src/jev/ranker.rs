@@ -9,10 +9,12 @@ use std::{
 
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
-use openhuman_core::agent::tinyagents::discovery::{
-    embedding_provider_is_usable, embedding_tool_ranker,
+use openhuman_embed::__host::agent::tinyagents::discovery::{
+    embedding_provider_is_usable, embedding_tool_ranker_in,
 };
-use openhuman_core::config::Config;
+use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::inference::embedding_host::SharedEmbeddingModel;
+use openhuman_embed::__host::security::approval::ApprovalChatContext;
 use tinyjevclient::Client;
 use tinytools::{RankCandidate, RankContext, RankError, RankHit, ToolRanker};
 use tinytools_jev::{JevRanker, JevRankerConfig, JevStrategy};
@@ -26,6 +28,30 @@ use super::route::{self, EnvLookup};
 pub type ConfigLoader =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<Config, String>> + Send>> + Send + Sync>;
 
+/// How the ranker builds the embedding provider its retriever searches with.
+/// The second argument is the chat the search runs for: a cloud provider shows
+/// its egress disclosure there. The default is the core's configured provider;
+/// a test hands in one that records the chat.
+pub type EmbedderFactory = Arc<
+    dyn for<'a> Fn(
+            &'a Config,
+            Option<ApprovalChatContext>,
+        ) -> Pin<Box<dyn Future<Output = SharedEmbeddingModel> + Send + 'a>>
+        + Send
+        + Sync,
+>;
+
+/// The core's configured embedding provider, routed to the chat when there is one.
+fn default_embedder() -> EmbedderFactory {
+    Arc::new(|config, chat| {
+        Box::pin(
+            openhuman_embed::__host::inference::embedding_host::default_embedding_provider_for_chat(
+                config, chat,
+            ),
+        )
+    })
+}
+
 /// Where the ranker reads the two env-provided Jev keys. The default is the
 /// process environment; a test hands in a fixed table.
 pub type EnvLoader = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -37,6 +63,7 @@ pub struct TinyHumansJevRanker {
     config: JevRankerConfig,
     load_config: ConfigLoader,
     env: EnvLoader,
+    embedder: EmbedderFactory,
     /// Deadline for one evaluation. Measured through the TinyHumans proxy
     /// (2026-09) one evaluation takes 0.7–1.9 s at p50 and the family
     /// strategy runs its second-stage evaluations concurrently, so six
@@ -49,9 +76,11 @@ pub struct TinyHumansJevRanker {
 /// Default per-evaluation deadline; see `TinyHumansJevRanker::deadline`.
 const DEFAULT_DEADLINE: Duration = Duration::from_secs(6);
 
+#[derive(Clone)]
 struct Cached {
     fingerprint: u64,
     ranker: JevRanker,
+    evaluator: Arc<dyn tinytools_jev::JevEvaluator>,
     /// The retriever inside `ranker`, kept so its catalogue embeddings
     /// survive a credential change.
     retriever: Arc<dyn ToolRanker>,
@@ -87,9 +116,10 @@ impl TinyHumansJevRanker {
         Self {
             config,
             load_config: Arc::new(|| {
-                Box::pin(openhuman_core::config::ops::load_config_with_timeout())
+                Box::pin(openhuman_embed::__host::config::ops::load_config_with_timeout())
             }),
             env: Arc::new(route::process_env),
+            embedder: default_embedder(),
             deadline: DEFAULT_DEADLINE,
             cached: Mutex::new(None),
         }
@@ -99,6 +129,13 @@ impl TinyHumansJevRanker {
     /// the process environment.
     pub fn with_env_loader(mut self, env: EnvLoader) -> Self {
         self.env = env;
+        self
+    }
+
+    /// Builds the retriever's embedding provider through `embedder` instead of
+    /// the core's configured one.
+    pub fn with_embedder_factory(mut self, embedder: EmbedderFactory) -> Self {
+        self.embedder = embedder;
         self
     }
 
@@ -121,27 +158,40 @@ impl TinyHumansJevRanker {
     /// load, which a `tool_search` (one model round trip plus a network call)
     /// dwarfs, and the benefit is that sign-in, sign-out and a backend URL
     /// change are all honoured by the next search.
-    async fn current(&self) -> Result<JevRanker, RankError> {
+    async fn current(&self, chat: Option<ApprovalChatContext>) -> Result<JevRanker, RankError> {
         let config = (self.load_config)()
             .await
             .map_err(|error| RankError::Backend {
                 reason: format!("config unavailable: {error}"),
             })?;
         let env: EnvLookup<'_> = &*self.env;
-        let resolved = route::resolve(&config, env)?;
+        let resolved = route::resolve(&config, env).await?;
         let base_url = resolved.client.base_url.clone();
         let route_label = resolved.route.label();
         let fingerprint = fingerprint(&format!("{route_label}:{}", resolved.secret), &base_url);
 
-        let mut cached = self
-            .cached
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(entry) = cached
-            .as_ref()
-            .filter(|entry| entry.fingerprint == fingerprint)
-        {
-            return Ok(entry.ranker.clone());
+        let (cached_match, cached_retriever) = {
+            let cached = self
+                .cached
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (
+                cached
+                    .as_ref()
+                    .filter(|entry| entry.fingerprint == fingerprint)
+                    .cloned(),
+                cached.as_ref().map(|entry| entry.retriever.clone()),
+            )
+        };
+        if let Some(entry) = cached_match {
+            return Ok(match chat {
+                None => entry.ranker.clone(),
+                // The cached retriever was built without a chat, so its cloud
+                // disclosures reach nobody. A search made in a chat gets a
+                // retriever routed to that chat; the catalogue embeddings it
+                // reads live in the durable cache, not in the retriever.
+                Some(chat) => self.routed(&entry, &config, chat).await?,
+            });
         }
         let client_config = resolved.client;
         let client = Client::new(client_config)
@@ -152,29 +202,59 @@ impl TinyHumansJevRanker {
         // embed (the same one memory recall uses), so a family larger than
         // one Jev Choice is cut by meaning, not by shared words. Reused
         // across rebuilds so the catalogue is embedded once per process.
-        let retriever: Arc<dyn ToolRanker> = match cached.as_ref() {
-            Some(entry) => entry.retriever.clone(),
-            None => retriever_for(&config)?,
+        let retriever = match cached_retriever {
+            Some(retriever) => retriever,
+            None => retriever_for(&config, None, &self.embedder).await?,
         };
         let ranker = JevRanker::new(
-            evaluator,
+            evaluator.clone(),
             self.config.clone().with_retriever(retriever.clone()),
         );
+        let credential_or_backend_changed = {
+            let cached = self
+                .cached
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            fingerprint_changed(cached.as_ref(), fingerprint)
+        };
         log::info!(
             "[tool-search] jev ranker bound to route={route_label} backend {} ({})",
-            openhuman_core::util::redact::redact_url_for_log(&base_url),
-            if fingerprint_changed(cached.as_ref(), fingerprint) {
+            openhuman_embed::__host::util::redact::redact_url_for_log(&base_url),
+            if credential_or_backend_changed {
                 "credential or backend changed"
             } else {
                 "first search"
             }
         );
-        *cached = Some(Cached {
+        let entry = Cached {
             fingerprint,
             ranker: ranker.clone(),
+            evaluator,
             retriever,
-        });
-        Ok(ranker)
+        };
+        *self
+            .cached
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(entry.clone());
+        match chat {
+            Some(chat) => self.routed(&entry, &config, chat).await,
+            None => Ok(ranker),
+        }
+    }
+
+    /// `entry`'s ranker, retrieving through a provider whose cloud
+    /// disclosures go to `chat`.
+    async fn routed(
+        &self,
+        entry: &Cached,
+        config: &Config,
+        chat: ApprovalChatContext,
+    ) -> Result<JevRanker, RankError> {
+        let retriever = retriever_for(config, Some(chat), &self.embedder).await?;
+        Ok(JevRanker::new(
+            entry.evaluator.clone(),
+            self.config.clone().with_retriever(retriever),
+        ))
     }
 }
 
@@ -184,9 +264,12 @@ impl TinyHumansJevRanker {
 /// the harness answers the search with its own BM25 catalogue in that case,
 /// and a Jev decision over a lexical shortlist would only add a network
 /// round trip to the same recall.
-fn retriever_for(config: &Config) -> Result<Arc<dyn ToolRanker>, RankError> {
-    let provider =
-        openhuman_core::inference::embedding_host::default_embedding_provider_with_config(config);
+async fn retriever_for(
+    config: &Config,
+    chat: Option<ApprovalChatContext>,
+    embedder: &EmbedderFactory,
+) -> Result<Arc<dyn ToolRanker>, RankError> {
+    let provider = embedder(config, chat).await;
     if !embedding_provider_is_usable(provider.as_ref()) {
         log::info!(
             "[tool-search] embedding provider `{}` cannot embed; jev search disabled, bm25 answers",
@@ -202,14 +285,10 @@ fn retriever_for(config: &Config) -> Result<Arc<dyn ToolRanker>, RankError> {
         provider.name(),
         provider.model_id()
     );
-    Ok(Arc::new(
-        embedding_tool_ranker(provider).with_disk_cache(
-            config
-                .workspace_dir
-                .join("cache")
-                .join("tool_search_embeddings.json"),
-        ),
-    ))
+    Ok(Arc::new(embedding_tool_ranker_in(
+        provider,
+        &config.workspace_dir,
+    )))
 }
 
 fn fingerprint(secret: &str, base_url: &str) -> u64 {
@@ -236,7 +315,14 @@ impl ToolRanker for TinyHumansJevRanker {
         candidates: &[RankCandidate],
         limit: usize,
     ) -> Result<Vec<RankHit>, RankError> {
-        let ranker = self.current().await?;
+        // The chat the search runs for, from the turn's rank context: a cloud
+        // embedder discloses the intent there.
+        let chat = context.chat.as_ref().map(|chat| ApprovalChatContext {
+            thread_id: chat.thread_id.clone(),
+            client_id: chat.client_id.clone(),
+            request_id: chat.request_id.clone(),
+        });
+        let ranker = self.current(chat).await?;
         let ranking = ranker
             .rank_detailed(intent, context, candidates, limit)
             .await?;

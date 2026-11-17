@@ -7,13 +7,13 @@
 //! shell, when it hosts the core) and `x-sdk-name` (the product identity from
 //! [`crate::backend::product`]). This is TinyHumans header policy, so it lives
 //! with the TinyHumans transport; the core only asks the installed
-//! [`BackendTransport`](openhuman_core::backend::BackendTransport) for them.
+//! [`BackendTransport`](openhuman_embed::BackendTransport) for them.
 
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::Duration;
 
-use openhuman_core::backend::TransportProfile;
+use crate::transport::TransportProfile;
 
 /// Upper bound on the `x-core-version` / `x-tauri-version` header values. A
 /// version string is short; anything longer is a misconfigured environment and
@@ -48,7 +48,7 @@ pub(crate) fn sanitize_client_version(raw: &str) -> Option<String> {
 ///
 /// Set at the transport level rather than per request because some callers
 /// drive a raw `reqwest::Client` themselves (multipart STT upload via
-/// [`BackendClient::raw_client`](openhuman_core::backend::BackendClient::raw_client))
+/// [`BackendClient::raw_client`](openhuman_embed::__host::backend::BackendClient::raw_client))
 /// and that traffic needs attributing too.
 pub fn attribution_headers() -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
@@ -77,7 +77,7 @@ pub fn attribution_headers() -> Result<HeaderMap> {
 ///
 /// Platform-appropriate TLS: Windows → schannel (honors the OS cert store,
 /// required for corporate TLS-inspection proxies); macOS / Linux → rustls.
-/// See [`openhuman_core::util::tls::tls_client_builder`].
+/// See [`openhuman_embed::__host::util::tls::tls_client_builder`].
 pub fn backend_client_builder(profile: TransportProfile) -> Result<reqwest::ClientBuilder> {
     let timeout = match profile {
         // `BackendClient` historically allowed 120 s: it fronts slow
@@ -86,7 +86,7 @@ pub fn backend_client_builder(profile: TransportProfile) -> Result<reqwest::Clie
         // `/agent-integrations/*` tool calls were always capped at 60 s.
         TransportProfile::Integrations => Duration::from_secs(60),
     };
-    Ok(openhuman_core::util::tls::tls_client_builder()
+    Ok(openhuman_embed::__host::util::tls::tls_client_builder()
         .default_headers(attribution_headers()?)
         .http1_only()
         // The SDK adds `x-api-key` per request. Reqwest does not strip this

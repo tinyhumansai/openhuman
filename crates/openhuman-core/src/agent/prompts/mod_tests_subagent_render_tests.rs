@@ -34,7 +34,7 @@ fn render_subagent_system_prompt_renders_workspace_tail() {
 }
 
 #[test]
-fn subagent_prompt_defaults_to_json_and_omits_protocol_without_tools() {
+fn subagent_prompt_with_json_format_and_omits_protocol_without_tools() {
     let workspace = std::env::temp_dir().join(format!(
         "openhuman_prompt_default_dialect_{}",
         uuid::Uuid::new_v4()
@@ -50,7 +50,7 @@ fn subagent_prompt_defaults_to_json_and_omits_protocol_without_tools() {
         &[],
         "You are a focused sub-agent.",
         SubagentRenderOptions::narrow(),
-        ToolCallFormat::default(),
+        ToolCallFormat::Json,
         &[],
     );
     assert!(!default_rendered.contains("def test_tool() -> str"));

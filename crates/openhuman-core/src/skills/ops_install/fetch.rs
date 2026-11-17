@@ -2,19 +2,21 @@
 //! root.
 
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use tinyskills::{
-    check_document_size, redact_url, validate_fetched_document, write_installed_document,
-    DocumentWrite, MAX_INSTALL_DOCUMENT_BYTES,
+    fetch_skill_document, redact_url, write_installed_document, DocumentWrite, FetchPolicy,
+    FetchedDocument, RegistryError, RegistryLimits, SystemResolver, MAX_INSTALL_DOCUMENT_BYTES,
 };
 
 use super::super::ops_discover::{discover_workflows_inner, is_workspace_trusted};
-use super::url_validation::{is_loopback_http_url, read_allow_local_http_env};
-use super::url_validation::{
-    normalize_install_url, validate_install_url_with_config, validate_resolved_host,
-};
+use super::scan_gate::{fetch_scanned, gate_install, ScanAcknowledgement, SkillInstallOutcome};
+use super::url_validation::read_allow_local_http_env;
+use super::url_validation::{normalize_install_url, validate_install_url_with_config};
+use crate::skills::catalog::ReqwestTransport;
 
 /// Default wall-clock budget for the SKILL.md fetch.
 pub const DEFAULT_INSTALL_TIMEOUT_SECS: u64 = 60;
@@ -88,10 +90,11 @@ pub struct InstallWorkflowFromUrlOutcome {
 ///   tarballs are rejected with `unsupported url form:`.
 /// * `timeout_secs` is clamped to [`MAX_INSTALL_TIMEOUT_SECS`].
 ///
-/// Runtime:
-/// * Body size is capped by [`MAX_WORKFLOW_MD_BYTES`] (1 MiB). The advertised
-///   `Content-Length` is checked up front; the buffered body length is
-///   checked again after the download as defense against a lying header.
+/// Runtime (the tinyskills fetch guard over [`ReqwestTransport`]):
+/// * The host is resolved once and the connection pinned to the checked
+///   public addresses; every redirect hop is re-validated.
+/// * Body size is capped by [`MAX_WORKFLOW_MD_BYTES`] (1 MiB), from the
+///   advertised `Content-Length` and again while the body streams.
 /// * Frontmatter is validated — `name` and `description` are required per
 ///   the agentskills.io spec.
 /// * The slug is derived from `metadata.id` when present, otherwise the
@@ -105,34 +108,92 @@ pub struct InstallWorkflowFromUrlOutcome {
 /// On success the full post-install skills catalog is re-discovered and the
 /// outcome includes the list of skill slugs that appeared since the start of
 /// the call.
+///
+/// The fetched document goes through the supply-chain scan gate: a blocking
+/// scan or a failed fetch is retried once, and a document that still blocks
+/// is returned as [`SkillInstallOutcome::ScanBlocked`] unless `acknowledgement`
+/// names that document's digest.
 pub async fn install_workflow_from_url(
     workspace_dir: &Path,
     params: InstallWorkflowFromUrlParams,
-) -> Result<InstallWorkflowFromUrlOutcome, String> {
+    acknowledgement: ScanAcknowledgement,
+) -> Result<SkillInstallOutcome, String> {
     let home = dirs::home_dir();
     let allow_local_http = read_allow_local_http_env();
-    install_workflow_from_url_with_home(workspace_dir, params, home.as_deref(), allow_local_http)
-        .await
+    install_workflow_from_url_with_home(
+        workspace_dir,
+        params,
+        home.as_deref(),
+        allow_local_http,
+        acknowledgement,
+    )
+    .await
 }
 
-/// Seconds from a `Retry-After` header, when it is the delta-seconds form.
-///
-/// RFC 9110 also permits an HTTP-date. We deliberately do not parse that: it
-/// would pull in a date parser to serve a form GitHub's raw CDN does not send,
-/// and the caller degrades correctly without it — the error still says the host
-/// is throttling, just without a specific delay.
-pub(crate) fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    headers
-        .get(reqwest::header::RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()
+/// Whether a non-`2xx` status is worth reporting: a `4xx` means the URL is
+/// wrong or the skill is gone, which is user or catalog input, not a defect.
+pub(crate) fn should_report_install_fetch_status(status: u16) -> bool {
+    !(200..300).contains(&status) && !(400..500).contains(&status)
 }
 
-pub(crate) fn should_report_install_fetch_status(status: reqwest::StatusCode) -> bool {
-    !status.is_success() && !status.is_client_error()
+/// Report a failed `SKILL.md` fetch when it is not user input: timeouts,
+/// transport failures, a broken transport contract and `5xx` statuses. `url`
+/// is the redacted URL when the caller knows it.
+pub(crate) fn report_install_fetch_failure(error: &RegistryError, url: Option<&str>) {
+    let (failure, status) = match error {
+        _ if error.is_timeout() => ("timeout", None),
+        RegistryError::Transport(_) => ("transport", None),
+        RegistryError::TransportContract { .. } => ("transport_contract", None),
+        RegistryError::Unavailable { status } if should_report_install_fetch_status(*status) => {
+            ("non_2xx", Some(status.to_string()))
+        }
+        _ => {
+            tracing::debug!(
+                kind = error.kind().as_str(),
+                "[skills] install fetch: not reported (user or catalog input)"
+            );
+            return;
+        }
+    };
+    let message = match (url, status.as_deref()) {
+        (Some(url), Some(status)) => format!("fetch failed: {url} returned status {status}"),
+        _ => format!("fetch failed: {error}"),
+    };
+    let mut tags = vec![("failure", failure)];
+    if let Some(url) = url {
+        tags.push(("url", url));
+    }
+    if let Some(status) = status.as_deref() {
+        tags.push(("status", status));
+    }
+    crate::core::observability::report_error(message.as_str(), "skills", "install_fetch", &tags);
+}
+
+/// The caller-facing message for a failed `SKILL.md` fetch from a URL.
+pub(crate) fn install_fetch_error(
+    error: &RegistryError,
+    fetch_url: &str,
+    timeout_secs: u64,
+) -> String {
+    report_install_fetch_failure(error, Some(&redact_url(fetch_url)));
+    match error {
+        _ if error.is_timeout() => format!("fetch timed out after {timeout_secs}s"),
+        RegistryError::Transport(transport) => format!("fetch failed: {transport}"),
+        RegistryError::TransportContract { .. } => format!("fetch failed: {error}"),
+        RegistryError::RateLimited { retry_after } => match retry_after {
+            Some(delay) => format!(
+                "{RATE_LIMITED_ERROR_PREFIX} by {fetch_url}: retry after {}s",
+                delay.as_secs()
+            ),
+            None => format!("{RATE_LIMITED_ERROR_PREFIX} by {fetch_url}: retry shortly"),
+        },
+        RegistryError::Unavailable { status } => {
+            format!("fetch failed: {fetch_url} returned status {status}")
+        }
+        RegistryError::UnsafeUrl(inner) => inner.to_string(),
+        RegistryError::InvalidDocument(inner) => inner.to_string(),
+        other => other.to_string(),
+    }
 }
 
 pub(crate) async fn install_workflow_from_url_with_home(
@@ -140,7 +201,8 @@ pub(crate) async fn install_workflow_from_url_with_home(
     params: InstallWorkflowFromUrlParams,
     home: Option<&Path>,
     allow_local_http: bool,
-) -> Result<InstallWorkflowFromUrlOutcome, String> {
+    acknowledgement: ScanAcknowledgement,
+) -> Result<SkillInstallOutcome, String> {
     let raw_url = params.url.trim().to_string();
     validate_install_url_with_config(&raw_url, allow_local_http)?;
 
@@ -151,27 +213,56 @@ pub(crate) async fn install_workflow_from_url_with_home(
 
     let fetch_url = normalize_install_url(&raw_url)?;
 
-    // Second-layer SSRF guard: a public-looking hostname can still resolve
-    // to a loopback / private / link-local address (DNS-to-private-IP). We
-    // resolve the host up-front and reject if any returned IP is private.
-    // Known caveat: this does not fully prevent DNS rebinding — reqwest's
-    // resolver may see different answers than ours. Closing that gap requires
-    // pinning a `SocketAddr` and passing it to reqwest via a custom resolver,
-    // tracked separately.
-    if !(allow_local_http && is_loopback_http_url(&fetch_url)) {
-        validate_resolved_host(&fetch_url).await?;
-    }
-
-    let redacted_raw_url = redact_url(&raw_url);
-    let redacted_fetch_url = redact_url(&fetch_url);
-
     tracing::debug!(
-        raw_url = %redacted_raw_url,
-        fetch_url = %redacted_fetch_url,
+        raw_url = %redact_url(&raw_url),
+        fetch_url = %redact_url(&fetch_url),
         workspace = %workspace_dir.display(),
         timeout_secs = timeout_secs,
         "[skills] install_workflow_from_url: entry"
     );
+
+    let mut policy = FetchPolicy::default();
+    policy.allow_loopback_http = allow_local_http;
+    policy.user_agent = format!("openhuman-core/{}", env!("CARGO_PKG_VERSION"));
+    let mut timeouts = crate::skills::catalog::registry_timeouts();
+    timeouts.document = Duration::from_secs(timeout_secs);
+    let mut limits = RegistryLimits::default();
+    limits.max_document_bytes = MAX_WORKFLOW_MD_BYTES as u64;
+
+    let transport: Arc<ReqwestTransport> = Arc::new(ReqwestTransport::new());
+    let fetched = fetch_scanned(&raw_url, &acknowledgement, || {
+        fetch_skill_document(
+            transport.clone(),
+            Arc::new(SystemResolver),
+            &fetch_url,
+            &policy,
+            &timeouts,
+            &limits,
+        )
+    })
+    .await
+    .map_err(|error| install_fetch_error(&error, &fetch_url, timeout_secs))?;
+
+    gate_install(&raw_url, &acknowledgement, fetched, |document| {
+        install_validated_document(workspace_dir, home, &raw_url, &fetch_url, document.document)
+    })
+}
+
+/// Write a validated `SKILL.md` into the user skills root, re-discover, and
+/// announce the change. An existing `SKILL.md` for the same slug is an
+/// idempotent success with no new skills.
+pub(crate) fn install_validated_document(
+    workspace_dir: &Path,
+    home: Option<&Path>,
+    source_url: &str,
+    fetched_from: &str,
+    document: FetchedDocument,
+) -> Result<InstallWorkflowFromUrlOutcome, String> {
+    let redacted_source = redact_url(source_url);
+    let redacted_fetched = redact_url(fetched_from);
+    let slug = document.slug;
+    let content = document.content;
+    let parse_warnings = document.warnings;
 
     let trusted_before = is_workspace_trusted(workspace_dir);
     let before: std::collections::HashSet<String> =
@@ -180,138 +271,23 @@ pub(crate) async fn install_workflow_from_url_with_home(
             .map(|s| s.name)
             .collect();
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .build()
-        .map_err(|e| format!("fetch failed: build http client: {e}"))?;
-
-    tracing::info!(
-        fetch_url = %redacted_fetch_url,
-        "[skills] install_workflow_from_url: fetching SKILL.md"
-    );
-
-    let response = match client.get(&fetch_url).send().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            let (failure, msg) = if e.is_timeout() {
-                ("timeout", format!("fetch timed out after {timeout_secs}s"))
-            } else {
-                ("transport", format!("fetch failed: {e}"))
-            };
-            crate::core::observability::report_error(
-                msg.as_str(),
-                "skills",
-                "install_fetch",
-                &[("url", redacted_fetch_url.as_str()), ("failure", failure)],
-            );
-            return Err(msg);
-        }
-    };
-
-    let status = response.status();
-    if !status.is_success() {
-        // A 4xx (esp. 404/410) means the requested SKILL.md is gone or the URL
-        // is wrong — expected user/catalog input state, surfaced to the UI as
-        // "skill not found". Don't page Sentry for it (TAURI-RUST-CGE: ~1,446
-        // events / 72 users on `openhuman@0.57.53`, almost all 404). Keep
-        // reporting 5xx — a genuine remote failure is still Sentry-actionable.
-        // The `Err(msg)` return is unchanged in both cases so the UI always
-        // surfaces the failure.
-        let status_str = status.as_u16().to_string();
-        // Read `Retry-After` off the response BEFORE anything consumes the
-        // body: `response.bytes()` below takes `response` by value, and a
-        // header read afterwards is not available at all. (The same ordering
-        // trap silently drops the header on the model-call path — see #6413.)
-        let retry_after = retry_after_secs(response.headers());
-        // A throttled host is a different user action from an unreachable one:
-        // "try again shortly" versus "this host is not answering". Both were
-        // previously the same opaque `returned status N` string, so the UI
-        // could not tell the user which had happened (#6409).
-        let msg = if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-            || (status.is_server_error() && retry_after.is_some())
-        {
-            match retry_after {
-                Some(secs) => {
-                    format!("{RATE_LIMITED_ERROR_PREFIX} by {fetch_url}: retry after {secs}s")
-                }
-                None => format!("{RATE_LIMITED_ERROR_PREFIX} by {fetch_url}: retry shortly"),
-            }
-        } else {
-            format!(
-                "fetch failed: {fetch_url} returned status {}",
-                status.as_u16()
-            )
-        };
-        let report_msg = format!(
-            "fetch failed: {redacted_fetch_url} returned status {}",
-            status.as_u16()
-        );
-        if should_report_install_fetch_status(status) {
-            crate::core::observability::report_error(
-                report_msg.as_str(),
-                "skills",
-                "install_fetch",
-                &[
-                    ("url", redacted_fetch_url.as_str()),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
-        } else {
-            tracing::debug!(
-                fetch_url = %redacted_fetch_url,
-                status = status.as_u16(),
-                "[skills] install_workflow_from_url: skipped Sentry report for user/catalog fetch status"
-            );
-        }
-        return Err(msg);
-    }
-
-    if let Some(len) = response.content_length() {
-        check_document_size(len).map_err(|e| e.to_string())?;
-    }
-
-    let bytes = match response.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            if e.is_timeout() {
-                return Err(format!("fetch timed out after {timeout_secs}s"));
-            }
-            return Err(format!("fetch failed: reading body: {e}"));
-        }
-    };
-
-    // Size, UTF-8, frontmatter, required fields and slug derivation are
-    // owned by tinyskills; the second size check guards against a lying
-    // Content-Length header.
-    let document = validate_fetched_document(&bytes).map_err(|e| e.to_string())?;
-    let slug = document.slug;
-    let content = document.content;
-    let parse_warnings = document.warnings;
-
-    // Install to user scope (`~/.openhuman/skills/<slug>`), which `discover_workflows`
-    // scans unconditionally. Project scope (`<ws>/.openhuman/skills/`) is gated on
-    // a `<ws>/.openhuman/trust` marker and would render the install invisible to the
-    // skills list until the user opts the workspace into trust.
-    let skills_root = home
-        .ok_or_else(|| "write failed: unable to resolve home directory".to_string())?
-        .join(".openhuman")
-        .join("skills");
+    let skills_root = crate::skills::write_root::user_skill_install_root(workspace_dir, home)
+        .ok_or_else(|| "write failed: unable to resolve home directory".to_string())?;
 
     let target_file =
         match write_installed_document(&skills_root, &slug, &content).map_err(|e| e.to_string())? {
             DocumentWrite::Installed(path) => path,
             DocumentWrite::AlreadyInstalled(target_file) => {
                 tracing::info!(
-                    raw_url = %redacted_raw_url,
-                    fetch_url = %redacted_fetch_url,
+                    source_url = %redacted_source,
+                    fetched_from = %redacted_fetched,
                     slug = %slug,
                     target = %target_file.display(),
-                    "[skills] install_workflow_from_url: already installed"
+                    "[skills] install: already installed"
                 );
 
                 return Ok(InstallWorkflowFromUrlOutcome {
-                    url: raw_url,
+                    url: source_url.to_owned(),
                     stdout: format!(
                         "Skill {slug:?} is already installed at {}",
                         target_file.display()
@@ -331,30 +307,28 @@ pub(crate) async fn install_workflow_from_url_with_home(
         .collect();
 
     tracing::info!(
-        raw_url = %redacted_raw_url,
-        fetch_url = %redacted_fetch_url,
+        source_url = %redacted_source,
+        fetched_from = %redacted_fetched,
         slug = %slug,
         bytes = content.len(),
         new_count = new_skills.len(),
-        "[skills] install_workflow_from_url: completed"
+        "[skills] install: completed"
     );
 
     let stdout = format!(
-        "Fetched {} bytes from {fetch_url}\nInstalled to {}",
+        "Fetched {} bytes from {fetched_from}\nInstalled to {}",
         content.len(),
         target_file.display()
     );
     let stderr = parse_warnings.join("\n");
 
-    // Notify live agent sessions so they refresh their `## Installed Skills`
-    // catalogue mid-conversation (see `OpenHumanSessionHost::refresh_workflows`).
     crate::skills::ops_discover::invalidate_workflow_metadata_cache();
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::WorkflowsChanged {
         reason: "install".to_string(),
     });
 
     Ok(InstallWorkflowFromUrlOutcome {
-        url: raw_url,
+        url: source_url.to_owned(),
         stdout,
         stderr,
         new_skills,

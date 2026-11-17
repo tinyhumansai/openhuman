@@ -97,7 +97,7 @@ export function getChannelIcons(
  * two behavioural families (`Productivity`, `Social`) and the one that already
  * carries a caution tone (`Tools & Automation`). The surplus rows fall back to
  * the neutral pair defined by `All` / `Other` rather than reaching for a fifth,
- * unthemeable ramp. See `gitbooks/developing/theming.md` ("Colour as identity").
+ * unthemeable ramp. See `docs/gitbooks/en/developing/theming.md` ("Colour as identity").
  */
 const NEUTRAL_CATEGORY_TONE = {
   chipClassName: 'bg-surface-subtle text-content-secondary',

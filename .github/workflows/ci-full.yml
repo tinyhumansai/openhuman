@@ -33,6 +33,9 @@ permissions:
   packages: read
 
 env:
+  # Property tests (proptest) run on a fixed seed in CI so a red run
+  # reproduces locally; run with another seed or PROPTEST_CASES to explore.
+  PROPTEST_RNG_SEED: "20261009"
   # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
   GH_TOKEN: ${{ github.token }}
   NPM_CONFIG_STORE_DIR: .pnpm-store
@@ -66,7 +69,7 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest@sha256:c3c20d625bcc9f75e50c3c2c2b75c88d3e60a3f4352b0f19f5327b490438722d
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
       # Trim DWARF debug info so test-binary linking doesn't exhaust runner disk
@@ -87,6 +90,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
 
       - name: Cache pnpm store
         id: pnpm-cache
@@ -123,50 +129,28 @@ jobs:
 
       - name: Install checksum-pinned native test modules
         run: |
-          # tinybus validates every directory ancestor. GitHub mounts the
-          # checkout as the host runner uid while this container runs as root,
-          # so keep native fixtures in a root-owned, ephemeral tree.
-          # The downloaded tinyjuice archive's version and sha256 are ONE decision:
-          # the archive name, the release tag and the checksum below all carry the
-          # version, so a bump must update every one of them or a stale digest only
-          # fails after the download. They are the ubuntu-22.04-x86_64 row of
-          # `crates/openhuman-core/src/modules/registry.rs`, which is the
-          # authoritative pin — copy them from there, never recompute.
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          juice_dir="$module_root/tinyjuice"
-          connectors_dir="$module_root/tinyconnectors"
-          search_dir="$module_root/tinysearch"
-          juice_archive="$juice_dir/tinyjuice-module-0.5.2-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$juice_dir" "$connectors_dir"
-          mkdir -p "$juice_dir" "$connectors_dir" "$search_dir"
-          curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-            "https://github.com/tinyhumansai/tinyjuice/releases/download/v0.5.2/$(basename "$juice_archive")" \
-            --output "$juice_archive"
-          echo "1a9bc9479ce51c87d82a6f145408cfcbe7d06de4613b0ca7cec1fd04bbc2b5b5  $juice_archive" \
-            | sha256sum --check
-          tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
-          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
-            "$connectors_dir/libtinyconnectors.so"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinysearch/crates/tinysearch/Cargo.toml
-          cp vendor/tinysearch/target/release/libtinysearch.so \
-            "$search_dir/libtinysearch.so"
-          echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" \
-            >> "$GITHUB_ENV"
-          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
-            >> "$GITHUB_ENV"
-          echo "TINYSEARCH_TEST_MODULE=$search_dir/libtinysearch.so" \
-            >> "$GITHUB_ENV"
+          # Keep fixtures in a trusted tree and resolve their verified releases
+          # from the same registry the product uses.
+          module_root="/root/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
 
       - name: Run Rust E2E suite
         # Wrapped so the cancellation watchdog covers the whole suite (mock
         # server + node harness), not just the cargo segments the inner
         # script wraps itself.
-        run: bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
+        run: |
+          mkdir -p "$OPENHUMAN_XDG_ROOT"
+          chmod 700 "$OPENHUMAN_XDG_ROOT"
+          bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
         env:
+          OPENHUMAN_XDG_ROOT: /root/openhuman-rust-e2e-xdg-${{ github.run_id }}-${{ github.run_attempt }}
           RUST_BACKTRACE: "1"
+
+  security-native:
+    name: Security Native Fixture (3 OS)
+    uses: ./.github/workflows/security-native.yml
 
   build-playwright-e2e-artifact:
     name: Build Playwright E2E Artifact
@@ -183,6 +167,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
 
       - name: Cache pnpm store
         id: pnpm-cache
@@ -263,16 +250,16 @@ jobs:
           if-no-files-found: error
 
   playwright-e2e:
-    name: E2E (Playwright / web lane)
+    name: E2E (Playwright / lane ${{ matrix.lane }})
     needs: [build-playwright-e2e-artifact]
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest@sha256:c3c20d625bcc9f75e50c3c2c2b75c88d3e60a3f4352b0f19f5327b490438722d
     timeout-minutes: 90
-    # TODO(ci-flaky, #3615): several specs consistently hit toBeVisible
-    # timeouts under CI resource contention. Run the lane but don't block
-    # release merges until infra stabilises.
-    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1, 2, 3, 4]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -280,6 +267,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
 
       - name: Cache pnpm store
         id: pnpm-cache
@@ -323,33 +313,13 @@ jobs:
 
       - name: Install native test modules
         run: |
-          # tinybus validates every directory ancestor. GitHub mounts the
-          # checkout as the host runner uid while this container runs as root,
-          # so keep native fixtures in a root-owned, ephemeral tree.
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          juice_dir="$module_root/tinyjuice"
-          connectors_dir="$module_root/tinyconnectors"
-          search_dir="$module_root/tinysearch"
-          juice_archive="$juice_dir/tinyjuice-module-0.5.2-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$juice_dir" "$connectors_dir"
-          mkdir -p "$juice_dir" "$connectors_dir" "$search_dir"
-          curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-            "https://github.com/tinyhumansai/tinyjuice/releases/download/v0.5.2/$(basename "$juice_archive")" \
-            --output "$juice_archive"
-          echo "1a9bc9479ce51c87d82a6f145408cfcbe7d06de4613b0ca7cec1fd04bbc2b5b5  $juice_archive" \
-            | sha256sum --check
-          tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
-          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
-            "$connectors_dir/libtinyconnectors.so"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinysearch/crates/tinysearch/Cargo.toml
-          cp vendor/tinysearch/target/release/libtinysearch.so \
-            "$search_dir/libtinysearch.so"
-          echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" >> "$GITHUB_ENV"
-          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" >> "$GITHUB_ENV"
-          echo "TINYSEARCH_TEST_MODULE=$search_dir/libtinysearch.so" >> "$GITHUB_ENV"
+          # Keep fixtures in a trusted tree and resolve their verified releases
+          # from the same registry the product uses.
+          module_root="/root/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
+
       - name: Install Playwright Chromium dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install-deps chromium
 
@@ -359,49 +329,8 @@ jobs:
       - name: Run Playwright web E2E suite
         env:
           OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
-        run: |
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          workspace_root="$OPENHUMAN_WORKSPACE"
-          export OPENHUMAN_WORKSPACE="$workspace_root/connections-aliases"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/connections-tab-aliases.spec.ts
-
-          export OPENHUMAN_WORKSPACE="$workspace_root/connections-deeplinks"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/connections-tab-deeplinks.spec.ts
-
-          export OPENHUMAN_WORKSPACE="$workspace_root/chat-harness-subagent"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/chat-harness-subagent.spec.ts
-
-          skills_index=0
-          while IFS= read -r skills_test; do
-            export OPENHUMAN_WORKSPACE="$workspace_root/skills-$skills_index"
-            mkdir -p "$OPENHUMAN_WORKSPACE"
-            bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-              test/playwright/specs/skills-search-install.spec.ts -g "$skills_test"
-            skills_index=$((skills_index + 1))
-          done <<'EOF'
-          a burst of typing issues ONE catalog search
-          a pause between words issues a second search
-          a query with no matches leaves no catalog rows
-          the typed text is preserved in the box while results load
-          offers Install, and the button is enabled before it is pressed
-          disables the button and shows Installing while the RPC is in flight
-          a failed install re-enables the button rather than stranding it
-          EOF
-
-          for shard_index in $(seq 1 64); do
-            shard="$shard_index/64"
-            export OPENHUMAN_WORKSPACE="$workspace_root/shard-$shard_index"
-            mkdir -p "$OPENHUMAN_WORKSPACE"
-            bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-              --shard="$shard" \
-              --grep-invert='Connections (aliases|deep links)|Skills explorer|Chat Harness - Subagent'
-          done
+          OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "1"
+        run: bash app/scripts/e2e-web-shards.sh --lane=${{ matrix.lane }} --lanes=4 --selection=required
 
       - name: Pack Playwright E2E failure artifacts
         if: failure()
@@ -416,7 +345,110 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: e2e-playwright-failure-logs-${{ github.run_id }}
+          name: e2e-playwright-required-failure-logs-${{ github.run_id }}-lane-${{ matrix.lane }}
+          path: .ci/artifacts/openhuman-playwright-failure-logs.tar.gz
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Runs only the exact unchanged AUI component-compatibility failure. Its job result is advisory; the required matrix above covers every healthy spec and every migration owner.
+  playwright-legacy-diagnostic:
+    name: E2E (Playwright legacy diagnostic / lane ${{ matrix.lane }})
+    needs: [build-playwright-e2e-artifact]
+    continue-on-error: true
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest@sha256:c3c20d625bcc9f75e50c3c2c2b75c88d3e60a3f4352b0f19f5327b490438722d
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install JS dependencies (test harness)
+        run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Download Playwright E2E artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: e2e-playwright-linux-${{ github.run_id }}
+          path: .
+
+      - name: Restore Playwright E2E artifact
+        run: |
+          set -euo pipefail
+          tar -xzf e2e-playwright-linux.tar.gz
+          cp -a repo/app/dist-web app/
+          # This bundle is built in a separate checkout (or restored from the
+          # exact source-hash cache above). Its marker mtime predates this
+          # job's fresh checkout, so refresh it after restoring the artifact;
+          # the content-addressed key proves the bundle matches these inputs.
+          touch app/dist-web/openhuman-e2e-bundle.marker
+          mkdir -p target
+          cp -a repo/target/. target/
+          rm -rf repo e2e-playwright-linux.tar.gz
+          chmod +x target/e2e-web-*/debug/openhuman-core
+
+      - name: Install native test modules
+        run: |
+          # Keep fixtures in a trusted tree and resolve their verified releases
+          # from the same registry the product uses.
+          module_root="/root/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
+
+      - name: Install Playwright Chromium dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install-deps chromium
+
+      - name: Install Playwright Chromium headless shell
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install chromium-headless-shell
+
+      - name: Run Playwright web E2E suite
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+          OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "1"
+        run: bash app/scripts/e2e-web-shards.sh --lane=${{ matrix.lane }} --lanes=1 --selection=diagnostic
+
+      - name: Pack Playwright E2E failure artifacts
+        if: failure()
+        run: |
+          mkdir -p .ci/artifacts
+          tar -czf .ci/artifacts/openhuman-playwright-failure-logs.tar.gz \
+            -C "$OPENHUMAN_WORKSPACE" .
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+
+      - name: Upload Playwright E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-playwright-legacy-diagnostic-failure-logs-${{ github.run_id }}-lane-${{ matrix.lane }}
           path: .ci/artifacts/openhuman-playwright-failure-logs.tar.gz
           retention-days: 7
           if-no-files-found: ignore
@@ -441,15 +473,9 @@ jobs:
     needs:
       - unit-tests
       - rust-e2e
+      - security-native
       - build-playwright-e2e-artifact
-      # `playwright-e2e` is intentionally EXCLUDED from the gate. It carries
-      # `continue-on-error: true` (flaky specs, TODO #3615), which makes the
-      # job report `success` to `needs` even when its steps fail — so listing
-      # it here would be a can-never-fail check that only reads as coverage.
-      # Rather than leave it decorative, we drop it from the gate until the
-      # specs are stabilised and the flag removed (#3615); the lane still runs
-      # for signal, and `build-playwright-e2e-artifact` (which CAN fail) stays
-      # gated so a broken web build is still caught.
+      - playwright-e2e
       - e2e-desktop
     if: always()
     runs-on: ubuntu-latest
@@ -458,13 +484,12 @@ jobs:
       - name: Require all CI Full jobs to pass
         run: |
           set -euo pipefail
-          # NOTE: "Playwright E2E" is deliberately absent — see the needs:
-          # comment above (#3615). Re-add it here once continue-on-error is
-          # removed from the playwright-e2e job.
           declare -A results=(
             ["Full Unit Suites"]="${{ needs['unit-tests'].result }}"
             ["Rust E2E"]="${{ needs['rust-e2e'].result }}"
+            ["Security Native Fixture"]="${{ needs['security-native'].result }}"
             ["Build Playwright E2E Artifact"]="${{ needs['build-playwright-e2e-artifact'].result }}"
+            ["Playwright E2E"]="${{ needs['playwright-e2e'].result }}"
             ["Desktop E2E"]="${{ needs['e2e-desktop'].result }}"
           )
 

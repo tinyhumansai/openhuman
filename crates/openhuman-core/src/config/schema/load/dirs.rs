@@ -161,7 +161,7 @@ fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
     default_dir.join(ACTIVE_WORKSPACE_STATE_FILE)
 }
 
-async fn load_persisted_workspace_dirs(
+pub(crate) async fn load_persisted_workspace_dirs(
     default_config_dir: &Path,
 ) -> Result<Option<(PathBuf, PathBuf)>> {
     let state_path = active_workspace_state_path(default_config_dir);
@@ -216,6 +216,12 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
             workspace_config_dir.clone(),
             workspace_config_dir.join("workspace"),
         );
+    }
+
+    // A layout-v2 profile's workspace is `users/<id>/files`; its config dir is
+    // the profile directory, which carries the `.layout` marker.
+    if let Some(profile) = crate::config::schema::ProfileLayout::of_workspace(workspace_dir) {
+        return (profile.dir, workspace_dir.to_path_buf());
     }
 
     let has_workspace_basename = workspace_dir
@@ -322,7 +328,16 @@ pub(crate) async fn resolve_runtime_config_dirs(
 /// revision separately: a switch between those two reads pairs workspace A
 /// with B's revision, and a receiver comparing revisions then ranks the stale
 /// A above the B it should yield to.
-pub async fn active_workspace_snapshot() -> Result<(PathBuf, u64)> {
+/// Returned boxed and `#[inline(never)]` on purpose: other crates await this
+/// (`openhuman-rpc`, `openhuman-embed`), and an `async fn` body is otherwise
+/// re-instantiated inside every calling crate's state machine. Boxing here
+/// keeps one copy, compiled in this crate.
+#[inline(never)]
+pub fn active_workspace_snapshot() -> futures::future::BoxFuture<'static, Result<(PathBuf, u64)>> {
+    Box::pin(active_workspace_snapshot_inner())
+}
+
+async fn active_workspace_snapshot_inner() -> Result<(PathBuf, u64)> {
     // An embedding host that supplied its own `Config` is authoritative, and
     // `config::ops::load_config_with_timeout` already short-circuits on it for
     // exactly this reason. Resolving from disk/env here instead would answer
@@ -332,9 +347,13 @@ pub async fn active_workspace_snapshot() -> Result<(PathBuf, u64)> {
     // mismatch there is not a wrong banner, it is *no* banner, permanently,
     // with only a `debug!` line to say so. See AGENTS.md, "CoreBuilder::config
     // alone configures boot and nothing else".
-    if let Some(config) = crate::core::runtime::context::CoreContext::current_embedder_config() {
-        let revision = super::active_workspace::publish_active_workspace(&config.workspace_dir);
-        return Ok((config.workspace_dir, revision));
+    if let Some(workspace_dir) =
+        crate::core::runtime::context::CoreContext::with_current_embedder_config(|config| {
+            config.workspace_dir.clone()
+        })
+    {
+        let revision = super::active_workspace::publish_active_workspace(&workspace_dir);
+        return Ok((workspace_dir, revision));
     }
     let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
     let (_, workspace_dir, source) =
@@ -398,9 +417,7 @@ pub(crate) async fn resolve_runtime_config_dirs_with(
 }
 
 /// Same as [`resolve_runtime_config_dirs`] but skips the
-/// `OPENHUMAN_WORKSPACE` env var override. Used by
-/// [`Config::load_from_default_paths`] so callers can reliably load
-/// the real user config without mutating the process environment.
+/// `OPENHUMAN_WORKSPACE` env var override.
 pub(super) async fn resolve_config_dirs_ignoring_env(
     default_openhuman_dir: &Path,
     default_workspace_dir: &Path,
@@ -415,14 +432,20 @@ pub(super) async fn resolve_config_dirs_ignoring_env(
     // the data intact. The async variant is used so the transient-lock backoff
     // does not block a tokio worker with `std::thread::sleep`.
     if let Some(user_id) = read_active_user_id_checked_async(default_openhuman_dir).await? {
-        let user_dir = user_openhuman_dir(default_openhuman_dir, &user_id);
-        let user_workspace = user_dir.join("workspace");
+        // The shared profile layout (`users/<id>/{config.toml,workspace}`),
+        // the same one a SaaS core lays its profiles out with.
+        let profile =
+            crate::config::schema::ProfileLayout::resolve(default_openhuman_dir, &user_id);
         tracing::debug!(
             user_id = %user_id,
-            user_dir = %user_dir.display(),
+            user_dir = %profile.dir.display(),
             "Config dirs resolved via active_user.toml"
         );
-        return Ok((user_dir, user_workspace, ConfigResolutionSource::ActiveUser));
+        return Ok((
+            profile.dir,
+            profile.workspace_dir,
+            ConfigResolutionSource::ActiveUser,
+        ));
     }
 
     if let Some((openhuman_dir, workspace_dir)) =
@@ -435,17 +458,17 @@ pub(super) async fn resolve_config_dirs_ignoring_env(
         ));
     }
 
-    let user_dir = pre_login_user_dir(default_openhuman_dir);
-    let user_workspace = user_dir.join("workspace");
+    let profile =
+        crate::config::schema::ProfileLayout::resolve_at(pre_login_user_dir(default_openhuman_dir));
     tracing::debug!(
         user_id = %PRE_LOGIN_USER_ID,
-        user_dir = %user_dir.display(),
+        user_dir = %profile.dir.display(),
         default_workspace_dir = %default_workspace_dir.display(),
         "Config dirs resolved to pre-login user directory (no active user, no workspace marker)"
     );
     Ok((
-        user_dir,
-        user_workspace,
+        profile.dir,
+        profile.workspace_dir,
         ConfigResolutionSource::DefaultConfigDir,
     ))
 }

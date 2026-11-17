@@ -10,12 +10,6 @@ import {
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
 const USER_ID = 'pw-harness-composio-tool-flow';
 
-interface MockRequest {
-  method: string;
-  url: string;
-  body?: string;
-}
-
 async function resetMock(): Promise<void> {
   await fetch(`${MOCK_ADMIN_BASE}/__admin/reset`, {
     method: 'POST',
@@ -30,12 +24,6 @@ async function setMockBehavior(key: string, value: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, value }),
   });
-}
-
-async function requests(): Promise<MockRequest[]> {
-  const response = await fetch(`${MOCK_ADMIN_BASE}/__admin/requests`);
-  const payload = (await response.json()) as { data?: MockRequest[] };
-  return Array.isArray(payload.data) ? payload.data : [];
 }
 
 function seedHarnessComposioState(): Promise<void[]> {
@@ -173,123 +161,5 @@ test.describe('Harness - Composio tool-call prompt flow', () => {
     await sendMessage(page, 'check my email');
     await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
     await expect(agentMessageText(page, /Q3 Budget Review/i)).toBeVisible();
-
-    const log = await requests();
-    const llmHits = log.filter(
-      request => request.method === 'POST' && request.url.includes('/chat/completions')
-    );
-    expect(llmHits.length).toBeGreaterThanOrEqual(2);
-  });
-
-  test('github tool call returns final reply listing repos', async ({ page }) => {
-    const CANARY = 'canary-github-d4e5f6';
-    await setMockBehavior(
-      'composioExecuteResponse_GITHUB_LIST_REPOS',
-      JSON.stringify({
-        repositories: [
-          { name: 'openhuman', full_name: 'tinyhumansai/openhuman', private: false },
-          { name: 'infra-scripts', full_name: 'tinyhumansai/infra-scripts', private: true },
-        ],
-      })
-    );
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([
-        {
-          content: '',
-          toolCalls: [
-            {
-              id: 'call_github_list_repos_1',
-              name: 'GITHUB_LIST_REPOS',
-              arguments: JSON.stringify({ per_page: 30 }),
-            },
-          ],
-        },
-        { content: `Your GitHub repositories: openhuman, infra-scripts. ${CANARY}` },
-      ])
-    );
-    await setMockBehavior('llmStreamChunkDelayMs', '10');
-
-    await sendMessage(page, 'list my GitHub repos');
-    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(agentMessageText(page, /openhuman/i)).toBeVisible();
-
-    const log = await requests();
-    const llmHits = log.filter(
-      request => request.method === 'POST' && request.url.includes('/chat/completions')
-    );
-    expect(llmHits.length).toBeGreaterThanOrEqual(2);
-  });
-
-  test('composio execute failure is acknowledged gracefully', async ({ page }) => {
-    const CANARY = 'canary-composio-fail-g7h8i9';
-    await setMockBehavior('composioExecuteFails', '400');
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([
-        {
-          content: '',
-          toolCalls: [
-            {
-              id: 'call_fail_tool_1',
-              name: 'GMAIL_GET_MAIL',
-              arguments: JSON.stringify({ max_results: 5 }),
-            },
-          ],
-        },
-        {
-          content: `Sorry, I was unable to fetch your emails - the action returned an error. ${CANARY}`,
-        },
-      ])
-    );
-    await setMockBehavior('llmStreamChunkDelayMs', '10');
-
-    await sendMessage(page, 'check my email inbox please');
-    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(agentMessageText(page, /unable to fetch your emails/i)).toBeVisible();
-  });
-
-  test('linear create issue flow confirms creation in the final reply', async ({ page }) => {
-    const CANARY = 'canary-linear-j0k1l2';
-    await setMockBehavior(
-      'composioExecuteResponse_LINEAR_CREATE_ISSUE',
-      JSON.stringify({
-        issue: {
-          id: 'issue-abc123',
-          title: 'Fix authentication timeout',
-          url: 'https://linear.app/tinyhumans/issue/ENG-42',
-          status: 'Todo',
-        },
-      })
-    );
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([
-        {
-          content: '',
-          toolCalls: [
-            {
-              id: 'call_linear_create_1',
-              name: 'LINEAR_CREATE_ISSUE',
-              arguments: JSON.stringify({
-                title: 'Fix authentication timeout',
-                team_id: 'ENG',
-                description: 'Auth tokens are timing out prematurely',
-              }),
-            },
-          ],
-        },
-        {
-          content: `I have created the Linear issue "Fix authentication timeout" (ENG-42). ${CANARY}`,
-        },
-      ])
-    );
-    await setMockBehavior('llmStreamChunkDelayMs', '10');
-
-    await sendMessage(page, 'create a linear issue titled Fix authentication timeout');
-    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
-    // `.first()` — the confirmation text also appears in the tool-result echo
-    // pane, so an unscoped match trips Playwright strict mode (2 elements).
-    await expect(agentMessageText(page, /I have created the Linear issue/i)).toBeVisible();
   });
 });

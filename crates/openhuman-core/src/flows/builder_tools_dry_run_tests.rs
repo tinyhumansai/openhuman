@@ -1,6 +1,6 @@
 use super::*;
 
-/// The scope gate runs BEFORE any client/network call, so a Write-scope
+/// The module's scope gate runs BEFORE any network call, so a Write-scope
 /// action is refused entirely offline — this must never depend on a live
 /// Composio backend to prove the probe can't perform a real mutation.
 #[tokio::test]
@@ -12,7 +12,11 @@ async fn get_tool_output_sample_refuses_a_write_scope_action() {
         .await
         .unwrap();
     assert!(result.is_error);
-    assert!(result.output().contains("READ-only"), "{}", result.output());
+    assert!(
+        result.output().to_lowercase().contains("read-only"),
+        "{}",
+        result.output()
+    );
 }
 
 /// The connected-toolkit gate runs before the real call too — in a test
@@ -29,7 +33,11 @@ async fn get_tool_output_sample_refuses_an_unconnected_toolkit() {
         .unwrap();
     assert!(result.is_error);
     assert!(
-        result.output().contains("not connected") || result.output().contains("no active"),
+        result.output().contains("not connected")
+            || result.output().contains("no active")
+            // The module refuses before the connection check when this test
+            // process has configured no connector route.
+            || result.output().contains("connector route"),
         "{}",
         result.output()
     );
@@ -39,7 +47,7 @@ async fn get_tool_output_sample_refuses_an_unconnected_toolkit() {
 
 #[test]
 fn dry_run_is_side_effect_free_and_ungated() {
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     assert_eq!(tool.name(), "dry_run_workflow");
     // Mock-only + side-effect-free → PermissionLevel::None, available on every
     // tier including read-only (audit F7).
@@ -51,7 +59,7 @@ fn dry_run_is_side_effect_free_and_ungated() {
 async fn dry_run_allowed_under_readonly_tier() {
     // F7: dry_run is mock-only and side-effect-free, so a read-only agent must
     // be able to self-verify its own proposal (previously refused).
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     assert_eq!(tool.permission_level(), PermissionLevel::None);
     let result = tool
         .execute(json!({ "graph": valid_graph() }))
@@ -64,7 +72,7 @@ async fn dry_run_allowed_under_readonly_tier() {
 
 #[tokio::test]
 async fn dry_run_supervised_runs_against_mock_and_labels_sandbox() {
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let result = tool
         .execute(json!({ "graph": valid_graph(), "input": { "x": 1 } }))
         .await
@@ -88,7 +96,7 @@ async fn dry_run_exercises_agent_ref_node_via_mock_agent_runner() {
     // capability; now `mock_capabilities_with_agent(MockAgentRunner)` echoes the
     // ref and the dry run goes green — proving the builder can self-test drafts
     // that use agent-kind nodes.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -120,7 +128,7 @@ async fn dry_run_plain_agent_with_output_parser_schema_is_green() {
     // validation after auto-fix: missing required property ...`, sinking a
     // correctly-built graph. Now the mock LLM synthesizes a schema-valid object,
     // and a downstream node binds the typed placeholders (non-null).
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Schedule",
@@ -181,7 +189,7 @@ async fn dry_run_plain_agent_with_output_parser_schema_is_green() {
 
 #[tokio::test]
 async fn dry_run_invalid_graph_is_error() {
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let result = tool
         .execute(json!({ "graph": { "nodes": [], "edges": [] } }))
         .await
@@ -198,7 +206,7 @@ async fn dry_run_catches_unwired_required_composio_arg() {
     seed_live_catalog_cache("gmail", vec![seeded_gmail_send_contract()]);
 
     let tmp = TempDir::new().unwrap();
-    let tool = DryRunWorkflowTool::new(test_config(&tmp));
+    let tool = dry_run_workflow_tool(test_config(&tmp));
 
     let graph_with = |args: Value| {
         json!({
@@ -250,7 +258,7 @@ async fn dry_run_flags_tool_call_arg_null_resolved_from_unschemad_agent() {
     // The `summarize` agent has no `output_parser.schema`, so (via the
     // schema-aware mock agent) its structured output has no `channel` field —
     // the exact "builds but does nothing" shape this check exists to catch.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -314,7 +322,7 @@ async fn dry_run_flags_composio_upstream_binding_as_unverifiable_not_a_wiring_bu
     // process-global catalog cache other tests seed for gmail/slack/etc.
     seed_live_catalog_cache("ws6up", vec![seeded_ws6_contract("WS6UP_LOOKUP", "ws6up")]);
     seed_live_catalog_cache("ws6dl", vec![seeded_ws6_contract("WS6DL_SEND", "ws6dl")]);
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -361,7 +369,7 @@ async fn dry_run_keeps_generic_null_text_for_a_non_tool_call_upstream_binding() 
     // `unverifiable` flag — so the honest-uncertainty treatment doesn't leak
     // onto real mistakes.
     seed_live_catalog_cache("ws6dl", vec![seeded_ws6_contract("WS6DL_SEND", "ws6dl")]);
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -405,7 +413,7 @@ async fn dry_run_passes_when_agent_schema_matches_tool_call_binding() {
     // always echoes `{ agent, request, connection }` regardless of schema)
     // this would incorrectly fail — proving the mock is what makes the check
     // accurate rather than perpetually red for correctly-built graphs.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -441,7 +449,7 @@ async fn dry_run_passes_when_agent_schema_matches_tool_call_binding() {
 async fn dry_run_passes_when_tool_call_binds_to_upstream_tool_output() {
     // A `tool_call` binding to another `tool_call`'s real output (not an
     // agent at all) must not be affected by the agent-schema machinery above.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -487,7 +495,7 @@ async fn dry_run_flags_tool_call_error_when_on_error_is_route() {
     // `dry_run_passes_when_tool_call_binds_to_upstream_tool_output` above.
     seed_live_catalog_cache("gmail", vec![seeded_gmail_send_contract()]);
 
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -530,7 +538,7 @@ async fn dry_run_flags_tool_call_error_when_on_error_is_continue() {
     // converts a node failure into routed data instead of failing the run.
     seed_live_catalog_cache("gmail", vec![seeded_gmail_send_contract()]);
 
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -564,7 +572,7 @@ async fn dry_run_passes_when_agent_enum_schema_binds_to_tool_call() {
     // must synthesize an ALLOWED value (not a generic `""` placeholder, which
     // would fail the vendored validator's `enum` check) so a correctly-built
     // graph using an enum schema dry-runs green instead of false-positiving.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -603,7 +611,7 @@ async fn dry_run_flags_null_resolved_agent_prompt() {
     // vendored engine's own `resolve_traced` records it as a null resolution
     // at `location: "prompt"`, meaning the agent would run with an EMPTY
     // prompt. Unlike other agent-config nulls, this one must fail the dry run.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },

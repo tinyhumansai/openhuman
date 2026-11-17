@@ -13,11 +13,43 @@
 # Simulate with: scripts/dep-sim.py --cut <crates>
 #
 # History
+#   334/311/3  2026-10-19  Two first-party crates split out of existing ones
+#                      (EX63 run 39182774906, Linux: 334 packages / 311 names /
+#                      3 native, against 332/309/3). New names: `tinyagents-hooks`
+#                      v2.2.0 (the stop and tool hook traits, extracted from
+#                      tinyagents-harness; openhuman-core and tinyagents-runtime
+#                      depend on it directly) and `tinystoragedrivers-schema`
+#                      v1.0.0 (the schema vocabulary extracted from
+#                      tinystoragedrivers-core). Both are vendored workspace
+#                      crates pulled in by the tinyagents 2.2.0 and
+#                      tinystoragedrivers d45d090 bumps; no third-party crate and
+#                      no native build was added, and neither is a duplicate
+#                      version of an existing crate, so there is nothing to dedupe.
+#   332/309/3  2026-10-18  Configurable storage backend selection (epic #7973)
+#                      makes tinystoragedrivers-core an always-on dependency of
+#                      the tinyagents session stores and the flows graph. Its
+#                      sealed-stream codec (StreamSeal, zstd-compressed JSON) adds
+#                      the zstd closure (zstd, zstd-safe, zstd-sys) and the core's
+#                      own `zstd` dependency now resolves through it, so the flows
+#                      profile gains a third native build (zstd-sys alongside
+#                      libsqlite3-sys and ring). Measured on CI (Linux):
+#                      332 packages / 309 names / 3 native.
 #   337/316/3  2026-10-04  Merge upstream/main file-intake and module updates.
 #                      The merged flows profile measures 337 packages / 316
 #                      names / 3 native builds (including libdeflate-sys).
 #   332/311/3  2026-10-05  Re-measure on the current upstream CI toolchain; the
 #                      flows profile resolves five fewer packages and names.
+#   342/320/3  2026-10-07  tinyskills v0.2.8 (#7054) depends on cap-std, which
+#                      brings cap-std, cap-primitives, cap-fs-ext,
+#                      ambient-authority, io-extras, a second io-lifetimes,
+#                      fs-set-times, maybe-owned and rustix-linux-procfs into
+#                      the always-on flows graph. Measured on CI (Linux):
+#                      342 packages / 320 names / 3 native.
+#   335/313/2  2026-10-09  The tinyagents and tinyflows mains (storage drivers
+#                      on tinystoragedrivers v0.4.0) shed seven packages, seven
+#                      names and one native build from the flows graph.
+#                      Measured on CI (Linux): 335 packages / 313 names / 2
+#                      native.
 #   339/318/3  2026-10-04  Workspace attachment intake adds lossless PNG
 #                      optimization through oxipng (11 packages/names, including
 #                      libdeflate-sys C compilation). The merged TinyBox jail
@@ -650,4 +682,115 @@
 #                      into the required host runtime. The migration adds five
 #                      resolved packages and four unique crate names; it does
 #                      not add a native build dependency.
-flows:332:311:3
+# 332/311/3 2026-10-04 Memory lifecycle refresh removed five packages/names
+#                      from the Linux flows graph; native builds remain at 3.
+# 337/315/2 2026-10-09 secrets on the storage backend add the first-party
+#                      tinystoragedrivers-secrets crate (one package, one name).
+# 338/316/2 2026-10-09 cron and flows on the storage ports add the first-party
+#                      tinyflows-drivers crate (one package, one name; no new
+#                      external crate, native builds unchanged).
+# 339/317/2 2026-10-10 storage-file is always on (the default sqlite layout
+#                      keeps the small stores' rows in document tables and
+#                      the file driver backs `file:` URLs), which adds the
+#                      first-party tinystoragedrivers-file crate (one package,
+#                      one name; no external crate, native builds unchanged).
+# 339/317/2 2026-10-10 Pre-core module registry vocabulary adds tinycomputer-bus
+#                      to loader-disabled builds. Only its pure contract is
+#                      added (one package/name); no native or implementation
+#                      dependency is introduced. This foundation is additive,
+#                      not a dependency-shedding claim.
+# 340/318/2 2026-10-10 Combining both independent additions above: measured
+#                      with dep-sim --cut-nothing on current upstream main.
+#                      Two existing native builds; no shedding claimed.
+
+# 335/313/2 2026-10-11 Connector processing and archive ownership now execute
+#                      through the verified v0.14.0 module. Removing the linked
+#                      implementation removes eight package names from this
+#                      profile; making flows enable the loader adds three.
+#                      Measured net change: five fewer packages/names, with
+#                      the same two native builds. No binary-size claim.
+# 326/304/2 2026-10-11 Combined released module adapters on current main,
+#                      including the existing managed-runtime removal.
+#                      Measured with dep-sim --cut-nothing; no size claim.
+# 323/298/2 2026-10-12 Re-measure merged upstream main at dc3ef0735281.
+#                      Both cargo tree and dep-sim --cut-nothing resolve 323
+#                      packages / 298 names / 2 native builds on Linux. Record
+#                      the existing reduction so it cannot silently grow back;
+#                      this ratchet change adds no dependency or size claim.
+# 326/302/2 2026-10-13 tinyflows v0.8.14 drops its own SQLite store and brings
+#                      `tinyflows-import` (the one-time legacy importer, behind
+#                      `flows`) in its place: dep-sim --cut tinyflows-import
+#                      removes exactly one name, and `tinyflows-sqlite` is gone,
+#                      so the importer is net zero. Re-measured on this branch
+#                      with dep-sim --cut-nothing: 326 packages / 302 names / 2
+#                      native builds on Linux. No size claim.
+# 330/305/2 2026-10-14 GROWTH, not a shed. openhuman-core takes a direct
+#                      `tinymcp` dependency with only the `ui` feature (the MCP
+#                      Apps rules: capability advertisement and tool-UI
+#                      resolution that render inline widgets in chat). It is
+#                      always on in product builds through `mcp`. Measured with
+#                      `scripts/kernel-floor.sh flows`, with and without the
+#                      `tinymcp` line: without it the merged tree resolves 328
+#                      packages / 304 names / 2 native (already above the
+#                      recorded 326/302); with it, 330 / 305 / 2. The delta
+#                      is two packages and one name: `tinymcp` (new name) and a
+#                      second major of `dirs` (v7.0.0; the name was already
+#                      present). Measured on macOS; CI re-measures on Linux.
+# 328/304/2 2026-10-15 The profile gateway reuses the `hmac` 0.12 and `sha2`
+#                      0.10 versions already in the flows graph for its
+#                      HMAC-SHA256 user-header signature, instead of adding
+#                      hmac 0.13 / sha2 0.11 and their digest closure. The
+#                      measured graph sheds two package versions and one
+#                      unique name with no native change.
+# 326/303/2 2026-10-16 Ratchet to the measured graph. CI (Linux, EX63 run
+#                      38878335779 on merge base 63c951aea7) reports flows at
+#                      326 packages / 303 names / 2 native against 328/304.
+# 321/301/2 2026-10-16 Re-measure after the upstream/main merge at ba83482245.
+#                      CI (Linux, EX63) reports five fewer packages and two
+#                      fewer unique crate names; native builds remain at two.
+# 338/315/3 2026-10-20 The tinymemory 2.0.0 bump (#8145) makes `async-lock`
+#                      (plus `event-listener` and `event-listener-strategy`)
+#                      an unconditional dependency of `tinymemory-tools`: its
+#                      owner barrier holds owned async RwLock guards without
+#                      binding a runtime. It is not behind a feature, so the
+#                      host cannot shed it; `uuid`, `schemars`, `url` were
+#                      already in the graph. +4 packages / +4 names, native
+#                      unchanged. Measured: scripts/kernel-floor.sh flows.
+# 320/300/3 2026-10-21 The flows profile includes the required
+#                      tinyagents-harness-tools crate (generic harness-owned
+#                      todo/goal/subagent tools) and the `disk` sysinfo feature
+#                      used by storage diagnostics. These add two resolved
+#                      packages and crate names; native builds are unchanged.
+#                      Measured: scripts/kernel-floor.sh flows.
+# 331/303/3 2026-10-24 GROWTH, recorded rather than shed. Measured with
+#                      scripts/kernel-floor.sh flows on every first-parent main
+#                      merge since the 320/300/3 ratchet (bd5a6c89c1, Linux):
+#                      #8179 (b56f31fb7f) 320/300, version bumps only;
+#                      #8198 (84d6cdafee) 322/302, adds `tinyjuice-host` and
+#                      `tinystoragedrivers-types`; #8229 + #8231 (495efc6844)
+#                      331/303 (adb2b6d162 alone cannot be checked out, so the
+#                      pair is measured together). The TinyStorageDrivers v2
+#                      split adds cmov, ctutils, tinyagents-storage-kit and
+#                      tinystoragedrivers-{api,blob,document,kv,queue}, and
+#                      drops fs4, tinyflows-import and
+#                      tinystoragedrivers-{client,core,file,schema,sqlite}: net
+#                      +1 name. The other +8 packages are a second RustCrypto
+#                      generation: tinystoragedrivers-secrets 2.1.0 needs
+#                      chacha20poly1305 0.11 and hkdf 0.13 (with hmac 0.13,
+#                      cipher 0.5, aead 0.6, poly1305 0.9, universal-hash 0.6,
+#                      inout 0.2) while openhuman-core still pins
+#                      chacha20poly1305 0.10, hkdf 0.12 and hmac 0.12. Those
+#                      duplicates are debt: unify core on the newer generation,
+#                      then ratchet back down. Every later main merge through
+#                      da6cec5b0e measures 331/303/3; native unchanged.
+# 341/312/3 2026-10-25 GROWTH, required by the harness tools now composed by
+#                      openhuman-core: fs, net, exec, media and plan-review
+#                      are enabled on tinyagents-harness-tools so the core can
+#                      expose the migrated generic tools. Current upstream/main
+#                      measures this floor. +10 packages / +9 unique names;
+#                      native unchanged. Measured with scripts/kernel-floor.sh
+#                      flows --json.
+# 325/305/3 2026-10-30 The module roll-up's upstream ownership split removes
+#                      dependencies from the always-on flows graph. Measured by
+#                      the hosted kernel-floor and dep-sim calibration checks.
+flows:325:305:3

@@ -1,7 +1,7 @@
 //! `GET /dev/connect` — hand this core to a browser-hosted dev renderer.
 //!
 //! The desktop shell mints the RPC bearer per launch and keeps it in memory
-//! (see [`openhuman_core::core::auth`]), so nothing on disk lets a browser tab reach the
+//! (see `openhuman::core::auth`), so nothing on disk lets a browser tab reach the
 //! running desktop core. This route closes that gap for development: it
 //! redirects to a loopback Vite dev server's `/__dev-connect` page with the
 //! RPC URL and bearer in the URL **fragment**, and that page seeds them into
@@ -41,10 +41,12 @@ pub struct DevConnectQuery {
 
 /// Whether the route is live in this process.
 pub fn dev_connect_enabled() -> bool {
-    dev_connect_enabled_with(
-        cfg!(debug_assertions),
-        std::env::var(DEV_CONNECT_ENV).ok().as_deref(),
-    )
+    // Never on a SaaS core: the route is auth-exempt and hands out the bearer.
+    !crate::core_host::core::runtime::is_saas()
+        && dev_connect_enabled_with(
+            cfg!(debug_assertions),
+            std::env::var(DEV_CONNECT_ENV).ok().as_deref(),
+        )
 }
 
 pub(crate) fn dev_connect_enabled_with(debug_build: bool, env: Option<&str>) -> bool {
@@ -141,7 +143,7 @@ pub async fn dev_connect_handler(
         );
     };
 
-    let Some(token) = openhuman_core::core::auth::get_rpc_token() else {
+    let Some(token) = crate::core_host::core::auth::get_rpc_token() else {
         return refuse(StatusCode::SERVICE_UNAVAILABLE, "core has no RPC token yet");
     };
 

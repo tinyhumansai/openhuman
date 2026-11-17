@@ -1,9 +1,0 @@
-From: ebill@metroelectric.example
-To: alex.rivera@example.com
-Date: Thu, 10 Sep 2026 11:02:00 -0400
-Subject: Your Metro Electric bill is ready
-
-Statement period: Aug 8 - Sep 8, 2026
-Amount due: $88.20
-Due date: September 28, 2026
-This amount varies each month with usage.

@@ -1,11 +1,13 @@
+use openhuman_embed::__host::core::runtime::DispatchCtx;
+use openhuman_embed::__host::util::params::{
+    json_output, optional_string, required_string, to_json,
+};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use openhuman_core::config::rpc as config_rpc;
-use openhuman_core::core::all::{ControllerFuture, RegisteredController};
-use openhuman_core::core::Outcome;
-use openhuman_core::core::{ControllerSchema, FieldSchema, TypeSchema};
+use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
+use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -340,47 +342,47 @@ pub fn team_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_team_get_usage(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_get_usage(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::team::get_usage(&config).await?)
     })
 }
 
-fn handle_team_list_members(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_list_members(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<TeamIdParams>(params)?;
         to_json(crate::hosted::team::list_members(&config, &payload.team_id).await?)
     })
 }
 
-fn handle_team_list_teams(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_list_teams(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::team::list_teams(&config).await?)
     })
 }
 
-fn handle_team_get_team(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_get_team(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<TeamIdParams>(params)?;
         to_json(crate::hosted::team::get_team(&config, &payload.team_id).await?)
     })
 }
 
-fn handle_team_create_team(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_create_team(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<CreateTeamParams>(params)?;
         to_json(crate::hosted::team::create_team(&config, &payload.name).await?)
     })
 }
 
-fn handle_team_update_team(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_update_team(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<UpdateTeamParams>(params)?;
         to_json(
             crate::hosted::team::update_team(&config, &payload.team_id, payload.name.as_deref())
@@ -389,41 +391,41 @@ fn handle_team_update_team(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_team_delete_team(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_delete_team(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<TeamIdParams>(params)?;
         to_json(crate::hosted::team::delete_team(&config, &payload.team_id).await?)
     })
 }
 
-fn handle_team_switch_team(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_switch_team(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<TeamIdParams>(params)?;
         to_json(crate::hosted::team::switch_team(&config, &payload.team_id).await?)
     })
 }
 
-fn handle_team_leave_team(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_leave_team(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<TeamIdParams>(params)?;
         to_json(crate::hosted::team::leave_team(&config, &payload.team_id).await?)
     })
 }
 
-fn handle_team_join_team(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_join_team(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<JoinTeamParams>(params)?;
         to_json(crate::hosted::team::join_team(&config, &payload.code).await?)
     })
 }
 
-fn handle_team_create_invite(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_create_invite(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<InviteParams>(params)?;
         to_json(
             crate::hosted::team::create_invite(
@@ -437,9 +439,9 @@ fn handle_team_create_invite(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_team_remove_member(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_remove_member(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<RemoveMemberParams>(params)?;
         to_json(
             crate::hosted::team::remove_member(&config, &payload.team_id, &payload.user_id).await?,
@@ -447,9 +449,12 @@ fn handle_team_remove_member(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_team_change_member_role(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_change_member_role(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<ChangeRoleParams>(params)?;
         to_json(
             crate::hosted::team::change_member_role(
@@ -463,17 +468,17 @@ fn handle_team_change_member_role(params: Map<String, Value>) -> ControllerFutur
     })
 }
 
-fn handle_team_list_invites(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_list_invites(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<TeamIdParams>(params)?;
         to_json(crate::hosted::team::list_invites(&config, &payload.team_id).await?)
     })
 }
 
-fn handle_team_revoke_invite(params: Map<String, Value>) -> ControllerFuture {
+fn handle_team_revoke_invite(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<RevokeInviteParams>(params)?;
         to_json(
             crate::hosted::team::revoke_invite(&config, &payload.team_id, &payload.invite_id)
@@ -482,21 +487,8 @@ fn handle_team_revoke_invite(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn to_json(outcome: Outcome<Value>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
 }
 
 fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
@@ -505,24 +497,6 @@ fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
         comment,
         required: false,
-    }
-}
-
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }
 

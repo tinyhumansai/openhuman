@@ -1,154 +1,97 @@
-//! Tests for the `tinyruntime` client facade.
-//!
-//! These exercise the parts that are this host's decisions rather than the
-//! module's: which provider serves a language, how this host's configuration
-//! becomes a request, and how a bus failure is classified. The module's own
-//! behaviour — resolution order, digest verification, pooling — is tested in its
-//! repository against its own suite, and re-asserting it here would only test
-//! the mock.
+use super::*;
 
-use super::{
-    pool_settings_for, provider_id, settings_for, RuntimeCallError, MODULE_ID, NODEJS_PROVIDER_ID,
-    PYTHON_PROVIDER_ID,
-};
-use crate::config::Config;
-use crate::modules::registry;
-use tinyruntime_bus::Language;
-
-#[test]
-fn each_first_party_language_maps_to_its_provider_module() {
-    assert_eq!(provider_id(&Language::nodejs()), Some(NODEJS_PROVIDER_ID));
-    assert_eq!(provider_id(&Language::python()), Some(PYTHON_PROVIDER_ID));
-}
-
-#[test]
-fn a_language_this_build_ships_no_provider_for_is_not_an_error_here() {
-    // The router accepts whatever its own configuration routes, and an operator
-    // may have put a third-party provider on the module search path. Refusing
-    // here would make that impossible.
-    assert_eq!(provider_id(&Language::new("ruby")), None);
-}
-
-#[test]
-fn the_provider_records_named_here_exist_in_the_registry() {
-    // A typo would surface as "unknown module" at the first tool call, long
-    // after the change that caused it.
-    for id in [MODULE_ID, NODEJS_PROVIDER_ID, PYTHON_PROVIDER_ID] {
-        assert!(
-            registry::find(id).is_some(),
-            "no registry record for '{id}'"
-        );
-    }
-}
-
-#[test]
-fn node_settings_come_from_the_node_config_block() {
-    let mut config = Config::default();
-    config.node.version = "v22.11.0".to_string();
-    config.node.prefer_system = false;
-    config.node.cache_dir = "/tmp/node-cache".to_string();
-
-    let settings = settings_for(&config, &Language::nodejs());
-    assert_eq!(settings.version, "v22.11.0");
-    assert!(!settings.prefer_system);
-    assert_eq!(settings.cache_dir, "/tmp/node-cache");
-}
-
-#[test]
-fn python_settings_come_from_the_python_config_block() {
-    let mut config = Config::default();
-    config.runtime_python.minimum_version = "3.12".to_string();
-    config.runtime_python.maximum_version = "3.15".to_string();
-    config.runtime_python.preferred_command = "/usr/bin/python3.12".to_string();
-
-    let settings = settings_for(&config, &Language::python());
-    assert_eq!(settings.version, "3.12");
-    assert_eq!(settings.maximum_version, "3.15");
-    assert_eq!(settings.preferred_command, "/usr/bin/python3.12");
-}
-
-#[test]
-fn the_two_languages_do_not_read_each_others_configuration() {
-    // The bug this rules out: a Python request served under the Node version
-    // pin, which would ask the Python channel for `v22.11.0`.
-    let mut config = Config::default();
-    config.node.version = "v22.11.0".to_string();
-    config.runtime_python.minimum_version = "3.12".to_string();
-
-    assert_eq!(
-        settings_for(&config, &Language::nodejs()).version,
-        "v22.11.0"
+/// The process-global runtime is stable within one caller runtime.
+#[tokio::test]
+async fn the_module_bus_is_a_singleton_and_serves_proxies() {
+    let first = runtime().await.expect("runtime should start");
+    assert!(is_started());
+    let second = runtime().await.expect("runtime should be reused");
+    assert!(
+        std::ptr::eq(first, second),
+        "runtime() handed out two different runtimes"
     );
-    assert_eq!(settings_for(&config, &Language::python()).version, "3.12");
+
+    // Building a proxy is a local operation — it validates names and nothing
+    // else. Nothing has claimed the name, so the call fails rather than
+    // hanging, which is what makes `ensure_loaded` worth having.
+    let proxy = first
+        .proxy(
+            "ai.tinyhumans.tinydocs.Documents",
+            "/ai/tinyhumans/tinydocs/Documents",
+        )
+        .expect("registry names should be well formed");
+    let result: tinybus::Result<serde_json::Value> = proxy.call("GenerateDocx", ()).await;
+    assert!(result.is_err(), "an unloaded module should not answer");
+
+    // A name that cannot be a bus name is refused without reaching the bus.
+    assert!(first.proxy("not a bus name", "/nope").is_err());
 }
 
-#[test]
-fn a_disabled_language_is_carried_into_the_request_rather_than_refused_here() {
-    // The module says why a language is unavailable; duplicating the check here
-    // would mean two places to change and two messages to keep in step.
-    let mut config = Config::default();
-    config.node.enabled = false;
-    assert!(!settings_for(&config, &Language::nodejs()).enabled);
+#[cfg(feature = "flows")]
+#[tokio::test]
+async fn registry_id_matches_the_live_modules_bus_address_not_package_name() {
+    let config = crate::config::Config::default();
+    let proxy = crate::modules::tinyflows::copilot_proxy(&config)
+        .await
+        .expect("linked TinyFlows module should be admitted and serving");
+    let _: Vec<tinyflows_bus::copilot::ResourceFile> = proxy
+        .call("ListResources", ())
+        .await
+        .expect("the resource call waits for module initialization");
+
+    let record = crate::modules::registry::find(crate::modules::tinyflows::MODULE_ID)
+        .expect("TinyFlows registry record");
+    let runtime = runtime().await.expect("module runtime is already serving");
+    let loaded = runtime
+        .host()
+        .list()
+        .into_iter()
+        .find(|module| {
+            module.manifest.bus_name.as_str() == record.bus_name
+                && module.manifest.object_path.as_str() == record.object_path
+        })
+        .expect("the registry bus address identifies the loaded module");
+
+    assert_eq!(record.id, "tinyflows");
+    assert_eq!(loaded.name, "tinyflows-module");
+    assert_ne!(loaded.name, record.id);
+    assert!(
+        is_module_serving(record.id),
+        "the registry id must report the enabled, live module despite its package name; info={loaded:#?}"
+    );
 }
 
-#[test]
-fn node_pools_by_default_and_python_does_not() {
-    // Not an oversight: a pooled Node job runs in its own worker thread with a
-    // fresh module graph, while a pooled Python job shares the interpreter with
-    // every other job on that worker.
-    let config = Config::default();
-    assert!(pool_settings_for(&config, &Language::nodejs()).enabled);
-    assert!(!pool_settings_for(&config, &Language::python()).enabled);
-}
+#[cfg(feature = "web3")]
+#[tokio::test]
+async fn wallet_host_callback_is_served_before_the_module_is_loaded() {
+    let workspace = tempfile::tempdir().expect("isolated wallet workspace");
+    let _workspace_env =
+        crate::web3::wallet::test_support::set_workspace_env_for_test(&workspace).await;
+    let runtime = runtime().await.expect("runtime should start");
+    let proxy = runtime
+        .proxy(
+            tinywallet_bus::HOST_INTERFACE,
+            tinywallet_bus::HOST_OBJECT_PATH,
+        )
+        .expect("wallet callback contract names are valid");
 
-#[test]
-fn turning_the_pool_off_wholesale_turns_it_off_for_every_language() {
-    let mut config = Config::default();
-    config.runtime_pool.enabled = false;
-    assert!(!pool_settings_for(&config, &Language::nodejs()).enabled);
-}
-
-#[test]
-fn pool_tuning_is_carried_from_this_hosts_configuration() {
-    let mut config = Config::default();
-    config.runtime_pool.node.max_workers = 4;
-    config.runtime_pool.node.recycle_after_jobs = 25;
-
-    let settings = pool_settings_for(&config, &Language::nodejs());
-    assert_eq!(settings.max_workers, 4);
-    assert_eq!(settings.recycle_after_jobs, 25);
-}
-
-#[test]
-fn a_zero_worker_pool_is_clamped_before_it_leaves_this_host() {
-    // A pool that can hold no workers would queue every job forever. The module
-    // clamps too, but sending a zero would make the request a lie about what
-    // this host asked for.
-    let mut config = Config::default();
-    config.runtime_pool.node.max_workers = 0;
-    assert!(pool_settings_for(&config, &Language::nodejs()).max_workers >= 1);
-}
-
-#[test]
-fn an_unloadable_module_and_a_bad_request_are_different_failures() {
-    // Callers act on them differently: one disables a feature, the other is
-    // worth reporting to whoever made the request.
-    let unavailable = RuntimeCallError::Unavailable("no artifact for this host".to_string());
-    let invalid = RuntimeCallError::InvalidRequest("no runtime provider for `ruby`".to_string());
-    assert_ne!(unavailable, invalid);
-    assert_eq!(unavailable.to_string(), "no artifact for this host");
-}
-
-#[test]
-fn a_call_error_renders_as_its_message_alone() {
-    // These are surfaced to models and users, so a variant name leaking into the
-    // text would be noise in a chat transcript.
-    for error in [
-        RuntimeCallError::Unavailable("a".to_string()),
-        RuntimeCallError::InvalidRequest("b".to_string()),
-        RuntimeCallError::Failed("c".to_string()),
-    ] {
-        let rendered = error.to_string();
-        assert!(rendered.len() <= 1, "got `{rendered}`");
-    }
+    assert!(
+        proxy
+            .is_available()
+            .await
+            .expect("ask the bus for the owner"),
+        "the host must serve callbacks before resolving the wallet module"
+    );
+    // Only TinyWallet may call them (TS-E2E-012); the host's own connection is
+    // not TinyWallet.
+    let refused: tinybus::Result<tinywallet_bus::wire::HostResponse> = proxy
+        .call(tinywallet_bus::names::host_methods::WALLET_ACCOUNTS, ())
+        .await;
+    // The ownership refusal itself, not any error (a missing callback errs too).
+    assert!(
+        refused.as_ref().is_err_and(
+            |error| format!("{error:?}").contains(crate::modules::callback_owner::REFUSAL)
+        ),
+        "a caller that is not TinyWallet was not refused by the owner check: {refused:?}"
+    );
 }

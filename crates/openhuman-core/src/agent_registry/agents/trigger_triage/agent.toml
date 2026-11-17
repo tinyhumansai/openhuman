@@ -1,0 +1,28 @@
+id = "trigger_triage"
+display_name = "Trigger Triage"
+when_to_use = "Classify an incoming external trigger (Composio webhook, cron fire, etc.) and decide drop / acknowledge / react / escalate. Never acts directly — the subscriber executes the decision."
+temperature = 0.2
+max_iterations = 2
+sandbox_mode = "read_only"
+
+# Strip everything except the memory context — the classifier needs to
+# know who the user is and what they decided before (the same inbound
+# trigger can be urgent for one user and noise for another) but does not
+# need the identity preamble, safety scaffolding, or skills catalog.
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = true
+
+[model]
+# This hint is consumed by `triage::routing::resolve_provider`,
+# NOT by the main `RouterProvider`. In commit 1 the resolver treats
+# every hint as remote; commit 2 will probe the local LLM and pick
+# local-vs-remote based on tier + health.
+hint = "local-or-remote-fast"
+
+[tools]
+# Zero tools by design. The classifier emits a structured JSON
+# decision which the subscriber parses and acts on. Local 1B-class
+# models are unreliable at nested tool calls, so we keep the turn
+# flat.
+named = []

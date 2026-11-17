@@ -1,338 +1,52 @@
-//! Audit logging for security events
+//! Host-side workspace registry for the module-owned audit stream.
 
 use crate::config::AuditConfig;
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use uuid::Uuid;
 
-/// Audit event types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuditEventType {
-    CommandExecution,
-    FileAccess,
-    ConfigChange,
-    AuthSuccess,
-    AuthFailure,
-    PolicyViolation,
-    SecurityEvent,
+/// Host handle retaining the audit's enabled setting for tool assembly.
+/// Event storage and ordering belong to TinySecurity and its `AuditSink2`.
+pub struct AuditSink {
+    enabled: AtomicBool,
 }
 
-/// Actor information (who performed the action)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Actor {
-    pub channel: String,
-    pub user_id: Option<String>,
-    pub username: Option<String>,
-}
+static WORKSPACE_AUDIT_SINKS: OnceLock<Mutex<HashMap<PathBuf, Arc<AuditSink>>>> = OnceLock::new();
 
-/// Action information (what was done)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Action {
-    pub command: Option<String>,
-    pub risk_level: Option<String>,
-    pub approved: bool,
-    pub allowed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub capability_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub policy_decision: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub approval_id: Option<String>,
-}
-
-/// Execution result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionResult {
-    pub success: bool,
-    pub exit_code: Option<i32>,
-    pub duration_ms: Option<u64>,
-    pub error: Option<String>,
-}
-
-/// Security context
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityContext {
-    pub policy_violation: bool,
-    pub rate_limit_remaining: Option<u32>,
-    pub sandbox_backend: Option<String>,
-}
-
-/// Complete audit event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditEvent {
-    pub timestamp: DateTime<Utc>,
-    pub event_id: String,
-    pub event_type: AuditEventType,
-    pub actor: Option<Actor>,
-    pub action: Option<Action>,
-    pub result: Option<ExecutionResult>,
-    pub security: SecurityContext,
-}
-
-impl AuditEvent {
-    /// Create a new audit event
-    pub fn new(event_type: AuditEventType) -> Self {
-        Self {
-            timestamp: Utc::now(),
-            event_id: Uuid::new_v4().to_string(),
-            event_type,
-            actor: None,
-            action: None,
-            result: None,
-            security: SecurityContext {
-                policy_violation: false,
-                rate_limit_remaining: None,
-                sandbox_backend: None,
-            },
-        }
-    }
-
-    /// Set the actor
-    pub fn with_actor(
-        mut self,
-        channel: String,
-        user_id: Option<String>,
-        username: Option<String>,
-    ) -> Self {
-        self.actor = Some(Actor {
-            channel,
-            user_id,
-            username,
-        });
-        self
-    }
-
-    /// Set the action
-    pub fn with_action(
-        mut self,
-        command: String,
-        risk_level: String,
-        approved: bool,
-        allowed: bool,
-    ) -> Self {
-        self.action = Some(Action {
-            command: Some(command),
-            risk_level: Some(risk_level),
-            approved,
-            allowed,
-            provider_id: None,
-            capability_id: None,
-            policy_decision: None,
-            approval_id: None,
-        });
-        self
-    }
-
-    /// Set the result
-    pub fn with_result(
-        mut self,
-        success: bool,
-        exit_code: Option<i32>,
-        duration_ms: u64,
-        error: Option<String>,
-    ) -> Self {
-        self.result = Some(ExecutionResult {
-            success,
-            exit_code,
-            duration_ms: Some(duration_ms),
-            error,
-        });
-        self
-    }
-}
-
-/// Audit logger
-pub struct AuditLogger {
-    log_path: PathBuf,
-    config: AuditConfig,
-    buffer: Mutex<Vec<AuditEvent>>,
-    /// Serializes the rotate + append + fsync critical section so concurrent
-    /// callers sharing one logger cannot interleave partial JSON lines.
-    write_lock: Mutex<()>,
-}
-
-/// Process-global cache of one [`AuditLogger`] per workspace directory.
-///
-/// Multiple agent sessions in the same process share a workspace and therefore
-/// the same `<workspace>/audit.log`. Handing each session its own logger would
-/// let concurrent appends race on rotation and interleave partial lines; this
-/// registry guarantees a single `Arc<AuditLogger>` per workspace so all writes
-/// serialize through one instance's `write_lock`.
-static WORKSPACE_AUDIT_LOGGERS: OnceLock<Mutex<HashMap<PathBuf, Arc<AuditLogger>>>> =
-    OnceLock::new();
-
-/// Return the shared [`AuditLogger`] for `openhuman_dir`, creating it on first
-/// use. All callers targeting the same workspace receive the same `Arc`, so log
-/// rotation and appends coordinate through one logger. The `config` of the first
-/// caller for a given workspace wins; later callers reuse the cached logger.
-pub fn get_or_create_workspace_audit_logger(
+pub fn get_or_create_workspace_audit_sink(
     config: AuditConfig,
     openhuman_dir: PathBuf,
-) -> Result<Arc<AuditLogger>> {
-    // Normalize the key: `PathBuf` equality is lexical, so `/ws` vs `/ws/` vs a
-    // symlinked spelling would otherwise cache distinct loggers for one physical
-    // workspace and reopen the rotate/append race this registry prevents.
-    //
-    // A canonicalize failure falls back to the raw path rather than propagating:
-    // audit-logger creation must never block agent startup. `NotFound` (the
-    // workspace dir not created yet) is expected and logged at debug; other
-    // errors (permission, I/O) are unexpected and logged at warn so real
-    // filesystem problems stay observable.
-    let openhuman_dir = match std::fs::canonicalize(&openhuman_dir) {
-        Ok(path) => path,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            log::debug!(
-                "[openhuman:audit] workspace path not yet created; keying registry on raw path: {}",
-                openhuman_dir.display()
-            );
-            openhuman_dir
-        }
-        Err(err) => {
-            log::warn!(
-                "[openhuman:audit] failed to canonicalize workspace path {} ({err}); keying registry on raw path",
-                openhuman_dir.display()
-            );
-            openhuman_dir
-        }
-    };
-    let registry = WORKSPACE_AUDIT_LOGGERS.get_or_init(|| Mutex::new(HashMap::new()));
+) -> Result<Arc<AuditSink>> {
+    let workspace = std::fs::canonicalize(&openhuman_dir).unwrap_or(openhuman_dir);
+    let registry = WORKSPACE_AUDIT_SINKS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = registry.lock();
-    if let Some(existing) = map.get(&openhuman_dir) {
+    if let Some(existing) = map.get(&workspace) {
+        existing.enabled.store(config.enabled, Ordering::Release);
         return Ok(Arc::clone(existing));
     }
-    let logger = Arc::new(AuditLogger::new(config, openhuman_dir.clone())?);
-    map.insert(openhuman_dir, Arc::clone(&logger));
+    let logger = Arc::new(AuditSink::new(config, workspace.clone())?);
+    map.insert(workspace, Arc::clone(&logger));
     Ok(logger)
 }
 
-/// Structured command execution details for audit logging.
-#[derive(Debug, Clone)]
-pub struct CommandExecutionLog<'a> {
-    pub channel: &'a str,
-    pub command: &'a str,
-    pub risk_level: &'a str,
-    pub approved: bool,
-    pub allowed: bool,
-    pub success: bool,
-    pub duration_ms: u64,
-}
-
-impl AuditLogger {
-    /// Build a disabled `Arc<AuditLogger>` for tests and contexts that need a
-    /// handle but should not write to disk. The `enabled = false` flag
-    /// short-circuits `log()` before any filesystem I/O, so the sentinel
-    /// `log_path` is never touched.
+impl AuditSink {
     pub fn disabled() -> Arc<Self> {
         Arc::new(Self {
-            log_path: PathBuf::new(),
-            config: AuditConfig {
-                enabled: false,
-                log_path: String::new(),
-                max_size_mb: 0,
-            },
-            buffer: Mutex::new(Vec::new()),
-            write_lock: Mutex::new(()),
+            enabled: AtomicBool::new(false),
         })
     }
 
-    /// Create a new audit logger
-    pub fn new(config: AuditConfig, openhuman_dir: PathBuf) -> Result<Self> {
-        let log_path = openhuman_dir.join(&config.log_path);
-        log::info!(
-            "[openhuman:audit] Logger initialized: enabled={}, path={}",
-            config.enabled,
-            log_path.display()
-        );
+    pub fn new(config: AuditConfig, _workspace: PathBuf) -> Result<Self> {
         Ok(Self {
-            log_path,
-            config,
-            buffer: Mutex::new(Vec::new()),
-            write_lock: Mutex::new(()),
+            enabled: AtomicBool::new(config.enabled),
         })
     }
 
-    /// Log an event
-    pub fn log(&self, event: &AuditEvent) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-
-        log::debug!(
-            "[openhuman:audit] Logging event: type={:?}, id={}",
-            event.event_type,
-            event.event_id
-        );
-
-        // Serialize the event outside the write lock — formatting is pure.
-        let line = serde_json::to_string(event)?;
-
-        // Hold `write_lock` across rotate + append + fsync so concurrent
-        // callers sharing this logger cannot interleave partial lines or
-        // race on rotation renames.
-        let _guard = self.write_lock.lock();
-        self.rotate_if_needed()?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_path)?;
-
-        writeln!(file, "{}", line)?;
-        file.sync_all()?;
-
-        Ok(())
-    }
-
-    /// Log a command execution event.
-    pub fn log_command_event(&self, entry: CommandExecutionLog<'_>) -> Result<()> {
-        let event = AuditEvent::new(AuditEventType::CommandExecution)
-            .with_actor(entry.channel.to_string(), None, None)
-            .with_action(
-                entry.command.to_string(),
-                entry.risk_level.to_string(),
-                entry.approved,
-                entry.allowed,
-            )
-            .with_result(entry.success, None, entry.duration_ms, None);
-
-        self.log(&event)
-    }
-
-    /// Rotate log if it exceeds max size
-    fn rotate_if_needed(&self) -> Result<()> {
-        if let Ok(metadata) = std::fs::metadata(&self.log_path) {
-            let current_size_mb = metadata.len() / (1024 * 1024);
-            if current_size_mb >= u64::from(self.config.max_size_mb) {
-                self.rotate()?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Rotate the log file
-    fn rotate(&self) -> Result<()> {
-        log::info!(
-            "[openhuman:audit] Rotating audit log: {}",
-            self.log_path.display()
-        );
-        for i in (1..10).rev() {
-            let old_name = format!("{}.{}.log", self.log_path.display(), i);
-            let new_name = format!("{}.{}.log", self.log_path.display(), i + 1);
-            let _ = std::fs::rename(&old_name, &new_name);
-        }
-
-        let rotated = format!("{}.1.log", self.log_path.display());
-        std::fs::rename(&self.log_path, &rotated)?;
-        Ok(())
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Acquire)
     }
 }
 

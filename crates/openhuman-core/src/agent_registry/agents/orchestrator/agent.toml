@@ -1,0 +1,306 @@
+id = "orchestrator"
+display_name = "Master Agent"
+when_to_use = "Default user-facing agent — handles everyday work directly, including code-repository tasks, and delegates only when parallelism or specialised capability materially helps. You should not normally spawn another orchestrator from inside one."
+temperature = 0.4
+# Sized for code work (#6958): on the DeepSWE sample every other harness needed
+# 50-180 model calls per task, and 50 stopped all ten before a source edit.
+# Operators can still set any cap with `[agent] max_tool_iterations_override`
+# or `OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS`.
+max_iterations = 200
+sandbox_mode = "sandboxed"
+
+# Spawn hierarchy: this is the user-facing tier. It can complete ordinary work
+# itself and delegates only when that is the better execution shape.
+# Loader enforces: a `chat` agent must NOT list any other `chat` agent
+# in `subagents` below — handoff goes directly to `worker` specialists. See `AgentTier` in `vendor/tinyagents/crates/tinyagents-definition/src/tier.rs`.
+agent_tier = "chat"
+# Connected MCP servers' tools join this agent's deferred catalogue.
+searches_connected_mcp = true
+# Identity now loads from the workspace rather than from this agent's compiled
+# prompt (#5701). `IdentitySection` injects SOUL.md (product persona, shared by
+# every agent that opts in) and ROLE.md (this agent's own role brief, which used
+# to be the `# Master Agent` / `## Core Responsibilities` preamble in prompt.md).
+# Both are user-editable files under the workspace, so tuning the agent's
+# identity no longer means recompiling. Turning this on is what makes the
+# section run at all — with `omit_identity = true` the builder skips
+# `IdentitySection` wholesale and neither file is read.
+omit_identity = false
+# The user-facing agent opens every new session with the compiled memory
+# context (`context.md`) as its first user message. Anything deeper is
+# on-demand through the one direct `memory` tool below.
+omit_memory_context = false
+omit_safety_preamble = true
+
+# Specialist routing surface. This allowlist constrains the `agent_id` enum
+# for the single `spawn_subagent` tool. Every named specialist is reached by
+# that tool; no per-specialist dispatch aliases are generated.
+#
+# `{ skills = "*" }` contributes deferred Composio actions, discovered through
+# `tool_search` and called directly; it does not spawn a sub-agent.
+#
+# Specialists whose value is a prompt over a small tool set use inline skills
+# instead. Their tools are `ToolExposure::Deferred` (found through
+# `tool_search`) and their playbook is the pack guide printed by `use_skill`.
+# The specialists that remain below provide pinned models, long-running
+# contexts, or curated domain belts.
+
+# Named tools this agent reaches through `tool_search` instead of its wire:
+# still registered, found by a search, and callable by their own name (the
+# harness admits a deferred tool by name without a prior search, so the
+# `file_read {"path": …}` line in an oversized-result preview keeps working).
+# Other agents that name these keep them advertised. Each one here is a
+# schema the model reaches for on a small share of turns, or a second route to
+# work a belt tool already does:
+#   * `mcp_registry_*`: MCP servers are named in the prompt and their own tools
+#     are deferred; the registry tools are the fallback, not the route.
+#   * `file_read` / `file_write`: `shell` and `apply_patch` are on the belt.
+#   * `http_request`: `web_fetch` covers GET.
+#   * `current_time`: every turn carries the date line; `resolve_time` converts.
+#   * `composio_list_toolkits`: the connectable catalogue, asked for rarely.
+deferred_tools = [
+    "mcp_registry_status",
+    "mcp_registry_list_tools",
+    "mcp_registry_connect",
+    "mcp_registry_tool_call",
+    "file_read",
+    "file_write",
+    "http_request",
+    "current_time",
+    "composio_list_toolkits",
+]
+
+[subagents]
+allowlist = [
+    # Task-source/workflow/artifact specialist. Route any request to add,
+    # preview, fetch, update, remove, or summarize proactive task sources,
+    # workflow bundles, or artifacts here instead of letting the generic
+    # tools agent see the full family.
+    "task_manager_agent",
+    # Image-understanding specialist. Route anything that hinges on the content
+    # of an attached or on-disk user-provided image file here — it is pinned to
+    # a dedicated multimodal model (`MODEL_MEDIA_UNDERSTANDING`), so it can
+    # actually see the image.
+    "vision_agent",
+    # Image-generation specialist. Route make/generate/edit an image requests
+    # here — it owns prompt
+    # craft, model selection, and saving the result to the workspace.
+    "image_agent",
+    # Video-generation specialist. Route make/generate a video or animate this
+    # image requests here —
+    # generation is async (minutes) and the agent blocks until the clip is saved.
+    "video_agent",
+    # Deck specialist. Owns presentation grounding, citations, image
+    # verification, and generate_presentation warning handling.
+    "presentation_agent",
+    # Skill registry specialist: discovers, installs, and manages agent
+    # skills from community registries (OpenHuman, HermesHub, ClawHub).
+    # Running an installed skill is the orchestrator's own `run_workflow`.
+    "skill_setup",
+    # Workflow-authoring specialist. Route any "set up a workflow
+    # that…", "automate…", "when X happens do Y", or "build/edit an automation
+    # or flow" request here — it grounds nodes in real tool slugs + connections,
+    # can sandbox dry-run a draft, and returns a workflow PROPOSAL for the user
+    # to review and save. It never creates/enables/runs a real flow itself.
+    # Calls run asynchronously. Reuse the same task_key to continue this
+    # proposal or answer a clarification without creating another child.
+    "workflow_builder",
+    # Workflow-discovery specialist (the "Flow Scout"). Route "what workflows
+    # should I set up?", "suggest some automations", or "discover flows for me"
+    # here — it reads the user's memory/threads/connections/flows read-only and
+    # records concrete, buildable suggestions for the Flows page. It never
+    # creates/enables/runs a flow; picking a suggestion routes to
+    # `workflow_builder` to author it.
+    "flow_discovery",
+    # NOTE: `summarizer` is not listed. It is runtime-only: the oversized
+    # tool-result hook resolves it from the registry
+    # (`context.summarizer_payload_threshold_tokens`, default 4000), and it
+    # is only reached by runtime summarization and is not model-callable.
+    { skills = "*" },
+]
+
+[model]
+# The primary agent must be capable of the inspect → edit → verify loop, not
+# merely route that work to a coding worker. Specialist agents can still use
+# burst / reasoning hints where a task benefits from them.
+hint = "coding"
+
+[tools]
+# Direct tools — things the orchestrator calls itself rather than
+# delegating.
+#
+# `composio_list_connections` lets the agent detect newly-authorised
+# integrations mid-session (the session-start fetch froze the Connected
+# Integrations block). `composio_connect` lets it raise an inline
+# connect card for ANY toolkit the user asks to connect — including ones
+# not yet connected (#3993); the tool validates the slug against the
+# backend allowlist and the OAuth handoff itself runs inside the card.
+# Toolkit *actions* are the per-action `Deferred` tools synthesised from
+# `{ skills = "*" }` below and reached through `tool_search` — the
+# orchestrator never calls composio_list_tools / composio_execute directly.
+named = [
+    # Tool packs add this proxy to the visible set when they withhold member
+    # schemas. The hosted runtime also enforces this definition as its dispatch
+    # allowlist, so the proxy must be declared here as well as injected there.
+    "use_skill",
+    # Not a registered tool: naming it opts this belt into on-demand tool
+    # discovery. Every registration marked `ToolExposure::Deferred` (rarely
+    # needed lookups such as `stock_*`, and the per-action / per-server /
+    # per-skill entries the long tail registers) stays off the wire and is
+    # reachable through the harness's intrinsic `tool_search` — ranked by Jev
+    # when the process has a TinyHumans credential, BM25 otherwise — and
+    # callable by name or via `tool_call` afterwards. The session builder
+    # strips this name from the allowlist and keeps the deferred set beside it
+    # (`agent/session_host/builder/builder_build.rs`).
+    "tool_search",
+    # The orchestrator runs installed skills itself; installation is routed to
+    # `skill_setup` through `spawn_subagent`.
+    "run_workflow",
+    # `ask_user_clarification` is deliberately absent. On the chat surface it
+    # is a no-op with a schema cost: it ends the turn with the question as the
+    # reply, which is exactly what asking in prose does. It stays on the
+    # sub-agent belts, where a headless child has no other way to pause into
+    # `awaiting_user`; the parent resumes it with spawn_subagent and task_key.
+# Direct coding surface. The Master Agent owns the normal inspect → edit →
+# verify loop in the action sandbox. `apply_patch` is the one edit mechanism
+# for existing files, `file_write` creates new files, and `shell` runs builds
+# and focused tests. Policy/approval/sandbox enforcement remains in the tool
+# layer; this declaration only makes the tools discoverable to the agent.
+    "file_read",
+    "grep",
+    "glob",
+    "list",
+    "apply_patch",
+    "file_write",
+    "shell",
+    "shell_process",
+    "git_operations",
+    # Versioned artifact surface (vendor/tiny-artifacts): every document the
+    # agent creates must land in the artifact pipeline — versioned JSON record
+    # + legacy mirror + UI card — so it is editable/viewable in the preview
+    # panel, instead of a bare file written via `shell` that never files an
+    # artifact (regression: MD outputs were not registered as artifacts).
+    "create_artifact",
+    "update_artifact",
+    "read_artifact",
+    "list_artifacts",
+    # Web research, done directly. There is no research sub-agent any more:
+    # the routed web tools do the depth themselves. A single fact is one
+    # `web_answer_tool` / `web_search_tool` / `web_fetch` / `http_request`
+    # call; multi-source research, comparisons and deep digests are
+    # `web_answer_tool` with `depth: "deep"` (when the provider offers it), or
+    # `web_search_tool` to locate sources plus `web_contents_tool` to read up
+    # to ten of them in one call.
+    "web_search_tool",
+    "web_answer_tool",
+    "web_contents_tool",
+    "web_fetch",
+    "http_request",
+    # Direct memory surface: ONE `memory` tool, `recall` | `fetch` | `learn` |
+    # `forget`. Recall and store are the product's core and must be
+    # first-class DIRECT calls, not a sub-agent spawn: a trivial "what is my Q3
+    # OKR" lookup or a "remember my Q3 OKR" write should not pay a blocking
+    # agentic round-trip (over-delegation, #4744). `learn` writes the store
+    # `recall` and `fetch` read, so the loop closes inline with a real
+    # confirmation. There is deliberately no memory sub-agent beside it.
+    "memory",
+    # Managed file-storage transfer surface for passing artifacts/attachments
+    # between chat, users, and workers. Storage lifecycle mutators
+    # (`storage_set_visibility`, `storage_delete_file`) stay out of the broad
+    # chat surface.
+    "storage_upload_file",
+    "storage_download_file",
+    "storage_list_files",
+    "storage_get_link",
+    # Sub-agent work always uses the asynchronous spawn surface. Select the
+    # specialist with agent_id and reuse task_key to continue an existing task.
+    "spawn_subagent",
+    "composio_list_connections",
+    # "What can I connect?" — the backend allowlist as
+    # `{toolkits, catalog:[{slug, name, description, categories}]}`. Distinct
+    # from `composio_list_connections`, which returns only ACTIVE/CONNECTED
+    # entries: prompt.md is right that "the list shows what is connected, not
+    # what is connectable", and THIS is the connectable half.
+    #
+    # Unpacked in `toolpacks::registry` so it can be declared here at all —
+    # packed, `closed_by_direct_handoff` denied it to this agent and every
+    # route out was closed: `use_skill{composio}` answers "no tools available",
+    # and the only hand-off it named described itself as DAG decomposition,
+    # which gave a model no reason to try it for a catalogue lookup. Measured:
+    # asked to list Composio apps, this agent ran `use_skill`, six
+    # `tool_search` calls, a 404 and two doc fetches, then reported a marketing
+    # "1,552+ apps" instead of this install's real 119.
+    "composio_list_toolkits",
+    # Inline OAuth connect card (#3993). Free-form `toolkit` slug — the
+    # orchestrator calls this directly to connect a service the user names,
+    # whether or not it is already connected. Validates against the backend
+    # allowlist and raises the in-chat Connect card.
+    "composio_connect",
+    # Connected MCP actions are deferred registrations found through
+    # `tool_search`. These generic registry tools remain a direct fallback for
+    # status, reconnection, and schema-driven calls. Installing servers remains
+    # a user action.
+    "mcp_registry_status",
+    "mcp_registry_list_tools",
+    "mcp_registry_connect",
+    "mcp_registry_tool_call",
+    # Current wall-clock time and the user's timezone, needed to ground a
+    # schedule (skill `scheduling`) or a quote's freshness (skill `web3`).
+    "current_time",
+    # Deterministic time resolver. As the chat-facing agent, the orchestrator
+    # is what reads a user's relative phrase ("last 24h", "since Monday")
+    # first. It must resolve the window here via `resolve_time` and hand the
+    # delegated agent an exact timestamp / ISO bound rather than leaving epoch
+    # arithmetic to the leaf (which once computed "24h ago" ~10 months off and
+    # missed the latest data). Never hand-compute Unix seconds.
+    "resolve_time",
+    # `todo` is the session todo list, Claude/Codex style: one whole-list
+    # write per call, scoped to this conversation thread (`TodoTool::name()
+    # == "todo"`; the legacy `todowrite` alias resolves to no registered
+    # tool).
+    "todo",
+    # Thread-level goal (Codex-style per-thread completion contract). `goal_set`
+    # records the durable objective for THIS thread when a non-trivial request
+    # lands (the orchestrator is authoritative — it always creates or replaces);
+    # `goal_get` reads it back (status + token budget); `goal_complete` closes it
+    # out only when evidence confirms success. Distinct from `todo` (this
+    # thread's step checklist). The
+    # harness injects the active goal into context each turn and can auto-continue
+    # it when the thread goes idle, so keeping the objective current here is what
+    # keeps that loop on-target.
+    "goal_set",
+    "goal_get",
+    "goal_complete",
+    # Resumes a paused goal when the user's message continues it; the turn
+    # start no longer resumes one on any message.
+    "goal_resume",
+    # Workflow composition. `run_workflow` runs another workflow as a
+    # subagent and (by default) waits on its result like a function call;
+    # `await_workflow` re-attaches to a run that outlived its inline wait.
+    # `list_workflows` / `describe_workflow` let the orchestrator discover
+    # what's installed and learn a workflow's inputs before running it; the
+    # `*_run*` read tools let it inspect a run's status + log. All route
+    # through `workflows::schemas::spawn_skill_run_background` +
+    # `await_run_outcome` — the same spawn path the `openhuman.skills_run`
+    # JSON-RPC controller uses (iter cap, transcript isolation,
+    # degenerate-response detector all apply).
+    "list_workflows",
+    "describe_workflow",
+    "list_workflow_runs",
+    "read_workflow_run_log",
+    "run_workflow",
+    "await_workflow",
+    # Self-update — lets the orchestrator answer "am I up to date" /
+    # "update OpenHuman" without sending the user to Settings →
+    # Developer Options. `update_check` is read-only; `update_apply`
+    # is dangerous, requires explicit user consent through
+    # `ask_user_clarification`, and respects
+    # `config.update.rpc_mutations_enabled`. Implementation re-uses
+    # `crates/openhuman-core/src/platform/update/` end-to-end — no parallel release logic.
+    "update_check",
+    "update_apply",
+    # NOTE: `generate_presentation` is intentionally NOT listed here — deck
+    # generation policy (grounding, citations, image verification) belongs to
+    # `presentation_agent`, which the orchestrator reaches via
+    # `spawn_subagent(agent_id = "presentation_agent")`. Listing it directly is asserted against in
+    # tests/in_process/orchestrator_presentation_wiring.rs.
+]

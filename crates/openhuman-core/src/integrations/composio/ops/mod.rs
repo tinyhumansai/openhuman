@@ -19,36 +19,39 @@
 //! | `execute`         | `composio_execute`                                                 |
 //! | `triggers`        | GitHub repos + trigger CRUD + trigger history                      |
 //! | `providers_ops`   | `composio_get_user_profile`, `composio_refresh_all_identities`     |
-//! | `sync`            | `composio_sync`, `run_sync_pass` (connector records → memory)      |
 //! | `direct_mode`     | `composio_get_mode`, `composio_set_api_key`, `_clear_...`          |
-//! | `user_scopes`     | per-toolkit agent scope prefs, in a workspace JSON file            |
-//! | `pass_failure`    | when a connector pass failed; the sync retry schedule (openhuman#6255) |
+//! | `scope_prefs`     | per-toolkit agent scope prefs, forwarded to the connector module   |
 
 mod connections;
 mod direct_mode;
 mod error_utils;
 mod execute;
-mod pass_failure;
 mod providers_ops;
-mod sync;
+mod scope_prefs;
 mod toolkits;
 mod tools_ops;
 mod triggers;
-mod user_scopes;
 
 // ── Public re-exports (match original ops.rs public surface) ───────────────
 
+#[cfg(feature = "flows")]
+pub(crate) use connections::flow_connection_entries;
+#[cfg(all(test, feature = "flows"))]
+pub(crate) use connections::title_case_toolkit;
 pub use connections::{
     active_connection_ids, composio_authorize, composio_delete_connection,
-    composio_list_connections,
+    composio_list_connections, ComposioDeleteResult,
 };
-pub use direct_mode::{composio_clear_api_key, composio_get_mode, composio_set_api_key};
+pub use direct_mode::{
+    clear_composio_api_key, composio_clear_api_key, composio_get_mode, composio_set_api_key,
+    get_composio_api_key, rpc_store_composio_api_key, store_composio_api_key,
+    COMPOSIO_DIRECT_PROVIDER,
+};
 pub(crate) use error_utils::{report_composio_op_error, should_forward_tags};
 pub use execute::composio_execute;
 pub use providers_ops::{
     composio_get_user_profile, composio_refresh_all_identities, RefreshIdentitiesReport,
 };
-pub use sync::{composio_sync, run_sync_pass, SyncPassOutcome, SYNC_PASS_MAX_ITEMS};
 pub use toolkits::{
     composio_list_agent_ready_toolkits, composio_list_capabilities, composio_list_toolkits,
 };
@@ -59,17 +62,18 @@ pub use triggers::{
     composio_list_triggers,
 };
 // The `composio.{get,set}_user_scopes` handlers' storage half.
-pub(crate) use user_scopes::{
-    load_or_default as load_user_scope_pref, save as save_user_scope_pref,
+pub(crate) use scope_prefs::{
+    ensure_migrated as ensure_user_scopes_migrated, load as load_user_scope_pref,
+    save as save_user_scope_pref,
 };
 
 // ── Re-export connected_integrations public items ──────────────────────────
 // (originally at the bottom of ops.rs)
 
 pub use super::connected_integrations::{
-    cached_active_integrations, cached_active_integrations_including_expired, connected_set_hash,
-    fetch_connected_integrations, fetch_connected_integrations_status,
-    invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
+    cached_active_integrations, connected_set_hash, fetch_connected_integrations,
+    fetch_connected_integrations_status, invalidate_connected_integrations_cache,
+    FetchConnectedIntegrationsStatus,
 };
 
 // ── Type aliases re-exported for callers ──────────────────────────────────
@@ -83,7 +87,7 @@ pub(crate) use super::connected_integrations::cache_key;
 #[cfg(test)]
 pub(crate) use super::connected_integrations::{CachedIntegrations, INTEGRATIONS_CACHE};
 #[cfg(test)]
-pub(crate) use crate::agent::prompts::ConnectedIntegration;
+pub(crate) use crate::integrations::ConnectedIntegration;
 #[cfg(test)]
 pub(crate) use std::time::{Duration, Instant};
 
@@ -93,17 +97,12 @@ pub(crate) use super::connected_integrations::sync_cache_with_connections;
 #[cfg(test)]
 pub(crate) use crate::config::Config;
 #[cfg(test)]
-pub(crate) use crate::integrations::composio::providers::SyncReason;
-#[cfg(test)]
 pub(crate) use connections::enrich_connections_with_identity;
 #[cfg(test)]
 pub(crate) use error_utils::{
-    backend_mode_without_session, classify_composio_failure_tag, direct_mode_without_key,
-    extract_backend_returned_status,
+    backend_mode_without_session, classify_composio_failure_tag, composio_op_report_message,
+    direct_mode_without_key, extract_backend_returned_status,
 };
-#[cfg(test)]
-pub(crate) use sync::parse_sync_reason;
-
 #[cfg(test)]
 #[path = "../ops_tests.rs"]
 mod tests;

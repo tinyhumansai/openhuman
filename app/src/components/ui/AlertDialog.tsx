@@ -54,7 +54,7 @@ export interface AlertDialogContentProps extends ComponentPropsWithoutRef<
   /**
    * Portal target. Defaults to `document.body`.
    *
-   * Same reason `DialogContent` takes one: the mascot, notch and overlay
+   * Same reason `DialogContent` takes one: the mascot and overlay
    * windows are transparent panels rendering their own React root, and a scrim
    * portalled into their `document.body` paints an opaque sheet over a window
    * that is supposed to be see-through. Those roots pass their own container.

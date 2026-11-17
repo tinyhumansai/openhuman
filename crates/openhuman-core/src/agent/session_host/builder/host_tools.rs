@@ -31,7 +31,6 @@ use std::sync::Arc;
 
 use tinytools::Tool;
 
-use crate::agent::tool_policy::ToolPolicy;
 use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use anyhow::Result;
@@ -62,7 +61,13 @@ pub struct HostTurnTools {
     /// enforce one through the session's tool policy.
     pub withheld: HashSet<String>,
     /// The session's admission gate, if the host sets one.
-    pub policy: Option<Arc<dyn ToolPolicy>>,
+    pub policy: Option<
+        Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    >,
 }
 
 impl HostTurnTools {
@@ -88,7 +93,7 @@ impl HostTurnTools {
     /// specifically, and a host that cannot override a tool it collides with
     /// has no way to correct one.
     ///
-    /// First and not last because [`dedup_visible_tool_specs`] keeps the first
+    /// First and not last because TinyAgents' `dedup_visible_tool_specs` keeps the first
     /// occurrence. Appending would advertise the config-derived spec while the
     /// host believed it had replaced it -- the model told about one tool and a
     /// different one answering, which is the version of this bug that is
@@ -97,7 +102,8 @@ impl HostTurnTools {
     /// Returns `None` for an empty belt, which is also a host that supplied no
     /// gate: there is nothing to admit.
     ///
-    /// [`dedup_visible_tool_specs`]: super::dedup_visible_tool_specs
+    /// Tool schema deduplication is owned by
+    /// `tinyagents_runtime::dedup_visible_tool_specs`.
     pub(super) fn merge_into(
         self,
         agent_id: &str,
@@ -135,7 +141,7 @@ impl HostTurnTools {
             0..0,
             self.tools.into_iter().map(|tool| {
                 if permanent.contains(tool.name()) {
-                    Box::new(super::permanent_tool::PermanentTool(tool)) as Box<dyn Tool>
+                    Box::new(tinyagents_runtime::PermanentTool(tool)) as Box<dyn Tool>
                 } else {
                     tool
                 }
@@ -171,7 +177,14 @@ impl HostTurnTools {
     /// session should keep an existing policy for calls the host does not own,
     /// the host composes the two and passes the result here.
     #[must_use]
-    pub fn with_policy(mut self, policy: Arc<dyn ToolPolicy>) -> Self {
+    pub fn with_policy(
+        mut self,
+        policy: Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    ) -> Self {
         self.policy = Some(policy);
         self
     }
@@ -190,18 +203,34 @@ impl HostTurnTools {
 /// The parts of a host turn belt that the session builder applies after
 /// expanding the agent's static scope.
 pub(super) struct MergedHostTurnTools {
-    pub policy: Option<Arc<dyn ToolPolicy>>,
+    pub policy: Option<
+        Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    >,
     pub withheld: HashSet<String>,
     pub permanent: HashSet<String>,
     pub scope_additions: HashSet<String>,
 }
 
+pub(super) fn add_permanent_tools(
+    mut definition: crate::agent_registry::host_definition::AgentDefinition,
+    permanent: &HashSet<String>,
+) -> crate::agent_registry::host_definition::AgentDefinition {
+    definition.extra_tools.extend(permanent.iter().cloned());
+    definition.extra_tools.sort();
+    definition.extra_tools.dedup();
+    definition
+}
+
 pub(super) fn scope_def(
-    definition: Option<&crate::agent::harness::definition::AgentDefinition>,
+    definition: Option<&crate::agent_registry::host_definition::AgentDefinition>,
     host_tools: &MergedHostTurnTools,
-) -> Option<crate::agent::harness::definition::AgentDefinition> {
+) -> Option<crate::agent_registry::host_definition::AgentDefinition> {
     let mut definition = definition.cloned()?;
-    if let crate::agent::harness::definition::ToolScope::Named(names) = &mut definition.tools {
+    if let tinyagents_definition::ToolScope::Named(names) = &mut definition.tools {
         names.retain(|name| !host_tools.withheld.contains(name));
         definition
             .extra_tools
@@ -215,17 +244,21 @@ pub(super) fn scope_def(
     Some(definition)
 }
 
-pub(super) fn merge_for_turn(
+pub(super) async fn merge_for_turn(
+    dispatch: &crate::core::runtime::DispatchCtx,
     host: Option<&HostTools>,
     agent_id: &str,
     session_id: Option<&str>,
     tools: &mut Vec<Box<dyn Tool>>,
     visible: &mut HashSet<String>,
 ) -> Result<MergedHostTurnTools> {
-    match host
-        .map(|build| build(TurnContext::new(agent_id, session_id)))
-        .map(|host_tools| host_tools.merge_into(agent_id, tools, visible))
-    {
+    let host_tools = match host {
+        Some(build) => {
+            Some(build(TurnContext::new(agent_id, session_id).with_dispatch(dispatch)).await)
+        }
+        None => None,
+    };
+    match host_tools.map(|host_tools| host_tools.merge_into(agent_id, tools, visible)) {
         Some(merged) => merged,
         None => Ok(MergedHostTurnTools {
             policy: None,
@@ -265,11 +298,22 @@ impl std::fmt::Debug for HostTurnTools {
 /// Non-exhaustive: this describes an occasion, and occasions gain detail.
 /// Construct it with [`TurnContext::new`] and read it through the accessors so
 /// a later field cannot break a host that matched on it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 #[non_exhaustive]
 pub struct TurnContext<'a> {
     agent_id: &'a str,
     session_id: Option<&'a str>,
+    dispatch: Option<&'a crate::core::runtime::DispatchCtx>,
+}
+
+impl std::fmt::Debug for TurnContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnContext")
+            .field("agent_id", &self.agent_id)
+            .field("session_id", &self.session_id)
+            .field("dispatch", &self.dispatch.is_some())
+            .finish()
+    }
 }
 
 impl<'a> TurnContext<'a> {
@@ -279,7 +323,26 @@ impl<'a> TurnContext<'a> {
         Self {
             agent_id,
             session_id,
+            dispatch: None,
         }
+    }
+
+    /// The same occasion, built under `dispatch`: the context of the session
+    /// being assembled, which a belt that reads the acting tenant takes it from.
+    #[must_use]
+    pub fn with_dispatch(mut self, dispatch: &'a crate::core::runtime::DispatchCtx) -> Self {
+        self.dispatch = Some(dispatch);
+        self
+    }
+
+    /// The context this turn is built under: the one named by
+    /// [`with_dispatch`](Self::with_dispatch), else the calling task's own (an
+    /// occasion built without one).
+    #[must_use]
+    pub fn dispatch_ctx(&self) -> crate::core::runtime::DispatchCtx {
+        self.dispatch
+            .cloned()
+            .unwrap_or_else(|| crate::core::runtime::DispatchCtx::from_weak(None))
     }
 
     /// The agent definition this turn runs as.
@@ -309,7 +372,9 @@ impl<'a> TurnContext<'a> {
 /// belt it was built with.
 ///
 /// See [`TurnContext`] for what the factory is told about the occasion.
-pub type HostTools = Arc<dyn for<'a> Fn(TurnContext<'a>) -> HostTurnTools + Send + Sync>;
+pub type HostTools = Arc<
+    dyn for<'a> Fn(TurnContext<'a>) -> futures::future::BoxFuture<'a, HostTurnTools> + Send + Sync,
+>;
 
 /// The constructor the host-tools seam exists for, kept beside the types it
 /// takes rather than with the config-derived constructors it sits among.
@@ -335,13 +400,15 @@ impl OpenHumanSessionHost {
     ///
     /// `session_id` is the conversation this turn runs in, reaching the
     /// factory as [`TurnContext::session_id`]; `None` when none is named yet.
-    pub fn from_config_with_host_tools(
+    pub async fn from_config_with_host_tools(
+        ctx: &crate::core::runtime::DispatchCtx,
         config: &Config,
-        definition: &crate::agent::harness::definition::AgentDefinition,
+        definition: &crate::agent_registry::host_definition::AgentDefinition,
         host: &super::HostTools,
         session_id: Option<&str>,
     ) -> Result<Self> {
         OpenHumanSessionHost::build_session_agent_inner(
+            ctx,
             config,
             &definition.id,
             Some(definition),
@@ -349,26 +416,58 @@ impl OpenHumanSessionHost {
             Some(host),
             session_id,
         )
+        .await
     }
-}
 
-/// Compose the host belt before adding the remaining product configuration.
-pub(super) fn tool_builder(
-    host: Option<&HostTools>,
-    agent_id: &str,
-    session_id: Option<&str>,
-    mut tools: Vec<Box<dyn Tool>>,
-    mut visible: HashSet<String>,
-) -> Result<super::super::SessionHostBuilder> {
-    let merged = merge_for_turn(host, agent_id, session_id, &mut tools, &mut visible)?;
-    let mut builder = OpenHumanSessionHost::builder()
-        .tools(tools)
-        .visible_tool_names(visible)
-        .withheld_tool_names(merged.withheld)
-        .permanent_tool_names(merged.permanent);
-    // A supplied gate retains the existing replacement semantics.
-    if let Some(policy) = merged.policy {
-        builder = builder.tool_policy(policy);
+    /// Build a session agent from a definition the caller already holds,
+    /// rather than an id resolved through `AgentDefinitionRegistry::current()`
+    /// or `config.agent_registry`.
+    ///
+    /// The definition is authoritative for this agent's prompt, tool scope,
+    /// sandbox mode and delegation allowlist; it is stamped on the session so
+    /// in-turn readers ([`OpenHumanSessionHost::resolved_definition`]) never fall back to a
+    /// registry entry that happens to share its id. This is the constructor a
+    /// library host uses to run many independently specified agents on one
+    /// booted core.
+    pub async fn from_config_with_definition(
+        ctx: &crate::core::runtime::DispatchCtx,
+        config: &Config,
+        definition: &crate::agent_registry::host_definition::AgentDefinition,
+    ) -> Result<Self> {
+        log::debug!(
+            "[agent] from_config_with_definition id={} sandbox={:?}",
+            definition.id,
+            definition.sandbox_mode,
+        );
+        OpenHumanSessionHost::build_session_agent_inner(
+            ctx,
+            config,
+            &definition.id,
+            Some(definition),
+            false,
+            None,
+            None,
+        )
+        .await
     }
-    Ok(builder)
+
+    pub(crate) async fn from_config_with_definition_and_turn_model_source(
+        ctx: &crate::core::runtime::DispatchCtx,
+        config: &Config,
+        definition: &crate::agent_registry::host_definition::AgentDefinition,
+        source: crate::agent::tinyagents::TurnModelSource,
+        model: String,
+    ) -> Result<Self> {
+        OpenHumanSessionHost::build_session_agent_inner_with_turn_model_source(
+            ctx,
+            config,
+            &definition.id,
+            Some(definition),
+            false,
+            None,
+            None,
+            Some((source, model)),
+        )
+        .await
+    }
 }

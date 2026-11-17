@@ -6,7 +6,7 @@
 use crate::core::legacy_aliases::resolve_legacy;
 use crate::core::rpc_log;
 use crate::core::types::{AppState, InvocationResult};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 /// Dispatches an RPC method call to the appropriate subsystem.
 ///
@@ -27,6 +27,7 @@ use serde_json::{json, Map, Value};
 /// A `Result` containing the JSON-formatted response or an error message if
 /// the method is unknown or invocation fails.
 pub async fn dispatch(
+    ctx: crate::core::runtime::DispatchCtx,
     state: AppState,
     method: &str,
     params: serde_json::Value,
@@ -78,7 +79,7 @@ pub async fn dispatch(
     }
 
     // Tier 2: Registered domain controllers.
-    if let Some(result) = try_registry_dispatch(method, params).await {
+    if let Some(result) = try_registry_dispatch(ctx, method, params).await {
         log::debug!(
             "[rpc:dispatch] routed method={} subsystem=controller_registry",
             method
@@ -122,17 +123,6 @@ pub const UNKNOWN_METHOD_PREFIX: &str = "unknown method: ";
 /// This also covers retired feature calls from older clients when no safe
 /// canonical handler exists (#3565: `openhuman.memory_tree_create_namespace`).
 ///
-/// `openhuman.harness_init_status` (#5157) is in the list for a *different*
-/// reason and must not be read as retired — it is a **live, registered**
-/// method (`harness_init::all_harness_init_registered_controllers`, tagged
-/// `DomainGroup::Platform`). It only misses when the caller and the running
-/// core disagree about the surface: an older core behind a newer UI bundle, a
-/// runtime `DomainSet` without `Platform` (e.g. `DomainSet::harness()`), or a
-/// slim feature build. Those are legitimate configurations, not core defects,
-/// so the miss stays debug-only — but do **not** delete the controller on the
-/// strength of this entry. `harness_init_status_is_registered_in_a_full_build`
-/// below pins that the method really is served, so a genuine regression fails
-/// a test instead of being silently swallowed by this allow-list.
 ///
 /// Each miss previously produced recurring Sentry events with zero user
 /// impact. The transport layer keeps these debug-only (never captured). The
@@ -145,7 +135,6 @@ const KNOWN_PROBE_METHODS: &[&str] = &[
     "auth.status",
     "config/get",
     "openhuman.memory_tree_create_namespace",
-    "openhuman.harness_init_status",
 ];
 
 /// Returns `true` when `method` is a known non-actionable unknown method name
@@ -194,8 +183,11 @@ fn try_core_dispatch(
 /// middleware as the rest of `/rpc`) and then opens
 /// `/events?client_id=<id>&token=<bind>`. The `/events` handler removes
 /// the token from the store on first use, so a leaked URL cannot be
-/// replayed by a second subscriber.
-fn handle_events_subscribe_token(params: serde_json::Value) -> Result<InvocationResult, String> {
+/// replayed by a second subscriber. The store is the server's, reached
+/// through the [`event_bind_tokens`](crate::core::event_bind_tokens) hook.
+pub(crate) fn handle_events_subscribe_token(
+    params: serde_json::Value,
+) -> Result<InvocationResult, String> {
     let obj = params.as_object();
     let client_id = obj
         .and_then(|m| m.get("client_id"))
@@ -214,15 +206,21 @@ fn handle_events_subscribe_token(params: serde_json::Value) -> Result<Invocation
         .and_then(|v| v.as_u64())
         .map(std::time::Duration::from_secs);
 
-    let issued =
-        crate::core::event_bind_tokens::issue(client_id.to_string(), ttl).ok_or_else(|| {
+    use crate::core::event_bind_tokens::{mint, MintError};
+    let issued = mint(client_id.to_string(), ttl).map_err(|error| match error {
+        MintError::AtCapacity => {
             log::warn!(
                 "[events-bind] reject mint: store at capacity (client_id_len={} ttl_secs={:?})",
                 client_id.len(),
                 ttl.map(|d| d.as_secs())
             );
             "events bind-token store at capacity; try again shortly".to_string()
-        })?;
+        }
+        MintError::NoServer => {
+            log::warn!("[events-bind] reject mint: no server installed a bind-token store");
+            "events bind tokens need the core's HTTP server, which is not running".to_string()
+        }
+    })?;
 
     let ttl_remaining_secs = issued
         .valid_until
@@ -243,40 +241,24 @@ fn handle_events_subscribe_token(params: serde_json::Value) -> Result<Invocation
 }
 
 async fn try_registry_dispatch(
+    ctx: crate::core::runtime::DispatchCtx,
     method: &str,
     params: Value,
 ) -> Option<Result<serde_json::Value, String>> {
-    let schema = crate::core::all::schema_for_rpc_method(method)?;
-    let params_obj = match params_to_object(params) {
+    let Some(schema) = crate::core::all::schema_for_rpc_method(method) else {
+        // Hidden because a `[components]` switch is off: say so, rather than
+        // reporting a method that exists as unknown.
+        return crate::core::all::disabled_component_for_method(&ctx, method)
+            .map(|name| Err(crate::core::runtime::components::component_disabled(name).encode()));
+    };
+    let params_obj = match crate::core::params::params_to_object(params) {
         Ok(params_obj) => params_obj,
         Err(err) => return Some(Err(err)),
     };
     if let Err(err) = crate::core::all::validate_params(&schema, &params_obj) {
         return Some(Err(err));
     }
-    crate::core::all::try_invoke_registered_rpc(method, params_obj).await
-}
-
-fn params_to_object(params: Value) -> Result<Map<String, Value>, String> {
-    match params {
-        Value::Object(map) => Ok(map),
-        Value::Null => Ok(Map::new()),
-        other => Err(format!(
-            "invalid params: expected object or null, got {}",
-            type_name(&other)
-        )),
-    }
-}
-
-fn type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
+    crate::core::all::try_invoke_registered_rpc(ctx, method, params_obj).await
 }
 
 #[cfg(test)]

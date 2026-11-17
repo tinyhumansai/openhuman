@@ -51,6 +51,10 @@ pub enum HarnessError {
     )]
     AlreadyRunning,
 
+    /// Removing an agent failed to confirm cleanup of its captured MCP owner.
+    #[error("MCP cleanup remains pending: {0}")]
+    McpCleanup(#[source] tinybus::module::ModuleCallError),
+
     /// A builder input could not be honoured.
     #[error("{0}")]
     Invalid(String),
@@ -77,6 +81,10 @@ impl From<crate::RuntimeError> for HarnessError {
             R::AlreadyRunning => Self::AlreadyRunning,
             R::Invalid(msg) => Self::Invalid(msg),
             R::BlankApiKey => Self::Invalid(err_text(&R::BlankApiKey)),
+            R::NoSessionStore => Self::Invalid(err_text(&R::NoSessionStore)),
+            R::MissingFeature { .. } | R::MissingStorageFeature { .. } => {
+                Self::Invalid(err_text(&err))
+            }
         }
     }
 }
@@ -86,10 +94,17 @@ impl From<crate::AgentError> for HarnessError {
         use crate::AgentError as A;
         match err {
             A::Call(e) => Self::Call(e),
+            A::McpCleanup(e) => Self::McpCleanup(e),
             A::Workspace { what, source } => Self::Workspace { what, source },
-            A::DuplicateId(_) | A::InvalidId { .. } | A::WidensRuntime(_) => {
-                Self::Invalid(err_text(&err))
-            }
+            A::DuplicateId(_)
+            | A::InvalidId { .. }
+            | A::WidensRuntime(_)
+            | A::ReservedId(_)
+            | A::AgentLimit { .. }
+            | A::CleanupPending
+            | A::UnknownId(_)
+            | A::UnknownTemplate(_)
+            | A::UnknownDefinition(_) => Self::Invalid(err_text(&err)),
             A::Invalid(msg) => Self::Invalid(msg),
         }
     }

@@ -11,8 +11,9 @@ use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 use super::super::client::{direct_list_connections, resolve_composio_route, ComposioRoute};
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::ComposioConnectionsResponse;
+use tinyconnectors_bus::names::methods;
 
 pub struct ComposioListConnectionsTool {
     /// Held instead of a pre-resolved route so the
@@ -50,7 +51,7 @@ impl Tool for ComposioListConnectionsTool {
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&config, outcome)
+        redact_composio_outcome(&config, outcome).await
     }
 }
 
@@ -84,7 +85,7 @@ impl ComposioListConnectionsTool {
                 );
             }
         };
-        let mut resp = match resolve_composio_route(&live_config) {
+        let mut resp = match resolve_composio_route(&live_config).await {
             Ok(ComposioRoute::Backend) => {
                 tracing::debug!("[composio] list_connections.execute: backend variant");
                 match connectors::call_bare::<ComposioConnectionsResponse>(
@@ -100,9 +101,9 @@ impl ComposioListConnectionsTool {
             }
             Ok(ComposioRoute::Direct(direct)) => {
                 tracing::debug!("[composio-direct] list_connections.execute: direct variant");
-                match direct_list_connections(&live_config, &direct)
-                    .await
-                    .map_err(|e| {
+                match direct_list_connections(&live_config, &direct).await {
+                    Ok(response) => response,
+                    Err(e) => {
                         // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
                         // routing with `ops.rs::composio_list_connections`.
                         // The agent-tool path can also fire 401s when a
@@ -116,11 +117,9 @@ impl ComposioListConnectionsTool {
                             "[composio-direct] composio_list_connections (direct) failed: {e:#}"
                         );
                         let rendered =
-                            redact_and_report(&live_config, "list_connections", &rendered);
-                        anyhow::anyhow!("{rendered}")
-                    }) {
-                    Ok(resp) => resp,
-                    Err(e) => return (live_config, Err(e)),
+                            redact_and_report(&live_config, "list_connections", &rendered).await;
+                        return (live_config, Err(anyhow::anyhow!("{rendered}")));
+                    }
                 }
             }
             Err(e) => {

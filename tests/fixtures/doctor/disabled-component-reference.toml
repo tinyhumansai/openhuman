@@ -1,0 +1,15 @@
+api_url = "__MOCK_BACKEND_URL__"
+default_model = "e2e-mock-model"
+default_temperature = 0.2
+
+[secrets]
+encrypt = false
+
+[components]
+memory = false
+
+[memory]
+engine = "cortexdb"
+
+[storage]
+url = "memory"

@@ -127,7 +127,7 @@ async fn back_up_previous(config_path: &Path, backup_path: &Path) {
     let Ok(existing) = fs::read_to_string(config_path).await else {
         return;
     };
-    let Ok(mut previous) = toml::from_str::<crate::config::Config>(&existing) else {
+    let Ok(mut previous) = super::parse::config_from_toml_str(&existing) else {
         // Unparseable, so it cannot be checked for at-rest secrets and cannot
         // be trusted not to hold one. It is also worthless to recovery, which
         // parses what it finds here.
@@ -142,7 +142,7 @@ async fn back_up_previous(config_path: &Path, backup_path: &Path) {
     previous.config_path = config_path.to_path_buf();
 
     let mut upgraded = previous.clone();
-    if let Err(e) = super::secrets::encrypt_config_secrets(&mut upgraded) {
+    if let Err(e) = super::secrets::encrypt_config_secrets(&mut upgraded).await {
         tracing::debug!(
             path = %config_path.display(),
             error = %e,

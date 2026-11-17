@@ -1,19 +1,32 @@
 //! [`ApprovalSecurityMiddleware`]: route external-effect tool calls through
 //! OpenHuman's human-in-the-loop approval gate at the tool boundary.
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use tinyagents_harness::context::RunContext;
-use tinyagents_harness::middleware::{ApprovalResolution, ApprovalResolver};
+use tinyagents_harness::middleware::{
+    ApprovalExecutionOutcome, ApprovalResolution, ApprovalResolver,
+};
 use tinyinference_llm::tool::ToolCall as TaToolCall;
 use tinytools::ToolResult as TaToolResult;
 
-use crate::security::approval::{
-    redact_args, summarize_action, ApprovalGate, ExecutionOutcome, GateOutcome,
-};
+use crate::security::approval::{summarize_action, ApprovalGate, ExecutionOutcome, GateOutcome};
 use tinytools::Tool;
+
+pub(super) fn approval_resolution_without_gate(
+    state: Option<crate::security::approval::gate::ApprovalGateBootState>,
+) -> ApprovalResolution {
+    if state.is_some_and(|state| state.disabled_by_env) {
+        ApprovalResolution::Allow { ticket: None }
+    } else {
+        ApprovalResolution::Deny {
+            reason: "Approval unavailable; external-effect tool was denied.".to_string(),
+        }
+    }
+}
 
 /// `wrap_tool`: route OpenHuman's human-in-the-loop **approval gate** through a
 /// named tinyagents tool middleware (issue #4249, Phase 1). A tool with an
@@ -75,7 +88,12 @@ impl ApprovalSecurityMiddleware {
             .unwrap_or(false)
     }
 
-    pub(crate) async fn requires_approval(&self, name: &str, args: &serde_json::Value) -> bool {
+    pub(crate) async fn requires_approval(
+        &self,
+        dispatch: &DispatchCtx,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> bool {
         #[cfg(feature = "modules")]
         let desktop_approval_disabled = match self
             .tool_sets
@@ -83,30 +101,82 @@ impl ApprovalSecurityMiddleware {
             .flat_map(|set| set.iter())
             .find(|tool| tool.name() == name)
         {
-            Some(tool) => crate::desktop::control::approvals_disabled_for(tool.as_ref()).await,
+            Some(tool) => {
+                crate::desktop::control::approvals_disabled_for(dispatch, tool.as_ref()).await
+            }
             None => false,
         };
         #[cfg(not(feature = "modules"))]
         let desktop_approval_disabled = false;
         self.has_external_effect(name, args) && !desktop_approval_disabled
     }
+
+    /// Resolve one call against an explicit gate. Tests and embedded runners
+    /// use this to preserve the turn's approval routing context without
+    /// installing a process-global gate.
+    pub(crate) async fn resolve_on(
+        &self,
+        gate: &ApprovalGate,
+        ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        call: &TaToolCall,
+    ) -> ApprovalResolution {
+        let approval_name = approval_tool_name(&call.name, &call.arguments);
+        let summary = summarize_action(&call.name, &call.arguments);
+        let (outcome, request_id) = gate
+            .intercept_audited_for_call(
+                &ctx.data.approval,
+                approval_name.as_ref(),
+                &summary,
+                call.arguments.clone(),
+                (!call.id.trim().is_empty()).then_some(call.id.as_str()),
+            )
+            .await;
+        match outcome {
+            GateOutcome::Deny { reason } => ApprovalResolution::Deny { reason },
+            GateOutcome::Allow => ApprovalResolution::Allow { ticket: request_id },
+        }
+    }
+
+    /// Persist the engine's terminal result through the explicit gate used for
+    /// the call. The harness cannot retract a completed tool result, so a
+    /// failed required audit write is latched for subsequent admissions.
+    pub(crate) fn record_terminal_on(
+        gate: &ApprovalGate,
+        ticket: &str,
+        outcome: ApprovalExecutionOutcome<'_>,
+    ) {
+        let (execution, error) = match outcome {
+            ApprovalExecutionOutcome::Result(result) if result.is_error => {
+                (ExecutionOutcome::Failure, Some(result.output()))
+            }
+            ApprovalExecutionOutcome::Result(_) => (ExecutionOutcome::Success, None),
+            ApprovalExecutionOutcome::Failed(_) => (ExecutionOutcome::Failure, None),
+            ApprovalExecutionOutcome::Cancelled(_)
+            | ApprovalExecutionOutcome::Control(_)
+            | ApprovalExecutionOutcome::Abandoned => (ExecutionOutcome::Aborted, None),
+            _ => (ExecutionOutcome::Aborted, None),
+        };
+        let _ = gate.record_execution_required(ticket, execution, error.as_deref());
+    }
 }
 
 /// Host side of the harness approval seam: the tool-set lookup, the global
 /// [`ApprovalGate`] hookup and the terminal audit row. The harness
-/// `ApprovalGateMiddleware` drives it (see `harness_assembly`).
+/// `ApprovalGateMiddleware` drives it (see `turn_middleware`).
 #[async_trait]
 impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
     for ApprovalSecurityMiddleware
 {
     async fn requires_approval(
         &self,
-        _ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         call: &TaToolCall,
     ) -> bool {
         // Resolve external-effect up front so no tool borrow is held across the
         // approval await.
-        let has_ext = self.requires_approval(&call.name, &call.arguments).await;
+        let has_ext = self
+            .requires_approval(&ctx.data.dispatch_ctx(), &call.name, &call.arguments)
+            .await;
         tracing::debug!(
             tool = %call.name,
             has_external_effect = has_ext,
@@ -117,15 +187,24 @@ impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
 
     async fn resolve(
         &self,
-        _ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         call: &TaToolCall,
     ) -> ApprovalResolution {
         let Some(gate) = ApprovalGate::try_global() else {
-            tracing::warn!(
+            let resolution =
+                approval_resolution_without_gate(crate::security::approval::gate::try_boot_state());
+            if matches!(resolution, ApprovalResolution::Allow { .. }) {
+                tracing::info!(
+                    tool = %call.name,
+                    "[tinyagents::mw] approval gate explicitly disabled by operator"
+                );
+                return resolution;
+            }
+            tracing::error!(
                 tool = %call.name,
-                "[tinyagents::mw] approval gate unavailable; external-effect tool will run without interactive approval"
+                "[tinyagents::mw] approval gate unavailable; denying external-effect tool"
             );
-            return ApprovalResolution::Allow { ticket: None };
+            return resolution;
         };
         let approval_name = approval_tool_name(&call.name, &call.arguments);
         tracing::debug!(
@@ -134,9 +213,13 @@ impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
             "[tinyagents::mw] routing external-effect tool through approval gate"
         );
         let summary = summarize_action(&call.name, &call.arguments);
-        let redacted = redact_args(&call.arguments);
         let (outcome, request_id) = gate
-            .intercept_audited(approval_name.as_ref(), &summary, redacted)
+            .intercept_audited(
+                &ctx.data.approval,
+                approval_name.as_ref(),
+                &summary,
+                call.arguments.clone(),
+            )
             .await;
         match outcome {
             GateOutcome::Deny { reason } => {

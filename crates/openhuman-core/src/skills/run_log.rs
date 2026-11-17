@@ -1,25 +1,181 @@
 //! Per-run streaming logs for `skills_run`.
 //!
-//! Each run writes a human-readable trace to
-//! `<workspace>/skills/.runs/<skill>_<UTC-ts>_<run>.log`: a header (skill,
-//! inputs, task prompt), one line per agent step (tool calls + results,
-//! sub-agent lifecycle, iteration boundaries) streamed live off the agent's
-//! [`AgentProgress`] channel, then a footer (status, duration, final output).
+//! Each run writes a human-readable trace to a host-owned storage stream: a
+//! header (skill, inputs, task prompt), one line per agent step (tool calls +
+//! results, sub-agent lifecycle, iteration boundaries) streamed live off the
+//! agent's [`AgentProgress`] channel, then a footer (status, duration, final
+//! output). The historical `log_path` field carries an opaque stream id.
 //!
-//! `.runs` is a sibling of the runtime skill *definitions* (`<workspace>/
-//! skills/<id>/`) so run logs never collide with a skill-id directory.
-
+//! The `skills.runs.` stream prefix keeps run logs separate from skill
+//! definitions and other host streams.
 use std::collections::HashMap;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
+use serde::Serialize;
 use serde_json::Value;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::progress::AgentProgress;
+use crate::progress::AgentProgress;
+use crate::storage::StorageError;
+
+pub use tinyskills::run_log::{detect_repeated_line, RunLogSlice, RunOutcome};
+use tinyskills::run_log::{parse_runs, parse_terminal_outcome, short, truncate};
+
+type RunLogStore = tinyskills_drivers::StreamRunLogStore;
+
+/// One host-visible run. `log_path` is an opaque stream identifier retained
+/// under the historical JSON field name for clients that tail a run.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScannedRun {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub started: String,
+    pub status: String,
+    pub duration_ms: Option<u64>,
+    pub finished: Option<String>,
+    pub log_path: String,
+}
+
+fn run_log_store(workspace: &Path) -> anyhow::Result<RunLogStore> {
+    let opened = crate::storage::local::open("skills::run_log", workspace)?;
+    let storage = opened.scoped()?;
+    let prepared = storage.clone();
+    let scope = opened.scope.to_storage_scope();
+    crate::storage::block_on(async move {
+        crate::storage::boot::prepare_scope(&prepared, &scope).await?;
+        Ok(())
+    })?;
+    Ok(RunLogStore::new(Arc::clone(storage.streams())))
+}
+
+fn stream_id(path: &Path) -> anyhow::Result<&str> {
+    let id = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("run-log stream id is not UTF-8"))?;
+    if !id.starts_with("skills.runs.") {
+        anyhow::bail!("invalid run-log stream id");
+    }
+    Ok(id)
+}
+
+fn io_error(error: impl std::fmt::Display) -> io::Error {
+    io::Error::other(error.to_string())
+}
+
+fn read_full(store: &RunLogStore, id: &str) -> Result<String, io::Error> {
+    let mut text = String::new();
+    let mut offset = 0;
+    loop {
+        let store = store.clone();
+        let id = id.to_owned();
+        let page = crate::storage::block_on(async move {
+            store
+                .read_slice(&id, offset, 64 * 1024)
+                .await
+                .map_err(|error| StorageError::backend(error.to_string()))
+        })
+        .map_err(io_error)?;
+        offset = page.offset;
+        text.push_str(&page.content);
+        if page.eof || page.bytes_read == 0 {
+            return Ok(text);
+        }
+    }
+}
+
+/// The host's old log-directory surface is retained only to build a stable
+/// opaque stream identifier; no filesystem directory is created or read.
+pub fn runs_dir(workspace: &Path) -> PathBuf {
+    workspace.join("skills").join(".runs")
+}
+
+/// Find a run's opaque stream identifier by its run id.
+pub fn find_run_log_path(workspace: &Path, run_id: &str) -> Option<PathBuf> {
+    scan_runs(workspace, None, usize::MAX)
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .map(|run| PathBuf::from(run.log_path))
+}
+
+/// Read the full terminal outcome for a persisted run stream.
+pub fn read_terminal_outcome(workspace: &Path, path: &Path) -> Option<RunOutcome> {
+    let id = stream_id(path).ok()?;
+    let store = run_log_store(workspace).ok()?;
+    let text = read_full(&store, id).ok()?;
+    parse_terminal_outcome(&text)
+}
+
+/// Scan persisted run streams, preserving the historical newest-first order.
+pub fn scan_runs(workspace: &Path, workflow_id: Option<&str>, limit: usize) -> Vec<ScannedRun> {
+    let store = match run_log_store(workspace) {
+        Ok(store) => store,
+        Err(error) => {
+            log::warn!("[skills::run_log] could not open run-log storage: {error:#}");
+            return Vec::new();
+        }
+    };
+    let runs = match crate::storage::block_on(async move {
+        store
+            .scan(None, usize::MAX)
+            .await
+            .map_err(|error| StorageError::backend(error.to_string()))
+    }) {
+        Ok(runs) => runs,
+        Err(error) => {
+            log::warn!("[skills::run_log] could not scan run logs: {error}");
+            return Vec::new();
+        }
+    };
+    let store = match run_log_store(workspace) {
+        Ok(store) => store,
+        Err(error) => {
+            log::warn!("[skills::run_log] could not reopen run-log storage: {error:#}");
+            return Vec::new();
+        }
+    };
+    let entries = runs
+        .into_iter()
+        .filter_map(|run| {
+            let text = read_full(&store, &run.stream_id).ok()?;
+            Some((run.stream_id, text))
+        })
+        .collect::<Vec<_>>();
+    parse_runs(entries, workflow_id, limit)
+        .into_iter()
+        .map(|run| ScannedRun {
+            run_id: run.run_id,
+            workflow_id: run.workflow_id,
+            started: run.started,
+            status: run.status,
+            duration_ms: run.duration_ms,
+            finished: run.finished,
+            log_path: run.stream_id,
+        })
+        .collect()
+}
+
+/// Read a byte-offset slice from a persisted run stream.
+pub fn read_run_log_slice(
+    workspace: &Path,
+    path: &Path,
+    offset: u64,
+    max_bytes: usize,
+) -> io::Result<RunLogSlice> {
+    let id = stream_id(path).map_err(io_error)?.to_owned();
+    let store = run_log_store(workspace).map_err(io_error)?;
+    crate::storage::block_on(async move {
+        store
+            .read_slice(&id, offset, max_bytes)
+            .await
+            .map_err(|error| StorageError::backend(error.to_string()))
+    })
+    .map_err(io_error)
+}
 
 /// Registry of in-flight workflow runs → their cancellation token. A run
 /// registers itself before executing and removes itself when it finishes; the
@@ -73,85 +229,79 @@ pub fn cancel_run(run_id: &str) -> bool {
     found
 }
 
-/// `<workspace>/skills/.runs`.
-pub fn runs_dir(workspace: &Path) -> PathBuf {
-    workspace.join("skills").join(".runs")
-}
-
-fn sanitize(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect()
-}
-
-fn short(s: &str) -> &str {
-    s.get(..8).unwrap_or(s)
-}
-
-/// `<runs_dir>/<skill>_<UTC ts>_<short run id>.log`.
+/// `<runs_dir>/<skill>_<UTC ts>_<short run id>.log`, stamped with the host clock.
 pub fn run_log_path(workspace: &Path, workflow_id: &str, run_id: &str) -> PathBuf {
-    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    runs_dir(workspace).join(format!(
-        "{}_{}_{}.log",
-        sanitize(workflow_id),
-        ts,
-        sanitize(short(run_id))
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let _ = workspace;
+    PathBuf::from(format!(
+        "skills.runs.{}.{}.{}",
+        tinyskills::run_log::sanitize(workflow_id),
+        tinyskills::run_log::sanitize(&ts),
+        tinyskills::run_log::sanitize(run_id)
     ))
 }
 
-async fn append(path: &Path, line: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await.ok();
-    }
-    let mut f = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await?;
-    f.write_all(line.as_bytes()).await?;
-    if !line.ends_with('\n') {
-        f.write_all(b"\n").await?;
-    }
-    f.flush().await
-}
-
-fn truncate(s: &str, n: usize) -> String {
-    let s = s.replace('\n', " ");
-    if s.chars().count() > n {
-        format!("{}…", s.chars().take(n).collect::<String>())
-    } else {
-        s
-    }
-}
-
-/// Write the run header (skill, inputs, the resolved task prompt).
+/// Write the run header, stamped with the host clock.
 pub async fn write_header(
+    workspace: &Path,
     path: &Path,
     workflow_id: &str,
     run_id: &str,
     inputs: &Value,
     task_prompt: &str,
 ) -> std::io::Result<()> {
-    let header = format!(
-        "==== workflow_run: {skill} ====\n\
-         run_id : {run}\n\
-         started: {start} UTC\n\
-         inputs : {inputs}\n\n\
-         --- task prompt ---\n{prompt}\n\n\
-         --- steps ---",
-        skill = workflow_id,
-        run = run_id,
-        start = chrono::Utc::now().to_rfc3339(),
-        inputs = serde_json::to_string(inputs).unwrap_or_default(),
-        prompt = task_prompt,
-    );
-    append(path, &header).await
+    let started = chrono::Utc::now().to_rfc3339();
+    let id = stream_id(path).map_err(io_error)?;
+    let timestamp = id
+        .strip_prefix("skills.runs.")
+        .and_then(|tail| tail.split('.').nth(1))
+        .ok_or_else(|| io_error("invalid run-log stream id"))?;
+    let store = run_log_store(workspace).map_err(io_error)?;
+    let workflow_id = workflow_id.to_owned();
+    let run_id = run_id.to_owned();
+    let timestamp = timestamp.to_owned();
+    let inputs = inputs.clone();
+    let task_prompt = task_prompt.to_owned();
+    let created = crate::storage::block_on(async move {
+        store
+            .start(
+                &workflow_id,
+                &run_id,
+                &timestamp,
+                &started,
+                &inputs,
+                &task_prompt,
+            )
+            .await
+            .map_err(|error| StorageError::backend(error.to_string()))
+    })
+    .map_err(io_error)?;
+    if created != id {
+        return Err(io_error("run-log stream id did not match the requested id"));
+    }
+    Ok(())
+}
+
+/// Write the final footer, stamped with the host clock.
+pub async fn write_footer(
+    workspace: &Path,
+    path: &Path,
+    status: &str,
+    elapsed_ms: u64,
+    output: &str,
+) -> std::io::Result<()> {
+    let finished = chrono::Utc::now().to_rfc3339();
+    let id = stream_id(path).map_err(io_error)?.to_owned();
+    let store = run_log_store(workspace).map_err(io_error)?;
+    let status = status.to_owned();
+    let output = output.to_owned();
+    crate::storage::block_on(async move {
+        store
+            .finish(&id, &status, elapsed_ms, &finished, &output)
+            .await
+            .map_err(|error| StorageError::backend(error.to_string()))
+    })
+    .map_err(io_error)
 }
 
 /// One log line for a step, or `None` for events too noisy to log per-event
@@ -163,6 +313,7 @@ pub fn format_event(ev: &AgentProgress) -> Option<String> {
             iteration,
             max_iterations,
         } => format!("· iteration {iteration}/{max_iterations}"),
+        AgentProgress::ContextCompacting => "· summarizing earlier conversation".to_string(),
         AgentProgress::ToolCallStarted {
             tool_name,
             arguments,
@@ -221,13 +372,18 @@ pub fn format_event(ev: &AgentProgress) -> Option<String> {
             "  ⮑ subagent {agent_id} awaiting user: {}",
             truncate(question, 200)
         ),
-        AgentProgress::TurnCompleted { iterations } => {
+        AgentProgress::TurnCompleted {
+            iterations,
+            stop: Some(stop),
+        } => format!("turn {} ({iterations} iterations)", stop.status_message()),
+        AgentProgress::TurnCompleted { iterations, .. } => {
             format!("turn completed ({iterations} iterations)")
         }
         // Noisy / non-step events — skipped (the final text is in the footer).
         AgentProgress::TextDelta { .. }
         | AgentProgress::ThinkingDelta { .. }
         | AgentProgress::ToolCallArgsDelta { .. }
+        | AgentProgress::ToolCallProgress { .. }
         | AgentProgress::TurnCostUpdated { .. }
         | AgentProgress::ModelCallCompleted { .. }
         | AgentProgress::SubagentTextDelta { .. }
@@ -243,348 +399,52 @@ pub fn format_event(ev: &AgentProgress) -> Option<String> {
 }
 
 /// Drain the progress channel to the log until the agent drops its sender.
-pub async fn drain_to_log(mut rx: Receiver<AgentProgress>, path: PathBuf) {
+/// Returns how the run's turn was stopped early, if its `TurnCompleted` said
+/// so, so the caller can write a `STOPPED` footer instead of `DONE`.
+pub async fn drain_to_log(
+    mut rx: Receiver<AgentProgress>,
+    workspace: PathBuf,
+    path: PathBuf,
+) -> Option<tinyagents_harness::turn_stop::TurnStop> {
+    let store = match run_log_store(&workspace) {
+        Ok(store) => store,
+        Err(error) => {
+            log::warn!("[skills::run_log] could not open run-log storage: {error:#}");
+            return None;
+        }
+    };
+    let id = match stream_id(&path) {
+        Ok(id) => id.to_owned(),
+        Err(error) => {
+            log::warn!("[skills::run_log] invalid run-log stream: {error:#}");
+            return None;
+        }
+    };
+    let mut stop = None;
     while let Some(ev) = rx.recv().await {
         if let Some(line) = format_event(&ev) {
-            let _ = append(&path, &line).await;
-        }
-    }
-}
-
-/// Detect the degenerate "model emitted the same paragraph many times in one
-/// generation" final-response failure mode we keep seeing on autonomous runs
-/// (e.g. `"Now I understand the structure..." × 23`, `"Good, the repo is
-/// cloned. Let me narrow down..." × 8`). When this fires we don't want the
-/// autonomous-skill path to mark the run `DONE` and have callers treat the
-/// degenerate text as a real result — we want it surfaced as `DEGENERATE` with
-/// the offending line attached, so the caller can retry / fail loud.
-///
-/// Splits on line boundaries (each repeat we've observed lands on its own
-/// line or paragraph), trims, counts non-trivial lines (`>= min_len` chars),
-/// and returns the most-repeated line if its count reaches `min_count`.
-pub fn detect_repeated_line(
-    text: &str,
-    min_len: usize,
-    min_count: usize,
-) -> Option<(String, usize)> {
-    use std::collections::HashMap;
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    for line in text.lines() {
-        let t = line.trim();
-        if t.len() >= min_len {
-            *counts.entry(t).or_insert(0) += 1;
-        }
-    }
-    counts
-        .into_iter()
-        .filter(|(_, c)| *c >= min_count)
-        .max_by_key(|(_, c)| *c)
-        .map(|(line, count)| (line.to_string(), count))
-}
-
-/// One run extracted from a `.runs/<skill>_<utc>_<run>.log` file. Built by
-/// [`scan_runs`] for the `openhuman.skills_recent_runs` RPC + the Skills
-/// Runner panel's "Recent runs" section. Status is `RUNNING` until the
-/// footer block (`--- result ---` + `status: …` + `duration: … ms`) lands.
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
-pub struct ScannedRun {
-    pub run_id: String,
-    pub workflow_id: String,
-    /// Header `started:` timestamp (RFC3339); empty if header was malformed.
-    pub started: String,
-    /// `"DONE"` / `"DEGENERATE"` / `"FAILED"` / `"RUNNING"` (running ⇔ no footer yet).
-    pub status: String,
-    /// Footer `duration: <ms> ms`, parsed; `None` while running.
-    pub duration_ms: Option<u64>,
-    /// Footer `finished:` timestamp; `None` while running.
-    pub finished: Option<String>,
-    /// Absolute path to the streaming log file — what the FE shows for
-    /// "view full log" or future tail-streaming.
-    pub log_path: String,
-}
-
-/// Scan `<workspace>/skills/.runs/` for run-log files, parse their header +
-/// footer, and return a vec sorted by `started` *descending* (most-recent
-/// first). When `workflow_id` is `Some(_)`, only entries whose header
-/// `workflow_id` matches are returned. `limit` caps the result (post-filter,
-/// post-sort) so the panel can render a short list cheaply. Malformed
-/// files are skipped silently — never blocks the response.
-pub fn scan_runs(workspace: &Path, workflow_id: Option<&str>, limit: usize) -> Vec<ScannedRun> {
-    let dir = runs_dir(workspace);
-    let mut runs: Vec<ScannedRun> = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return runs;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".log") {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let mut sid = String::new();
-        let mut rid = String::new();
-        let mut started = String::new();
-        let mut status = String::from("RUNNING");
-        let mut duration_ms: Option<u64> = None;
-        let mut finished: Option<String> = None;
-        let mut seen_result = false;
-        // The on-disk format from `write_header` / `write_footer` is
-        // label-then-colon-then-value, with the labels right-padded for
-        // visual alignment in the log — e.g. `status  : DONE`,
-        // `duration: 617236 ms`, `run_id : <uuid>`. Splitting on the FIRST
-        // `:` and trimming both halves is robust to that padding without
-        // hand-tracking each label's exact whitespace.
-        for line in text.lines() {
-            if line.starts_with("==== workflow_run:") {
-                // Header banner: `==== workflow_run: <id> ====`
-                sid = line
-                    .trim_start_matches("==== workflow_run:")
-                    .trim()
-                    .trim_end_matches('=')
-                    .trim()
-                    .to_string();
-                continue;
-            }
-            if line.starts_with("--- result ---") {
-                seen_result = true;
-                continue;
-            }
-            let Some((label_raw, value_raw)) = line.split_once(':') else {
-                continue;
-            };
-            let label = label_raw.trim();
-            let value = value_raw.trim();
-            match (label, seen_result) {
-                // Header fields (before --- result ---)
-                ("run_id", false) => rid = value.to_string(),
-                ("started", false) => started = value.to_string(),
-                // Footer fields (after --- result ---)
-                ("status", true) => status = value.to_string(),
-                ("duration", true) => {
-                    // Format: "<n> ms"
-                    let num = value.trim_end_matches(" ms").trim();
-                    if let Ok(n) = num.parse::<u64>() {
-                        duration_ms = Some(n);
-                    }
-                }
-                ("finished", true) => {
-                    finished = Some(value.trim_end_matches(" UTC").trim().to_string());
-                }
-                _ => {}
+            if let Err(error) = store.append_line(&id, &line).await {
+                log::warn!("[skills::run_log] append failed: {error}");
             }
         }
-        if sid.is_empty() || rid.is_empty() {
-            // Malformed header — skip rather than show a half-row.
-            continue;
-        }
-        if let Some(want) = workflow_id {
-            if sid != want {
-                continue;
-            }
-        }
-        runs.push(ScannedRun {
-            run_id: rid,
-            workflow_id: sid,
-            started,
-            status,
-            duration_ms,
-            finished,
-            log_path: path.to_string_lossy().into_owned(),
-        });
-    }
-    // Sort most-recent first by `started` (RFC3339 sorts lexicographically).
-    runs.sort_by(|a, b| b.started.cmp(&a.started));
-    runs.truncate(limit);
-    runs
-}
-
-/// Look up the on-disk log path for a given `run_id` by scanning the
-/// `<workspace>/skills/.runs/` directory. Used by
-/// `openhuman.skills_read_run_log` to resolve a stable id back to a path
-/// without trusting the caller to send one (no path-traversal surface).
-pub fn find_run_log_path(workspace: &Path, run_id: &str) -> Option<PathBuf> {
-    if run_id.is_empty() {
-        return None;
-    }
-    let dir = runs_dir(workspace);
-    let entries = std::fs::read_dir(&dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".log") {
-            continue;
-        }
-        // File names are `<skill>_<utc>_<run-id-prefix>.log`. The run-id
-        // prefix is the first 8 chars of the uuid (see
-        // `runs_dir`/`run_log_path` + `short` helper). Match against the
-        // prefix to avoid having to read the file's header.
-        let short = run_id.get(..8).unwrap_or(run_id);
-        if name.contains(&format!("_{short}.log")) {
-            return Some(path);
+        if let AgentProgress::TurnCompleted { stop: Some(s), .. } = &ev {
+            stop = Some(s.clone());
         }
     }
-    None
+    stop
 }
 
-/// Terminal outcome of a finished run, parsed from the `--- result ---`
-/// footer: the status word (`DONE` / `DEGENERATE` / `FAILED`) and the
-/// final output body that follows it. Used by `run_workflow` /
-/// `await_workflow` to hand the spawned run's result straight back to the
-/// orchestrator instead of making it scrape the log itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunOutcome {
-    pub status: String,
-    pub output: String,
-}
-
-/// Read a run-log file and, if the footer has landed, return the terminal
-/// status + final output body. Returns `None` while the run is still
-/// `RUNNING` (no footer yet) or the file is unreadable — callers poll on
-/// `None`. Mirrors the on-disk layout written by [`write_footer`]:
-///
-/// ```text
-/// --- result ---
-/// status  : DONE
-/// duration: 1234 ms
-/// finished: <rfc3339> UTC
-///
-/// <output body…>
-/// ```
-pub fn read_terminal_outcome(path: &Path) -> Option<RunOutcome> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let marker = "--- result ---";
-    let idx = text.find(marker)?;
-    let after = &text[idx + marker.len()..];
-    let mut status = String::new();
-    let mut saw_finished = false;
-    let mut lines = after.lines();
-    // Consume the footer header lines (status/duration/finished); the first
-    // blank line after `finished:` separates them from the output body.
-    for line in lines.by_ref() {
-        let Some((label, value)) = line.split_once(':') else {
-            // A line without a colon before `finished:` means a malformed
-            // footer — bail rather than mis-slice the body.
-            if line.trim().is_empty() {
-                continue;
-            }
-            break;
-        };
-        match label.trim() {
-            "status" => status = value.trim().to_string(),
-            "finished" => {
-                saw_finished = true;
-                break;
-            }
-            _ => {}
-        }
-    }
-    // Require BOTH `status:` and the closing `finished:` line — write_footer
-    // emits `finished:` last, so its absence means we raced a partially
-    // written (or malformed) footer and the run isn't actually terminal yet.
-    if status.is_empty() || !saw_finished {
-        return None;
-    }
-    // Everything past the footer header is the final output body.
-    let output = lines.collect::<Vec<_>>().join("\n").trim().to_string();
-    Some(RunOutcome { status, output })
-}
-
-/// Read a slice of a run log file. Returns the bytes from `offset`
-/// forward, capped at `max_bytes`, plus `eof` (true if we hit end-of-
-/// file) and a flag indicating whether the `--- result ---` footer is
-/// present in the file as a whole (so the FE can stop polling). Used by
-/// `openhuman.skills_read_run_log` for the chat-style log viewer's
-/// scroll + tail behaviour.
-pub fn read_run_log_slice(
-    path: &Path,
-    offset: u64,
-    max_bytes: usize,
-) -> std::io::Result<RunLogSlice> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(path)?;
-    let file_size = f.metadata()?.len();
-    if offset >= file_size {
-        // No new bytes. Still return a (cheap) check for footer presence
-        // so the FE knows whether to keep polling.
-        let complete = file_has_footer(path)?;
-        return Ok(RunLogSlice {
-            offset,
-            bytes_read: 0,
-            content: String::new(),
-            eof: true,
-            complete,
-        });
-    }
-    f.seek(SeekFrom::Start(offset))?;
-    let want = ((file_size - offset).min(max_bytes as u64)) as usize;
-    let mut buf = vec![0u8; want];
-    f.read_exact(&mut buf)?;
-    let content = String::from_utf8_lossy(&buf).into_owned();
-    let bytes_read = buf.len() as u64;
-    let new_offset = offset + bytes_read;
-    let eof = new_offset >= file_size;
-    let complete = if eof {
-        // If we read to EOF, the slice itself tells us if the footer
-        // landed in our current chunk — otherwise re-scan from disk.
-        content.contains("\n--- result ---\n")
-            || content.starts_with("--- result ---\n")
-            || file_has_footer(path)?
-    } else {
-        // Mid-file read — cheap re-scan to know if we should keep polling.
-        file_has_footer(path)?
-    };
-    Ok(RunLogSlice {
-        offset: new_offset,
-        bytes_read,
-        content,
-        eof,
-        complete,
-    })
-}
-
-/// One slice of a run log file. `offset` is the *new* read cursor (the
-/// FE uses it as the next call's `offset` so successive reads tail
-/// cleanly). `complete` is true once the run footer landed — the FE can
-/// then stop the polling timer.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct RunLogSlice {
-    pub offset: u64,
-    pub bytes_read: u64,
-    pub content: String,
-    pub eof: bool,
-    pub complete: bool,
-}
-
-/// Cheap check for whether `path` contains the `--- result ---` footer
-/// anywhere. Reads the file once. Used to decide if the FE should keep
-/// polling.
-fn file_has_footer(path: &Path) -> std::io::Result<bool> {
-    let text = std::fs::read_to_string(path)?;
-    Ok(text.contains("\n--- result ---\n"))
-}
-
-/// Final footer: status, duration, and the agent's final output text.
-pub async fn write_footer(
-    path: &Path,
-    status: &str,
-    elapsed_ms: u64,
-    output: &str,
-) -> std::io::Result<()> {
-    let footer = format!(
-        "\n--- result ---\n\
-         status  : {status}\n\
-         duration: {elapsed_ms} ms\n\
-         finished: {fin} UTC\n\n{output}\n",
-        fin = chrono::Utc::now().to_rfc3339(),
-    );
-    append(path, &footer).await
+/// [`drain_to_log`] on its own task, acting for `ctx`. The log store resolves
+/// its storage scope from the acting context, so a bare spawn would write the
+/// steps under the default scope (or, in SaaS, fail closed) while the header
+/// sits under the dispatching tenant's.
+pub fn spawn_drain_to_log(
+    ctx: &crate::core::runtime::DispatchCtx,
+    rx: Receiver<AgentProgress>,
+    workspace: PathBuf,
+    path: PathBuf,
+) -> tokio::task::JoinHandle<Option<tinyagents_harness::turn_stop::TurnStop>> {
+    ctx.spawn(drain_to_log(rx, workspace, path))
 }
 
 #[cfg(test)]

@@ -6,7 +6,10 @@ fn layout_uses_agent_id_paths() {
     let layout = AgentLayout::resolve(ws, "alpha", PathBuf::from("/r/a"));
     assert_eq!(layout.home, Path::new("/r/workspace/agents/alpha"));
     assert_eq!(layout.skills, Path::new("/r/workspace/agents/alpha/skills"));
-    assert_eq!(layout.transcripts, Path::new("/r/workspace/session_raw"));
+    assert_eq!(
+        layout.transcripts,
+        Path::new("/r/workspace/agents/alpha/session_raw")
+    );
     assert_eq!(layout.action_dir, Path::new("/r/a"));
 }
 

@@ -7,15 +7,15 @@
 //! trying to trigger it — asking the agent to run `rm -rf` to see whether the
 //! deny rule fires — is the failure mode this surface exists to prevent.
 
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use tinyagents_runtime::command_hooks::context::TurnIdentity;
-use tinyagents_runtime::command_hooks::types::{HookEvent, HookPayload};
+use tinyagents_hooks::command::context::TurnIdentity;
+use tinyagents_hooks::command::types::{HookEvent, HookPayload};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![schemas("list"), schemas("reload"), schemas("test")]
@@ -104,19 +104,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_list(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { Ok(describe(super::host::engine().snapshot().await.as_ref())) })
 }
 
-fn handle_reload(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_reload(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        super::ops::init(&config).await;
+        let config = ctx.load_config().await?;
+        super::ops::init(&ctx, &config).await;
         Ok(describe(super::host::engine().snapshot().await.as_ref()))
     })
 }
 
-fn handle_test(params: Map<String, Value>) -> ControllerFuture {
+fn handle_test(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let event_name: String = read_required(&params, "event")?;
         let event = HookEvent::parse(&event_name).ok_or_else(|| {
@@ -135,7 +135,7 @@ fn handle_test(params: Map<String, Value>) -> ControllerFuture {
         )
         .map_err(|error| format!("invalid payload for '{event}': {error}"))?;
 
-        let input = tinyagents_runtime::command_hooks::context::build_input(
+        let input = tinyagents_hooks::command::context::build_input(
             event,
             TurnIdentity::default(),
             payload,
@@ -160,7 +160,7 @@ fn handle_test(params: Map<String, Value>) -> ControllerFuture {
 }
 
 /// Render a config for the wire, naming the source file of every definition.
-fn describe(config: &tinyagents_runtime::command_hooks::config::HookConfig) -> Value {
+fn describe(config: &tinyagents_hooks::command::config::HookConfig) -> Value {
     let by_event: Map<String, Value> = config
         .by_event
         .iter()
@@ -175,7 +175,7 @@ fn describe(config: &tinyagents_runtime::command_hooks::config::HookConfig) -> V
                         "timeout": definition.timeout,
                         "fail_closed": definition.fail_closed,
                         "enabled": definition.enabled,
-                        "layer": definition.layer.map(tinyagents_runtime::command_hooks::config::HookLayer::as_str),
+                        "layer": definition.layer.map(tinyagents_hooks::command::config::HookLayer::as_str),
                         "source_dir": definition.source_dir.as_ref().map(|dir| dir.display().to_string()),
                     })
                 })

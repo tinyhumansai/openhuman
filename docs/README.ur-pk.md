@@ -2,207 +2,378 @@
 
 <h1 align="center">OpenHuman</h1>
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/demo.png" alt="The Tet" />
-</p>
-
-<p align="center" style="display: inline-block">
-	<a href="https://trendshift.io/repositories/23680" target="_blank" style="display: inline-block">
-		<img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-	</a>
-	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-		<img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
-		</a>
-		<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-			<img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;t=1779351403565">
-		</a>
-</p>
-<p align="center" style="display: inline-block">
- <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-topic-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-  <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-topic-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;topic_id=268&amp;t=1779351808756">
-  </a>
-  <a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-topic-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
-   <img alt="OpenHuman - An open source AI harness built with the human in mind | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-topic-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;topic_id=46&amp;t=1779351808756">
-   </a>
- </p>
-
 </div>
 
 <div dir="rtl" lang="ur">
 
 <p align="center">
- <strong>OpenHuman آپ کی ذاتی AI سپر انٹیلی جنس ہے: ایک دماغ جو سب کچھ یاد رکھتا ہے، ایک شاندار آرکسٹریٹر، ایک گہرا محقق۔ مقامی اول، سادہ، طاقتور۔</strong>
-</p>
-
-<p align="center">
- <a href="https://guild.tinyhumans.ai/">ڈسکارڈ</a> •
- <a href="https://www.reddit.com/r/tinyhumansai/">ریڈٹ</a> •
- <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X/ٹویٹر</a> •
- <a href="https://tinyhumans.gitbook.io/openhuman/">دستاویزات</a> •
- <a href="https://x.com/intent/follow?screen_name=senamakel">فالو کریں @senamakel (مصنف)</a>
+ <strong>سب سے تیز، سستا اور موثر اوپن سورس ایجنٹ ہارنیس۔ صرف $10 کے VPS پر 500 سے زیادہ ایجنٹ چلائیں۔</strong><br/>
+ عام لوگوں کے لیے ڈیسک ٹاپ ایپ۔ ڈیولپرز کے لیے Rust لائبریری۔
 </p>
 
 </div>
 
 <div dir="ltr">
-
-<p align="center">
-  🇺🇸 <a href="../README.md">English</a> | 🇸🇦 <a href="./README.ar.md">العربية</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇵🇰 <a href="./README.ur-pk.md">اردو</a>
-</p>
 
 <p align="center">
  <img src="https://img.shields.io/badge/status-early%20beta-orange" alt="ابتدائی آزمائشی نسخہ" />
  <a href="https://github.com/tinyhumansai/openhuman/releases/latest"><img src="https://img.shields.io/github/v/release/tinyhumansai/openhuman?label=latest" alt="تازہ ترین نسخہ" /></a>
- <a href="https://github.com/tinyhumansai/openhuman"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="ستارے" /></a>
+ <a href="https://github.com/tinyhumansai/openhuman/stargazers"><img src="https://img.shields.io/github/stars/tinyhumansai/openhuman?style=flat" alt="گٹ ہب ستارے" /></a>
  <a href="../LICENSE"><img src="https://img.shields.io/github/license/tinyhumansai/openhuman" alt="لائسنس" /></a>
+ <a href="https://github.com/tinyhumansai/openhuman-benchmarks"><img src="https://img.shields.io/badge/benchmarks-public-brightgreen" alt="عوامی بینچ مارکس" /></a>
+</p>
+
+<p align="center">
+ <a href="https://tinyhumans.gitbook.io/openhuman/">دستاویزات</a> ·
+ <a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust کوئیک اسٹارٹ</a> ·
+ <a href="https://tinyhumansai.github.io/openhuman-benchmarks/">بینچ مارکس</a> ·
+ <a href="https://github.com/tinyhumansai/openhuman/discussions">گفتگو</a> ·
+ <a href="https://guild.tinyhumans.ai/">Discord</a> ·
+ <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> ·
+ <a href="https://x.com/intent/follow?screen_name=tinyhumansai">X</a> ·
+ <a href="https://x.com/intent/follow?screen_name=senamakel">@senamakel (خالق)</a>
+</p>
+
+<p align="center">
+ <img src="./demo.gif" alt="OpenHuman ڈیسک ٹاپ ایپ کی ایک جھلک" />
+</p>
+
+<p align="center">
+	<a href="https://trendshift.io/repositories/23680" target="_blank">
+		<img src="https://trendshift.io/api/badge/repositories/23680" alt="tinyhumansai%2Fopenhuman | Trendshift" width="250" height="55"/>
+	</a>
+	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
+		<img alt="OpenHuman on Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=daily&amp;t=1778916022823">
+	</a>
+	<a href="https://www.producthunt.com/products/openhuman?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-openhuman" target="_blank" rel="noopener noreferrer">
+		<img alt="OpenHuman on Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1136902&amp;theme=light&amp;period=weekly&amp;t=1779351403565">
+	</a>
+</p>
+
+<p align="center">
+  🇺🇸 <a href="../README.md">English</a> | 🇸🇦 <a href="./README.ar.md">العربية</a> | 🇨🇳 <a href="./README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./README.ko.md">한국어</a> | 🇩🇪 <a href="./README.de.md">Deutsch</a> | 🇹🇷 <a href="./README.tr.md">Türkçe</a> | 🇵🇰 <a href="./README.ur-pk.md"><strong>اردو</strong></a>
 </p>
 
 </div>
 
 <div dir="rtl" lang="ur">
 
-> **ابتدائی آزمائشی نسخہ**: فعال ترقی جاری ہے، بے ضابطگیوں کی توقع کریں۔
+> [!NOTE]
+> 🎉 لانچ کے ایک ہفتے کے اندر، OpenHuman مسلسل نو دن تک GitHub پر **نمبر ایک ٹرینڈنگ ریپوزٹری** رہا۔
 
-> 🎉 لانچ کے ایک ہفتے کے اندر، OpenHuman مسلسل نو دن تک GitHub پر نمبر ایک ٹرینڈنگ ریپوزٹری رہا۔
+> **ابتدائی آزمائشی نسخہ۔** OpenHuman پر فعال کام جاری ہے، اس لیے کچھ خامیوں کی توقع رکھیں۔
 
-# انسٹال کریں
+---
 
-انسٹالر [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) سے یا [GitHub ریلیز](https://github.com/tinyhumansai/openhuman/releases/latest) صفحے سے ڈاؤن لوڈ کریں۔
+## انسٹال کریں
 
-ٹرمینل انسٹال (Homebrew، Debian/Ubuntu `.deb`، AUR، انسٹال اسکرپٹس، اور پلیٹ فارم نوٹس) کے لیے **[INSTALL.md](../INSTALL.md)** دیکھیں۔
+سب سے آسان طریقہ یہ ہے کہ ڈیسک ٹاپ ایپ [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) یا [تازہ ترین ریلیز](https://github.com/tinyhumansai/openhuman/releases/latest) سے ڈاؤن لوڈ کریں۔ macOS کے لیے `.dmg`، Windows کے لیے `.msi` یا `.exe`، اور Linux کے لیے `.deb` یا `.AppImage` موجود ہے۔
 
-# OpenHuman کیا ہے؟
-
-OpenHuman تین چیزیں ہے جو زیادہ تر اسسٹنٹس نہیں ہیں: **ایک دماغ** جو آپ کی دنیا کی ایک مستقل، مقامی یادداشت بناتا ہے؛ **ایک شاندار آرکسٹریٹر** جو پائیدار گرافس پر ایجنٹس کے فلیٹس چلاتا ہے؛ اور **ایک گہرا محقق** جو آپ کے سوال مکمل کرنے سے پہلے آپ کے ڈیٹا اور ویب کا جائزہ لے لیتا ہے۔ ہر بلیٹ [دستاویزات](https://tinyhumans.gitbook.io/openhuman/) میں گہرائی سے تحریر کی طرف جاتا ہے۔
-
-### 🧠 دماغ
-
-- **[میموری](../gitbooks/features/memory.md)**: تبدیل ہونے والے انجن (ہوسٹڈ TinyHumans یا آپ کا اپنا CortexDB) پر Recall، Fetch اور Store۔ دستاویزات، گفتگو اور سیکھی ہوئی باتیں محفوظ ہوتی ہیں، جواب حوالوں کے ساتھ ملتے ہیں، اور ہر دور سے پہلے متعلقہ میموری پیک بازیافت کیا جاتا ہے۔
-- **[100+ OAuth انضمام، 5,000+ MCP سرورز، 90,000+ سکلز](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: ایک کلک سے Gmail، Notion، GitHub، Slack اور اپنے باقی اسٹیک میں پلگ ان کریں۔ [خودکار لانا](https://tinyhumans.gitbook.io/openhuman/features/memory) ہر 20 منٹ میں دماغ کو خوراک دیتا ہے۔ اس کے پاس آج صبح ہی کل کا سیاق و سباق ہوتا ہے۔
-- **[اہداف اور ٹوڈوز](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: فی تھریڈ پائیدار اہداف اور چیٹ میں دکھائی جانے والی ایجنٹ کی ٹوڈو فہرست۔
-- **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: ٹول آؤٹ پٹ ماڈل تک پہنچنے سے پہلے کمپریس ہوتا ہے: وہی معلومات، 80% تک کم ٹوکنز۔ اتنا بڑا دماغ اس کے بغیر ناقابلِ برداشت مہنگا ہوتا۔
-
-### 🕸️ آرکسٹریٹر
-
-- **[ورک فلوز](https://tinyhumans.gitbook.io/openhuman/features/workflows)**: ایجنٹ آٹومیشن تجویز کرتا ہے؛ آپ اسے کینوس پر جائزہ لے کر محفوظ کرتے ہیں۔ اوپن سورس [tinyflows](https://github.com/tinyhumansai/tinyflows) پر پائیدار، ٹرگر سے چلنے والے، منظوری سے محفوظ رنز۔
-- **[ایک ہارنس جو کام مکمل کرتا ہے](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**: اوپن سورس [tinyagents](https://github.com/tinyhumansai/tinyagents) پر چیک پوائنٹ شدہ گراف رنز۔ اٹکے ہوئے ایجنٹس کو راہ دکھائی جاتی ہے، رکے ہوئے بنیادی وجہ واپس دیتے ہیں، ہر رن حقیقی فی کال لاگت کے ساتھ دوبارہ چلایا جا سکتا ہے۔
-- **[ایک split brain، ہمیشہ فعال](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**: ایک تیز reflex ایجنٹ آنے والی ٹریفک کو چھانٹتا ہے جبکہ ایک گہرا reasoning کور ورکر فلیٹس کو کام سونپتا ہے، لاشعور کی رہنمائی میں۔
-
-### 🔬 گہرا محقق اور کام کرنے والا
-
-- **سب کچھ شامل ہے**: ویب سرچ، سکریپر، کوڈر ٹول سیٹ، ایک حقیقی [براؤزر](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)، بیک اینڈ کے ذریعے تقریر سے متن اور ہوسٹ شدہ یا مقامی Piper کے ذریعے متن سے تقریر کے ساتھ [مقامی آواز](../gitbooks/features/native-tools/voice.md)، اور ساتھ [ماڈل روٹنگ](https://tinyhumans.gitbook.io/openhuman/features/model-routing) جو ہر ورک لوڈ کے لیے صحیح LLM چنتی ہے، ایک سبسکرپشن، [مقامی AI اختیاری](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)۔
-- **[تصویر اور ویڈیو جنریشن](https://tinyhumans.gitbook.io/openhuman/features/native-tools)**: Seedream/SeedEdit تصاویر اور Seedance/Veo ویڈیو، براہ راست آپ کے ورک اسپیس میں، اسی سبسکرپشن پر۔
-- **[15 میسجنگ چینلز](https://tinyhumans.gitbook.io/openhuman/features/channels)**: Telegram، Discord، Slack، WhatsApp، Signal، iMessage… اور ساتھ **مقامی ای میل** (IMAP IDLE + SMTP)۔ آپ کا ایجنٹ آپ تک وہیں پہنچتا ہے جہاں آپ پہلے سے موجود ہیں۔
-
-### 🧍 انسانی، نجی، آپ کا اپنا
-
-- **سادہ، یوزر انٹرفیس اول اور انسانی**: انسٹال سے کام کرنے والے ایجنٹ تک چند کلکس میں، کوئی کنفیگ فائلیں نہیں، کوئی ٹرمینل نہیں۔ اور اس کا [ایک چہرہ](https://tinyhumans.gitbook.io/openhuman/features/mascot) ہے: ایک مسکاٹ جو بولتا ہے، ردعمل دیتا ہے، اور آپ کو یاد رکھتا ہے۔
-- **[پرائیویسی اور سیکیورٹی](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)**: ڈیوائس پر انکرپٹڈ ڈیٹا، منظوری کا دروازہ، OS-keyring رازداری، اختیاری سینڈ باکسنگ، اور ساتھ **[پرائیویسی موڈ](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)**: ایک سوئچ اور کوئی inference آپ کی مشین سے باہر نہیں جاتی، Rust کور میں نافذ۔
-- **[تھیمز اور تھیم اسٹوڈیو](https://tinyhumans.gitbook.io/openhuman/features/theming)**: پانچ تھیم خاندان اور ایک مکمل بصری ایڈیٹر، JSON کے طور پر قابلِ ایکسپورٹ۔
-
-## منٹوں میں سیاق و سباق، ہفتوں میں نہیں
-
-OpenHuman پہلا ایجنٹ ہارنس ہے جو منٹوں میں آپ کو جان لیتا ہے۔ کارپیتھی کے [LLM Knowledgebase](https://x.com/karpathy/status/2039805659525644595) سے متاثر۔ زیادہ تر ایجنٹ سرد شروع ہوتے ہیں۔ Hermes آپ کو کام کرتے دیکھ کر سیکھتا ہے؛ OpenClaw پلگ انز کا سیاق و سباق لانے کا انتظار کرتا ہے۔ کسی بھی طرح، آپ دن یا ہفتے گزارتے ہیں اس سے پہلے کہ ایجنٹ آپ کے اسٹیک کے بارے میں کافی جانے تاکہ حقیقی طور پر مفید ہو۔
+ٹرمینل پسند ہے؟ انسٹال اسکرپٹ آپ کے سسٹم کے لیے درست پیکیج چنتی ہے، اس کا چیک سم جانچتی ہے اور اسے انسٹال کر دیتی ہے:
 
 </div>
 
 <div dir="ltr">
 
+```bash
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
+```
+
 </div>
 
 <div dir="rtl" lang="ur">
 
-> OpenHuman دستاویزات، گفتگو اور سیکھی ہوئی باتیں میموری انجن میں رکھتا ہے اور حوالوں کے ساتھ سوالوں کے جواب دیتا ہے۔
+macOS اور Linux کی اسکرپٹ کیا کرے گی، یہ پہلے دیکھنے کے لیے کمانڈ کے آخر میں `bash -s -- --dry-run` لگائیں۔ دوسرے اختیارات اور مسائل کا حل [INSTALL.md](../INSTALL.md) میں ہے۔
 
-OpenHuman انتظار چھوڑ دیتا ہے۔ ذرائع (فولڈر، فائلیں، لنکس، GitHub، RSS، جڑی ہوئی ایپس) شامل کریں، وہ شیڈول پر سنک ہوتے ہیں، اور ایجنٹ [میموری](../gitbooks/features/memory.md) سے فوراً جواب دے سکتا ہے۔
+---
 
-صرف ایک سنک پاس میں، ایجنٹ کے پاس آپ کے ان باکس، کیلنڈر، ریپوز، دستاویزات، پیغامات کا مکمل (کمپریسڈ) سیاق و سباق ہوتا ہے۔ کوئی تربیتی مدت نہیں۔ کوئی "اسے کچھ ہفتے دو" نہیں۔ یہ آپ بن جاتا ہے، آپ کے کنٹرول میں۔
+## OpenHuman ہی کیوں؟
 
-## ایک آرکسٹریٹر، چیٹ بوٹ نہیں
+زیادہ تر ایجنٹ ہارنیس ہر ایجنٹ کے لیے ایک بھاری پروسیس چلاتے ہیں اور ہر کال پر بڑا پرامپٹ دوبارہ بھیجتے ہیں۔ OpenHuman وہی کام بہت کم وسائل میں کرتا ہے۔ یہ ایجنٹوں کے بڑے بیڑے کے لیے بنایا گیا واحد مکمل فیچرز والا اوپن سورس ہارنیس ہے: 500 ایجنٹ $10 کے سرور پر سما جاتے ہیں۔
 
-زیادہ تر ایجنٹ ہارنسز ایک لوپ میں ایک ایجنٹ چلاتے ہیں۔ OpenHuman ایک **[آرکسٹریٹر](https://tinyhumans.gitbook.io/openhuman/features/orchestration)** ہے:
+<table>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>تیز</h3>
+
+<p><a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md">بینچ مارک نتائج</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">کولڈ اسٹارٹ کے اعداد و شمار</a></p>
+
+<p>کوڈنگ کے کام تقریباً 20 سیکنڈ میں مکمل کرتا ہے، جو ہمارے آزمائے ہوئے سات AI ایجنٹ ٹولز میں سب سے تیز ہے۔ ایک سیکنڈ کے دسویں حصے میں شروع ہو جاتا ہے۔</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>سستا</h3>
+
+<p><a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md">لاگت اور ٹوکن ڈیٹا</a> · <a href="https://tinyhumans.gitbook.io/openhuman/features/token-compression">کمپریشن کیسے کام کرتی ہے</a></p>
+
+<p>عام ایجنٹ ٹول کے مقابلے میں 2.6 گنا کم ٹوکن استعمال کرتا ہے، اور ہمارے ٹیسٹ میں اس کا کل بل سب سے کم رہا۔</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>بڑے پیمانے پر موثر</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">بیڑے کی پیمائشیں</a> · <a href="https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/profile/docs/library-benchmarking.md">طریقہ کار</a></p>
+
+<p>عام ایجنٹ ٹول کے مقابلے میں تقریباً 8 گنا کم میموری اور CPU استعمال کرتا ہے۔ $10 کے سرور پر 500 سے زیادہ ایجنٹ چلائیں۔</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>ڈیولپرز کے لیے بنایا گیا</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust کوئیک اسٹارٹ</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">ایمبیڈنگ گائیڈ</a> · <a href="../crates/openhuman-embed/examples">مثالیں</a></p>
+
+<p>اسے Rust لائبریری کے طور پر استعمال کریں: ایجنٹ کو کسی بھی عام فنکشن کی طرح کال کریں، یا ایک چھوٹے سرور سے پورا بیڑا چلائیں۔</p>
+
+</td>
+
+</tr>
+
+</table>
 
 </div>
 
 <div dir="ltr">
 
 <p align="center">
- <img src="../gitbooks/.gitbook/assets/orchestration.png" alt="OpenHuman آرکسٹریشن کا خاکہ">
+ <img src="./oh-v-hermes.gif" alt="Hermes بمقابلہ OpenHuman" />
 </p>
 
 </div>
 
 <div dir="rtl" lang="ur">
 
-> ایجنٹ سے ایجنٹ میسجنگ Signal-پروٹوکول اینڈ ٹو اینڈ انکرپشن پر چلتی ہے، لہٰذا آپ کچھ بھی جوڑ سکتے ہیں (Claude Code، Codex، OpenClaw، Hermes) اور OpenHuman کو اپنے تمام ایجنٹس اور ٹولز کو آرکسٹریٹ کرنے کے لیے استعمال کر سکتے ہیں۔
+<p align="center"><em>ایک ہی پرامپٹ، ساتھ ساتھ: "ایجنٹ ہارنیس کے بارے میں ایک اینیمی کہانی لکھو، اسے HTML صفحے میں لکھو اور میرے لیے کھول دو۔"<br/>OpenHuman نے 20 سیکنڈ میں مکمل کیا، 15k ٹوکن اور $0.0054 لاگت کے ساتھ۔ Hermes نے 9 منٹ 40 سیکنڈ لیے، 37k ٹوکن اور $0.0082 لاگت کے ساتھ۔</em></p>
 
-- **گرافس، لوپس نہیں**: باریاں [tinyagents](https://github.com/tinyhumansai/tinyagents) پر چیک پوائنٹ شدہ گرافس کے طور پر چلتی ہیں: انسان کے لیے رکیں، ری اسٹارٹ سے بچ نکلیں، رن کے بیچ سے دوبارہ شروع ہوں۔
-- **ذیلی ایجنٹ فلیٹس**: ماہرین تین سطح گہرائی تک بنتے ہیں؛ اٹکے ہوئے ایجنٹ بنیادی وجہ کی رپورٹیں بن جاتے ہیں۔
-- **ایجنٹ سے ایجنٹ، انکرپٹڈ**: انسٹینسز ایک دوسرے کو Signal-پروٹوکول E2E سیشنز پر x402 ادائیگیوں کے ساتھ آرکسٹریٹ کرتے ہیں۔ کوئی سرور کبھی سادہ متن نہیں دیکھتا۔
+---
 
-## ورک فلوز جو آپ دیکھ سکتے ہیں
+## بڑی ایجادات
 
-n8n اور Zapier سے گہرے متاثر، [ورک فلوز](https://tinyhumans.gitbook.io/openhuman/features/workflows) وہی بصری، ٹرگر سے چلنے والی آٹومیشن آپ کے ایجنٹ تک لاتے ہیں۔ فرق یہ ہے کہ ایجنٹ انہیں آپ کے لیے بناتا ہے۔ کسی آٹومیشن کی درخواست کریں اور ایجنٹ ایک تجویز کرتا ہے: ایک [tinyflows](https://github.com/tinyhumansai/tinyflows) گراف جس کا آپ محفوظ کرنے سے پہلے بصری کینوس پر جائزہ لیتے ہیں۔
+زیادہ تر ایجنٹ ہارنیس ایک سادہ چکر ہیں: سب کچھ ماڈل کو بھیجو، انتظار کرو، دہراؤ۔ ایک ایجنٹ کے لیے یہ ٹھیک ہے، لیکن جلد ہی سست اور مہنگا ہو جاتا ہے، اور سینکڑوں ایجنٹ چلانے پر ناکام ہو جاتا ہے۔
+
+OpenHuman ان حصوں کو نئے سرے سے سوچتا ہے جن پر سب سے زیادہ خرچ آتا ہے: AI کو کتنا متن پڑھنا پڑتا ہے، وہ صحیح ٹول کیسے ڈھونڈتا ہے، فیچرز کیسے لوڈ ہوتے ہیں، اور پورے نظام کو کتنی مشین درکار ہے۔ نیچے دیے گئے چھ خیالات ہی اوپر بیان کی گئی رفتار اور بچت کی وجہ ہیں۔ تفصیل کے لیے ہر کارڈ دستاویزات سے جڑا ہے۔
+
+<table>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>RLM ٹوکن کمپریشن</h3>
+
+<p><a href="https://arxiv.org/abs/2512.24601">RLM مقالہ</a> · <a href="https://tinyhumans.gitbook.io/openhuman/features/token-compression">یہ کیسے کام کرتا ہے</a></p>
+
+<p><a href="https://arxiv.org/abs/2512.24601">Recursive Language Models</a> پر مبنی۔ ٹول کے بڑے نتائج AI کے پڑھنے سے پہلے کمپریس ہو جاتے ہیں۔ بہت بڑے نتائج کے لیے AI کو ایک ہینڈل ملتا ہے جس میں وہ سب کچھ پڑھنے کے بجائے تلاش کر سکتا ہے۔ کچھ بھی ضائع نہیں ہوتا۔</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>Jev: فوری اور درست ٹول سرچ</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/jev">Jev</a> · <a href="./plans/jev-tool-search-baseline.md">پیمائشیں</a></p>
+
+<p>Jev ایک چھوٹا ماڈل ہے جو 1,215 ٹولز میں سے صحیح ٹول ڈھونڈتا ہے۔ صحیح ٹول 86.8% مرتبہ اس کی اوپر کی تجاویز میں ہوتا ہے، جبکہ کی ورڈ سرچ میں یہ شرح 70.5% ہے۔</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>متحد Rust بس</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">پلگ اِن کیسے کام کرتے ہیں</a></p>
+
+<p>سرچ، دستاویزات یا آواز جیسا ہر فیچر ایک ہی Rust بس میں جڑتا ہے، یہ خیال <a href="https://packages.debian.org/stable/dbus">Linux سسٹم بس</a> سے لیا گیا ہے۔ فیچر صرف ضرورت پڑنے پر لوڈ ہوتا ہے، اور اگر کوئی ایک اٹک جائے تو باقی کام کرتے رہتے ہیں۔</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>گہرائی سے مربوط میموری</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/features/memory">میموری کیسے کام کرتی ہے</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/engines">میموری انجن</a></p>
+
+<p>میموری پہلے سے شامل ہے۔ ہر باری سے پہلے OpenHuman ٹوکن کی حد کے اندر صرف کام کی چیزیں چنتا ہے اور حوالوں کے ساتھ AI کو دے دیتا ہے۔ یہ بغیر کسی سیٹ اپ کے چلتی ہے، اور ایک سیٹنگ سے آپ کوئی دوسرا میموری انجن لگا سکتے ہیں۔</p>
+
+</td>
+
+</tr>
+
+<tr>
+
+<td width="50%" valign="top">
+
+<h3>براؤزر اور ڈیسک ٹاپ پر فوری کنٹرول</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer">براؤزر اور کمپیوٹر کنٹرول</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/jev">Jev</a></p>
+
+<p>ایجنٹ ایک اصل براؤزر اور آپ کی ڈیسک ٹاپ ایپس استعمال کرتا ہے۔ Jev اسکرین پر موجود بٹنوں میں سے ہر کلک چنتا ہے، اسکرین شاٹس کے بغیر۔ کسی بھی ادائیگی سے پہلے رک جاتا ہے۔</p>
+
+</td>
+
+<td width="50%" valign="top">
+
+<h3>پروگرام کے قابل Rust کور</h3>
+
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust کوئیک اسٹارٹ</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/performance">کارکردگی</a></p>
+
+<p>پورا ہارنیس ایک ہی پروسیس میں کمپائل شدہ Rust ہے، اس لیے ایک سیکنڈ کے دسویں حصے میں شروع ہوتا ہے اور ہلکا رہتا ہے: ہمارے کوڈنگ کاموں پر زیادہ سے زیادہ 68 MB۔ یہی کور ایک لائبریری بھی ہے۔ اپنے Rust کوڈ سے ایجنٹ کو کال کریں، یا ایک چھوٹے سرور پر سینکڑوں ایجنٹ ساتھ ساتھ چلائیں۔</p>
+
+</td>
+
+</tr>
+
+</table>
+
+---
+
+## بینچ مارکس
 
 </div>
 
 <div dir="ltr">
 
 <p align="center">
- <img src="../gitbooks/.gitbook/assets/workflows.png" alt="OpenHuman ورک فلو کینوس">
+ <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified رن swe-x86-1: OpenHuman بمقابلہ چھ دوسرے ہارنیس، دس پینلز میں" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+ </picture>
 </p>
 
 </div>
 
 <div dir="rtl" lang="ur">
 
-> ایجنٹ ورک فلو تجویز کرتا ہے؛ آپ کینوس پر اس کا جائزہ لیتے ہیں اور محفوظ کرتے ہیں۔
+ہم نے سات ہارنیس کو ایک ہی SWE-bench کاموں پر، ایک ہی ماڈل، API کلید اور کنٹینر کے ساتھ چلایا، اور ہر کال ناپی۔ سیٹ اپ اور نتائج [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks) میں عوامی ہیں، اس لیے کوئی بھی انہیں دوبارہ چلا سکتا ہے۔ تازہ ترین رن [`swe-x86-1`](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md) ہے، جس میں دس کام ہیں۔
 
-محفوظ شدہ ورک فلوز پائیدار اور ٹرگر سے چلنے والے ہوتے ہیں: یہ شیڈولز، ویب ہکس، یا چینل ایونٹس پر چلتے ہیں، ری اسٹارٹ سے بچ نکلتے ہیں، اور ضمنی اثرات کو منظوریوں کے پیچھے محفوظ رکھتے ہیں۔
+OpenHuman نے اپنے کام اوسط وقت کے آدھے سے بھی کم میں مکمل کیے، 2.6 گنا کم ٹوکن اور آٹھویں حصے کی میموری اور CPU کے ساتھ۔ اس نے 114 ماڈل کالز کیں جبکہ دوسروں نے 134 سے 212 کیں، اور اس کے پورے رن پر $0.05 لاگت آئی جبکہ دوسروں پر $0.08 سے $0.35۔
 
-## OpenHuman بمقابلہ دوسرے ایجنٹ ہارنسز
+یہ ہر قدم پر کم کام کر کے جیتتا ہے۔ کور ایک ہی پروسیس میں کمپائل شدہ Rust ہے، Node یا Python نہیں، اس لیے ماڈل کالز کے درمیان یہ بہت کم میموری اور تقریباً نہ ہونے کے برابر CPU استعمال کرتا ہے۔ یہ ساتوں میں سب سے چھوٹا پرامپٹ بھیجتا ہے، اپنے 20 ٹولز سمیت 4.6k ٹوکن، اس لیے ہر کال سستی ہوتی ہے اور جلد واپس آتی ہے (اوسط 1.65 سیکنڈ، یہ بھی سب سے تیز)۔ اسے جواب تک پہنچنے کے لیے کم کالز بھی چاہیے ہوتی ہیں، اور زیادہ تر بچت یہیں سے آتی ہے۔
 
-اعلیٰ سطحی موازنہ (مصنوعات تیار ہوتی ہیں، اس لیے ہر وینڈر کے خلاف تصدیق کریں)۔ OpenHuman کو **وینڈر پھیلاؤ کو کم سے کم کرنے**، **ورک فلو کے علم کو ڈیوائس پر رکھنے**، اور ایجنٹ کو آپ کے ڈیٹا کی **مستقل یادداشت** دینے کے لیے بنایا گیا ہے، نہ کہ صرف چیٹ۔
+| فی حل شدہ کام | OpenHuman (اوسط کے مقابلے میں) | باقی چھ کا اوسط | باقی چھ میں بہترین |
+| --- | --- | --- | --- |
+| کل وقت (p50) | **19.8 s** (2.3 گنا تیز) | 46.5 s | 28.4 s (OpenCode) |
+| ٹوکن | **167k** (2.6 گنا کم) | 435k | 370k (Codex) |
+| لاگت | **$0.0077** (-36%) | $0.012 | $0.0077 (OpenCode، برابر) |
+| زیادہ سے زیادہ میموری | **68 MB** (7.7 گنا کم) | 523 MB | 123 MB (Codex) |
+| CPU وقت | **1.3 s** (8 گنا کم) | 10.4 s | 2.9 s (DeepSeek Harness) |
+| سسٹم پرامپٹ | **4.6k ٹوکن** (-40%) | 7.7k | 6.2k (DeepSeek Harness) |
+
+---
+
+## صارفین کے لیے
+
+اگر آپ Claude Code، Codex، OpenClaw یا Hermes استعمال کرتے ہیں تو آپ یہ خیالات پہلے سے جانتے ہیں: ٹولز کے ساتھ ایجنٹ لوپ، MCP، اسکلز، BYOK ماڈلز اور میموری۔ OpenHuman میں یہ سب موجود ہیں، ڈیسک ٹاپ ایپ، ٹرمینل ایپ یا بغیر اسکرین کے سرور میں۔
+
+| صلاحیت | OpenHuman میں کیا شامل ہے |
+| --- | --- |
+| ترتیب دینے کے قابل میموری | [آپ کی فائلوں، ریپوز، فیڈز اور ایپس پر بلٹ اِن میموری](https://tinyhumans.gitbook.io/openhuman/features/memory)، ہر باری سے پہلے حوالوں کے ساتھ یاد کی جاتی ہے، آپ کے چنے ہوئے میموری انجن پر |
+| وائس ایجنٹس | ایک [لائیو وائس ایجنٹ](https://tinyhumans.gitbook.io/openhuman/features/native-tools/voice) جسے آپ بات کے بیچ میں روک سکتے ہیں، ساتھ ڈکٹیشن اور بولے گئے جوابات |
+| کمپیوٹر اور براؤزر کنٹرول | [اصل Chrome براؤزر اور آپ کی ڈیسک ٹاپ ایپس چلاتا ہے](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)، ایسی کسی بھی چیز سے پہلے پوچھتا ہے جو واپس نہ ہو سکے |
+| سرچ | [سرچ انجن اور سرچ ایجنٹس](https://tinyhumans.gitbook.io/openhuman/features/native-tools/web-search): Exa اور Gemini شامل ہیں، Brave، Tavily، Parallel اور مزید آپ کی اپنی کلید کے ساتھ، حوالوں کے ساتھ مستند جوابات اور Deep Research |
+| ٹولز | [نیٹو ٹولز](https://tinyhumans.gitbook.io/openhuman/features/native-tools): شیل اور کوڈر، اسکریپر، دستاویزات، تصویر اور ویڈیو بنانا، cron |
+| MCP اور اسکلز | [MCP سرورز اور اسکل بنڈلز](https://tinyhumans.gitbook.io/openhuman/features/integrations/mcp-and-skills) |
+| OAuth انٹیگریشنز | [Composio کے ذریعے 119 ایپس](https://tinyhumans.gitbook.io/openhuman/features/integrations)، [ٹرگرز](https://tinyhumans.gitbook.io/openhuman/features/integrations/triggers) کے ساتھ جو کچھ ہونے پر ایجنٹ کو شروع کر دیتے ہیں |
+| ماڈلز | [لوکل ماڈلز (Ollama، LM Studio، MLX) اور 26 فراہم کنندگان کے لیے BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models)، [خودکار ماڈل روٹنگ](https://tinyhumans.gitbook.io/openhuman/features/model-routing) کے ساتھ |
+| چینلز | ایجنٹ کے فرنٹ اینڈ کے طور پر [14 میسجنگ چینلز](https://tinyhumans.gitbook.io/openhuman/features/channels): Telegram، Discord، iMessage، ای میل اور مزید |
+| ورک فلوز | [پائیدار ورک فلو گراف](https://tinyhumans.gitbook.io/openhuman/features/workflows): cron، ایونٹ یا دستی ٹرگرز، منظوری کے مراحل، وقفے کے بعد دوبارہ شروع |
+| حفاظت | [منظوری کا گیٹ](https://tinyhumans.gitbook.io/openhuman/features/approval-gate)، [سینڈ باکس میں عمل](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security) (OS جیل یا Docker)، صرف مقامی رن کے لیے [پرائیویسی موڈ](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)، رازوں کے لیے [OS کی رنگ](https://tinyhumans.gitbook.io/openhuman/features/os-keyring-and-secret-storage) |
+| استعمال کی ٹریکنگ | [فی کال لاگت اور ٹوکن کا استعمال](https://tinyhumans.gitbook.io/openhuman/features/billing-and-usage)، ساتھ دوبارہ چلانے کے قابل رن جرنلز |
+
+[شروعات](https://tinyhumans.gitbook.io/openhuman/overview/getting-started) یا [گائیڈز](https://tinyhumans.gitbook.io/openhuman/guides) سے آغاز کریں۔
+
+---
+
+## ڈیولپرز کے لیے
+
+OpenHuman لائبریری کو ترجیح دینے والا ہارنیس ہے۔ اسے اپنے Rust پروجیکٹ میں شامل کریں اور ایجنٹ کو کسی بھی عام فنکشن کی طرح کال کریں، کوئی سائیڈ کار یا ڈیمن چلانے کی ضرورت نہیں۔ ایک رن ٹائم سینکڑوں ایجنٹ سنبھال سکتا ہے، ہر ایک کا اپنا ماڈل، ٹولز، میموری اور سینڈ باکس۔ ان میں سے 500 $10 کے VPS پر سما جاتے ہیں، اس لیے ہر گاہک کے لیے ایک ایجنٹ والی پروڈکٹ کلسٹر کے بغیر شروع ہو سکتی ہے۔
 
 </div>
 
 <div dir="ltr">
 
-|                    | Claude Cowork            | OpenClaw            | Hermes Agent        | OpenHuman                                                                                              |
-| ------------------ | ------------------------ | ------------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
-| **اوپن سورس**      | 🚫 ملکیتی                | ✅ MIT              | ✅ MIT              | ✅ GNU                                                                                                 |
-| **شروع کرنا آسان** | ✅ ڈیسک ٹاپ + کمانڈ لائن | ⚠️ پہلے ٹرمینل      | ⚠️ پہلے ٹرمینل      | ✅ صاف یوزر انٹرفیس، منٹوں میں                                                                         |
-| **لاگت**           | ⚠️ سبسکرپشن + ایڈ آنز    | ⚠️ اپنے ماڈل        | ⚠️ اپنے ماڈل        | ✅ ایک سبسکرپشن + TokenJuice                                                                           |
-| **یادداشت**        | ✅ چیٹ تک محدود          | ⚠️ پلگ ان پر انحصار | ✅ خود سیکھنا       | 🚀 تبدیل ہونے والا انجن (TinyHumans یا اپنا CortexDB)، حوالے، فی دور میموری پیک |
-| **انضمام**         | ⚠️ چند کنیکٹر            | ⚠️ خود لائیں        | ⚠️ خود لائیں        | 🚀 100+ OAuth · 5k+ MCP · 90k+ سکلز                                                                    |
-| **ذرائع سنک**      | 🚫 کوئی نہیں             | 🚫 کوئی نہیں        | 🚫 کوئی نہیں        | ✅ شیڈول پر میموری میں سنک |
-| **آرکسٹریشن**      | ⚠️ ذیلی ٹاسکس            | ⚠️ ایک لوپ          | ⚠️ ایک لوپ          | 🚀 ایجنٹ گرافس + چیک پوائنٹس + E2E-انکرپٹڈ A2A                                                         |
-| **ورک فلوز**       | 🚫 کوئی نہیں             | ⚠️ اسکرپٹس          | ⚠️ اسکرپٹس          | 🚀 بصری، پائیدار، ایجنٹ کی تجویز کردہ، منظوری سے محفوظ                                                 |
-| **میٹنگز**         | 🚫 کوئی نہیں             | 🚫 کوئی نہیں        | 🚫 کوئی نہیں        | 🚀 Meet/Zoom/Teams/Webex میں شامل، بولتا ہے، لائیو ٹرانسکرپٹ                                           |
-| **میسجنگ چینلز**   | 🚫 کوئی نہیں             | ⚠️ چند ایک          | ⚠️ چند ایک          | ✅ 15 بشمول مقامی ای میل (IMAP/SMTP)                                                                   |
-| **صرف مقامی موڈ**  | 🚫 صرف کلاؤڈ             | ⚠️ اپنا مقامی لائیں | ⚠️ اپنا مقامی لائیں | ✅ ایک سوئچ سے نافذ پرائیویسی موڈ                                                                      |
-| **مشاہدہ پذیری**   | 🚫 غیر شفاف              | ⚠️ لاگز             | ⚠️ لاگز             | ✅ قابلِ اعادہ رن جرنلز + فی کال لاگت کا حساب                                                          |
-| **API پھیلاؤ**     | 🚫 اضافی چابیاں          | 🚫 اپنی چابیاں      | 🚫 کئی وینڈر        | ✅ ایک اکاؤنٹ                                                                                          |
-| **ماڈل روٹنگ**     | 🚫 ایک ماڈل              | ⚠️ دستی             | ⚠️ دستی             | ✅ بلٹ ان                                                                                              |
-| **مقامی ٹولز**     | ✅ صرف کوڈ               | ✅ صرف کوڈ          | ✅ صرف کوڈ          | ✅ کوڈ + سرچ + سکریپر + براؤزر + آواز + میڈیا جنریشن                                                   |
+```rust
+use openhuman_embed::{Access, Harness, Provider, Workspace};
+
+let agent = Harness::builder()
+    .provider(Provider::openai_compatible("https://api.openai.com/v1", "sk-...").model("gpt-5"))
+    .workspace(Workspace::Ephemeral)
+    .access(Access::readonly())
+    .build()
+    .await?;
+
+let reply = agent.run("Summarize what you can see in this directory.").await?;
+println!("{}", reply.reply);
+```
 
 </div>
 
 <div dir="rtl" lang="ur">
 
-## سورس سے تعاون
+اگلا قدم: [Rust کوئیک اسٹارٹ](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)، [ایمبیڈنگ گائیڈ](../docs/gitbooks/en/developing/embed/README.md) اور [ڈیولپر دستاویزات](https://tinyhumans.gitbook.io/openhuman/developing)۔
 
-نیا تعاون کنندہ؟ fork/PR ورک فلو اور مقامی تصدیقی کمانڈز کے لیے [`CONTRIBUTING.md`](../CONTRIBUTING.md) سے شروع کریں، یا [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) میں موجود کاپی پیسٹ AI-ایجنٹ پرامپٹ استعمال کریں۔ مختصر راستہ:
+---
 
-1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.96.1 (`rustfmt` + `clippy`)، CMake، Ninja، ripgrep، اور پلیٹ فارم ڈیسک ٹاپ بلڈ کی ضروریات انسٹال کریں۔
-2. ریپو کو fork اور کلون کریں، پھر `pnpm install` سے پہلے `git submodule update --init --recursive` چلائیں تاکہ وینڈرڈ Tauri/CEF سورس موجود ہوں۔
-3. ویب صرف UI کام کے لیے `pnpm dev`، ڈیسک ٹاپ شیل کے لیے `pnpm --filter openhuman-app dev:app` (macOS) یا `pnpm dev:app:win` (Windows)، اور PR کھولنے سے پہلے فوکسڈ چیکس جیسے `pnpm typecheck`، `pnpm format:check`، اور `cargo check -p openhuman --lib` استعمال کریں۔
+## موازنہ کیسا رہتا ہے؟
 
-مزید دستاویزات: [آرکیٹیکچر](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [سیٹ اپ](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [کلاؤڈ ڈیپلائے](../gitbooks/features/cloud-deploy.md)۔
+یہاں OpenHuman کو ان ہارنیس کے ساتھ رکھا گیا ہے جو زیادہ تر لوگ پہلے سے استعمال کرتے ہیں۔ اوپر کی چار قطاریں ہمارے [عوامی بینچ مارک](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/results/swe-x86-1/summary.md) سے ہیں: SWE-bench کے دس کوڈنگ کام، ہر ہارنیس کے لیے ایک ہی ماڈل اور کنٹینر۔ ہر عدد فی حل شدہ کام ہے۔ باقی قطاریں فیچرز کا موازنہ کرتی ہیں۔
 
-# GitHub پر ہمیں اسٹار کریں
+مختصر یہ کہ باقی ایک شخص کے ایک ایجنٹ کے ساتھ کام کرنے کے لیے بہترین ہیں۔ OpenHuman یہ بھی کرتا ہے، اور ساتھ ہی یہ وہ اوپن سورس آپشن ہے جسے آپ لائبریری کے طور پر ایمبیڈ کر کے بیڑے تک بڑھا سکتے ہیں۔ پروڈکٹس تیزی سے بدلتی ہیں، اس لیے فیصلے سے پہلے ہر پروجیکٹ کو خود دیکھ لیں۔
 
-_AGI اور مصنوعی شعور کی طرف بڑھ رہے ہیں؟ ریپو کو اسٹار کریں اور دوسروں کو راستہ تلاش کرنے میں مدد کریں۔_
+|                         | Claude Code          | Codex                | OpenClaw             | Hermes Agent         | OpenHuman                                |
+| ----------------------- | -------------------- | -------------------- | -------------------- | -------------------- | ---------------------------------------- |
+| **اوسط کام کا وقت**     | 37.8 s               | 36.1 s               | 62 s                 | 58.5 s               | 🚀 19.8 s                                 |
+| **فی کام اوسط ٹوکن**    | 428k                 | 370k                 | 442k                 | 482k                 | 🚀 167k                                   |
+| **فی کام زیادہ سے زیادہ میموری** | 231 MB               | 123 MB               | 1.57 GB              | 816 MB               | 🚀 68 MB                                  |
+| **فی کام اوسط لاگت**    | $0.04                | $0.02                | $0.01                | $0.0082              | 🚀 $0.0077                                |
+| **اوپن سورس**           | 🚫 ملکیتی            | ✅ Apache-2.0        | ✅ MIT               | ✅ MIT               | ✅ GPL-3.0                               |
+| **ایجنٹ بیڑے**          | ⚠️ ہر ایجنٹ کا پروسیس | ⚠️ ہر ایجنٹ کا پروسیس | ⚠️ ہر ایجنٹ کا پروسیس | ⚠️ ہر ایجنٹ کا پروسیس | 🚀 $10 کے VPS پر 500 ایجنٹ               |
+| **ایمبیڈ ہونے والی لائبریری** | ⚠️ CLI پر SDK        | ⚠️ CLI پر SDK        | 🚫 کوئی نہیں         | ⚠️ Python پیکیج      | 🚀 ٹائپ شدہ Rust API                      |
+| **میموری**              | ⚠️ میموری فائلیں     | ⚠️ میموری فائلیں     | ⚠️ پلگ اِن پر منحصر  | ✅ خود سیکھنے والی   | 🚀 ہر باری حوالوں کے ساتھ یاد کی جاتی    |
+| **انٹیگریشنز**          | ✅ MCP               | ✅ MCP               | ⚠️ خود لائیں         | ⚠️ خود لائیں         | 🚀 119 OAuth ایپس، MCP، اسکلز            |
+| **میسجنگ چینلز**        | 🚫 کوئی نہیں         | 🚫 کوئی نہیں         | ✅ کئی               | ✅ چند               | ✅ 14، بشمول ای میل                      |
+| **براؤزر اور ڈیسک ٹاپ** | ⚠️ MCP کے ذریعے براؤزر | ⚠️ MCP کے ذریعے براؤزر | ✅ براؤزر            | ✅ براؤزر            | ✅ براؤزر اور ڈیسک ٹاپ ایپس              |
+| **ورک فلوز**            | 🚫 کوئی نہیں         | 🚫 کوئی نہیں         | ⚠️ اسکرپٹس           | ⚠️ اسکرپٹس           | 🚀 بصری، ایجنٹ کے بنائے مسودے            |
+| **ماڈل کا انتخاب**      | ⚠️ Anthropic ماڈلز   | ⚠️ پہلے OpenAI       | ✅ کوئی بھی          | ✅ کوئی بھی          | ✅ کوئی بھی، بلٹ اِن روٹنگ کے ساتھ       |
+
+---
+
+## شراکت
+
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) پڑھیں، یا کسی AI کوڈنگ ایجنٹ سے [اس پرامپٹ](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) کے ذریعے رہنمائی لیں۔
+
+1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.99.1 (`rustfmt` اور `clippy` کے ساتھ)، CMake، Ninja، ripgrep، اور اپنے پلیٹ فارم کے ڈیسک ٹاپ بلڈ کے تقاضے انسٹال کریں۔
+2. ریپو کو فورک کر کے کلون کریں۔ `git submodule update --init --recursive` چلائیں، پھر `pnpm install`۔
+3. UI کے کام کے لیے `pnpm dev` یا ڈیسک ٹاپ ایپ کے لیے `pnpm dev:app` چلائیں۔ PR کھولنے سے پہلے `pnpm typecheck`، `pnpm format:check` اور `cargo check --manifest-path Cargo.toml` چلائیں۔
+
+مزید [سیٹ اپ کرنا](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up)، [`AGENTS.md`](../AGENTS.md) اور [کریٹس کا جائزہ](../crates/README.md) میں ہے۔ OpenHuman کے کئی حصے [`vendor/`](../vendor) کے تحت اپنے الگ ریپوز میں ہیں، اور وہ بھی شراکت کا خیر مقدم کرتے ہیں۔
+
+شراکت داروں کو مفت مرچ اور [Discord](https://guild.tinyhumans.ai/) پر خصوصی رسائی ملتی ہے۔
+
+## اسٹار ہسٹری
 
 </div>
 
@@ -222,9 +393,7 @@ _AGI اور مصنوعی شعور کی طرف بڑھ رہے ہیں؟ ریپو ک
 
 <div dir="rtl" lang="ur">
 
-# شراکت داروں کا ہال آف فیم
-
-کچھ محبت دکھائیں اور ہال آف فیم میں جگہ پائیں۔ شراکت داروں کو مفت مرچ اور ہمارے [ڈسکارڈ](https://guild.tinyhumans.ai/) تک خصوصی رسائی ملتی ہے۔
+## شراکت دار
 
 </div>
 

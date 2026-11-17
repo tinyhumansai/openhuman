@@ -1,16 +1,24 @@
 use super::*;
 
-use crate::cron::JobType;
-use crate::cron::Schedule;
-use crate::cron::TooFrequent;
-use crate::cron::MIN_AGENT_JOB_INTERVAL;
+use tinyflows_bus::schedule::types::JobType;
+use tinyflows_bus::schedule::types::Schedule;
+use tinyflows_bus::schedule::TooFrequent;
+use tinyflows_bus::schedule::MIN_AGENT_JOB_INTERVAL;
 #[tokio::test]
 async fn deliver_if_configured_empty_success_skips_chat_and_alert() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
     let job = proactive_job();
     // Successful but empty: nothing delivered anywhere.
-    assert!(deliver_if_configured(&config, &job, "", true).await.is_ok());
+    assert!(deliver_if_configured(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job,
+        "",
+        true
+    )
+    .await
+    .is_ok());
     assert_eq!(cron_alerts(&config).await, 0);
 }
 
@@ -29,16 +37,24 @@ fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
         publish_cron_user_error(kind);
         let ev = next_user_error(&mut rx, kind);
         // Broadcast to the "system" room every connected socket auto-joins.
-        assert_eq!(ev.client_id, "system");
-        // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
-        assert_eq!(ev.error_type.as_deref(), Some(kind));
-        assert_eq!(ev.error_source.as_deref(), Some("cron"));
-        // Metadata-only: a `user_error` NEVER carries the raw provider body
-        // (CLAUDE.md) and is thread-less (no chat context).
-        assert!(ev.message.is_none(), "user_error must not carry a raw body");
-        assert!(ev.full_response.is_none());
-        assert!(ev.thread_id.is_empty(), "cron user_error is thread-less");
-        assert!(ev.request_id.is_empty());
+        assert_eq!(ev.context().client_id, "system");
+        assert!(
+            ev.context().thread_id.is_empty(),
+            "cron user_error is thread-less"
+        );
+        assert!(ev.context().request_id.is_empty());
+        match ev.wire_event() {
+            crate::web_chat::WebChannelEvent::UserError {
+                error_type,
+                error_source,
+                ..
+            } => {
+                // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
+                assert_eq!(error_type.as_deref(), Some(kind));
+                assert_eq!(error_source.as_deref(), Some("cron"));
+            }
+            other => panic!("expected user_error, got {}", other.event_name()),
+        }
     }
 }
 
@@ -86,12 +102,11 @@ async fn cron_agent_job_short_loopback_send_error_stays_retryable() {
 
 // ── agent-job frequency check (#6158) ───────────────────────────
 //
-// The `Schedule::Cron` arm used to compare the next run after now with the
-// next run after now plus one second — the same instant unless a run fell
-// inside that second — so *every* cron-scheduled agent job warned, whatever
-// its expression, and the three `// should not panic` tests could not tell.
-// The verdict is now returned with its evidence and measured over
-// consecutive runs, so each case below asserts it.
+// The cadence maths (`RunsCloserThan`: the tightest pair of consecutive runs,
+// the exact-five-minutes boundary, irregular expressions) is the module's and
+// is tested there. What the host owns, and pins here, is the verdict it draws
+// from the module's answer: which jobs it asks about, and that a module that
+// cannot read a schedule is not evidence of anything.
 
 fn agent_job_on(schedule: Schedule) -> CronJob {
     let mut job = test_job("echo hi");
@@ -108,86 +123,64 @@ fn cron_agent_job(expr: &str) -> CronJob {
     })
 }
 
-#[test]
-fn non_agent_and_one_shot_jobs_are_never_high_frequency() {
-    // `test_job` runs every minute — but it is a shell job.
+#[tokio::test]
+async fn non_agent_and_one_shot_jobs_are_never_high_frequency() {
+    let config = Config::default();
+    // `test_job` runs every minute, but it is a shell job.
     let mut shell = test_job("echo hi");
     shell.job_type = JobType::Shell;
-    assert!(agent_job_too_frequent(&shell).is_none());
-    warn_if_high_frequency_agent_job(&shell);
+    assert!(agent_job_too_frequent(&config, &shell).await.is_none());
+    warn_if_high_frequency_agent_job(&config, &shell).await;
 
     let once = agent_job_on(Schedule::At { at: Utc::now() });
-    assert!(agent_job_too_frequent(&once).is_none());
-    warn_if_high_frequency_agent_job(&once);
+    assert!(agent_job_too_frequent(&config, &once).await.is_none());
+    warn_if_high_frequency_agent_job(&config, &once).await;
 }
 
-#[test]
-fn every_ms_below_five_minutes_is_high_frequency() {
+#[tokio::test]
+async fn every_ms_below_five_minutes_is_high_frequency() {
+    let config = Config::default();
     let job = agent_job_on(Schedule::Every { every_ms: 60_000 });
     assert_eq!(
-        agent_job_too_frequent(&job),
+        agent_job_too_frequent(&config, &job).await,
         Some(TooFrequent::FixedInterval(ChronoDuration::minutes(1)))
     );
-    warn_if_high_frequency_agent_job(&job); // logs the evidence, must not panic
+    warn_if_high_frequency_agent_job(&config, &job).await; // logs the evidence, must not panic
 }
 
 /// The regression: every ordinary schedule was reported as too frequent.
-#[test]
-fn an_ordinary_cron_agent_job_is_not_high_frequency() {
-    for expr in [
-        "*/10 * * * *",
-        "0 * * * *",
-        "0 9 * * *",
-        "*/6 * * * *",
-        "0 9 * * 1-5",
-    ] {
+#[tokio::test]
+async fn an_ordinary_cron_agent_job_is_not_high_frequency() {
+    let config = Config::default();
+    for expr in ["*/10 * * * *", "0 9 * * *", "0 9 * * 1-5"] {
         assert!(
-            agent_job_too_frequent(&cron_agent_job(expr)).is_none(),
+            agent_job_too_frequent(&config, &cron_agent_job(expr))
+                .await
+                .is_none(),
             "{expr} runs at most every 6 minutes and must not warn"
         );
     }
 }
 
-#[test]
-fn a_cron_agent_job_under_five_minutes_is_still_caught() {
-    for expr in [
-        "*/3 * * * *",
-        "*/1 * * * *",
-        "*/4 * * * *",
-        "*/30 * * * * *",
-    ] {
-        let hit = agent_job_too_frequent(&cron_agent_job(expr))
+#[tokio::test]
+async fn a_cron_agent_job_under_five_minutes_is_still_caught() {
+    let config = Config::default();
+    for expr in ["*/3 * * * *", "1,2,30 * * * *"] {
+        let hit = agent_job_too_frequent(&config, &cron_agent_job(expr))
+            .await
             .unwrap_or_else(|| panic!("{expr} runs oftener than every 5 minutes and must warn"));
         assert!(hit.gap() < MIN_AGENT_JOB_INTERVAL, "{expr}: {hit}");
     }
 }
 
-/// An irregular expression is judged by its tightest pair, whatever minute
-/// the check happens to run at (CodeRabbit / Codex on #6159).
-#[test]
-fn an_irregular_cron_agent_job_is_judged_by_its_shortest_gap() {
-    for expr in ["1,2,30 * * * *", "0,1 * * * *", "0,3 9 * * *"] {
-        let hit = agent_job_too_frequent(&cron_agent_job(expr))
-            .unwrap_or_else(|| panic!("{expr} has two runs inside five minutes and must warn"));
-        assert!(hit.gap() <= ChronoDuration::minutes(3), "{expr}: {hit}");
-    }
-}
-
-/// Exactly five minutes is the boundary the message names, and it is not
-/// over it. `*/5` is also the expression the codebase's own tests reach for,
-/// so warning on it would train an operator to ignore the warning.
-#[test]
-fn a_cron_agent_job_at_exactly_five_minutes_is_not_high_frequency() {
-    assert!(agent_job_too_frequent(&cron_agent_job("*/5 * * * *")).is_none());
-    let every_five = agent_job_on(Schedule::Every {
-        every_ms: 5 * 60 * 1000,
-    });
-    assert!(agent_job_too_frequent(&every_five).is_none());
-}
-
-/// A schedule the arm cannot read is not evidence of anything, least of all
-/// of running too often.
-#[test]
-fn an_unparseable_cron_expression_is_not_high_frequency() {
-    assert!(agent_job_too_frequent(&cron_agent_job("not a cron expression")).is_none());
+/// A schedule the module cannot read is not evidence of anything, least of
+/// all of running too often.
+#[tokio::test]
+async fn an_unparseable_cron_expression_is_not_high_frequency() {
+    let config = Config::default();
+    assert!(
+        agent_job_too_frequent(&config, &cron_agent_job("not a cron expression"))
+            .await
+            .is_none()
+    );
 }

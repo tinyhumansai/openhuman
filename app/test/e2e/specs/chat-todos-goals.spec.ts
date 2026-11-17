@@ -13,10 +13,11 @@
  * The scripted turn:
  *   Turn 1: goal_set → todo (five items, first in progress) → text
  *   Turn 2: todo (three completed, fourth in progress) → text
- *   Turn 3: todo (all five completed) → goal_complete → text
+ *   Turn 3: todo (all five completed) → goal_complete
  *
  * Verifies:
- *   G1.1 — the goal banner shows the objective and an "active" status
+ *   G1.1 — after the scripted turn settles, the task card shows the objective
+ *          and waiting status
  *   G1.2 — the checklist renders all five items with their statuses
  *   G1.3 — a later write moves the checklist on (3 of 5, fourth in progress)
  *   G1.4 — the final write completes every item and the banner turns complete
@@ -32,7 +33,7 @@ import {
   typeIntoComposer,
   waitForSocketConnected,
 } from '../helpers/chat-harness';
-import { clickTestId, textExists, waitForTestId } from '../helpers/element-helpers';
+import { clickSelector, clickTestId, waitForTestId } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
 import { setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
@@ -40,7 +41,6 @@ import { setMockBehavior, startMockServer, stopMockServer } from '../mock-server
 const LOG_PREFIX = '[chat-todos-goals]';
 const USER_ID = 'e2e-chat-todos-goals';
 const OBJECTIVE = 'Ship the v2 release notes';
-const CANARY_FINAL = 'canary-todos-goals-9a8b7c';
 
 const STEPS = [
   'Read the changelog',
@@ -64,8 +64,10 @@ function toolCall(id: string, name: string, args: string) {
   return { content: '', toolCalls: [{ id, name, arguments: args }] };
 }
 
-const FORCED_RESPONSES = [
-  // Turn 1: record the objective, then write the plan.
+const TURN_1_RESPONSES = [
+  // One agent turn may make several primary model requests as tools run.
+  // Keep this queue scoped to the first user message so later turns retain
+  // their own observable intermediate state.
   toolCall(
     'call_goal_set_1',
     'goal_set',
@@ -73,46 +75,84 @@ const FORCED_RESPONSES = [
   ),
   toolCall('call_todo_1', 'todo', todoArgs(0)),
   { content: 'Plan written; starting on the changelog.' },
+];
+
+const TURN_2_RESPONSES = [
   // Turn 2: three done, working the fourth.
   toolCall('call_todo_2', 'todo', todoArgs(3)),
   { content: 'Three steps done.' },
+];
+
+const TURN_3_RESPONSES = [
   // Turn 3: everything done, goal closed.
   toolCall('call_todo_3', 'todo', todoArgs(5)),
+  // goal_complete is terminal by the TinyAgents contract; it suppresses
+  // autonomous continuation, so there is no subsequent model text response.
   toolCall('call_goal_complete_1', 'goal_complete', JSON.stringify({})),
-  { content: `All five steps are done: ${CANARY_FINAL}` },
 ];
 
 /** The checklist's rendered items: `[content, status]` pairs, in list order. */
 async function readChecklist(): Promise<Array<[string, string]>> {
   return (await browser.execute(() => {
-    const rows = Array.from(document.querySelectorAll('[data-testid="todo-item"]'));
+    const card = document.querySelector('[data-testid="todo-checklist"]');
+    const rows = Array.from(card?.querySelectorAll('[data-testid="todo-item"]') ?? []);
     return rows.map(row => [(row.textContent ?? '').trim(), row.getAttribute('data-status') ?? '']);
   })) as Array<[string, string]>;
 }
 
-/** The checklist header's completed/total counters, or null when absent. */
+/** The current task-card checklist's completed/total item counts. */
 async function readProgress(): Promise<{ completed: number; total: number } | null> {
+  const items = await readChecklist();
+  if (!items.length) return null;
+  return { completed: items.filter(([, status]) => status === 'done').length, total: items.length };
+}
+
+/** The shipped task card's state + objective, or null when no card is shown. */
+async function readGoal(): Promise<{ status: string; objective: string } | null> {
   return (await browser.execute(() => {
     const el = document.querySelector('[data-testid="todo-checklist"]');
     if (!el) return null;
+    // TaskCard puts the objective in its flexing label span. Whole-button
+    // text also includes the screen-reader state and the trailing meta label.
+    const label = el.querySelector('button > span.flex-1');
     return {
-      completed: Number(el.getAttribute('data-todo-completed') ?? -1),
-      total: Number(el.getAttribute('data-todo-total') ?? -1),
-    };
-  })) as { completed: number; total: number } | null;
-}
-
-/** The goal banner's status + objective, or null when no banner is shown. */
-async function readGoal(): Promise<{ status: string; objective: string } | null> {
-  return (await browser.execute(() => {
-    const el = document.querySelector('[data-testid="goal-banner"]');
-    if (!el) return null;
-    const objective = el.querySelector('[data-testid="goal-objective"]');
-    return {
-      status: el.getAttribute('data-goal-status') ?? '',
-      objective: (objective?.textContent ?? '').trim(),
+      status: el.getAttribute('data-state') ?? '',
+      objective: (label?.textContent ?? '').trim(),
     };
   })) as { status: string; objective: string } | null;
+}
+
+/** Content-free identity check for the thread that owns the visible turn. */
+async function readSelectedThreadSnapshot(): Promise<{
+  threadId: string | null;
+  messageCount: number;
+  hasUserMessage: boolean;
+  hasAgentMessage: boolean;
+}> {
+  return (await browser.execute(() => {
+    const winAny = window as unknown as { __OPENHUMAN_STORE__?: { getState: () => unknown } };
+    const state = winAny.__OPENHUMAN_STORE__?.getState() as
+      | {
+          thread?: {
+            selectedThreadId?: string | null;
+            messagesByThreadId?: Record<string, Array<{ sender?: 'user' | 'agent' }>>;
+          };
+        }
+      | undefined;
+    const threadId = state?.thread?.selectedThreadId ?? null;
+    const messages = threadId ? (state?.thread?.messagesByThreadId?.[threadId] ?? []) : [];
+    return {
+      threadId,
+      messageCount: messages.length,
+      hasUserMessage: messages.some(message => message.sender === 'user'),
+      hasAgentMessage: messages.some(message => message.sender === 'agent'),
+    };
+  })) as {
+    threadId: string | null;
+    messageCount: number;
+    hasUserMessage: boolean;
+    hasAgentMessage: boolean;
+  };
 }
 
 async function waitForProgress(completed: number, total: number, timeout = 45_000) {
@@ -130,6 +170,32 @@ async function waitForProgress(completed: number, total: number, timeout = 45_00
   );
 }
 
+async function waitForGoalStatus(status: string, timeout = 45_000): Promise<void> {
+  await browser.waitUntil(async () => (await readGoal())?.status === status, {
+    timeout,
+    timeoutMsg: `task card never reached ${status}; last: ${JSON.stringify(await readGoal())}`,
+  });
+}
+
+/** Completed task cards start collapsed, so expand before inspecting their rows. */
+async function expandChecklistIfCollapsed(): Promise<void> {
+  const expanded = (await browser.execute(() =>
+    document.querySelector('[data-testid="todo-checklist"] button')?.getAttribute('aria-expanded')
+  )) as string | null | undefined;
+  if (expanded === 'false') {
+    await clickSelector('[data-testid="todo-checklist"] button');
+  }
+  await browser.waitUntil(
+    async () =>
+      (await browser.execute(() =>
+        document
+          .querySelector('[data-testid="todo-checklist"] button')
+          ?.getAttribute('aria-expanded')
+      )) === 'true',
+    { timeout: 5_000, timeoutMsg: 'task checklist disclosure did not open' }
+  );
+}
+
 async function sendTurn(message: string) {
   await typeIntoComposer(message);
   expect(
@@ -141,9 +207,6 @@ async function sendTurn(message: string) {
 }
 
 describe('Chat todos and goals', () => {
-  before(function () {
-    this.skip();
-  });
   let threadId: string;
 
   before(async () => {
@@ -152,9 +215,8 @@ describe('Chat todos and goals', () => {
     await waitForApp();
     await resetApp(USER_ID);
 
-    setMockBehavior('llmForcedResponses', JSON.stringify(FORCED_RESPONSES));
     setMockBehavior('llmStreamChunkDelayMs', '10');
-    console.log(`${LOG_PREFIX} Setup complete — ${FORCED_RESPONSES.length} forced responses`);
+    console.log(`${LOG_PREFIX} Setup complete — per-turn forced responses ready`);
   });
 
   after(async () => {
@@ -179,18 +241,46 @@ describe('Chat todos and goals', () => {
 
     const socketReady = await waitForSocketConnected(30_000);
     if (!socketReady) console.warn(`${LOG_PREFIX} socket not connected — send may fail`);
+    setMockBehavior('llmForcedResponses', JSON.stringify(TURN_1_RESPONSES));
     await sendTurn('Write the v2 release notes, in five steps.');
 
-    await waitForTestId('goal-banner', 45_000);
+    await waitForTestId('todo-checklist', 45_000);
+    await waitForGoalStatus('waiting');
     const goal = await readGoal();
-    console.log(`${LOG_PREFIX} G1.1: banner — ${JSON.stringify(goal)}`);
+    console.log(`${LOG_PREFIX} G1.1: task card — ${JSON.stringify(goal)}`);
     expect(goal?.objective).toBe(OBJECTIVE);
-    expect(goal?.status).toBe('active');
+    expect(goal?.status).toBe('waiting');
+
+    // New-thread creation can expose its placeholder selection before the
+    // durable turn is attached. Track the actual selected thread only after
+    // Redux proves it owns this rendered conversation.
+    const placeholderThreadId = threadId;
+    await browser.waitUntil(
+      async () => {
+        const current = await readSelectedThreadSnapshot();
+        return Boolean(current.threadId && current.hasUserMessage && current.hasAgentMessage);
+      },
+      {
+        timeout: 15_000,
+        timeoutMsg: `selected thread never owned the rendered turn: ${JSON.stringify(
+          await readSelectedThreadSnapshot()
+        )}`,
+      }
+    );
+    const current = await readSelectedThreadSnapshot();
+    expect(current.threadId).toBeTruthy();
+    expect(current.hasUserMessage).toBe(true);
+    expect(current.hasAgentMessage).toBe(true);
+    console.log(
+      `${LOG_PREFIX} G1.1 identity: placeholder_changed=${current.threadId !== placeholderThreadId}; selected_message_count=${current.messageCount}`
+    );
+    threadId = current.threadId!;
   });
 
   it('G1.2 — the checklist renders all five items with their statuses', async () => {
     await waitForTestId('todo-checklist', 45_000);
     await waitForProgress(0, 5);
+    await waitForGoalStatus('waiting');
 
     const items = await readChecklist();
     console.log(`${LOG_PREFIX} G1.2: items — ${JSON.stringify(items)}`);
@@ -198,7 +288,7 @@ describe('Chat todos and goals', () => {
       STEPS.map(step => expect.stringContaining(step))
     );
     expect(items.map(([, status]) => status)).toEqual([
-      'in_progress',
+      'pending',
       'pending',
       'pending',
       'pending',
@@ -207,39 +297,41 @@ describe('Chat todos and goals', () => {
   });
 
   it('G1.3 — a later write moves the checklist on', async () => {
+    setMockBehavior('llmForcedResponses', JSON.stringify(TURN_2_RESPONSES));
     await sendTurn('continue');
     await waitForProgress(3, 5);
+    await waitForGoalStatus('waiting');
 
     const items = await readChecklist();
     console.log(`${LOG_PREFIX} G1.3: items — ${JSON.stringify(items)}`);
     expect(items.map(([, status]) => status)).toEqual([
-      'completed',
-      'completed',
-      'completed',
-      'in_progress',
+      'done',
+      'done',
+      'done',
+      'pending',
       'pending',
     ]);
     // The goal is untouched by a todo write.
-    expect((await readGoal())?.status).toBe('active');
+    expect(['working', 'waiting']).toContain((await readGoal())?.status);
   });
 
-  it('G1.4 — the final turn completes every item and closes the goal', async () => {
+  it('G1.4 — the final turn completes every item and marks the task card done', async () => {
+    setMockBehavior('llmForcedResponses', JSON.stringify(TURN_3_RESPONSES));
     await sendTurn('finish it');
-    await waitForProgress(5, 5);
-    await browser.waitUntil(async () => (await readGoal())?.status === 'complete', {
+    await browser.waitUntil(async () => (await readGoal())?.status === 'done', {
       timeout: 45_000,
       timeoutMsg: `goal never turned complete; last: ${JSON.stringify(await readGoal())}`,
     });
+    await expandChecklistIfCollapsed();
+    await waitForProgress(5, 5);
 
     const items = await readChecklist();
-    expect(items.map(([, status]) => status)).toEqual([
-      'completed',
-      'completed',
-      'completed',
-      'completed',
-      'completed',
-    ]);
-    expect(await textExists(CANARY_FINAL)).toBe(true);
+    expect(items.map(([, status]) => status)).toEqual(['done', 'done', 'done', 'done', 'done']);
+    expect(await readGoal()).toMatchObject({ status: 'done', objective: OBJECTIVE });
+    const current = await readSelectedThreadSnapshot();
+    expect(current.threadId).toBe(threadId);
+    expect(current.hasUserMessage).toBe(true);
+    expect(current.hasAgentMessage).toBe(true);
     console.log(`${LOG_PREFIX} G1.4: passed — all five done, goal complete`);
   });
 
@@ -268,11 +360,12 @@ describe('Chat todos and goals', () => {
       timeoutMsg: 'never switched back to the first thread',
     });
 
-    await waitForProgress(5, 5);
-    await browser.waitUntil(async () => (await readGoal())?.status === 'complete', {
+    await browser.waitUntil(async () => (await readGoal())?.status === 'done', {
       timeout: 30_000,
       timeoutMsg: `goal did not rehydrate; last: ${JSON.stringify(await readGoal())}`,
     });
+    await expandChecklistIfCollapsed();
+    await waitForProgress(5, 5);
     expect((await readGoal())?.objective).toBe(OBJECTIVE);
     console.log(`${LOG_PREFIX} G1.5: passed — both rehydrated after a thread switch`);
   });

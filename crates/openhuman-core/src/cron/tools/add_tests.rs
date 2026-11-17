@@ -1,8 +1,8 @@
 use super::*;
 use crate::config::Config;
-use crate::cron::ActiveHours;
 use crate::security::AutonomyLevel;
 use tempfile::TempDir;
+use tinyflows_bus::schedule::types::ActiveHours;
 
 async fn test_config(tmp: &TempDir) -> Arc<Config> {
     let config = Config {
@@ -338,43 +338,6 @@ async fn agent_job_announce_missing_target_rejected() {
     assert!(result.output().contains("delivery.to is required"));
 }
 
-#[test]
-fn validate_delivery_skips_proactive_and_none_modes() {
-    let tmp = TempDir::new().unwrap();
-    let cfg = cfg_with_telegram(&tmp, vec!["alice".into()]);
-
-    let proactive = DeliveryConfig {
-        mode: "proactive".into(),
-        channel: None,
-        to: None,
-        best_effort: true,
-    };
-    assert!(validate_delivery(&cfg, &proactive).is_ok());
-
-    let none = DeliveryConfig {
-        mode: "none".into(),
-        channel: None,
-        to: None,
-        best_effort: true,
-    };
-    assert!(validate_delivery(&cfg, &none).is_ok());
-}
-
-#[test]
-fn validate_delivery_announce_web_is_a_no_op() {
-    // "web" doesn't have an allowed_users gate; announce to web is
-    // a degenerate but valid configuration (in-app explicit).
-    let tmp = TempDir::new().unwrap();
-    let cfg = test_config_sync(&tmp);
-    let cfg_unused = DeliveryConfig {
-        mode: "announce".into(),
-        channel: Some("web".into()),
-        to: Some("any".into()),
-        best_effort: true,
-    };
-    assert!(validate_delivery(&cfg, &cfg_unused).is_ok());
-}
-
 // ── GHSA-f46p-6vf9-64mm: approval gate must fire for cron_add ────
 
 #[test]
@@ -593,12 +556,14 @@ async fn accepts_agent_job_at_exactly_five_minutes() {
 }
 
 #[test]
-fn schema_and_description_document_the_agent_floor() {
+fn description_and_guide_document_the_agent_floor() {
     let tool = CronAddTool::new(
         Arc::new(Config::default()),
         Arc::new(SecurityPolicy::default()),
     );
     assert!(tool.description().contains("at least 5 minutes apart"));
-    let schema = tool.parameters_schema().to_string();
-    assert!(schema.contains("at least 300000 = 5 minutes"), "{schema}");
+    let guide = crate::tools::toolpacks::pack("scheduling")
+        .expect("scheduling pack")
+        .guide;
+    assert!(guide.contains("at least 5 minutes apart"), "{guide}");
 }

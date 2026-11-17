@@ -90,12 +90,7 @@ export const TOOL_PHRASES = {
   checkMediaModels: { active: 'Checking media models', done: 'Checked media models' },
   createDocument: { active: 'Creating document', done: 'Created document' },
   createPresentation: { active: 'Creating presentation', done: 'Created presentation' },
-  generatePodcast: { active: 'Generating podcast', done: 'Generated podcast' },
-  emailPodcast: { active: 'Emailing podcast', done: 'Emailed podcast' },
-  createAndEmailPodcast: {
-    active: 'Creating and emailing podcast',
-    done: 'Created and emailed podcast',
-  },
+  showView: { active: 'Showing a view', done: 'Showed a view' },
 
   // ── Memory ──────────────────────────────────────────────────────────────
   recallMemories: { active: 'Recalling memories', done: 'Recalled memories' },
@@ -113,7 +108,6 @@ export const TOOL_PHRASES = {
 
   // ── Agents and delegation ──────────────────────────────────────────────
   delegateTask: { active: 'Delegating task', done: 'Delegated task' },
-  runAgentsInParallel: { active: 'Running agents in parallel', done: 'Ran agents in parallel' },
   messageAgent: { active: 'Messaging agent', done: 'Messaged agent' },
   waitForAgent: { active: 'Waiting for agent', done: 'Waited for agent' },
   wait: { active: 'Waiting', done: 'Waited' },
@@ -134,6 +128,7 @@ export const TOOL_PHRASES = {
   setGoal: { active: 'Setting goal', done: 'Set goal' },
   checkGoal: { active: 'Checking goal', done: 'Checked goal' },
   completeGoal: { active: 'Completing goal', done: 'Completed goal' },
+  resumeGoal: { active: 'Resuming goal', done: 'Resumed goal' },
 
   // ── Scheduling ──────────────────────────────────────────────────────────
   scheduleTask: { active: 'Scheduling task', done: 'Scheduled task' },
@@ -157,7 +152,6 @@ export const TOOL_PHRASES = {
   searchPlaces: { active: 'Searching places', done: 'Searched places' },
   lookUpPlace: { active: 'Looking up place', done: 'Looked up place' },
   checkMarkets: { active: 'Checking markets', done: 'Checked markets' },
-  placeCall: { active: 'Placing call', done: 'Placed call' },
   checkTaskSources: { active: 'Checking task sources', done: 'Checked task sources' },
   updateTaskSources: { active: 'Updating task sources', done: 'Updated task sources' },
   fetchTasks: { active: 'Fetching tasks', done: 'Fetched tasks' },
@@ -220,6 +214,9 @@ export const TOOL_PHRASES = {
   setUpWorkspace: { active: 'Setting up workspace', done: 'Set up workspace' },
   checkArtifacts: { active: 'Checking artifacts', done: 'Checked artifacts' },
   deleteArtifact: { active: 'Deleting artifact', done: 'Deleted artifact' },
+  createArtifact: { active: 'Creating artifact', done: 'Created artifact' },
+  updateArtifact: { active: 'Updating artifact', done: 'Updated artifact' },
+  shareArtifact: { active: 'Sharing artifact', done: 'Shared artifact' },
 } as const satisfies Record<string, { active: string; done: string }>;
 
 export type ToolPhraseId = keyof typeof TOOL_PHRASES;

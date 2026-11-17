@@ -13,7 +13,7 @@ use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use tower::ServiceExt;
 
-use openhuman_core::core::auth::CORE_TOKEN_ENV_VAR;
+use crate::core_host::core::auth::CORE_TOKEN_ENV_VAR;
 
 use super::build_core_http_router;
 
@@ -36,14 +36,13 @@ fn ensure_test_rpc_auth() -> String {
         // binaries don't collide (they run in separate processes anyway).
         unsafe { std::env::set_var(CORE_TOKEN_ENV_VAR, TEST_RPC_TOKEN) };
         let tmp = tempfile::tempdir().expect("tempdir for token file");
-        openhuman_core::core::auth::init_rpc_token(tmp.path())
+        crate::core_host::core::auth::init_rpc_token(tmp.path())
             .expect("init rpc auth token for http tests");
     });
-    openhuman_core::core::auth::get_rpc_token()
+    crate::core_host::core::auth::get_rpc_token()
         .expect("rpc bearer must be installed after ensure_test_rpc_auth")
         .to_string()
 }
-
 /// Build the test router (Socket.IO disabled — no real runtime needed).
 fn test_router() -> axum::Router {
     let _ = ensure_test_rpc_auth();
@@ -135,16 +134,59 @@ async fn test_chat_completions_with_bearer_not_rejected_as_auth_error() {
     );
 }
 
-/// Dictation WebSockets accept the browser query-token transport at the
-/// handler boundary, but still reject a token that is not the process bearer.
-#[tokio::test]
-async fn test_dictation_rejects_invalid_query_token() {
-    let req = Request::builder()
-        .method(Method::GET)
-        .uri("/ws/dictation?token=not-the-core-token")
-        .body(Body::empty())
-        .unwrap();
+// ── Fallback scope ─────────────────────────────────────────────────────────────
+//
+// The `?token=` fallback is a transport workaround for the SSE / WebSocket
+// routes in `QUERY_TOKEN_PATHS` only. These pin that it does not widen to
+// `/rpc`, and that it still checks the token where it applies.
 
-    let resp = dispatch(req).await;
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+fn rpc_body() -> Body {
+    Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+}
+
+#[tokio::test]
+async fn a_valid_query_token_does_not_authorize_rpc() {
+    let token = ensure_test_rpc_auth();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/rpc?token={token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(rpc_body())
+        .unwrap();
+    assert_eq!(dispatch(req).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_wrong_header_bearer_on_rpc_is_401() {
+    let _ = ensure_test_rpc_auth();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/rpc")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer not-the-core-token")
+        .body(rpc_body())
+        .unwrap();
+    assert_eq!(dispatch(req).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_webhook_stream_checks_its_query_token() {
+    let token = ensure_test_rpc_auth();
+    for (uri, authorized) in [
+        ("/events/webhooks".to_owned(), false),
+        ("/events/webhooks?token=nope".to_owned(), false),
+        (format!("/events/webhooks?token={token}"), true),
+    ] {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(&uri)
+            .body(Body::empty())
+            .unwrap();
+        let status = dispatch(req).await.status();
+        if authorized {
+            assert_ne!(status, StatusCode::UNAUTHORIZED, "{uri}");
+        } else {
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+        }
+    }
 }

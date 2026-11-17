@@ -25,8 +25,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SidebarSlotOutlet, SidebarSlotProvider } from '../../components/layout/shell/SidebarSlot';
+import Conversations from '../../features/conversations/Conversations';
 // Type-only: erased at runtime, so it does not defeat `vi.hoisted`.
 import type { FlowApprovalRequest } from '../../hooks/useFlowApprovalRequests';
+import { listArtifactsForThread } from '../../services/artifactDownloadService';
 import { chatSend } from '../../services/chatService';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import chatRuntimeReducer, {
@@ -38,8 +40,12 @@ import runModeReducer from '../../store/runModeSlice';
 import socketReducer from '../../store/socketSlice';
 import themeReducer from '../../store/themeSlice';
 import threadGoalReducer from '../../store/threadGoalSlice';
-import threadReducer from '../../store/threadSlice';
-import threadTodosReducer from '../../store/threadTodosSlice';
+import threadReducer, {
+  addMessageLocal,
+  clearThreadInferenceActive,
+  markThreadInferenceActive,
+} from '../../store/threadSlice';
+import threadTodosReducer, { setThreadTodos } from '../../store/threadTodosSlice';
 import type { Thread, ThreadMessage } from '../../types/thread';
 
 // ── Hoisted mock state ─────────────────────────────────────────────────────
@@ -124,8 +130,8 @@ vi.mock('../../store/socketSelectors', () => ({
 
 vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
-// ChatFilesChip hydrates ready artifacts through the Tauri artifact service on
-// mount; the chip under test is driven from the preloaded slice instead.
+// The thread's ready artifacts are hydrated through the Tauri artifact service
+// when the thread opens.
 vi.mock('../../services/artifactDownloadService', () => ({
   listArtifactsForThread: vi.fn().mockResolvedValue({ ok: true, artifacts: [] }),
   saveArtifactViaDialog: vi.fn(),
@@ -204,6 +210,14 @@ function threadState(extra: Record<string, unknown> = {}) {
   };
 }
 
+vi.mock('../../store/userScopedStorage', () => ({
+  userScopedStorage: {
+    getItem: vi.fn().mockResolvedValue(null),
+    setItem: vi.fn().mockResolvedValue(undefined),
+    removeItem: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 const connectedSocket = { byUser: { __pending__: { status: 'connected', socketId: 'socket-1' } } };
 
 /**
@@ -227,7 +241,6 @@ async function renderChat(
       ...(preload.chatRuntime ?? {}),
     },
   });
-  const { default: Conversations } = await import('../../features/conversations/Conversations');
 
   await act(async () => {
     render(
@@ -291,6 +304,95 @@ describe('assistant-ui chat surface — composer-adjacent cards', () => {
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
     mockFlowApprovalRequests.mockReturnValue({ requests: [], dismiss: vi.fn() });
     vi.mocked(chatSend).mockResolvedValue(undefined);
+  });
+
+  it('docks active task cards and leaves completed cards with their original turn', async () => {
+    const store = await renderChat();
+    await act(async () => {
+      for (const [id, sender] of [
+        ['user-first', 'user'],
+        ['agent-first', 'agent'],
+      ] as const) {
+        store.dispatch({
+          type: addMessageLocal.fulfilled.type,
+          payload: {
+            threadId: THREAD_ID,
+            message: {
+              id,
+              sender,
+              content: 'Task turn',
+              type: 'text',
+              extraMetadata: {},
+              createdAt: '2026-01-01T00:00:00Z',
+            },
+          },
+        });
+      }
+    });
+    await act(async () =>
+      store.dispatch(
+        setThreadTodos({
+          threadId: THREAD_ID,
+          todos: [
+            { content: 'Inspect the current UI', status: 'completed' },
+            { content: 'Verify overlay geometry', status: 'in_progress' },
+          ],
+        })
+      )
+    );
+    const plan = await screen.findByTestId('todo-checklist');
+    const overlay = plan.closest('[data-slot="composer-overlays"]');
+    expect(overlay).toBeNull();
+    expect(plan.closest('[data-slot="task-card-dock"]')).not.toBeNull();
+    expect(plan).toHaveAttribute('data-slot', 'task-card');
+    expect(plan).toHaveAttribute('data-state', 'waiting');
+    expect(plan.querySelector('.animate-spin')).toBeNull();
+    await act(async () => store.dispatch(markThreadInferenceActive(THREAD_ID)));
+    expect(screen.getByTestId('todo-checklist')).toHaveAttribute('data-state', 'working');
+    await act(async () => store.dispatch(clearThreadInferenceActive(THREAD_ID)));
+    expect(screen.getByTestId('todo-checklist')).toHaveAttribute('data-state', 'waiting');
+    expect(screen.getByTestId('todo-checklist').querySelector('.animate-spin')).toBeNull();
+
+    await act(async () =>
+      store.dispatch(
+        setThreadTodos({
+          threadId: THREAD_ID,
+          todos: [
+            { content: 'Inspect the current UI', status: 'completed' },
+            { content: 'Verify overlay geometry', status: 'completed' },
+          ],
+        })
+      )
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('todo-checklist')).toHaveAttribute('data-state', 'done')
+    );
+    await act(async () => {
+      for (const [id, sender] of [
+        ['user-next', 'user'],
+        ['agent-next', 'agent'],
+      ] as const) {
+        store.dispatch({
+          type: addMessageLocal.fulfilled.type,
+          payload: {
+            threadId: THREAD_ID,
+            message: {
+              id,
+              sender,
+              content: 'Next conversation turn',
+              type: 'text',
+              extraMetadata: {},
+              createdAt: '2026-01-01T00:01:00Z',
+            },
+          },
+        });
+      }
+    });
+    const completed = screen.getByTestId('todo-checklist');
+    expect(completed.closest('[data-slot="task-card-dock"]')).toBeNull();
+    const owningMessage = completed.closest('[data-slot="aui_assistant-message-root"]');
+    expect(owningMessage).toHaveTextContent('Task turn');
+    expect(owningMessage).not.toHaveTextContent('Next conversation turn');
   });
 
   it('shows the send error when a send is rejected', async () => {
@@ -417,10 +519,11 @@ describe('assistant-ui chat surface — composer-adjacent cards', () => {
     expect(chatSend).not.toHaveBeenCalled();
   });
 
-  it('lists the thread files chip beside the model pill', async () => {
+  it('loads the thread artifacts without a files chip in the composer', async () => {
     await renderChat({ chatRuntime: { artifactsByThread: { [THREAD_ID]: [readyArtifact()] } } });
 
-    expect(await screen.findByTestId('chat-files-chip')).toBeInTheDocument();
+    await waitFor(() => expect(listArtifactsForThread).toHaveBeenCalledWith(THREAD_ID));
+    expect(screen.queryByTestId('chat-files-chip')).not.toBeInTheDocument();
   });
 
   it('places context usage in the right action cluster immediately before voice mode', async () => {

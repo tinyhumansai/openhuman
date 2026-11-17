@@ -27,6 +27,7 @@ pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 pub struct TerminalGuard {
     terminal: Tui,
     alternate_screen: bool,
+    mouse: bool,
 }
 
 impl TerminalGuard {
@@ -50,12 +51,24 @@ impl TerminalGuard {
         Ok(Self {
             terminal,
             alternate_screen,
+            mouse: alternate_screen,
         })
     }
 
     /// Mutable access to the underlying terminal for drawing.
     pub fn terminal(&mut self) -> &mut Tui {
         &mut self.terminal
+    }
+    pub fn set_mouse(&mut self, enabled: bool) -> io::Result<()> {
+        if self.mouse != enabled {
+            if enabled {
+                execute!(io::stdout(), EnableMouseCapture)?;
+            } else {
+                execute!(io::stdout(), DisableMouseCapture)?;
+            }
+            self.mouse = enabled;
+        }
+        Ok(())
     }
 }
 

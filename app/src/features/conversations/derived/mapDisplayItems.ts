@@ -200,6 +200,7 @@ function subagentActivityStatus(status: DerivedSubagentStatus | undefined): stri
   switch (status) {
     case 'failed':
       return 'failed';
+    case 'incomplete':
     case 'interrupted':
     case 'running':
       return status;
@@ -215,6 +216,9 @@ function subagentEntryStatus(status: DerivedSubagentStatus | undefined): ToolTim
   switch (status) {
     case 'failed':
       return 'error';
+    // Stopped without a complete answer (timeout or exhausted budget): not a
+    // success, but not a hard failure either, so it settles like a cancel.
+    case 'incomplete':
     case 'interrupted':
     case 'running':
       return 'cancelled';

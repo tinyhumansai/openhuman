@@ -33,8 +33,14 @@ pnpm test:plan -- \
 
 ## Notes
 
-- Default repo is `tinyhumansai/openhuman`.
+- Default repo is [`tinyhumansai/openhuman`](https://github.com/tinyhumansai/openhuman).
 - Requires `gh auth status` to be healthy.
 - Default synthesizer is `codex`; `--llm claude` is also supported.
 - The Markdown output is intentionally compressed. The JSONL is the better input
   if you want to do a second dedupe or planning pass later.
+
+## See also
+
+- [Testing strategy](../../docs/gitbooks/en/developing/testing-strategy.md), where the backlog items land.
+- [`docs/TEST-COVERAGE-MATRIX.md`](../../docs/TEST-COVERAGE-MATRIX.md) and [`tests/README.md`](../../tests/README.md).
+- [`scripts/README.md`](../README.md).

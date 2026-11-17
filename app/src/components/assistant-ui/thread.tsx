@@ -12,14 +12,15 @@ import {
 } from '@/components/assistant-ui/composer-dictation';
 import { ComposerTriggerPopover } from '@/components/assistant-ui/composer-trigger-popover';
 import { DirectiveText } from '@/components/assistant-ui/directive-text';
-import { EditMessage } from '@/components/assistant-ui/elements/edit-message';
 import { ErrorState } from '@/components/assistant-ui/elements/error-state';
 import { Image } from '@/components/assistant-ui/elements/image';
 import { MessageTiming } from '@/components/assistant-ui/elements/message-timing.aui';
+import { ScrollAnchor } from '@/components/assistant-ui/elements/scroll-anchor.aui';
 import { StoppedRun } from '@/components/assistant-ui/elements/stopped-run';
 import { ToolFallback } from '@/components/assistant-ui/elements/tool-fallback';
 import { File } from '@/components/assistant-ui/file';
 import { ThreadFollowupSuggestions } from '@/components/assistant-ui/follow-up-suggestions';
+import { useComposerFocusOnThreadOpen } from '@/components/assistant-ui/lib/useComposerFocusOnThreadOpen';
 import { cn } from '@/components/assistant-ui/lib/utils';
 import { MarkdownText } from '@/components/assistant-ui/markdown-text';
 import { ComposerQuotePreview, SelectionToolbar } from '@/components/assistant-ui/quote';
@@ -34,10 +35,14 @@ import {
   useAuiEditCapabilities,
   useAuiReloadCapability,
 } from '@/features/conversations/components/aui/auiThreadState';
+import { onComposerPrefill } from '@/features/conversations/tools/mcpUi/composerPrefill';
+import { McpWidgetStrip } from '@/features/conversations/tools/mcpUi/McpWidgetStrip';
+import { collectMessageWidgets } from '@/features/conversations/tools/mcpUi/messageWidgets';
+import { MessageVoiceNote, useMessageVoiceNote } from '@/features/voiceNotes/MessageVoiceNote';
 import { useT } from '@/lib/i18n/I18nContext';
-import { useAuiThreadId } from '@/providers/AssistantUiRuntimeProvider';
 import { useComposerDictationState } from '@/providers/ComposerDictationContext';
 import { CHAT_ERROR_METADATA_KEY } from '@/store/threadSlice';
+import { fullTimestamp, relativeTime } from '@/utils/relativeTime';
 import { useActionBarReload, useMessageError } from '@assistant-ui/core/react';
 import {
   ActionBarMorePrimitive,
@@ -61,7 +66,7 @@ import {
 import { LexicalComposerInput } from '@assistant-ui/react-lexical';
 import debugFactory from 'debug';
 import {
-  ArrowDownIcon,
+  AlertTriangleIcon,
   ArrowUpIcon,
   AudioLinesIcon,
   CheckIcon,
@@ -84,11 +89,8 @@ import {
   createContext,
   type FC,
   type PropsWithChildren,
-  type RefObject,
-  useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -104,6 +106,8 @@ export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
  * `ToolFallback`.
  */
 export type ThreadComponents = {
+  MessageTasks?: ComponentType | undefined;
+  ActiveTasks?: ComponentType | undefined;
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
@@ -143,6 +147,26 @@ export type ThreadComponents = {
    * component returns `null` when it has nothing to say.
    */
   RunningStatus?: ComponentType | undefined;
+  /**
+   * Host-owned content under the last message while no turn is running — e.g.
+   * an "Interrupted" marker for a turn the host knows was cut off. Returns
+   * `null` when there is nothing to show.
+   */
+  TranscriptFooter?: ComponentType | undefined;
+  /**
+   * Host-owned content rendered after the last message, inside the
+   * scrollable transcript — artifact cards from versioned tools that
+   * carry no tool-call id and would otherwise be invisible to the
+   * inline tool-call renderer. Always mounted (not gated on isRunning).
+   */
+  AfterMessages?: ComponentType | undefined;
+  /**
+   * Host-owned artifact cards rendered inside each assistant message's
+   * content area (matched by requestId). Unlike AfterMessages which
+   * renders once at the end of the transcript, MessageArtifacts renders
+   * per-message so cards appear attached to the message that created them.
+   */
+  MessageArtifacts?: ComponentType | undefined;
   /** Host-owned attachment previews rendered above the editor. */
   ComposerAttachments?: ComponentType | undefined;
   /** Host-owned attachment picker rendered in the action row. */
@@ -204,8 +228,19 @@ export type ThreadProps = {
   onModelChange?: ((value: string | null, contextWindow?: number | null) => void) | undefined;
   /** Host transport error shown in place of an empty welcome state. */
   loadError?: string | null | undefined;
-  /** Host-specific Escape behavior (for example cancel + restore prompt). */
-  onEscape?: (() => void) | undefined;
+  /**
+   * Host-specific Escape behavior (for example cancel + restore prompt).
+   * Returning `false` means it did nothing, and the key is left to anything
+   * else listening (an open popover); any other return swallows it.
+   */
+  onEscape?: (() => boolean | void) | undefined;
+  /**
+   * ArrowUp in an EMPTY composer (no modifiers, no IME): recall the last
+   * prompt. Returns whether it did; only then is the key consumed.
+   */
+  onRecallLastPrompt?: (() => boolean) | undefined;
+  /** Placeholder override for the composer input (run / waiting states). */
+  composerPlaceholder?: string | undefined;
   /**
    * Commands offered when the composer input starts with `/`. Supplied by the
    * host because a command's `execute` is host behaviour (`/clear` has to
@@ -325,6 +360,18 @@ function useThreadFileDrop() {
 const EMPTY_COMPONENTS: ThreadComponents = {};
 
 const ThreadComponentsContext = createContext<ThreadComponents>(EMPTY_COMPONENTS);
+// Composer callbacks can change on background refreshes. Keep message renderers
+// in a separate context so that change does not invalidate the full transcript.
+type MessageComponents = Pick<
+  ThreadComponents,
+  | 'AssistantMessage'
+  | 'ToolFallback'
+  | 'ActivityGroup'
+  | 'SourceGroup'
+  | 'MessageTasks'
+  | 'MessageArtifacts'
+>;
+const MessageComponentsContext = createContext<MessageComponents>(EMPTY_COMPONENTS);
 
 const NO_SLASH_COMMANDS: readonly Unstable_SlashCommand[] = [];
 const SlashCommandsContext = createContext<readonly Unstable_SlashCommand[]>(NO_SLASH_COMMANDS);
@@ -372,21 +419,45 @@ export const Thread: FC<ThreadProps> = ({
   onModelChange,
   loadError = null,
   onEscape,
+  onRecallLastPrompt,
+  composerPlaceholder,
   slashCommands = NO_SLASH_COMMANDS,
 }) => {
   const isEmpty = useAuiState(isNewChatView);
+  const messageComponents = useMemo<MessageComponents>(
+    () => ({
+      AssistantMessage: components.AssistantMessage,
+      ToolFallback: components.ToolFallback,
+      ActivityGroup: components.ActivityGroup,
+      SourceGroup: components.SourceGroup,
+      MessageTasks: components.MessageTasks,
+      MessageArtifacts: components.MessageArtifacts,
+    }),
+    [
+      components.AssistantMessage,
+      components.ToolFallback,
+      components.ActivityGroup,
+      components.SourceGroup,
+      components.MessageTasks,
+      components.MessageArtifacts,
+    ]
+  );
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <SlashCommandsContext.Provider value={slashCommands}>
-        <ThreadRoot
-          isEmpty={isEmpty}
-          model={model}
-          onModelChange={onModelChange}
-          loadError={loadError}
-          onEscape={onEscape}
-        />
-      </SlashCommandsContext.Provider>
+      <MessageComponentsContext.Provider value={messageComponents}>
+        <SlashCommandsContext.Provider value={slashCommands}>
+          <ThreadRoot
+            isEmpty={isEmpty}
+            model={model}
+            onModelChange={onModelChange}
+            loadError={loadError}
+            onEscape={onEscape}
+            onRecallLastPrompt={onRecallLastPrompt}
+            composerPlaceholder={composerPlaceholder}
+          />
+        </SlashCommandsContext.Provider>
+      </MessageComponentsContext.Provider>
     </ThreadComponentsContext.Provider>
   );
 };
@@ -396,48 +467,44 @@ const ThreadRoot: FC<{
   model: string | null;
   onModelChange?: (value: string | null, contextWindow?: number | null) => void;
   loadError: string | null;
-  onEscape?: () => void;
-}> = ({ isEmpty, model, onModelChange, loadError, onEscape }) => {
+  onEscape?: () => boolean | void;
+  onRecallLastPrompt?: () => boolean;
+  composerPlaceholder?: string;
+}> = ({
+  isEmpty,
+  model,
+  onModelChange,
+  loadError,
+  onEscape,
+  onRecallLastPrompt,
+  composerPlaceholder,
+}) => {
   const { t } = useT();
   const {
     Welcome = ThreadWelcome,
     Composer: HostComposer,
     ConversationMap,
+    ActiveTasks,
   } = useContext(ThreadComponentsContext);
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const messageGroupRef = useRef<HTMLDivElement>(null);
-  // Everything the viewport scrolls over, which is MORE than the message group:
-  // the footer below it holds the follow-up suggestions, and those appear when
-  // a reply finishes. Observing only the messages misses that growth and leaves
-  // the transcript stranded short of the bottom at the end of every turn.
-  const scrollContentRef = useRef<HTMLDivElement>(null);
-
-  const { claimScroll } = useFollowBottom(viewportRef, scrollContentRef);
-  useOpenThreadAtBottom(viewportRef, claimScroll);
   const { isDraggingFiles, dropHandlers } = useThreadFileDrop();
-
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
       {...dropHandlers}
       style={{
         ['--thread-max-width' as string]: '44rem',
-        ['--composer-bg' as string]: 'var(--color-card)',
-        ['--composer-radius' as string]: '1.5rem',
+        ['--composer-bg' as string]: 'color-mix(in oklab, var(--color-muted) 30%, transparent)',
+        ['--composer-radius' as string]: '1rem',
         ['--composer-padding' as string]: '8px',
       }}>
       <ThreadPrimitive.Viewport
-        ref={viewportRef}
-        // The host follower below checks the reader's live distance from the
-        // bottom. Disable assistant-ui's unconditional run-start jump so it
-        // cannot override a reader who intentionally scrolled into history.
-        autoScroll={false}
+        autoScroll
+        turnAnchor="bottom"
         scrollToBottomOnRunStart={false}
         data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth">
+        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll">
         {ConversationMap ? <ConversationMap /> : null}
         <div
-          ref={scrollContentRef}
           className={cn(
             'mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4',
             isEmpty && 'justify-center'
@@ -460,18 +527,13 @@ const ThreadRoot: FC<{
             </>
           )}
 
-          <div
-            ref={messageGroupRef}
-            data-slot="aui_message-group"
-            className="mb-14 flex flex-col gap-y-6 empty:hidden">
+          <div data-slot="aui_message-group" className="mb-14 flex flex-col gap-y-6 empty:hidden">
             <ThreadPrimitive.Messages>{() => <ThreadMessage />}</ThreadPrimitive.Messages>
             <RunningStatusSlot />
+            <TranscriptFooterSlot />
+            <AfterMessagesSlot />
+            {ActiveTasks && <ActiveTasks />}
           </div>
-          <ThreadBottomFollower
-            viewportRef={viewportRef}
-            contentRef={messageGroupRef}
-            claimScroll={claimScroll}
-          />
 
           <ThreadPrimitive.ViewportFooter
             className={cn(
@@ -489,6 +551,8 @@ const ThreadRoot: FC<{
                   model={model}
                   onModelChange={onModelChange}
                   onEscape={onEscape}
+                  onRecallLastPrompt={onRecallLastPrompt}
+                  placeholder={composerPlaceholder}
                   isDraggingFiles={isDraggingFiles}
                 />
                 <AuiIf condition={s => isNewChatView(s) && s.composer.isEmpty}>
@@ -516,340 +580,6 @@ const ThreadRoot: FC<{
 };
 
 /**
- * Opening a thread lands on its newest message.
- *
- * assistant-ui has two stock knobs for this and BOTH are inert here:
- *
- * - `scrollToBottomOnThreadSwitch` listens for `threads.selectionChanged`,
- *   which fires only when its `mainThreadId` changes. That id is
- *   `adapter.threadId ?? DEFAULT_THREAD_ID`, and `useOpenHumanExternalStore`
- *   returns no `threadId` — the real thread travels out-of-band through
- *   `AuiThreadIdContext` — so `mainThreadId` never leaves the default and the
- *   event never fires.
- * - `scrollToBottomOnInitialize` latches on the first non-empty render and
- *   re-arms only while the thread has zero messages. `<AssistantUiChat>` is
- *   mounted without a `key`, so this viewport survives thread switches with
- *   that latch still set.
- *
- * The second one is why the defect is intermittent rather than total, and it
- * is the case to keep in mind. `useOpenHumanExternalStore` reads
- * `state.thread.messagesByThreadId[threadId]`, a cache cleared only on delete
- * or sign-out, so a thread visited earlier this session hands its messages
- * over on the very render the id changes: it never passes through the empty
- * state that re-arms the latch, and the viewport keeps the PREVIOUS thread's
- * `scrollTop`. A thread not yet cached does briefly read empty and therefore
- * scrolls correctly even unfixed — so a fix checked only against a fresh
- * thread looks right and fixes nothing.
- *
- * Hence: latch on the thread id rather than on emptiness. Nothing here is
- * conditional on the reader's scroll position, unlike `ThreadBottomFollower`
- * below — "don't yank the reader who scrolled up" is about a new turn arriving
- * in the thread being read, and a scroll offset left over from a different
- * thread is not a reading position worth restoring.
- *
- * This lives in `ThreadRoot`, which owns `viewportRef`, rather than in
- * `ThreadBottomFollower`, which is handed it: a descendant's layout effect
- * runs before its ancestor's ref is attached, so the follower sees
- * `viewportRef.current === null` on the mount that matters and would burn the
- * latch without scrolling.
- */
-function useOpenThreadAtBottom(
-  viewportRef: RefObject<HTMLDivElement | null>,
-  claimScroll: () => void
-) {
-  const hasMessages = useAuiState(s => s.thread.messages.length > 0);
-  const threadId = useAuiThreadId();
-  // Which thread this viewport has already been dropped to the bottom for.
-  // `undefined` (nothing opened yet) is deliberately distinct from the
-  // `string | null` a thread id can be, so the initial value cannot collide
-  // with a genuine "no thread selected".
-  const openedThreadRef = useRef<string | null | undefined>(undefined);
-
-  useLayoutEffect(() => {
-    // Wait for the transcript: on the uncached path the messages arrive a tick
-    // after the id changes, and a scroll issued against an empty viewport goes
-    // nowhere. Leaving the latch alone here is what lets that second pass run.
-    if (!hasMessages) return;
-    if (openedThreadRef.current === threadId) return;
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-
-    openedThreadRef.current = threadId;
-    // `behavior: 'instant'` overrides the viewport's `scroll-smooth` class:
-    // opening a thread should start at the bottom, not animate down through the
-    // entire history to get there.
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' });
-    // Re-arm following for the NEW thread. `followRef` lives as long as this
-    // viewport, which outlives any one thread, so without this a reader who
-    // scrolled up in thread A carries that `false` into thread B — and if both
-    // threads sit at the same `scrollTop` (0 and 0 is the easy case) the open
-    // scroll produces no `scroll` event to re-enable it, so B never follows its
-    // own reply. Opening a thread is not a reader scrolling away from it.
-    claimScroll();
-  }, [claimScroll, hasMessages, threadId, viewportRef]);
-}
-
-const FOLLOW_BOTTOM_THRESHOLD_PX = 80;
-
-/**
- * How long after a scroll-capable input a falling `scrollTop` still counts as
- * the reader moving. Generous enough for a wheel's momentum tail and a held
- * key's repeat; far shorter than any gap between a gesture and an unrelated
- * layout shift worth ignoring.
- */
-const USER_SCROLL_INTENT_WINDOW_MS = 1000;
-
-/** Keys that scroll a focused scroller up (or anywhere — any of them is intent). */
-const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
-
-/**
- * Keep the newest content in view while the assistant streams.
- *
- * `ThreadBottomFollower` below cannot do this. It keys on
- * `latestMessage.id`/`.role`, and a streaming reply is ONE message whose id
- * never changes (`STREAMING_TAIL_ID`, `providers/assistantUiMessages.ts`) and
- * whose role is `assistant` — so it neither passes that hook's `role ===
- * 'user'` guard nor re-runs as tokens land. assistant-ui's own `autoScroll` is
- * off here deliberately: its stick threshold is ~1px against this host's 80,
- * and its run-start jump is unconditional, so enabling it would put two
- * followers with different ideas of "at the bottom" on one viewport.
- *
- * So follow the content box rather than the message list. A `ResizeObserver`
- * fires on every height change from any cause — tokens, markdown reflow, a
- * code block, a tool timeline expanding, an image decoding — none of which the
- * message identity reports.
- *
- * The reader stays in charge: `followRef` tracks their live distance from the
- * bottom, so scrolling up into history stops the following, and scrolling back
- * within `FOLLOW_BOTTOM_THRESHOLD_PX` resumes it. That is the contract the
- * viewport comment states — never yank a reader who deliberately left the
- * bottom — and it is enforced here rather than assumed.
- *
- * ## Pin-then-follow, and what that costs
- *
- * `ThreadBottomFollower` aligns a new USER message to the TOP of the viewport
- * so the reply streams beneath it. For a reply taller than the viewport that
- * alignment and this following are mutually exclusive: keep the question
- * pinned and the answer streams below the fold — the reported defect — or
- * follow the answer and the question eventually scrolls off the top.
- *
- * The choice made here is **pin at turn start, follow thereafter**, with the
- * reader overriding both by scrolling away. The pin is an alignment for the
- * moment a turn begins, not a claim on the whole turn, and every mainstream
- * chat client resolves it the same way. This is a visible change to how a long
- * reply reads, so it is recorded rather than left to be rediscovered.
- *
- * What a reader gives up: on a reply taller than the viewport, their own
- * question scrolls off the top as the answer streams. What they get back is
- * the answer being on screen while it arrives, which is the defect this fixes.
- */
-function useFollowBottom(
-  viewportRef: RefObject<HTMLDivElement | null>,
-  contentRef: RefObject<HTMLDivElement | null>
-) {
-  // Starts true so a thread opens following; the first user scroll away from
-  // the bottom is what turns it off.
-  const followRef = useRef(true);
-  const lastScrollTopRef = useRef(0);
-  // `scrollHeight` as it stood when we last claimed a scroll. Growth up to this
-  // mark is growth we already knew about; only growth BEYOND it is new content
-  // worth following. `null` means no claim is outstanding.
-  const claimedHeightRef = useRef<number | null>(null);
-
-  /**
-   * Declare a scroll as OURS, after performing it.
-   *
-   * Setting `followRef` alone is not enough and was the first thing I tried.
-   * A programmatic scroll is synchronous but its `scroll` event is not, so the
-   * listener runs AFTER the caller has re-armed the flag, sees a `scrollTop`
-   * lower than the stale baseline, and clears it again. Re-baselining here —
-   * while `scrollTop` already holds the post-scroll value — is what makes the
-   * later event a no-op instead.
-   */
-  const claimScroll = useCallback(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    lastScrollTopRef.current = viewport.scrollTop;
-    claimedHeightRef.current = viewport.scrollHeight;
-    followRef.current = true;
-  }, [viewportRef]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    const content = contentRef.current;
-    if (!viewport || !content) return;
-
-    const distanceFromBottom = () =>
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-
-    // Turning following ON needs only proximity to the bottom. Turning it OFF
-    // requires the reader to have moved UP, which is the part that matters:
-    //
-    // a growth-induced `scroll` event carries the reply's NEW `scrollHeight`
-    // against an unmoved `scrollTop`, so a bare proximity test would read "far
-    // from the bottom" and clear the flag for a reader who never moved —
-    // silently ending the follow this hook exists to provide. Requiring a
-    // decrease in `scrollTop` makes that impossible: content growth does not
-    // move it, scroll anchoring only ever moves it DOWN the document (it
-    // preserves the visual position when content is inserted above), and this
-    // hook's own `scrollTo` moves it to the maximum.
-    //
-    // `reasoning.tsx` solves the same problem by additionally requiring
-    // `scrollHeight` to be unchanged. That is right for a small preview box and
-    // wrong here: during a live stream the height changes on almost every
-    // event, so the reader's scroll away would be ignored and they would be
-    // dragged back down — breaking the "never yank a reader who left the
-    // bottom" contract. Keying on `scrollTop` alone holds in both cases.
-    lastScrollTopRef.current = viewport.scrollTop;
-
-    // ...and the move up has to be the READER's. A falling `scrollTop` is not
-    // proof of that: a disclosure collapsing above the fold, content shrinking
-    // under a reply that swaps parts, and assistant-ui's `useScrollLock`
-    // (which writes the old `scrollTop` back on every scroll event while a
-    // disclosure animates) all lower it with nobody touching anything — and
-    // each used to switch following off mid-turn, leaving the reply streaming
-    // below the fold. So a decrease only counts within a short window after
-    // an input that can scroll: wheel, touch, a scroll key, or a press on the
-    // viewport itself (its scrollbar).
-    let userIntentAt = Number.NEGATIVE_INFINITY;
-    let scrollbarDragActive = false;
-    const markIntent = () => {
-      userIntentAt = window.performance.now();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (SCROLL_KEYS.has(event.key)) markIntent();
-    };
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.target === viewport) {
-        scrollbarDragActive = true;
-        markIntent();
-      }
-    };
-    const clearScrollbarDrag = () => {
-      scrollbarDragActive = false;
-    };
-
-    const onScroll = () => {
-      if (distanceFromBottom() <= FOLLOW_BOTTOM_THRESHOLD_PX) {
-        followRef.current = true;
-      } else if (
-        viewport.scrollTop < lastScrollTopRef.current &&
-        (scrollbarDragActive ||
-          window.performance.now() - userIntentAt <= USER_SCROLL_INTENT_WINDOW_MS)
-      ) {
-        followRef.current = false;
-      }
-      lastScrollTopRef.current = viewport.scrollTop;
-    };
-    viewport.addEventListener('scroll', onScroll, { passive: true });
-    viewport.addEventListener('wheel', markIntent, { passive: true });
-    viewport.addEventListener('touchmove', markIntent, { passive: true });
-    // Scroll keys are delivered to whatever has focus, not to the viewport.
-    const keyTarget = viewport.ownerDocument;
-    keyTarget.addEventListener('keydown', onKeyDown);
-    viewport.addEventListener('pointerdown', onPointerDown);
-    viewport.addEventListener('pointerup', clearScrollbarDrag);
-    viewport.addEventListener('pointercancel', clearScrollbarDrag);
-
-    const observer = new ResizeObserver(() => {
-      // Read the flag; do NOT recompute the distance here. By the time this
-      // callback runs the content has already grown: `scrollHeight` is the new
-      // larger value while `scrollTop` has not moved, so a fresh measurement
-      // reads "far from the bottom" *because of the growth being reacted to*.
-      // Recomputing would decline to follow on the first token batch and never
-      // recover, which looks identical to the defect this hook fixes. The
-      // question is "was the reader at the bottom BEFORE this growth", and only
-      // a value captured before it can answer that.
-      //
-      // The flag is maintained by `onScroll` above, which only clears it on a
-      // genuine upward move by the reader — see the note there for why a bare
-      // proximity test would clear it on the growth being reacted to.
-      if (!followRef.current) return;
-      // Do not follow the growth that PROMPTED the claim.
-      //
-      // A new user message grows the content box, which queues a resize
-      // notification; `ThreadBottomFollower` then aligns that message to the
-      // top and claims the scroll. The queued callback runs afterwards, and
-      // following it would scroll straight to the bottom — erasing the
-      // alignment before it is ever painted, which makes the alignment
-      // pointless rather than merely short-lived.
-      //
-      // So a claim records the height it was made at, and growth up to that
-      // mark is ignored. The first growth BEYOND it is the reply arriving,
-      // which is what following is for; the mark is then dropped so the rest
-      // of the turn streams normally.
-      const claimedHeight = claimedHeightRef.current;
-      if (claimedHeight !== null) {
-        if (viewport.scrollHeight <= claimedHeight) return;
-        claimedHeightRef.current = null;
-      }
-      // `instant` overrides the viewport's `scroll-smooth`: a smooth animation
-      // per token would lag permanently behind the stream.
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' });
-    });
-    observer.observe(content);
-
-    return () => {
-      viewport.removeEventListener('scroll', onScroll);
-      viewport.removeEventListener('wheel', markIntent);
-      viewport.removeEventListener('touchmove', markIntent);
-      keyTarget.removeEventListener('keydown', onKeyDown);
-      viewport.removeEventListener('pointerdown', onPointerDown);
-      viewport.removeEventListener('pointerup', clearScrollbarDrag);
-      viewport.removeEventListener('pointercancel', clearScrollbarDrag);
-      observer.disconnect();
-    };
-  }, [contentRef, viewportRef]);
-
-  return { followRef, claimScroll };
-}
-
-/**
- * Align a new turn only for a reader who remains near the bottom. assistant-ui's
- * run-start scroll is unconditional, which would pull a reader from older
- * messages into every new turn.
- */
-const ThreadBottomFollower: FC<{
-  viewportRef: RefObject<HTMLDivElement | null>;
-  contentRef: RefObject<HTMLDivElement | null>;
-  claimScroll: () => void;
-}> = ({ viewportRef, contentRef, claimScroll }) => {
-  const latestMessage = useAuiState(s => s.thread.messages.at(-1));
-
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    const distanceFromBottom = viewport
-      ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
-      : Infinity;
-    if (latestMessage?.role !== 'user' || distanceFromBottom > FOLLOW_BOTTOM_THRESHOLD_PX) {
-      return;
-    }
-    const userMessages = contentRef.current?.querySelectorAll<HTMLElement>('[data-role="user"]');
-    // `behavior: 'instant'`, like the other two scrolls in this file, and for a
-    // second reason beyond overriding `scroll-smooth`: `claimScroll` below
-    // re-baselines from `viewport.scrollTop`, which is only correct if the move
-    // has already happened. A smooth alignment has NOT moved it by the time the
-    // next line runs, so the baseline would capture the pre-scroll position and
-    // the animation's own scroll events — a run of decreasing `scrollTop` —
-    // would read as the reader scrolling away, clearing the flag exactly when
-    // the reply starts. That failed intermittently rather than always, since a
-    // growth event landing between animation frames could re-arm it.
-    userMessages
-      ?.item(userMessages.length - 1)
-      ?.scrollIntoView({ block: 'start', behavior: 'instant' });
-    // This alignment scrolls UP whenever the reader was at the bottom — the new
-    // user message sits above the trailing `mb-14` and running-status slot, so
-    // bringing its top to the viewport top lowers `scrollTop`. To
-    // `useFollowBottom`'s listener that is indistinguishable from the reader
-    // scrolling away, and it would clear the follow flag at the exact moment
-    // the reply starts arriving. Re-arm: this scroll is ours, not theirs.
-    claimScroll();
-  }, [claimScroll, contentRef, latestMessage?.id, latestMessage?.role, viewportRef]);
-
-  return null;
-};
-
-/**
  * The host's `RunningStatus`, gated on the thread actually running.
  *
  * Kept inside the message group so the line sits under the last message —
@@ -865,9 +595,27 @@ const RunningStatusSlot: FC = () => {
   );
 };
 
+/** Host footer under the last message, shown only while nothing is running. */
+const TranscriptFooterSlot: FC = () => {
+  const { TranscriptFooter } = useContext(ThreadComponentsContext);
+  if (!TranscriptFooter) return null;
+  return (
+    <AuiIf condition={s => !s.thread.isRunning}>
+      <TranscriptFooter />
+    </AuiIf>
+  );
+};
+
+/** Host content after the last message; always mounted (not gated). */
+const AfterMessagesSlot: FC = () => {
+  const { AfterMessages } = useContext(ThreadComponentsContext);
+  if (!AfterMessages) return null;
+  return <AfterMessages />;
+};
+
 const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
-    useContext(ThreadComponentsContext);
+    useContext(MessageComponentsContext);
   const role = useAuiState(s => s.message.role);
   const isEditing = useAuiState(s => s.message.composer.isEditing);
 
@@ -877,22 +625,60 @@ const ThreadMessage: FC = () => {
 };
 
 const ThreadScrollToBottom: FC = () => {
+  const { t } = useT();
+  return <ScrollAnchor label={t('chat.message.scrollToBottom')} />;
+};
+
+const ChannelMessageActivity: FC = () => {
+  const metadata = useAuiState(state => state.message.metadata?.custom) as
+    | { extraMetadata?: Record<string, unknown> }
+    | undefined;
+  const activity = metadata?.extraMetadata?.channelActivity;
+  if (!activity || typeof activity !== 'object') return null;
+  const value = activity as {
+    reactions?: Array<{ value?: unknown; customEmojiId?: unknown }> | Record<string, unknown>;
+    readReceipts?: unknown[] | Record<string, unknown>;
+  };
+  const storedItems = (items: unknown): unknown[] => {
+    if (Array.isArray(items)) return items;
+    if (items && typeof items === 'object') return Object.values(items);
+    return [];
+  };
+  const reactionCounts = new Map<string, number>();
+  for (const reaction of storedItems(value.reactions)) {
+    if (!reaction || typeof reaction !== 'object') continue;
+    const item = reaction as { value?: unknown };
+    if (typeof item.value !== 'string' || item.value.length === 0) continue;
+    reactionCounts.set(item.value, (reactionCounts.get(item.value) ?? 0) + 1);
+  }
+  const readCount = storedItems(value.readReceipts).length;
+  if (reactionCounts.size === 0 && readCount === 0) return null;
   return (
-    <ThreadPrimitive.ScrollToBottom asChild>
-      <TooltipIconButton
-        tooltip="Scroll to bottom"
-        variant="outline"
-        className="aui-thread-scroll-to-bottom dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible">
-        <ArrowDownIcon />
-      </TooltipIconButton>
-    </ThreadPrimitive.ScrollToBottom>
+    <div data-slot="aui_channel-message-activity" className="mt-1 flex flex-wrap gap-1">
+      {[...reactionCounts].map(([reaction, count]) => (
+        <span
+          key={reaction}
+          data-testid="channel-message-reaction"
+          className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs">
+          {reaction} {count}
+        </span>
+      ))}
+      {readCount > 0 && (
+        <span
+          data-testid="channel-message-read-receipts"
+          aria-hidden="true"
+          className="text-muted-foreground px-1 py-0.5 text-xs">
+          ✓✓ {readCount}
+        </span>
+      )}
+    </div>
   );
 };
 
 const ThreadWelcome: FC = () => {
   const { t } = useT();
   return (
-    <div className="aui-thread-welcome-root mb-6 flex flex-col items-center px-4 text-center">
+    <div className="aui-thread-welcome-root mb-6 flex flex-col px-2">
       <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-medium tracking-tight duration-200">
         {t('chat.newWindowPrompt', 'How can I help you today?')}
       </h1>
@@ -916,7 +702,7 @@ const ThreadSuggestionItem: FC = () => {
           variant="ghost"
           className="aui-thread-welcome-suggestion text-foreground hover:bg-muted border-border/60 h-auto gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-normal whitespace-nowrap transition-colors">
           <SuggestionPrimitive.Title className="aui-thread-welcome-suggestion-text-1" />
-          <SuggestionPrimitive.Description className="aui-thread-welcome-suggestion-text-2 empty:hidden" />
+          <SuggestionPrimitive.Description className="aui-thread-welcome-suggestion-text-2 text-muted-foreground empty:hidden" />
         </Button>
       </SuggestionPrimitive.Trigger>
     </div>
@@ -936,10 +722,12 @@ export function extractComposerPasteFiles(
 const Composer: FC<{
   model: string | null;
   onModelChange?: (value: string | null, contextWindow?: number | null) => void;
-  onEscape?: () => void;
+  onEscape?: () => boolean | void;
+  onRecallLastPrompt?: () => boolean;
+  placeholder?: string;
   /** A file drag is over the thread and will land here; see `useThreadFileDrop`. */
   isDraggingFiles: boolean;
-}> = ({ model, onModelChange, onEscape, isDraggingFiles }) => {
+}> = ({ model, onModelChange, onEscape, onRecallLastPrompt, placeholder, isDraggingFiles }) => {
   const { t } = useT();
   const dictation = useComposerDictationState();
   const cancelDictation = dictation?.cancel;
@@ -970,6 +758,7 @@ const Composer: FC<{
       textbox?.removeAttribute('data-testid');
     };
   }, [messageInputLabel]);
+  useComposerFocusOnThreadOpen(inputWrapperRef);
 
   // Set for as long as an IME composition is open. The gate is a ref rather
   // than state because it is read from a microtask, not from a render.
@@ -979,6 +768,11 @@ const Composer: FC<{
   // composition before it runs. That stale write would rebuild the editor
   // mid-composition and cancel it -- #5763 again, one composition later.
   const isComposingTextRef = useRef(false);
+
+  useEffect(() => onComposerPrefill(text => aui.composer.setText(text)), [aui]);
+  // ArrowUp recall only fires on an empty composer, so a caret move inside a
+  // multi-line draft is never hijacked.
+  const composerIsEmpty = useAuiState(state => state.composer.text.length === 0);
 
   // DOM text -> composer store. The text is read at event time; only the write
   // is deferred by a microtask, so the editor has finished applying the event
@@ -1045,69 +839,7 @@ const Composer: FC<{
             data-slot="aui_composer-shell"
             data-dragging={onComposerFiles && isDraggingFiles ? 'true' : undefined}
             onPasteCapture={handlePasteCapture}
-            // Keyed to `content-faint` rather than `line`/`line-strong`, which
-            // sat too close to the composer's own surface to read as an edge at
-            // all; `content-faint` is a real step along the grey ramp in both
-            // themes and the alpha then pulls it back.
-            //
-            // The border is deliberately fainter than the content card's edge
-            // (0.65 in `index.css`) because it is not carrying the definition
-            // alone: `shadow-soft` lifts the composer off the transcript, and a
-            // lifted surface needs less outline than a flat one to read as
-            // separate. Border and shadow together at low strength read calmer
-            // than either at full — a hard 0.65 line under a shadow reads as
-            // two competing edges.
-            //
-            // Two roles, kept apart: the SHADOW is constant and the BORDER is
-            // what moves.
-            //
-            // The shadow is an explicit near-black pair rather than
-            // `shadow-soft`/`shadow-medium`. Those tokens are black at 0.08
-            // alpha, which is a diffuse haze — on the themed chrome behind this
-            // composer it reads as a smudge rather than a cast shadow.
-            //
-            // Both layers are pushed DOWN rather than spread evenly, because an
-            // even shadow reads as a glow: it implies light from everywhere,
-            // which is no light at all, and the composer ends up looking fuzzy
-            // instead of raised. The offsets (6px, 22px) exceed each layer's
-            // negative spread (-4px, -16px), so the cast clears the box on the
-            // bottom edge and is pulled in at the top — the asymmetry is what
-            // says "lit from above".
-            //
-            //   0 8px  12px -4px  / 0.18  — contact: tight, near the edge
-            //   0 30px 44px -16px / 0.24  — cast: far, wide, and the stronger
-            //
-            // Both halved from 0.34 / 0.48: at those strengths the composer
-            // read as hovering well above the page, and the cast crowded the
-            // last message. Half keeps the lit-from-above asymmetry while the
-            // surface sits closer to the transcript.
-            //
-            // The far layer carrying more alpha than the near one is
-            // deliberate and is what gives depth; the usual instinct is the
-            // reverse, which flattens it back out.
-            //
-            // `animate-composer-shadow` then orbits those offsets clockwise on
-            // a slow loop (`composerShadowOrbit`, `index.css`), as though the
-            // light above the composer circles the room. The static values here
-            // are the orbit's 25% stop, so the animation starts from roughly
-            // where the unanimated composer sits rather than jumping on load. The static `shadow-[…]` above is
-            // not redundant: it is what `motion-reduce:animate-none` falls back
-            // to, so the composer keeps its elevation when the OS asks for less
-            // motion and merely stops moving. Keyframes override the utility
-            // while the animation runs, which is why the two can coexist.
-            //
-            // Focus is now carried entirely by the border — 0.35 → 0.90 on the
-            // same token, so the edge sharpens rather than changing colour —
-            // and `transition` names border-color alone. Animating the shadow
-            // as well meant two things moving at once for a single event; with
-            // the elevation fixed, the composer stays put and only its outline
-            // responds. `duration-200 ease-out` is the settle, and
-            // `motion-reduce` drops it for anyone who asked the OS for less
-            // motion — the cue still lands, just instantly.
-            //
-            // `border-ring` on drag is untouched — that state is meant to break
-            // the pattern.
-            className="border-content-faint/35 focus-within:border-content-faint/90 data-[dragging=true]:border-ring shadow-[0_8px_12px_-4px_rgb(0_0_0/0.09),0_30px_44px_-16px_rgb(0_0_0/0.12)] animate-composer-shadow motion-reduce:animate-none flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] duration-200 ease-out motion-reduce:transition-none data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
+            className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
             {/* Renders only while a quote is set; dismissing it clears the quote. */}
             <ComposerQuotePreview />
             {HostComposerAttachments ? <HostComposerAttachments /> : <ComposerAttachments />}
@@ -1121,7 +853,7 @@ const Composer: FC<{
              */}
             <LexicalComposerInput
               ref={inputWrapperRef}
-              placeholder={t('chat.typeMessage', 'Send a message...')}
+              placeholder={placeholder ?? t('chat.typeMessage', 'Send a message...')}
               onCompositionStartCapture={() => {
                 isComposingTextRef.current = true;
               }}
@@ -1155,13 +887,33 @@ const Composer: FC<{
                 syncComposerFromDom(event.target);
               }}
               onKeyDownCapture={event => {
+                const native = event.nativeEvent;
                 if (event.key === 'Escape' && onEscape) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onEscape();
+                  // Only swallow the key when the host acted; otherwise an open
+                  // `/` or `@` popover still gets to close on it.
+                  if (onEscape() !== false) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }
                   return;
                 }
-                const native = event.nativeEvent;
+                if (
+                  event.key === 'ArrowUp' &&
+                  onRecallLastPrompt &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !isComposingTextRef.current &&
+                  !native.isComposing &&
+                  composerIsEmpty
+                ) {
+                  if (onRecallLastPrompt()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }
+                  return;
+                }
                 if (
                   isComposingTextRef.current ||
                   native.isComposing ||
@@ -1222,7 +974,7 @@ const ComposerAction: FC<{
     !!ComposerIdleAction && composerText.trim().length === 0 && !hasComposerAttachments;
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <div className="flex min-w-0 items-center gap-1">
+      <div className="flex items-center gap-1.5">
         {HostComposerAddAttachment ? <HostComposerAddAttachment /> : <ComposerAddAttachment />}
         <ChatSettingsPanel model={model} onModelChange={onModelChange} />
         <ComposerExtrasSlot />
@@ -1297,17 +1049,43 @@ const ComposerAction: FC<{
             </ComposerPrimitive.Send>
           )}
         </AuiIf>
-        <AuiIf condition={s => s.thread.isRunning}>
+        {/*
+          While a turn runs, typed text is a queued follow-up (the runtime's
+          `queue` capability keeps Send enabled), so the primary slot offers to
+          queue it; Stop takes the slot only when there is nothing to send —
+          OpenClaw's rule, and the one that keeps a half-typed follow-up one
+          Enter away instead of behind a Stop button.
+        */}
+        <AuiIf condition={s => s.thread.isRunning && s.composer.text.trim().length > 0}>
+          <ComposerPrimitive.Send asChild>
+            <TooltipIconButton
+              tooltip={t('composer.queueSend')}
+              side="bottom"
+              type="button"
+              variant="default"
+              size="icon"
+              className="aui-composer-send size-7 rounded-full bg-primary-500 text-content-inverted hover:bg-primary-600"
+              data-testid="queue-message-button"
+              data-analytics-id="chat-composer-queue-send"
+              aria-label={t('composer.queueSend')}>
+              <ArrowUpIcon className="aui-composer-send-icon size-4" />
+            </TooltipIconButton>
+          </ComposerPrimitive.Send>
+        </AuiIf>
+        <AuiIf condition={s => s.thread.isRunning && s.composer.text.trim().length === 0}>
           <ComposerPrimitive.Cancel asChild>
-            <Button
+            <TooltipIconButton
+              tooltip={t('composer.stopEsc')}
+              side="bottom"
               type="button"
               variant="default"
               size="icon"
               className="aui-composer-cancel size-7 rounded-full bg-primary-500 text-content-inverted hover:bg-primary-600"
               data-testid="stop-generation-button"
+              data-analytics-id="chat-composer-stop"
               aria-label={t('chat.stopGeneration', 'Stop generating')}>
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
-            </Button>
+            </TooltipIconButton>
           </ComposerPrimitive.Cancel>
         </AuiIf>
       </div>
@@ -1382,21 +1160,10 @@ const isStoppedRun = (s: AssistantState): boolean =>
   s.message.status?.type === 'incomplete' && s.message.status.reason === 'cancelled';
 
 /**
- * The stopped turn's own text, split into words for the vendored
- * `StoppedRun` element, plus `cancel_reason`/`superseded_by`
- * (wire-contract.md `chat_cancelled`, carried through
- * `metadata.custom.extraMetadata` by `assistantUiMessages.ts`) so the reason
- * chip can distinguish a user-initiated Stop from a turn the core superseded.
+ * `cancel_reason` (wire-contract.md `chat_cancelled`, carried through
+ * `metadata.custom.extraMetadata` by `assistantUiMessages.ts`), so the reason
+ * chip can tell a user-initiated Stop from a turn the core superseded.
  */
-// Two primitive selectors rather than one object-returning selector:
-// `useAuiState`'s selector is compared by `Object.is`, so an inline `{...}`
-// literal differs from itself on every store tick and free-runs the
-// subscription — exactly the "Maximum update depth exceeded" loop this file
-// hit once already. `words` (an array) is derived from `text` with
-// `useMemo` in the component below instead of being computed here.
-const selectStoppedRunText = (s: AssistantState): string =>
-  s.message.parts.flatMap(part => (part.type === 'text' ? [part.text] : [])).join(' ');
-
 const selectStoppedRunCancelReason = (s: AssistantState): string | undefined => {
   const custom = s.message.metadata?.custom as
     | { extraMetadata?: { cancelReason?: string; supersededBy?: string } }
@@ -1416,9 +1183,7 @@ const selectStoppedRunCancelReason = (s: AssistantState): string | undefined => 
 const StoppedRunSlot: FC = () => {
   const aui = useAui();
   const { t } = useT();
-  const text = useAuiState(selectStoppedRunText);
   const cancelReason = useAuiState(selectStoppedRunCancelReason);
-  const words = useMemo(() => (text.length > 0 ? text.split(/\s+/).filter(Boolean) : []), [text]);
   const { disabled: reloadDisabled, reload } = useActionBarReload();
   const reasonLabel =
     cancelReason === 'superseded'
@@ -1427,7 +1192,6 @@ const StoppedRunSlot: FC = () => {
   return (
     <StoppedRun
       data-testid="stopped-marker"
-      words={words}
       reason={reasonLabel}
       onContinue={() => {
         if (!reloadDisabled) reload();
@@ -1440,12 +1204,17 @@ const StoppedRunSlot: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  const voiceNote = useMessageVoiceNote();
   const {
     ToolFallback: ToolFallbackComponent = ToolFallback,
     ActivityGroup = DefaultActivityGroup,
     SourceGroup,
-  } = useContext(ThreadComponentsContext);
+    MessageTasks,
+    MessageArtifacts,
+  } = useContext(MessageComponentsContext);
   const stopped = useAuiState(isStoppedRun);
+  const parts = useAuiState(s => s.message.parts);
+  const widgets = useMemo(() => collectMessageWidgets(parts), [parts]);
 
   const ACTION_BAR_PT = 'pt-1.5';
   // `min-h` reserves the bar's height (`pt-1.5` + a `size-6` button = 7.5) so a
@@ -1464,9 +1233,8 @@ const AssistantMessage: FC = () => {
   // asserted in `thread.actionBarSpacing.test.tsx`.
   const ACTION_BAR_HEIGHT = `-mb-6 min-h-7.5 ${ACTION_BAR_PT}`;
   // The root's own `-mb-7.5 pb-7.5` pair below is PAINT-ONLY and unrelated to
-  // the above: `content-visibility:auto` implies `contain: paint`, so `pb`
-  // widens the paint box to cover the bar that `-mb` pulls past the content
-  // box, and the root's `-mb` cancels that padding again in flow.
+  // the above: the padding reserves paint space for the action bar, and the
+  // negative margin compensates for that padding in normal flow.
 
   return (
     <MessagePrimitive.Root
@@ -1490,7 +1258,7 @@ const AssistantMessage: FC = () => {
        */}
       <div
         data-slot="aui_assistant-message-content"
-        className="text-foreground [&>*+*]:mt-3 [&_[data-slot=reasoning-root]]:mb-0 px-2 leading-relaxed wrap-break-word">
+        className="text-foreground px-2 leading-relaxed wrap-break-word">
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
             reasoning: ['group-activity'],
@@ -1500,15 +1268,23 @@ const AssistantMessage: FC = () => {
           })}>
           {({ part, children }) => {
             switch (part.type) {
-              case 'group-activity':
-                return <ActivityGroup group={part}>{children}</ActivityGroup>;
+              case 'group-activity': {
+                const groupWidgets = widgets.filter(widget =>
+                  part.indices.includes(widget.partIndex)
+                );
+                return (
+                  <>
+                    <ActivityGroup group={part}>{children}</ActivityGroup>
+                    <McpWidgetStrip widgets={groupWidgets} />
+                  </>
+                );
+              }
               case 'group-source':
                 return SourceGroup ? <SourceGroupSlot Component={SourceGroup} /> : null;
               case 'text':
-                // A stopped/cancelled turn's text renders once, inside
-                // `StoppedRunSlot` below (as `words`), not here — see that
-                // component's docstring.
-                return stopped ? null : <MarkdownText />;
+                // A stopped turn's partial is markdown like any reply (#7729);
+                // `StoppedRunSlot` below adds only the reason and actions.
+                return <MarkdownText />;
               case 'reasoning':
                 // A step inside the activity group, not a disclosure of its own.
                 return (
@@ -1547,6 +1323,22 @@ const AssistantMessage: FC = () => {
         {stopped && <StoppedRunSlot />}
         <MessageError />
         <ChatErrorNotice />
+        {MessageTasks && (
+          <div>
+            <MessageTasks />
+          </div>
+        )}
+        {MessageArtifacts && (
+          <div className="mt-2">
+            <MessageArtifacts />
+          </div>
+        )}
+        {voiceNote ? (
+          <div data-slot="aui_assistant-message-voice-note" className="mt-2">
+            <MessageVoiceNote note={voiceNote} withTranscript={false} />
+          </div>
+        ) : null}
+        <ChannelMessageActivity />
       </div>
 
       <div
@@ -1580,7 +1372,7 @@ const AssistantActionBar: FC = () => {
   const reloadAction =
     canReload && !isFailedTurn ? (
       <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip="Refresh">
+        <TooltipIconButton tooltip={t('chat.message.refresh')}>
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
@@ -1592,7 +1384,7 @@ const AssistantActionBar: FC = () => {
       autohide="not-last"
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex gap-1 duration-200">
       <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="Copy">
+        <TooltipIconButton tooltip={t('chat.message.copy')}>
           <AuiIf condition={s => s.message.isCopied}>
             <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
           </AuiIf>
@@ -1618,7 +1410,7 @@ const AssistantActionBar: FC = () => {
           unconditionally, so they are always live here. */}
       <ActionBarPrimitive.FeedbackPositive asChild>
         <TooltipIconButton
-          tooltip="Good response"
+          tooltip={t('chat.message.goodResponse')}
           data-testid="assistant-feedback-positive"
           className="data-[submitted=true]:text-primary-600 dark:data-[submitted=true]:text-primary-400">
           <ThumbsUpIcon />
@@ -1626,7 +1418,7 @@ const AssistantActionBar: FC = () => {
       </ActionBarPrimitive.FeedbackPositive>
       <ActionBarPrimitive.FeedbackNegative asChild>
         <TooltipIconButton
-          tooltip="Bad response"
+          tooltip={t('chat.message.badResponse')}
           data-testid="assistant-feedback-negative"
           className="data-[submitted=true]:text-coral-600 dark:data-[submitted=true]:text-coral-400">
           <ThumbsDownIcon />
@@ -1644,14 +1436,14 @@ const AssistantActionBar: FC = () => {
       <AuiIf condition={s => s.thread.capabilities.speech}>
         <AuiIf condition={s => s.message.speech == null}>
           <ActionBarPrimitive.Speak asChild>
-            <TooltipIconButton tooltip="Read aloud">
+            <TooltipIconButton tooltip={t('chat.message.readAloud')}>
               <Volume2Icon />
             </TooltipIconButton>
           </ActionBarPrimitive.Speak>
         </AuiIf>
         <AuiIf condition={s => s.message.speech != null}>
           <ActionBarPrimitive.StopSpeaking asChild>
-            <TooltipIconButton tooltip="Stop reading">
+            <TooltipIconButton tooltip={t('chat.message.stopReading')}>
               <VolumeXIcon className="text-destructive" />
             </TooltipIconButton>
           </ActionBarPrimitive.StopSpeaking>
@@ -1659,7 +1451,9 @@ const AssistantActionBar: FC = () => {
       </AuiIf>
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger asChild>
-          <TooltipIconButton tooltip="More" className="data-[state=open]:bg-accent">
+          <TooltipIconButton
+            tooltip={t('chat.message.more')}
+            className="data-[state=open]:bg-accent">
             <MoreHorizontalIcon />
           </TooltipIconButton>
         </ActionBarMorePrimitive.Trigger>
@@ -1667,9 +1461,9 @@ const AssistantActionBar: FC = () => {
           side="bottom"
           align="start"
           sideOffset={6}
-          className="aui-action-bar-more-content bg-popover text-popover-foreground data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:animate-out data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-32 overflow-hidden rounded-xl border p-1.5">
+          className="aui-action-bar-more-content bg-popover text-popover-foreground data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:animate-out data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-[8rem] overflow-hidden rounded-xl border p-1.5">
           <ActionBarPrimitive.ExportMarkdown asChild>
-            <ActionBarMorePrimitive.Item className="aui-action-bar-more-item hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-hidden select-none">
+            <ActionBarMorePrimitive.Item className="aui-action-bar-more-item hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none">
               <DownloadIcon className="size-4" />
               {t('assistantUi.thread.exportAsMarkdown', 'Export as Markdown')}
             </ActionBarMorePrimitive.Item>
@@ -1682,7 +1476,40 @@ const AssistantActionBar: FC = () => {
        * that element's own docstring for why it belongs inside this root.
        */}
       <MessageTiming />
+      <MessageTimestamp />
     </ActionBarPrimitive.Root>
+  );
+};
+
+/**
+ * Muted relative send time beside the message actions ("5m ago"), with the
+ * full local date, time and zone in its tooltip. The action bar mounts on
+ * hover (and for the last message), so "now" is taken when it mounts rather
+ * than ticking on every message in a long transcript.
+ */
+const MessageTimestamp: FC = () => {
+  const { t, locale } = useT();
+  const createdAt = useAuiState(s => s.message.createdAt);
+  const [now] = useState(() => new Date());
+  if (!(createdAt instanceof Date)) return null;
+  const relative = relativeTime(createdAt, now, locale);
+  if (!relative) return null;
+  const label =
+    relative.kind === 'justNow'
+      ? t('chat.message.justNow')
+      : relative.kind === 'minutes'
+        ? t('chat.message.minutesAgo').replace('{count}', String(relative.count))
+        : relative.kind === 'hours'
+          ? t('chat.message.hoursAgo').replace('{count}', String(relative.count))
+          : relative.label;
+  return (
+    <time
+      data-testid="message-timestamp"
+      dateTime={createdAt.toISOString()}
+      title={fullTimestamp(createdAt, locale)}
+      className="text-muted-foreground/80 ms-1 self-center text-xs tabular-nums">
+      {label}
+    </time>
   );
 };
 
@@ -1699,6 +1526,7 @@ const UserImagePart: ImageMessagePartComponent = part => (
 );
 
 const UserMessage: FC = () => {
+  const voiceNote = useMessageVoiceNote();
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
@@ -1707,7 +1535,7 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-xl px-4 py-2 wrap-break-word empty:hidden">
+        <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           {/* `Text: DirectiveText` because the composer can put directive syntax
               into a user message without anyone opting in. The `/` popover is
               built from `unstable_useSlashCommandAdapter`, which returns an
@@ -1718,33 +1546,31 @@ const UserMessage: FC = () => {
               `Text` component here that renders as raw syntax and is sent to the
               model verbatim. Assistant text is unaffected: it renders through
               `MarkdownText` on the part switch below, a different slot. */}
-          <MessagePrimitive.Parts
-            components={{ Text: DirectiveText, File: UserFilePart, Image: UserImagePart }}
-          />
+          {voiceNote ? (
+            <MessageVoiceNote note={voiceNote} withTranscript />
+          ) : (
+            <MessagePrimitive.Parts
+              components={{ Text: DirectiveText, File: UserFilePart, Image: UserImagePart }}
+            />
+          )}
         </div>
-        <div className="aui-user-action-bar-wrapper absolute inset-s-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
+        <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
           <UserActionBar />
         </div>
       </div>
 
       <BranchPicker
         data-slot="aui_user-branch-picker"
-        className="col-span-full col-start-1 row-start-3 -me-1 justify-end"
+        className="col-span-full col-start-1 -me-1 justify-end"
       />
+      <ChannelMessageActivity />
     </MessagePrimitive.Root>
   );
 };
 
 const UserActionBar: FC = () => {
   const { t } = useT();
-  // Edit is offered only when the bound runtime can honour it. The
-  // external-store adapter supplies `onNew` / `onCancel` and neither `onEdit`
-  // nor `setMessages`, so assistant-ui reports `edit: false` and
-  // `EditComposer` below never renders — the button was clickable and did
-  // nothing (#5897).
-  //
-  // Gated on the capability rather than hard-coded off, so the affordance
-  // appears by itself the day the adapter grows `onEdit`.
+  // The adapter supplies editing; preview runtimes without it hide the action.
   const { canEdit } = useAuiEditCapabilities();
 
   // Hoisted out of the JSX rather than written as `{canEdit && (…)}` inline: a
@@ -1754,7 +1580,7 @@ const UserActionBar: FC = () => {
   // is an ordinary statement, instrumented like any other.
   const editAction = canEdit ? (
     <ActionBarPrimitive.Edit asChild>
-      <TooltipIconButton tooltip="Edit" className="aui-user-action-edit">
+      <TooltipIconButton tooltip={t('chat.message.edit')} className="aui-user-action-edit">
         <PencilIcon />
       </TooltipIconButton>
     </ActionBarPrimitive.Edit>
@@ -1767,8 +1593,8 @@ const UserActionBar: FC = () => {
       className="aui-user-action-bar-root flex flex-col items-end">
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton
-          tooltip={t('chat.copyResponse', 'Copy response')}
-          title={t('chat.copyResponse', 'Copy response')}>
+          tooltip={t('chat.message.copyMessage')}
+          title={t('chat.message.copyMessage')}>
           <CopyIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
@@ -1794,42 +1620,50 @@ const selectDiscardedReplies = (s: AssistantState): number =>
   Math.max(0, s.thread.messages.length - 1 - s.message.index);
 
 const EditComposer: FC = () => {
-  const aui = useAui();
   const { t } = useT();
-  const value = useAuiState(s => s.composer.text);
   const discardedReplies = useAuiState(selectDiscardedReplies);
   return (
     <MessagePrimitive.Root data-slot="aui_edit-composer-wrapper" className="flex flex-col px-2">
-      <EditMessage
-        className="ms-auto"
-        value={value}
-        discardedReplies={discardedReplies}
-        editing
-        onValueChange={text => aui.message.composer().setText(text)}
-        onSave={() => aui.message.composer().send()}
-        onCancel={() => aui.message.composer().cancel()}
-        cancelLabel={t('common.cancel')}
-        sendLabel={t('chat.elicitation.send')}
-        editAriaLabel={t('conversations.assistantUi.edit.ariaLabel')}
-        discardedRepliesText={count =>
-          t(
-            count === 1
-              ? 'conversations.assistantUi.edit.discardedRepliesOne'
-              : 'conversations.assistantUi.edit.discardedRepliesOther'
-          ).replace('{count}', String(count))
-        }
-      />
+      <ComposerPrimitive.Root
+        data-slot="edit-message"
+        className="bg-background border-border/60 ms-auto flex w-full flex-col gap-3 rounded-2xl border p-3.5">
+        <ComposerPrimitive.Input
+          rows={2}
+          autoFocus
+          aria-label={t('conversations.assistantUi.edit.ariaLabel')}
+          className="bg-foreground/[0.04] text-foreground/90 min-h-16 resize-none rounded-xl px-3 py-2.5 text-sm leading-relaxed outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+        {discardedReplies > 0 && (
+          <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+            <AlertTriangleIcon aria-hidden className="size-3.5 shrink-0" />
+            <span className="font-mono text-[11px] tabular-nums">
+              {t(
+                discardedReplies === 1
+                  ? 'conversations.assistantUi.edit.discardedRepliesOne'
+                  : 'conversations.assistantUi.edit.discardedRepliesOther'
+              ).replace('{count}', String(discardedReplies))}
+            </span>
+          </div>
+        )}
+        <div className="flex items-center justify-end gap-2">
+          <ComposerPrimitive.Cancel asChild>
+            <Button variant="ghost" size="sm" className="rounded-full">
+              {t('common.cancel')}
+            </Button>
+          </ComposerPrimitive.Cancel>
+          <ComposerPrimitive.Send asChild>
+            <Button size="sm" className="rounded-full">
+              {t('chat.elicitation.send')}
+            </Button>
+          </ComposerPrimitive.Send>
+        </div>
+      </ComposerPrimitive.Root>
     </MessagePrimitive.Root>
   );
 };
 
 const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({ className, ...rest }) => {
-  // The same defect class as the Edit button above, one step from biting: this
-  // is rendered unconditionally at both call sites and is invisible today only
-  // because `hideWhenSingleBranch` happens to hold — the adapter implements no
-  // `setMessages`, so there is never more than one branch. That is
-  // assistant-ui's guard doing the work this app intended to do itself, and it
-  // would become a second dead control if the prop ever went away.
+  // Show branching only on runtimes whose adapter supports it.
   const { canSwitchToBranch } = useAuiEditCapabilities();
   if (!canSwitchToBranch) return null;
 

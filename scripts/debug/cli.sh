@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dispatcher for `pnpm debug <cmd> <args…>`.
 # Agent-friendly wrappers around the project's test/run scripts.
-# Commands: unit | e2e | rust | logs | harness-cache-audit | capture | breakdown
+# Commands: unit | e2e | rust | logs | harness-cache-audit | capture | breakdown | web
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +32,10 @@ Commands:
         exact request bodies the harness sends and prints one line per
         inference response (serving endpoint, TTFB, prompt/cached tokens,
         prompt_cache_key). Configure with CAPTURE_* env vars; `--help` lists them.
+  web   [--script <file.mjs>] [--headed] [--keep] [--help]
+        Drive the web SPA in Playwright Chromium against a throwaway stack
+        (mock backend, fresh core, watcher-free Vite), signed in through the
+        real provider button. Artifacts go to target/debug-logs/web-<ts>/.
   breakdown <req.json> [--response <res>] [--depth N] [--top N] [--json]
         Token accounting for one captured request: every system-prompt
         section, tool schema and message priced in tokens, calibrated to the
@@ -66,6 +70,9 @@ case "$cmd" in
     ;;
   goals-live)
     exec node "$here/goals-live.mjs" "$@"
+    ;;
+  web)
+    exec node "$here/web-ui.mjs" "$@"
     ;;
   *)
     echo "[debug] unknown command: $cmd" >&2

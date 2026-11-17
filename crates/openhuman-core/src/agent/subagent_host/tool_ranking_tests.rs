@@ -9,7 +9,7 @@
 //! provider-neutral library crate, so this suite stays here rather than
 //! moving up with the algorithm.
 
-use crate::agent::prompts::ConnectedIntegrationTool;
+use crate::integrations::ConnectedIntegrationTool;
 use tinyagents_harness::tool::{rank_tools_by_prompt, SelectableTool, MIN_CONFIDENT_HITS};
 
 fn rank_actions_by_prompt(

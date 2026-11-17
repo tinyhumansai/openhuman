@@ -1,6 +1,7 @@
 use serde_json::Map;
 
 use super::*;
+use crate::core::runtime::DispatchCtx;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 fn schema(
@@ -17,7 +18,7 @@ fn schema(
     }
 }
 
-fn noop_handler(_params: Map<String, Value>) -> ControllerFuture {
+fn noop_handler(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { Ok(Value::Null) })
 }
 
@@ -30,7 +31,7 @@ fn grouped(controllers: Vec<RegisteredController>) -> Vec<GroupedController> {
         .into_iter()
         .map(|controller| GroupedController {
             group: DomainGroup::Platform,
-            controller,
+            controller: ControllerEntry::legacy(controller),
         })
         .collect()
 }
@@ -200,36 +201,30 @@ fn all_controller_schemas_matches_registered_count() {
     assert_eq!(schemas.len(), controllers.len());
 }
 
-/// With the `voice` feature on (the default), the voice + audio_toolkit
+/// With the `voice` feature on (the default), the voice
 /// controllers are compiled in and registered — the desktop build is
 /// byte-identical.
 #[test]
 #[cfg(feature = "voice")]
-fn voice_and_audio_controllers_registered_when_feature_on() {
+fn voice_controllers_registered_when_feature_on() {
     let schemas = all_controller_schemas();
     assert!(
         schemas.iter().any(|s| s.namespace == "voice"),
         "voice controllers must be registered when the `voice` feature is on"
     );
-    assert!(
-        schemas.iter().any(|s| s.namespace == "audio_toolkit"),
-        "audio_toolkit controllers must be registered when the `voice` feature is on"
-    );
 }
 
-/// With the `voice` feature off, both domains are compiled out: their
-/// controllers never enter the registry, so voice/audio RPC methods are
+/// With the `voice` feature off, the voice domain are compiled out: their
+/// controllers never enter the registry, so voice RPC methods are
 /// unknown-method and absent from `/schema`. This is the compile-time
 /// stub-facade correctness gate (see `crate::voice::stub`).
 #[test]
 #[cfg(not(feature = "voice"))]
-fn voice_and_audio_controllers_absent_when_feature_off() {
+fn voice_controllers_absent_when_feature_off() {
     let schemas = all_controller_schemas();
     assert!(
-        !schemas
-            .iter()
-            .any(|s| s.namespace == "voice" || s.namespace == "audio_toolkit"),
-        "voice/audio_toolkit controllers must be compiled out when the `voice` feature is off"
+        !schemas.iter().any(|s| s.namespace == "voice"),
+        "voice controllers must be compiled out when the `voice` feature is off"
     );
 }
 
@@ -243,21 +238,11 @@ fn inference_engine_compiled_in_when_feature_on() {
     const { assert!(crate::inference::INFERENCE_COMPILED_IN) };
 }
 
-/// With the `inference` feature off, the marker flips and `cpal` leaves the
-/// dependency graph. The observable effect is the microphone-permission probe:
-/// it reports `Unknown` rather than a real verdict, because there is no
-/// audio-device API compiled in to ask. Speech-to-text is unaffected in either
-/// direction — it is a hosted HTTP call now, not an in-process engine.
+/// The host marker follows the inference gate without linking audio-device code.
 #[test]
 #[cfg(not(feature = "inference"))]
 fn inference_engine_compiled_out_when_feature_off() {
-    use tinycomputer_accessibility::{detect_microphone_permission, PermissionState};
     const { assert!(!crate::inference::INFERENCE_COMPILED_IN) };
-    assert_eq!(
-        detect_microphone_permission(),
-        PermissionState::Unknown,
-        "without `inference` there is no audio-device API to probe"
-    );
 }
 
 /// With the `skills` feature on (the default), all three skill domains are
@@ -279,10 +264,9 @@ fn skill_controllers_registered_when_feature_on() {
 /// unknown-method and absent from `/schema`. This is the compile-time
 /// stub-facade correctness gate (see `crate::skills::stub`).
 ///
-/// Note this does NOT cover `skills::types` / `skills::ops_types`: those stay
-/// compiled in both directions (the type carve-out — `tools::traits` re-exports
-/// `ToolResult`/`ToolContent` out of them), but they expose no controllers, so
-/// the namespaces are absent either way.
+/// Workflow metadata in `skills::ops_types` stays compiled in both directions.
+/// Generic tool-result types come from `tinytools`. Neither exposes controllers,
+/// so these namespaces are absent either way.
 #[test]
 #[cfg(not(feature = "skills"))]
 fn skill_controllers_absent_when_feature_off() {
@@ -816,7 +800,12 @@ fn validate_registry_rejects_duplicate_registered_controllers() {
 
 #[tokio::test]
 async fn try_invoke_registered_rpc_returns_none_for_unknown_method() {
-    let out = try_invoke_registered_rpc("openhuman.not_a_real_method_xyz_123", Map::new()).await;
+    let out = try_invoke_registered_rpc(
+        DispatchCtx::unbound(),
+        "openhuman.not_a_real_method_xyz_123",
+        Map::new(),
+    )
+    .await;
     assert!(out.is_none(), "unknown methods must return None");
 }
 
@@ -824,30 +813,13 @@ async fn try_invoke_registered_rpc_returns_none_for_unknown_method() {
 async fn try_invoke_registered_rpc_returns_some_for_known_method() {
     // `openhuman.health_snapshot` is registered at startup and takes no
     // required params — it must route and produce Some(_).
-    let out = try_invoke_registered_rpc("openhuman.health_snapshot", Map::new()).await;
-    assert!(out.is_some(), "known method must route");
-}
-
-#[tokio::test]
-async fn try_invoke_registered_rpc_routes_security_policy_info() {
-    let workspace = tempfile::TempDir::new().expect("security policy workspace");
-    let mut config = crate::config::Config::default();
-    config.workspace_dir = workspace.path().to_path_buf();
-    config.action_dir = workspace.path().to_path_buf();
-    config.config_path = workspace.path().join("config.toml");
-    let ctx = CoreContext::for_test_with_config(DomainSet::full(), config);
-    let out = CoreContext::scope(
-        ctx,
-        try_invoke_registered_rpc("openhuman.security_policy_info", Map::new()),
+    let out = try_invoke_registered_rpc(
+        DispatchCtx::unbound(),
+        "openhuman.health_snapshot",
+        Map::new(),
     )
-    .await
-    .expect("security policy info should be registered")
-    .expect("security policy info should succeed");
-
-    assert!(
-        out.get("result").is_some() || out.get("autonomy").is_some(),
-        "security policy info should return policy payload: {out}"
-    );
+    .await;
+    assert!(out.is_some(), "known method must route");
 }
 
 #[test]
@@ -983,7 +955,7 @@ async fn dispatch_returns_none_for_gated_method() {
         .expect("a flows.* method exists in the full registry");
 
     let ctx = CoreContext::for_test(DomainSet::harness(), None);
-    let out = CoreContext::scope(ctx, try_invoke_registered_rpc(&gated_method, Map::new())).await;
+    let out = try_invoke_registered_rpc(DispatchCtx::new(ctx), &gated_method, Map::new()).await;
     assert!(
         out.is_none(),
         "gated method `{gated_method}` must dispatch as None under harness()"
@@ -992,9 +964,10 @@ async fn dispatch_returns_none_for_gated_method() {
     // A harness-family method still routes (Some) — security.policy_info needs
     // no workspace, so it is a clean positive control.
     let ctx = CoreContext::for_test(DomainSet::harness(), None);
-    let out = CoreContext::scope(
-        ctx,
-        try_invoke_registered_rpc("openhuman.security_policy_info", Map::new()),
+    let out = try_invoke_registered_rpc(
+        DispatchCtx::new(ctx),
+        "openhuman.security_policy_info",
+        Map::new(),
     )
     .await;
     assert!(
@@ -1282,7 +1255,6 @@ fn carved_out_families_report_their_own_group() {
         // Mis-tagged before the realignment: these live inside a named family
         // directory but answered `Platform`, so `harness()` registered nothing
         // for them despite claiming to enable their family.
-        ("harness_init", DomainGroup::Agent),
         ("ai", DomainGroup::Agent),
         ("auth", DomainGroup::Security),
         ("devices", DomainGroup::Security),
@@ -1328,7 +1300,6 @@ fn platform_holds_only_kernel_surfaces() {
                     | "dashboard"
                     | "notification"
                     | "sandbox"
-                    | "harness_init"
                     | "ai"
                     | "auth"
                     | "devices"
@@ -1340,21 +1311,12 @@ fn platform_holds_only_kernel_surfaces() {
     }
 }
 
-/// `harness()` claims agent + memory + threads + config + security. Before the
-/// realignment it silently dropped several of their namespaces into `Platform`,
-/// most damagingly `harness_init` — an agent harness that never runs harness
-/// init. This asserts the claim is now true.
+/// `harness()` claims agent + memory + threads + config + security. This
+/// asserts the enabled families are registered.
 #[test]
 fn harness_preset_registers_the_families_it_claims() {
     let harness = crate::core::runtime::DomainSet::harness();
-    for ns in [
-        "harness_init",
-        "ai",
-        "auth",
-        "devices",
-        "workspace",
-        "memory",
-    ] {
+    for ns in ["ai", "auth", "devices", "workspace", "memory"] {
         let group =
             group_for_namespace(ns).unwrap_or_else(|| panic!("namespace `{ns}` is not registered"));
         assert!(
@@ -1414,7 +1376,7 @@ fn embedded_preset_excludes_desktop_and_hosted() {
 // `tool_group()` (tools/ops.rs), `StoreInitPlan` and `DomainSubscriberPlan`.
 // Adding a variant compiles cleanly while leaving a tool ungated or a store
 // unkeyed — both of which actually happened during the realignment (#5332):
-// `harness_init` stayed in Platform, and `people`'s store keyed on a different
+// `people`'s store keyed on a different
 // group than its controllers, which would have served an RPC surface with no
 // store behind it. These tests close that gap.
 
@@ -1456,108 +1418,6 @@ fn domain_group_all_lists_every_variant() {
     );
 }
 
-/// Every group must be a decision in `StoreInitPlan`: either it owns a store
-/// field, or it is explicitly declared store-less here. A new family that owns
-/// a store but is not keyed will fail this until it is listed.
-#[test]
-fn every_domain_group_is_accounted_for_in_store_init_plan() {
-    use crate::core::runtime::context::StoreInitPlan;
-
-    // Groups that own a store field in StoreInitPlan.
-    const OWNS_STORE: &[DomainGroup] =
-        &[DomainGroup::Memory, DomainGroup::Agent, DomainGroup::Skills];
-    // Groups with no store of their own. Adding a variant forces a choice
-    // between these two lists — that is the point.
-    const STORELESS: &[DomainGroup] = &[
-        DomainGroup::Threads,
-        DomainGroup::Config,
-        DomainGroup::Security,
-        DomainGroup::Flows,
-        DomainGroup::Mcp,
-        DomainGroup::Channels,
-        DomainGroup::Web3,
-        DomainGroup::Voice,
-        DomainGroup::Media,
-        DomainGroup::Inference,
-        DomainGroup::Integrations,
-        DomainGroup::Automation,
-        DomainGroup::Runtimes,
-        DomainGroup::Desktop,
-        DomainGroup::Hosted,
-        // The registry is a compiled-in `const` table and the loaded-module set
-        // lives in tinybus's own `ModuleHost`, so there is nothing for
-        // `init_stores` to stand up.
-        DomainGroup::Modules,
-        DomainGroup::Platform,
-    ];
-
-    for g in DomainGroup::ALL {
-        let owns = OWNS_STORE.contains(g);
-        let storeless = STORELESS.contains(g);
-        assert!(
-            owns ^ storeless,
-            "{g:?} is in neither (or both) of OWNS_STORE / STORELESS — decide \
-             whether it needs a StoreInitPlan field and list it in exactly one"
-        );
-    }
-
-    // And the owning groups actually gate their field: turning the group off
-    // must turn the store off.
-    let mut only_memory = crate::core::runtime::DomainSet::none();
-    only_memory.memory = true;
-    let plan = StoreInitPlan::for_domains(only_memory);
-    assert!(plan.memory, "Memory on ⇒ memory store initialized");
-    assert!(!plan.agent_attachments, "Agent off ⇒ attachments store off");
-    assert!(!plan.skills_prune, "Skills off ⇒ skills prune off");
-}
-
-/// Same contract for `DomainSubscriberPlan`: every group either registers
-/// subscribers or is declared subscriber-less.
-#[test]
-fn every_domain_group_is_accounted_for_in_subscriber_plan() {
-    use crate::core::runtime::subscribers::DomainSubscriberPlan;
-
-    const REGISTERS: &[DomainGroup] = &[
-        DomainGroup::Platform,
-        DomainGroup::Channels,
-        DomainGroup::Flows,
-        DomainGroup::Memory,
-        DomainGroup::Agent,
-        DomainGroup::Mcp,
-        DomainGroup::Integrations,
-        DomainGroup::Security,
-        DomainGroup::Desktop,
-        DomainGroup::Skills,
-    ];
-    const NO_SUBSCRIBERS: &[DomainGroup] = &[
-        DomainGroup::Threads,
-        DomainGroup::Config,
-        DomainGroup::Web3,
-        DomainGroup::Voice,
-        DomainGroup::Media,
-        DomainGroup::Inference,
-        DomainGroup::Automation,
-        DomainGroup::Runtimes,
-        DomainGroup::Hosted,
-        // Modules run on their own in-process broker, so they cannot publish a
-        // `DomainEvent` and there is nothing on the core bus to subscribe to.
-        DomainGroup::Modules,
-    ];
-
-    for g in DomainGroup::ALL {
-        assert!(
-            REGISTERS.contains(g) ^ NO_SUBSCRIBERS.contains(g),
-            "{g:?} is in neither (or both) of REGISTERS / NO_SUBSCRIBERS — decide \
-             whether it registers event-bus subscribers and list it in exactly one"
-        );
-    }
-
-    // full() must enable every registering group; none() must enable none.
-    let full = DomainSubscriberPlan::for_domains(crate::core::runtime::DomainSet::full());
-    let none = DomainSubscriberPlan::for_domains(crate::core::runtime::DomainSet::none());
-    assert_ne!(full, none, "full() and none() must differ");
-}
-
 /// M5.1 split `memory::all_memory_registered_controllers()` into seven
 /// per-family pairs pushed separately in `build_registered_controllers`. This
 /// pins the observable result: the `memory` namespace still occupies one
@@ -1592,36 +1452,6 @@ fn memory_controllers_form_one_contiguous_run_in_aggregator_order() {
     );
 }
 
-// ---- runtime-node gate -----------------------------------------------------
-
-#[test]
-#[cfg(feature = "runtime-node")]
-fn javascript_controllers_registered_when_feature_on() {
-    let ns: Vec<&str> = all_controller_schemas()
-        .iter()
-        .map(|s| s.namespace)
-        .collect();
-    assert!(
-        ns.contains(&"javascript"),
-        "runtime-node ON must register the `javascript` namespace"
-    );
-}
-
-/// The half that proves the gate removes anything: absent, not
-/// registered-and-failing.
-#[test]
-#[cfg(not(feature = "runtime-node"))]
-fn javascript_controllers_absent_when_feature_off() {
-    let ns: Vec<&str> = all_controller_schemas()
-        .iter()
-        .map(|s| s.namespace)
-        .collect();
-    assert!(
-        !ns.contains(&"javascript"),
-        "runtime-node OFF must not register the `javascript` namespace"
-    );
-}
-
 #[path = "all_extensions_tests.rs"]
 mod extensions_tests;
 
@@ -1630,3 +1460,6 @@ mod removed_tests;
 
 #[path = "all_registry_tests.rs"]
 mod registry_tests;
+
+#[path = "all_domain_plan_tests.rs"]
+mod domain_plan_tests;

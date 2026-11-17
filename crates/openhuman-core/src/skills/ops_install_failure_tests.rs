@@ -39,6 +39,7 @@ async fn a_throttled_host_reports_rate_limiting_with_its_retry_after() {
         },
         Some(home.path()),
         true,
+        crate::skills::ops_install::ScanAcknowledgement::Absent,
     )
     .await
     .expect_err("a 429 must fail the install");
@@ -77,6 +78,7 @@ async fn a_throttled_host_without_retry_after_still_reports_rate_limiting() {
         },
         Some(home.path()),
         true,
+        crate::skills::ops_install::ScanAcknowledgement::Absent,
     )
     .await
     .expect_err("a 429 must fail the install");
@@ -112,6 +114,7 @@ async fn a_missing_skill_is_not_reported_as_rate_limiting() {
         },
         Some(home.path()),
         true,
+        crate::skills::ops_install::ScanAcknowledgement::Absent,
     )
     .await
     .expect_err("a 404 must fail the install");
@@ -121,4 +124,96 @@ async fn a_missing_skill_is_not_reported_as_rate_limiting() {
         "a 404 is a missing skill, not throttling, got: {error}"
     );
     assert!(error.contains("404"), "got: {error}");
+}
+
+#[cfg(feature = "crash-reporting")]
+#[test]
+fn a_4xx_fetch_is_not_reported_and_a_5xx_is() {
+    use crate::skills::ops_install::report_install_fetch_failure;
+    use tinyskills::RegistryError;
+
+    let missing = sentry::test::with_captured_events(|| {
+        report_install_fetch_failure(&RegistryError::Unavailable { status: 404 }, Some("u"));
+        report_install_fetch_failure(&RegistryError::RateLimited { retry_after: None }, None);
+        report_install_fetch_failure(
+            &RegistryError::NotFound {
+                id: "x".into(),
+                closest: Vec::new(),
+            },
+            None,
+        );
+    });
+    assert!(
+        missing.is_empty(),
+        "user input is not reported: {missing:?}"
+    );
+
+    let outage = sentry::test::with_captured_events(|| {
+        report_install_fetch_failure(&RegistryError::Unavailable { status: 503 }, Some("u"));
+    });
+    assert_eq!(outage.len(), 1);
+    let tags = &outage[0].tags;
+    assert_eq!(tags.get("domain").map(String::as_str), Some("skills"));
+    assert_eq!(
+        tags.get("operation").map(String::as_str),
+        Some("install_fetch")
+    );
+    assert_eq!(tags.get("failure").map(String::as_str), Some("non_2xx"));
+    assert_eq!(tags.get("status").map(String::as_str), Some("503"));
+}
+
+#[tokio::test]
+async fn a_slow_host_reports_the_clamped_timeout() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/SKILL.md"))
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5)))
+        .mount(&server)
+        .await;
+
+    let home = tempfile::tempdir().unwrap();
+    let error = install_workflow_from_url_with_home(
+        home.path(),
+        InstallWorkflowFromUrlParams {
+            url: format!("{}/SKILL.md", server.uri()),
+            timeout_secs: Some(1),
+        },
+        Some(home.path()),
+        true,
+        crate::skills::ops_install::ScanAcknowledgement::Absent,
+    )
+    .await
+    .expect_err("the host outlasts the budget");
+    assert_eq!(error, "fetch timed out after 1s");
+}
+
+#[tokio::test]
+async fn a_document_without_frontmatter_is_refused() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/SKILL.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("# no frontmatter\n"))
+        .mount(&server)
+        .await;
+
+    let home = tempfile::tempdir().unwrap();
+    let error = install_workflow_from_url_with_home(
+        home.path(),
+        InstallWorkflowFromUrlParams {
+            url: format!("{}/SKILL.md", server.uri()),
+            timeout_secs: Some(5),
+        },
+        Some(home.path()),
+        true,
+        crate::skills::ops_install::ScanAcknowledgement::Absent,
+    )
+    .await
+    .expect_err("not a SKILL.md");
+    assert!(!error.starts_with("fetch failed"), "{error}");
 }

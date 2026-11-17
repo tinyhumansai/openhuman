@@ -1,5 +1,5 @@
 use super::{
-    all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
+    all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat_scoped,
     channel_web_cancel, channel_web_queue_clear, channel_web_queue_remove,
     channel_web_queue_status, classify_inference_error, drain_queued_turns_for_test,
     event_session_id_for, generic_inference_error_user_message, in_flight_entries_for_test,
@@ -11,8 +11,12 @@ use super::{
     TestRunChatTaskBlock, WebChatParams,
 };
 use crate::core::TypeSchema;
+use crate::inference::registry::{
+    register_backend_error_classifier, BackendErrorClassification, BackendErrorKind,
+};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use tinyagents_harness::run_queue::QueueLane;
 use tokio::time::{timeout, Duration};
 
@@ -39,14 +43,72 @@ const LMSTUDIO_TEMPLATE_400: &str = "lmstudio returned: Engine protocol predict 
      messages.') }}...Error: Jinja Exception: No user query found in messages.\",\
      \"type\":\"invalid_request_error\"}}";
 
-// ── #870 managed-backend errorCode classification (F2/F3/F4/F6/F8) ──
+/// Run a web-copy assertion with explicit provider-neutral metadata. Hosted
+/// token/envelope parsing belongs to TinyHumans; core tests inject the semantic
+/// classification that the host registry supplies at runtime.
+fn classify_with_backend_metadata(
+    message: &str,
+    kind: BackendErrorKind,
+    malformed_bad_request: bool,
+) -> ClassifiedError {
+    static FIXTURES: OnceLock<Arc<Mutex<HashMap<String, BackendErrorClassification>>>> =
+        OnceLock::new();
+    let fixtures = Arc::clone(FIXTURES.get_or_init(|| Arc::new(Mutex::new(HashMap::new()))));
+    register_backend_error_classifier(Arc::new(move |_provider, error| {
+        fixtures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(error)
+            .cloned()
+            .unwrap_or(BackendErrorClassification {
+                provider_owned: false,
+                backend_owned: false,
+                reportable: true,
+                token: None,
+                kind: None,
+                malformed_bad_request: false,
+            })
+    }));
+    FIXTURES
+        .get()
+        .expect("fixture map initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(
+            message.to_string(),
+            BackendErrorClassification {
+                provider_owned: true,
+                backend_owned: true,
+                reportable: malformed_bad_request
+                    || matches!(
+                        kind,
+                        BackendErrorKind::PayloadTooLarge | BackendErrorKind::ContextLengthExceeded
+                    ),
+                token: None,
+                kind: Some(kind),
+                malformed_bad_request,
+            },
+        );
+    classify_inference_error(message)
+}
 
-/// Build a flattened managed-backend error string the way it reaches
-/// `classify_inference_error` after the typed provider error is collapsed
-/// to a `String` (the `"OpenHuman API error (<status>): <body>"` envelope
-/// from `inference::provider::ops::api_error`).
-fn managed_error(status: &str, body: &str) -> String {
-    format!("OpenHuman API error ({status}): {body}")
+fn classify_failure_fixture(case: &str, message: &str) -> ClassifiedError {
+    let metadata = match case {
+        "be_rate_limited" => Some((BackendErrorKind::RateLimited, false)),
+        "be_credits" => Some((BackendErrorKind::InsufficientCredits, false)),
+        "be_upstream" => Some((BackendErrorKind::UpstreamUnavailable, false)),
+        "be_model_unavailable" => Some((BackendErrorKind::ModelUnavailable, false)),
+        "be_payload" => Some((BackendErrorKind::PayloadTooLarge, false)),
+        "be_context" => Some((BackendErrorKind::ContextLengthExceeded, false)),
+        "be_bad_request" | "be_bad_request_history" => Some((BackendErrorKind::BadRequest, false)),
+        "be_bad_request_malformed" => Some((BackendErrorKind::BadRequest, true)),
+        "be_internal" => Some((BackendErrorKind::Internal, false)),
+        _ => None,
+    };
+    match metadata {
+        Some((kind, malformed)) => classify_with_backend_metadata(message, kind, malformed),
+        None => classify_inference_error(message),
+    }
 }
 
 // ── SessionCacheFingerprint (thread-session cache invalidation) ───────
@@ -61,11 +123,13 @@ fn fp(
 ) -> SessionCacheFingerprint {
     SessionCacheFingerprint {
         model_override: model_override.map(String::from),
+        effective_model: "sample-model".to_string(),
         temperature,
         target_agent_id: target.to_string(),
         provider_binding: provider_binding.to_string(),
         autonomy_signature: "sig-default".to_string(),
         model_registry_signature: "registry-default".to_string(),
+        workspace_dir: std::path::PathBuf::from("/ws/a"),
     }
 }
 
@@ -73,7 +137,8 @@ fn fp(
 async fn wait_for_in_flight<F: Fn(&[(String, String)]) -> bool>(pred: F) -> Vec<(String, String)> {
     timeout(Duration::from_secs(5), async {
         loop {
-            let entries = in_flight_entries_for_test().await;
+            let entries =
+                in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient()).await;
             if pred(&entries) {
                 return entries;
             }
@@ -100,6 +165,8 @@ fn make_block() -> TestRunChatTaskBlock {
         started: Arc::new(AtomicBool::new(false)),
         dropped: Arc::new(AtomicBool::new(false)),
         release: Arc::new(tokio::sync::Notify::new()),
+        max_park_for: Duration::from_secs(30),
+        succeed_in: None,
     }
 }
 
@@ -107,7 +174,9 @@ fn make_block() -> TestRunChatTaskBlock {
 async fn wait_for_parallel<F: Fn(&[(String, String)]) -> bool>(pred: F) -> Vec<(String, String)> {
     timeout(Duration::from_secs(5), async {
         loop {
-            let entries = parallel_in_flight_entries_for_test().await;
+            let entries =
+                parallel_in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient())
+                    .await;
             if pred(&entries) {
                 return entries;
             }
@@ -124,6 +193,8 @@ mod cancel_scoping_tests;
 mod error_code_classification_tests;
 #[path = "web_tests_error_copy_fixture_tests.rs"]
 mod error_copy_fixture_tests;
+#[path = "web_tests_prompt_screen_classification_tests.rs"]
+mod prompt_screen_classification_tests;
 #[path = "web_tests_queue_acceptance_tests.rs"]
 mod queue_acceptance_tests;
 #[path = "web_tests_rate_limit_classification_tests.rs"]
@@ -132,3 +203,19 @@ mod rate_limit_classification_tests;
 mod session_and_concurrency_tests;
 #[path = "web_tests_start_chat_ingress_tests.rs"]
 mod start_chat_ingress_tests;
+#[path = "web_tests_timeout_classification_tests.rs"]
+mod timeout_classification_tests;
+#[path = "web_tests_turn_lifecycle_tests.rs"]
+mod turn_lifecycle_tests;
+
+#[cfg(feature = "voice")]
+#[path = "web_tests_ptt_source_tests.rs"]
+mod ptt_source_tests;
+
+/// Keep admission, queue operations, cancellation and spawned turns under the
+/// same isolated host configuration for the entire lifecycle assertion.
+async fn with_web_test_context<F: std::future::Future>(operation: F) -> F::Output {
+    let workspace = tempfile::tempdir().expect("isolated web host configuration");
+    let config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&config, operation).await
+}

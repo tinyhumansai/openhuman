@@ -18,7 +18,6 @@ fn env_overlay_empty_lookup_leaves_defaults_intact() {
         cfg.default_temperature,
         cfg.runtime.reasoning_enabled,
         cfg.update.enabled,
-        cfg.dictation.enabled,
     );
     cfg.apply_env_overlay_with(&HashMapEnv::new());
     let after = (
@@ -26,7 +25,6 @@ fn env_overlay_empty_lookup_leaves_defaults_intact() {
         cfg.default_temperature,
         cfg.runtime.reasoning_enabled,
         cfg.update.enabled,
-        cfg.dictation.enabled,
     );
     assert_eq!(before, after);
 }
@@ -349,10 +347,10 @@ async fn load_or_init_falls_back_to_defaults_when_backup_also_corrupted() {
 
     let config = load_or_init_for_workspace(root).await;
 
-    // Config::default() sets default_model = Some("reasoning-v1").
+    // A bare core has no provider policy that can supply a default model.
     assert_eq!(
         config.default_model.as_deref(),
-        Some(crate::config::schema::DEFAULT_MODEL),
+        None,
         "must fall back to defaults when backup is also corrupted"
     );
 
@@ -384,7 +382,7 @@ async fn load_or_init_falls_back_to_defaults_when_no_backup() {
 
     assert_eq!(
         config.default_model.as_deref(),
-        Some(crate::config::schema::DEFAULT_MODEL),
+        None,
         "must fall back to defaults when no backup exists"
     );
 
@@ -395,6 +393,36 @@ async fn load_or_init_falls_back_to_defaults_when_no_backup() {
     assert!(
         tokio::fs::try_exists(&corrupted_path).await.unwrap(),
         "corrupted primary must be renamed to config.toml.corrupted"
+    );
+}
+
+#[tokio::test]
+async fn a_second_corruption_keeps_the_first_corrupted_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let first = root.join("config.toml.corrupted");
+    write_file(&first, "first corrupted copy").await;
+    write_file(&root.join("config.toml"), CORRUPTED_TOML).await;
+
+    load_or_init_for_workspace(root).await;
+
+    assert_eq!(
+        tokio::fs::read_to_string(&first).await.unwrap(),
+        "first corrupted copy",
+        "the earlier corrupted copy must not be overwritten"
+    );
+    let mut later = Vec::new();
+    let mut entries = tokio::fs::read_dir(root).await.unwrap();
+    while let Some(e) = entries.next_entry().await.unwrap() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with("config.toml.corrupted.") {
+            later.push(tokio::fs::read_to_string(e.path()).await.unwrap());
+        }
+    }
+    assert_eq!(
+        later,
+        vec![CORRUPTED_TOML.to_string()],
+        "the new corruption gets its own copy"
     );
 }
 
@@ -598,8 +626,8 @@ async fn load_or_init_recovers_from_non_utf8_config() {
 
     // Should have loaded defaults (not crashed).
     assert!(
-        config.default_model.is_some(),
-        "must load defaults from non-UTF-8 config"
+        config.default_model.is_none(),
+        "bare core has no provider-owned default model"
     );
 
     // The runtime recovery flag must be set so the boot path can surface a

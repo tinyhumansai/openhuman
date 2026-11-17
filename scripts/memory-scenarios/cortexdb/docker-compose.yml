@@ -1,0 +1,50 @@
+# A throwaway CortexDB for the memory scenarios' `local` engine.
+#
+# Started by run.mjs with its own compose project (`memscen-<run>`), so its
+# volume is `memscen-<run>_cortex-data`: never the user's `cortexdb` container,
+# its `cortexdb-data` volume or port 3141. The port is a free one picked per run.
+#
+# Inference is the local Ollama (OpenAI-compatible /v1) by default: semantic
+# embeddings (nomic-embed-text, 768 dims) and a small chat model for
+# extraction, answers and verification. run.mjs falls back to tinymemory's
+# deterministic mock-inference only when Ollama is unreachable, and the report
+# then says recall-quality checks were skipped.
+name: memscen
+
+services:
+  cortex:
+    image: cortexdb/cortexdb:${CORTEXDB_VERSION:-v0.10.5}
+    command: ["3141", "/data"]
+    environment:
+      CORTEX_API_KEY: ${MEMSCEN_CORTEX_KEY:?set by run.mjs}
+      CORTEX_DEPLOYMENT_PRESET: dev_local
+      CORTEX_EMBEDDING_URL: ${CORTEX_EMBEDDING_URL:-${CORTEX_INFERENCE_URL:?set by run.mjs}}
+      CORTEX_EMBEDDING_API_KEY: ${CORTEX_INFERENCE_KEY:-ollama}
+      OPENAI_API_KEY: ${CORTEX_INFERENCE_KEY:-ollama}
+      CORTEX_EMBEDDING_MODEL: ${CORTEX_EMBEDDING_MODEL:-nomic-embed-text}
+      CORTEX_EMBEDDING_DIMS: ${CORTEX_EMBEDDING_DIMS:-768}
+      CORTEX_LLM_URL: ${CORTEX_INFERENCE_URL}
+      CORTEX_ENTITY_API_KEY: ${CORTEX_INFERENCE_KEY:-ollama}
+      CORTEX_LLM_MODEL: ${CORTEX_CHAT_MODEL:-llama3.2:3b}
+      CORTEX_ENRICHMENT_URL: ${CORTEX_INFERENCE_URL}
+      CORTEX_ENRICHMENT_API_KEY: ${CORTEX_INFERENCE_KEY:-ollama}
+      CORTEX_ENRICHMENT_MODEL: ${CORTEX_CHAT_MODEL:-llama3.2:3b}
+      CORTEX_ENRICHMENT_DELAY_SECONDS: "0"
+      CORTEX_ANSWER_PROVIDER: openai
+      CORTEX_ANSWER_URL: ${CORTEX_INFERENCE_URL}
+      CORTEX_ANSWER_API_KEY: ${CORTEX_INFERENCE_KEY:-ollama}
+      CORTEX_ANSWER_MODEL: ${CORTEX_CHAT_MODEL:-llama3.2:3b}
+      CORTEX_VERIFIER_URL: ${CORTEX_INFERENCE_URL}
+      CORTEX_VERIFIER_API_KEY: ${CORTEX_INFERENCE_KEY:-ollama}
+      CORTEX_VERIFIER_MODEL: ${CORTEX_CHAT_MODEL:-llama3.2:3b}
+    env_file:
+      - flags.env
+    ports: ["127.0.0.1:${MEMSCEN_CORTEX_PORT:?set by run.mjs}:3141"]
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - cortex-data:/data
+      - ./${MEMSCEN_CORTEX_TOML:-cortex.toml}:/data/cortex.toml:ro
+
+volumes:
+  cortex-data:

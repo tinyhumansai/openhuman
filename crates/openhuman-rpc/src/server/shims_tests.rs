@@ -2,12 +2,40 @@ use std::ffi::OsString;
 
 use crate::server::testing::EnvVarGuard;
 
+use openhuman_tinyhumans::embed::{DomainSet, HostKind, RuntimeBuilder, ServiceSet};
+
 #[test]
-fn e2e_environment_enables_advertised_tool_groups() {
-    let _guard = EnvVarGuard::set_many(vec![("OPENHUMAN_E2E", "1".into())]);
-    let builder =
-        openhuman_core::core::runtime::CoreBuilder::new(openhuman_core::core::types::HostKind::Cli);
-    let _ = super::apply_e2e_tool_groups(builder);
+fn server_builder_applies_services_bearer_and_listener_to_the_preset() {
+    let builder = super::server_builder(
+        RuntimeBuilder::desktop(),
+        ServiceSet::headless_api(),
+        Some("127.0.0.1"),
+        Some(7801),
+        Some(std::sync::Arc::new("bearer".into())),
+    );
+    let summary = builder.summary();
+    assert_eq!(summary.host_kind, HostKind::TauriShell);
+    assert_eq!(summary.domains, Some(DomainSet::full()));
+    assert_eq!(summary.services, Some(ServiceSet::headless_api()));
+    assert!(summary.fixed_token);
+    assert_eq!(summary.listen_host.as_deref(), Some("127.0.0.1"));
+    assert_eq!(summary.listen_port, Some(7801));
+}
+
+#[test]
+fn server_builder_leaves_unset_listener_and_token_to_serve() {
+    let summary = super::server_builder(
+        RuntimeBuilder::cli(),
+        ServiceSet::desktop(),
+        None,
+        None,
+        None,
+    )
+    .summary();
+    assert_eq!(summary.host_kind, HostKind::detect_standalone());
+    assert!(!summary.fixed_token);
+    assert_eq!(summary.listen_host, None);
+    assert_eq!(summary.listen_port, None);
 }
 
 #[test]
@@ -45,25 +73,29 @@ fn server_shim_refuses_public_bind_without_operator_token() {
                             "OPENHUMAN_WORKSPACE",
                             workspace.path().as_os_str().to_os_string(),
                         ),
+                        ("HOME", workspace.path().as_os_str().to_os_string()),
+                        ("USERPROFILE", workspace.path().as_os_str().to_os_string()),
+                        ("TOKIO_WORKER_THREADS", OsString::from("2")),
+                        (
+                            "OPENHUMAN_KEYRING_MASTER_KEY",
+                            OsString::from(
+                                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                            ),
+                        ),
                         ("OPENHUMAN_CORE_TOKEN", OsString::from("")),
                     ]);
-                    let services = openhuman_core::core::runtime::ServiceSet::headless_api();
+                    let services = ServiceSet::headless_api();
 
-                    let error = super::run_server_with_services(
-                        Some("0.0.0.0"),
-                        Some(0),
-                        services,
-                        true,
-                        None,
-                        None,
-                        None,
-                    )
-                    .await
-                    .expect_err("public bind must require an operator-supplied token");
+                    let error = super::run_server_with_services(Some("0.0.0.0"), Some(0), services)
+                        .await
+                        .expect_err("public bind must require an operator-supplied token");
 
-                    assert!(error
-                        .to_string()
-                        .contains("refusing to bind on non-loopback"));
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("refusing to bind on non-loopback"),
+                        "{error:#}"
+                    );
                 });
         })
         .expect("test thread")

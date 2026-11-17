@@ -3,7 +3,7 @@
 //! The agent domain publishes one native request handler, `agent.run_turn`,
 //! which executes a single end-to-end agentic turn (LLM call → tool calls →
 //! loop until final text) on the tinyagents harness via
-//! [`run_channel_turn_via_graph`](crate::agent::harness::run_channel_turn_via_graph)
+//! [`run_channel_turn`](crate::channels::runtime::turn_driver::run_channel_turn)
 //! (issue #4249; the legacy `run_tool_call_loop` was removed).
 //!
 //! Consumers call it via [`crate::core::bus::BUS.native().request`]
@@ -20,19 +20,20 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::agent::progress::AgentProgress;
-use crate::agent::turn_origin::{self, AgentTurnOrigin};
 use crate::config::MultimodalConfig;
 use crate::core::bus::BUS;
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
+use crate::progress::AgentProgress;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
 };
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
 
-use super::harness::definition::{AgentDefinitionRegistry, SandboxMode};
-use super::harness::{run_channel_turn_via_graph, with_current_sandbox_mode};
-use tinytools_std::file_state::with_file_state_agent_id;
+use crate::agent_registry::host_definition::AgentDefinitionRegistry;
+use crate::channels::run_channel_turn;
+use tinyagents_definition::SandboxMode;
+use tinyagents_harness_tools::fs::file_state::with_file_state_agent_id;
 
 /// Method name used to dispatch an agentic turn through the native bus.
 pub const AGENT_RUN_TURN_METHOD: &str = "agent.run_turn";
@@ -129,19 +130,24 @@ pub struct AgentTurnRequest {
     /// status updates for this turn.
     pub on_progress: Option<mpsc::Sender<AgentProgress>>,
 
-    /// Trust/routing label for this turn. The bus handler scopes
-    /// [`AGENT_TURN_ORIGIN`](crate::agent::turn_origin::AGENT_TURN_ORIGIN)
+    /// Trust/routing label for this turn. The bus handler scopes the origin
     /// around the tool loop so the approval gate (and any other
     /// origin-aware policy) sees the same value the caller intended.
     ///
-    /// Native-bus dispatch crosses a `tokio::spawn` boundary inside the
-    /// registry, so callers cannot rely on `AGENT_TURN_ORIGIN` propagating
-    /// implicitly — the origin must travel as an owned field.
+    /// The origin travels as an owned field, so the handler does not depend on
+    /// the caller's ambient scope.
     ///
     /// Defaults to [`AgentTurnOrigin::Unknown`] so any caller that fails
     /// to populate this fails closed at the gate rather than silently
     /// inheriting trusted-automation semantics.
     pub origin: AgentTurnOrigin,
+
+    /// Where this turn's parked approvals surface (the channel's chat thread
+    /// and client), handed to the turn's run context so the gate routes a
+    /// `Prompt`-class tool call back to the channel instead of letting it
+    /// through unprompted. Default (no chat) for channels without an approval
+    /// surface and for non-channel callers such as triage.
+    pub approval: crate::security::approval::ApprovalTurnContext,
 }
 
 /// Final response from an agentic turn.
@@ -200,6 +206,7 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
         extra_tools,
         on_progress,
         origin,
+        approval,
     } = req;
 
     tracing::debug!(
@@ -223,7 +230,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
         .find(|msg| msg.role.eq_ignore_ascii_case("user"))
         .map(|msg| msg.content.as_str())
     {
-        let decision = enforce_prompt_input(
+        let decision = enforce_prompt_input_in(
+            &crate::core::runtime::DispatchCtx::ambient(),
             user_prompt,
             PromptEnforcementContext {
                 source: "agent.bus.run_turn",
@@ -231,7 +239,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
                 user_id: Some(channel_name.as_str()),
                 session_id: target_agent_id.as_deref(),
             },
-        );
+        )
+        .await;
         if !matches!(decision.action, PromptEnforcementAction::Allow) {
             tracing::warn!(
                 channel = %channel_name,
@@ -264,16 +273,18 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
     }
 
     // Resolve the target agent's declared sandbox mode so any
-    // tool executed inside the loop can read it via the
-    // `CURRENT_AGENT_SANDBOX_MODE` task-local. Falls back to
+    // tool executed inside the loop receives it through the explicit
+    // host operation context. Falls back to
     // `SandboxMode::None` when the request doesn't pin an agent
     // id (legacy "generic unfiltered turn" path) or when the
     // global registry hasn't been initialised (tests that stub
     // the bus without bootstrapping definitions).
     let sandbox_mode = target_agent_id
         .as_deref()
-        .and_then(|id| AgentDefinitionRegistry::global().and_then(|reg| reg.get(id)))
-        .map(|def| def.sandbox_mode)
+        .and_then(|id| {
+            AgentDefinitionRegistry::current()
+                .and_then(|reg| reg.get(id).map(|def| def.sandbox_mode))
+        })
         .unwrap_or(SandboxMode::None);
 
     // Scope the caller-supplied origin around the tool loop so
@@ -290,41 +301,39 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
     );
     // Memory acts as the target agent (the root when none is named) for
     // the whole channel turn.
-    let memory_agent = target_agent_id.clone().unwrap_or_default();
+    let memory_identity = tinymemory_tools::layout::identity::Identity::root()
+        .child(target_agent_id.as_deref().unwrap_or_default());
     let graph_origin = origin.clone();
     let outcome = turn_origin::with_origin(
         origin,
-        crate::memory::scope::within_agent(
-            &memory_agent,
-            with_file_state_agent_id(
-                file_state_id,
-                with_current_sandbox_mode(sandbox_mode, async {
-                    // Channel/CLI turns run through the tinyagents harness
-                    // (issue #4249); the legacy `run_tool_call_loop` is removed.
-                    // `on_progress` mirrors the harness event stream (tool
-                    // timeline, text deltas, cost footer) — production channel
-                    // dispatch always supplies it and now expects it live.
-                    // `on_delta` (raw Sender<String>) is superseded by
-                    // `on_progress` text deltas, so it's intentionally unused.
-                    let _ = (&provider_name, silent, &channel_name, on_delta);
-                    run_channel_turn_via_graph(
-                        turn_model_source.clone(),
-                        &mut history,
-                        tools_registry.clone(),
-                        extra_tools,
-                        visible_tool_names.as_ref(),
-                        &model,
-                        temperature,
-                        max_tool_iterations,
-                        multimodal.clone(),
-                        multimodal_files.clone(),
-                        on_progress,
-                        Some(graph_origin),
-                    )
-                    .await
-                }),
-            ),
-        ),
+        with_file_state_agent_id(file_state_id, async {
+            // Channel/CLI turns run through the tinyagents harness
+            // (issue #4249); the legacy `run_tool_call_loop` is removed.
+            // `on_progress` mirrors the harness event stream (tool
+            // timeline, text deltas, cost footer) — production channel
+            // dispatch always supplies it and now expects it live.
+            // `on_delta` (raw Sender<String>) is superseded by
+            // `on_progress` text deltas, so it's intentionally unused.
+            let _ = (&provider_name, silent, &channel_name, on_delta);
+            run_channel_turn(
+                turn_model_source.clone(),
+                &mut history,
+                tools_registry.clone(),
+                extra_tools,
+                visible_tool_names.as_ref(),
+                &model,
+                temperature,
+                max_tool_iterations,
+                multimodal.clone(),
+                multimodal_files.clone(),
+                on_progress,
+                Some(graph_origin),
+                sandbox_mode,
+                approval,
+                memory_identity,
+            )
+            .await
+        }),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -349,15 +358,18 @@ async fn handle_agent_run_turn_on_large_stack(
     req: AgentTurnRequest,
 ) -> Result<AgentTurnResponse, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
+    let dispatch = crate::core::runtime::DispatchCtx::ambient();
     let handle = std::thread::Builder::new()
         .name("agent-run-turn-test".to_string())
+        // Match the CI test runtime's stack: LLVM instrumentation expands
+        // this full-pipeline future beyond the production worker's stack.
         .stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("build agent run_turn test runtime");
-            let result = runtime.block_on(handle_agent_run_turn(req));
+            let result = runtime.block_on(dispatch.enter(handle_agent_run_turn(req)));
             let _ = tx.send(result);
         })
         .map_err(|error| format!("failed to spawn large-stack agent handler: {error}"))?;

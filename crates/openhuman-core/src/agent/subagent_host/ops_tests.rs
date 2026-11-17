@@ -1,5 +1,6 @@
 use super::*;
-use crate::agent::harness::definition::{ModelSpec, ToolScope};
+use crate::agent::subagent_host::SubagentRunOutcome;
+use tinyagents_definition::{ModelSpec, ToolScope};
 use tinytools::Tool;
 
 fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
@@ -8,9 +9,6 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         when_to_use: "t".into(),
         display_name: None,
         system_prompt: PromptSource::Inline("system".into()),
-        omit_identity: true,
-        omit_memory_context: true,
-        omit_safety_preamble: true,
         model: ModelSpec::Inherit,
         temperature: 0.4,
         tools: ToolScope::Named(names.iter().map(|s| s.to_string()).collect()),
@@ -18,19 +16,27 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         deferred_tools: Vec::new(),
+        tool_rules: None,
         max_iterations: 5,
         iteration_policy: Default::default(),
         max_result_chars: None,
         max_turn_output_tokens: None,
         timeout_secs: None,
-        sandbox_mode: crate::agent::harness::definition::SandboxMode::None,
+        sandbox_mode: tinyagents_definition::SandboxMode::None,
         background: false,
-        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
-        agent_tier: crate::agent::harness::definition::AgentTier::Worker,
-        source: crate::agent::harness::definition::DefinitionSource::Builtin,
-        graph: Default::default(),
+        agent_tier: tinyagents_definition::AgentTier::Worker,
+        source: tinyagents_definition::DefinitionSource::Builtin,
+        extensions: crate::agent_registry::host_definition::AgentExt {
+            omit_identity: true,
+            omit_memory_context: true,
+            omit_safety_preamble: true,
+            tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
+            searches_connected_mcp: false,
+            ..Default::default()
+        },
+        role: None,
     }
 }
 
@@ -67,7 +73,6 @@ fn stub(name: &'static str) -> Box<dyn Tool> {
 
 // ── End-to-end runner tests with mock provider ────────────────────────
 
-use crate::agent::harness::fork_context::with_parent_context;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tinyagents_harness::run_queue::{QueueLane, RunQueue};
@@ -241,8 +246,34 @@ fn tool_response(name: &str, args: &str) -> ModelResponse {
     }
 }
 
+/// Run the direct host adapter against an explicit root context in unit tests.
+async fn run_host_from_test_options(
+    definition: &AgentDefinition,
+    input: &str,
+    options: SubagentRunOptions,
+) -> Result<SubagentRunOutcome, SubagentRunError> {
+    let mut root_data = options.run_context.clone();
+    let root_config = root_data.root_run_config("subagent-host-test");
+    let parent = root_data.into_tinyagents(root_config);
+    Box::pin(
+        crate::agent::subagent_host::OpenHumanSubagentHost::new(definition.clone(), options)
+            .run(&parent, input.to_owned()),
+    )
+    .await
+}
+
 /// Build a minimal `ParentExecutionContext` suitable for runner tests.
 /// Uses a no-op memory backend so we don't have to spin up a real one.
+/// `options` with `parent` bound as the run's explicit parent execution
+/// context, the way a spawning tool or orchestration surface supplies it.
+fn with_parent(
+    parent: ParentExecutionContext,
+    mut options: SubagentRunOptions,
+) -> SubagentRunOptions {
+    options.run_context.parent = Some(parent);
+    options
+}
+
 fn make_parent(
     provider: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
@@ -263,23 +294,24 @@ fn make_parent(
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.5,
-        workspace_dir: std::env::temp_dir(),
+        workspace_dir: crate::storage::test_support::isolated_workspace(),
         agent_config: crate::config::AgentConfig::default(),
         workflows: Arc::new(vec![]),
         memory_context: Arc::new(None),
         session_id: "test-session".into(),
         channel: "test".into(),
         connected_integrations: vec![],
-        tool_call_format: crate::agent::prompts::ToolCallFormat::PFormat,
+        tool_call_format: tinytools_agent::dialect::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }
 
 // ── Runtime spawn-hierarchy (tier) gate (issue #4098) ───────────────────────
-// `tier_gate_decision` is the pure decision the runtime gate in `run_subagent`
+// `tier_gate_decision` is the pure decision the runtime gate in child execution
 // applies to each delegation hop. Tested directly so the deny/allow/skip
 // table is covered without standing up a global registry or a live spawn.
 
@@ -290,6 +322,8 @@ fn gate(parent: Option<&AgentDefinition>, child: &AgentDefinition) -> Result<(),
 
 #[path = "ops_tests_model_resolution_tests.rs"]
 mod model_resolution_tests;
+#[path = "ops_tests_nested_stack_tests.rs"]
+mod nested_stack_tests;
 #[path = "ops_tests_slug_filter_typed_mode_tests.rs"]
 mod slug_filter_typed_mode_tests;
 #[path = "ops_tests_tier_gate_tests.rs"]

@@ -93,32 +93,6 @@ impl Default for SearxngConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct WebSearchConfig {
-    #[serde(default = "default_web_search_max_results")]
-    pub max_results: usize,
-    #[serde(default = "default_web_search_timeout_secs")]
-    pub timeout_secs: u64,
-}
-
-fn default_web_search_max_results() -> usize {
-    5
-}
-
-fn default_web_search_timeout_secs() -> u64 {
-    15
-}
-
-impl Default for WebSearchConfig {
-    fn default() -> Self {
-        Self {
-            max_results: default_web_search_max_results(),
-            timeout_secs: default_web_search_timeout_secs(),
-        }
-    }
-}
-
 // ── Search providers ────────────────────────────────────────────────
 //
 // Several providers can be active at once. Each provider has a route —
@@ -146,8 +120,14 @@ pub(crate) const SEARCH_SCHEMA_PROVIDERS: u32 = 2;
 pub const SEARCH_ROLE_SEARCH: &str = "search";
 pub const SEARCH_ROLE_ANSWER: &str = "answer";
 pub const SEARCH_ROLE_CONTENTS: &str = "contents";
-/// Capability roles, in display order.
-pub const SEARCH_ROLES: &[&str] = &[SEARCH_ROLE_SEARCH, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS];
+pub const SEARCH_ROLE_IMAGES: &str = "images";
+/// Capability roles, in display order: every `tinysearch_bus::Role`, by its key.
+pub const SEARCH_ROLES: &[&str] = &[
+    SEARCH_ROLE_SEARCH,
+    SEARCH_ROLE_ANSWER,
+    SEARCH_ROLE_CONTENTS,
+    SEARCH_ROLE_IMAGES,
+];
 
 /// Providers the host can configure — the TinySearch catalog.
 pub const SEARCH_PROVIDERS: &[&str] = tinysearch_bus::PROVIDERS;
@@ -175,11 +155,23 @@ fn default_search_timeout_secs() -> u64 {
 
 /// Credentials for a BYO search provider. Considered configured iff the
 /// trimmed value is non-empty.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchEngineCredentials {
+    /// Optional direct provider base URL. Operator profile settings validate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
     #[serde(default)]
     pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for SearchEngineCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchEngineCredentials")
+            .field("has_key", &self.has_key())
+            .field("has_base_url", &self.base_url.is_some())
+            .finish()
+    }
 }
 
 impl SearchEngineCredentials {
@@ -199,69 +191,7 @@ impl SearchEngineCredentials {
     }
 }
 
-/// How calls to a provider are routed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SearchRoute {
-    /// Through the TinyHumans backend with the session credential.
-    Managed,
-    /// Straight to the provider with the user's own key.
-    #[default]
-    Direct,
-}
-
-impl SearchRoute {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Managed => "managed",
-            Self::Direct => "direct",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "managed" | "backend" => Some(Self::Managed),
-            "direct" => Some(Self::Direct),
-            _ => None,
-        }
-    }
-}
-
-/// How search tools are presented to the agent.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SearchPresentation {
-    /// One tool per capability role (the default).
-    #[default]
-    Roles,
-    /// Every usable provider's own tools.
-    AllTools,
-    /// One `search` router tool with a provider argument.
-    Router,
-    /// Only the tools of `presentation_provider`.
-    OneProvider,
-}
-
-impl SearchPresentation {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Roles => "roles",
-            Self::AllTools => "all_tools",
-            Self::Router => "router",
-            Self::OneProvider => "one_provider",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "roles" => Some(Self::Roles),
-            "all_tools" => Some(Self::AllTools),
-            "router" => Some(Self::Router),
-            "one_provider" => Some(Self::OneProvider),
-            _ => None,
-        }
-    }
-}
+pub use tinysearch_bus::{PresentationMode, ProviderRoute};
 
 /// Per-provider selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -269,15 +199,17 @@ impl SearchPresentation {
 pub struct SearchProviderSettings {
     /// Whether the user turned this provider on.
     pub enabled: bool,
-    /// Managed or direct.
-    pub route: SearchRoute,
+    /// Managed or direct. Serialized as `managed` / `direct`.
+    #[serde(with = "tinysearch_bus::managed_route")]
+    #[schemars(with = "String")]
+    pub route: ProviderRoute,
 }
 
 impl Default for SearchProviderSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            route: SearchRoute::Direct,
+            route: ProviderRoute::Direct,
         }
     }
 }
@@ -286,20 +218,20 @@ impl SearchProviderSettings {
     pub fn managed() -> Self {
         Self {
             enabled: true,
-            route: SearchRoute::Managed,
+            route: ProviderRoute::Backend,
         }
     }
 
     pub fn direct() -> Self {
         Self {
             enabled: true,
-            route: SearchRoute::Direct,
+            route: ProviderRoute::Direct,
         }
     }
 }
 
 /// Search configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchConfig {
     /// Settings format; see [`SEARCH_SCHEMA_VERSION`]. Absent in legacy files.
@@ -321,7 +253,7 @@ pub struct SearchConfig {
 
     /// Tool presentation.
     #[serde(default)]
-    pub presentation: SearchPresentation,
+    pub presentation: PresentationMode,
 
     /// Provider for `one_provider`, or the router default.
     #[serde(default)]
@@ -334,6 +266,18 @@ pub struct SearchConfig {
     /// Per-request timeout in seconds (default 15).
     #[serde(default = "default_search_timeout_secs")]
     pub timeout_secs: u64,
+
+    /// Render results compactly for the model: citations that repeat a listed
+    /// result are left out and a page's text is kept to 1,500 characters
+    /// instead of 500. Defaults to `false`. Env: `OPENHUMAN_SEARCH_COMPACT_RESULTS`.
+    #[serde(default)]
+    pub compact_results: bool,
+
+    /// Cap, in characters, on each page an Exa contents call returns. Unset
+    /// asks for whole pages; the module lowers anything above 1,500 to 1,500.
+    /// Env: `OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS` (`0` clears it).
+    #[serde(default)]
+    pub contents_max_chars: Option<u64>,
 
     /// Brave Search key (direct route).
     #[serde(default)]
@@ -373,6 +317,13 @@ pub struct SearchConfig {
     #[serde(default, skip_serializing)]
     #[schemars(skip)]
     pub gemini_route: Option<String>,
+
+    /// Keys an embedder pinned for one agent, by provider. Never persisted
+    /// or printed. While any is set, this config is authoritative for the
+    /// agent's search calls. Set them with [`SearchConfig::pin_host_credential`].
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub host_credentials: BTreeMap<String, SearchHostCredential>,
 }
 
 impl Default for SearchConfig {
@@ -382,10 +333,12 @@ impl Default for SearchConfig {
             enabled: Some(true),
             providers: default_providers(),
             roles: BTreeMap::new(),
-            presentation: SearchPresentation::Roles,
+            presentation: PresentationMode::Roles,
             presentation_provider: None,
             max_results: default_search_max_results(),
             timeout_secs: default_search_timeout_secs(),
+            compact_results: false,
+            contents_max_chars: None,
             brave: SearchEngineCredentials::default(),
             querit: SearchEngineCredentials::default(),
             exa: SearchEngineCredentials::default(),
@@ -397,6 +350,7 @@ impl Default for SearchConfig {
             gemini_route: None,
             parallel: SearchEngineCredentials::default(),
             tinyfish: SearchEngineCredentials::default(),
+            host_credentials: BTreeMap::new(),
         }
     }
 }
@@ -467,19 +421,23 @@ impl SearchConfig {
     }
 
     /// Route for `provider`; providers that cannot be managed are always direct.
-    pub fn route(&self, provider: &str) -> SearchRoute {
+    pub fn route(&self, provider: &str) -> ProviderRoute {
         if !MANAGED_SEARCH_PROVIDERS.contains(&provider) {
-            return SearchRoute::Direct;
+            return ProviderRoute::Direct;
         }
         self.providers
             .get(provider)
             .map(|settings| settings.route)
-            .unwrap_or(SearchRoute::Direct)
+            .unwrap_or(ProviderRoute::Direct)
     }
 }
 
 #[path = "search_migrate.rs"]
 mod migrate;
+
+#[path = "search_host.rs"]
+mod host;
+pub use host::{SearchHostCredential, UnknownKeyedSearchProvider};
 
 #[cfg(test)]
 #[path = "search_search_config_tests_tests.rs"]

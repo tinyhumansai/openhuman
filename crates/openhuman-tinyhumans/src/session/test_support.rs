@@ -201,6 +201,7 @@ pub struct StoredCredential {
     pub token: String,
     pub user_id: Option<String>,
     pub user: Option<Value>,
+    pub issuing_backend: Option<String>,
 }
 
 /// A [`CoreLink`] that behaves like the core's `auth.*` credential RPCs,
@@ -252,6 +253,7 @@ impl FakeCore {
                 "userId": s.user_id,
                 "user": s.user,
                 "profileId": "app-session:default",
+                "issuingBackend": s.issuing_backend,
             }),
             None => {
                 json!({ "isAuthenticated": false, "userId": null, "user": null, "profileId": null })
@@ -309,6 +311,10 @@ impl CoreLink for FakeCore {
                             .and_then(Value::as_str)
                             .map(str::to_string),
                         user: params.get("user").cloned(),
+                        issuing_backend: params
+                            .get("issuingBackend")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
                     });
                 }
                 Ok(self.state())

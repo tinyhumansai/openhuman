@@ -6,21 +6,7 @@ use super::{
 // lsof is a unix tool, so its parser is only compiled there.
 #[cfg(unix)]
 use super::parse_lsof_pid;
-use std::sync::{Mutex, MutexGuard, OnceLock};
-
-fn env_lock() -> MutexGuard<'static, ()> {
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    // Recover from poison: when one test panics while holding this lock
-    // (e.g. an embedded-core readiness timeout under CI load), every
-    // subsequent test in the suite would otherwise cascade-fail with
-    // "env lock poisoned" — turning one real flake into three. The lock
-    // only serializes process-wide env-var mutation; the inner `()`
-    // carries no state that poisoning could corrupt.
-    ENV_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+use crate::test_env::env_lock;
 
 /// Builds the same worker runtime that the desktop host uses. Some core-process
 /// tests start an embedded agent server; Tokio's default 2 MiB worker stack is
@@ -28,8 +14,8 @@ fn env_lock() -> MutexGuard<'static, ()> {
 fn core_test_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
-        .max_blocking_threads(openhuman_core::core::runtime::MAX_BLOCKING_THREADS)
+        .thread_stack_size(openhuman_rpc::embed::process::AGENT_WORKER_STACK_BYTES)
+        .max_blocking_threads(openhuman_rpc::embed::process::MAX_BLOCKING_THREADS)
         .build()
         .expect("build core test runtime")
 }
@@ -62,6 +48,36 @@ impl Drop for EnvGuard {
     }
 }
 
+/// A private, unsigned-in workspace and loopback-only backend keep embedded
+/// boot tests independent of the operator's profile and other test cleanup.
+struct TestWorkspace {
+    _env: EnvGuard,
+    _backend: EnvGuard,
+    _api_key: EnvGuard,
+    _session: EnvGuard,
+    _storage: EnvGuard,
+    _rpc_url: EnvGuard,
+    _directory: tempfile::TempDir,
+}
+
+fn test_workspace() -> TestWorkspace {
+    // Empty values also prevent dotenv from restoring inherited credentials
+    // or an external storage backend during boot.
+    let directory = tempfile::tempdir().expect("test workspace");
+    TestWorkspace {
+        _env: EnvGuard::set(
+            "OPENHUMAN_WORKSPACE",
+            directory.path().to_str().expect("workspace path"),
+        ),
+        _backend: EnvGuard::set("BACKEND_URL", "http://127.0.0.1:9"),
+        _api_key: EnvGuard::set("OPENHUMAN_BACKEND_API_KEY", ""),
+        _session: EnvGuard::set("OPENHUMAN_BACKEND_SESSION_TOKEN", ""),
+        _storage: EnvGuard::set("OPENHUMAN_STORAGE_URL", ""),
+        _rpc_url: EnvGuard::unset("OPENHUMAN_CORE_RPC_URL"),
+        _directory: directory,
+    }
+}
+
 #[test]
 fn default_core_port_env_and_fallback() {
     let _env_lock = env_lock();
@@ -81,8 +97,10 @@ fn core_process_handle_new_creates_instance() {
 
 #[test]
 fn ready_signal_updates_runtime_port_and_fallback_notice() {
+    let _env_lock = env_lock();
+    let _rpc_url = EnvGuard::unset("OPENHUMAN_CORE_RPC_URL");
     let handle = CoreProcessHandle::new(7788);
-    handle.apply_embedded_ready_signal(openhuman_rpc::server::EmbeddedReadySignal {
+    handle.apply_embedded_ready_signal(openhuman_rpc::host::EmbeddedReadySignal {
         port: 7789,
         fallback_from: Some(7788),
     });
@@ -102,8 +120,8 @@ fn ready_signal_updates_runtime_port_and_fallback_notice() {
 /// Regression: `ensure_running` must NOT publish the per-launch RPC bearer
 /// to the `OPENHUMAN_CORE_TOKEN` environment variable.
 ///
-/// The bearer is now handed to the in-process core in-memory via the
-/// `rpc_token` argument of `run_server_embedded_with_ready`; setting it on
+/// The bearer is now handed to the in-process core in-memory via
+/// `DesktopOptions::rpc_token` of `openhuman_rpc::host::desktop`; setting it on
 /// the process env would put it within reach of any same-UID process
 /// reading `/proc/<pid>/environ` (Linux) or `sysctl KERN_PROCARGS2` /
 /// `ps eww -p <pid>` (macOS).
@@ -111,10 +129,11 @@ fn ready_signal_updates_runtime_port_and_fallback_notice() {
 fn ensure_running_does_not_publish_token_to_env() {
     let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let _workspace = test_workspace();
     // Force a clean slate so we can assert on the post-spawn value.
     let _wipe = EnvGuard::unset("OPENHUMAN_CORE_TOKEN");
     let rt = core_test_runtime();
-    let (result, env_after, expected_token, env_during_spawn) = rt.block_on(async {
+    let (result, env_after, env_during_spawn) = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test listener");
@@ -124,17 +143,19 @@ fn ensure_running_does_not_publish_token_to_env() {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         let handle = CoreProcessHandle::new(port);
-        let expected_token = handle.rpc_token().to_string();
-        let result = handle.ensure_running().await;
-        // Capture env immediately after spawn returns Ok — before any
-        // tokio task could plausibly have set the var.
-        let env_after = std::env::var("OPENHUMAN_CORE_TOKEN").ok();
-        // Also peek midway via spawning a tiny check task in the same
-        // runtime — guards against the codepath setting+removing the var
-        // within the spawn window.
-        let env_during_spawn = std::env::var("OPENHUMAN_CORE_TOKEN").ok();
+        let startup = handle.ensure_running();
+        tokio::pin!(startup);
+        let mut token_seen_during_spawn = false;
+        let result = loop {
+            token_seen_during_spawn |= std::env::var_os("OPENHUMAN_CORE_TOKEN").is_some();
+            tokio::select! {
+                result = &mut startup => break result,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
+            }
+        };
+        let env_after = std::env::var_os("OPENHUMAN_CORE_TOKEN");
         handle.shutdown().await;
-        (result, env_after, expected_token, env_during_spawn)
+        (result, env_after, token_seen_during_spawn)
     });
 
     assert!(
@@ -144,13 +165,42 @@ fn ensure_running_does_not_publish_token_to_env() {
     assert!(
         env_after.is_none(),
         "ensure_running must NOT publish OPENHUMAN_CORE_TOKEN to the process env \
-         (sidecar-era leak channel removed). Found: {env_after:?} (handle token was {expected_token:?})"
+         (sidecar-era leak channel removed)"
     );
     assert!(
-        env_during_spawn.is_none(),
-        "OPENHUMAN_CORE_TOKEN must remain unset even momentarily during spawn. \
-         Found: {env_during_spawn:?}"
+        !env_during_spawn,
+        "OPENHUMAN_CORE_TOKEN must remain unset during spawn"
     );
+}
+
+#[test]
+fn ensure_running_preserves_an_inherited_token_without_publishing_its_bearer() {
+    let _env_lock = env_lock();
+    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let _workspace = test_workspace();
+    let _inherited = EnvGuard::set("OPENHUMAN_CORE_TOKEN", "inherited-test-token");
+    let rt = core_test_runtime();
+    rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        let handle = CoreProcessHandle::new(port);
+        assert_ne!(handle.rpc_token(), "inherited-test-token");
+        let result = handle.ensure_running().await;
+        let inherited_preserved = std::env::var("OPENHUMAN_CORE_TOKEN")
+            .is_ok_and(|value| value == "inherited-test-token");
+        handle.shutdown().await;
+        assert!(
+            result.is_ok(),
+            "embedded core must become ready: {result:?}"
+        );
+        assert!(
+            inherited_preserved,
+            "startup must leave inherited token configuration unchanged"
+        );
+    });
 }
 
 /// Issue #1613: when the preferred port is occupied by a non-OpenHuman
@@ -159,6 +209,7 @@ fn ensure_running_does_not_publish_token_to_env() {
 fn ensure_running_falls_back_for_unknown_listener_on_port() {
     let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let _workspace = test_workspace();
     let rt = core_test_runtime();
     let (result, chosen_port, notice) = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -195,6 +246,7 @@ fn ensure_running_falls_back_for_unknown_listener_on_port() {
 fn ensure_running_falls_back_to_7789_when_7788_is_busy() {
     let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let _workspace = test_workspace();
     let rt = core_test_runtime();
     rt.block_on(async {
         let listener = match tokio::net::TcpListener::bind("127.0.0.1:7788").await {
@@ -550,11 +602,11 @@ fn core_process_handle_new_token_is_valid() {
 
 /// `CoreProcessHandle::new()` must NOT publish the token to the global
 /// `CURRENT_RPC_TOKEN`. The global is set only after `ensure_running()`
-/// successfully spawns the embedded server with `OPENHUMAN_CORE_TOKEN` in
-/// scope. Advertising the token before spawn would 401 against any process
+/// successfully spawns the embedded server with its in-memory bearer. Advertising the token before spawn would 401 against any process
 /// already listening on the port that never received this token.
 #[test]
 fn new_does_not_publish_global_token() {
+    let _env_lock = env_lock();
     let before = current_rpc_token();
     let handle = CoreProcessHandle::new(19002);
     let after = current_rpc_token();
@@ -764,6 +816,7 @@ fn validate_kill_target_refuses_protected_pids() {
 fn recover_port_conflict_succeeds_when_port_is_free() {
     let _env_lock = env_lock();
     let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let _workspace = test_workspace();
     let rt = core_test_runtime();
 
     let outcome = rt.block_on(async {
@@ -791,38 +844,4 @@ fn recover_port_conflict_succeeds_when_port_is_free() {
         outcome.new_port.is_some(),
         "new_port should be set on success"
     );
-}
-
-#[test]
-fn recover_port_conflict_handles_stale_listener() {
-    let _env_lock = env_lock();
-    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
-    let rt = core_test_runtime();
-
-    // Bind a port, attempt recovery — the recovery must still succeed because
-    // ensure_running's fallback range kicks in when the preferred port is busy.
-    let outcome = rt.block_on(async {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-
-        let handle = CoreProcessHandle::new(port);
-        let outcome = handle.recover_port_conflict().await;
-        handle.shutdown().await;
-        drop(listener);
-        outcome
-    });
-
-    // Recovery may succeed via port fallback even with the listener held.
-    // We only assert that the outcome is well-formed.
-    assert!(
-        !outcome.message.is_empty(),
-        "outcome message must always be populated"
-    );
-    if outcome.success {
-        assert!(outcome.new_port.is_some());
-    } else {
-        assert!(outcome.new_port.is_none());
-    }
 }

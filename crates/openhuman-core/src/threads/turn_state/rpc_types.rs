@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 use tinyagents_session::turn_state::types::{PersistedToolFailure, TurnState};
 
 /// Request payload for `openhuman.threads_turn_state_get`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetTurnStateRequest {
     pub thread_id: String,
 }
 
 /// Response payload for `openhuman.threads_turn_state_get`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTurnStateResponse {
     /// `None` when no snapshot exists for the thread.
@@ -26,7 +26,7 @@ pub struct GetTurnStateResponse {
 
 /// Response payload for `openhuman.threads_turn_state_list` and
 /// `openhuman.threads_turn_state_history`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTurnStatesResponse {
     pub turn_states: Vec<TurnState>,
@@ -50,14 +50,20 @@ pub struct ClearTurnStateRequest {
 }
 
 /// Response payload for `openhuman.threads_turn_state_clear`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClearTurnStateResponse {
     pub cleared: bool,
 }
 
-impl From<&crate::tools::status::ClassifiedFailure> for PersistedToolFailure {
-    fn from(f: &crate::tools::status::ClassifiedFailure) -> Self {
+/// Project a classified tool failure onto its persisted wire shape.
+///
+/// A free function rather than a `From` impl: both types are foreign to this
+/// crate (`tinytools` and `tinyagents_session`).
+pub(crate) fn persisted_tool_failure(
+    f: &tinytools::status::ClassifiedFailure,
+) -> PersistedToolFailure {
+    {
         // Serialize the enums to their wire variant name so the persisted
         // `class`/`category` strings match exactly what the live socket emits
         // (`ClassifiedFailure` serializes each as its bare variant name).
@@ -67,7 +73,7 @@ impl From<&crate::tools::status::ClassifiedFailure> for PersistedToolFailure {
                 .and_then(|j| j.as_str().map(str::to_string))
                 .unwrap_or_default()
         }
-        Self {
+        PersistedToolFailure {
             class: variant_name(&f.class),
             category: variant_name(&f.category),
             recoverable: f.recoverable,

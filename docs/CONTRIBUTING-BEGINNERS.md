@@ -285,10 +285,11 @@ git remote -v
 
 ### 3a. Initialize submodules
 
-The project vendors several supporting crates as git submodules under `vendor/`
-(tinyagents, tinyflows, tinychannels, tinyhumans-sdk, tinybus, tinymemory,
-tinywallet, tinyhosts, tinymcp, tinybox, tinyruntime, tinydocs, tinyvoice,
-tinyjuice, tinyconnectors — see `.gitmodules`). The desktop shell itself uses
+The project vendors eighteen supporting crates as git submodules under
+`vendor/` (tinyagents, tinyflows, tinychannels, tinyhumans-sdk, tinybus,
+tinymemory, tinywallet, tinyhosts, tinymcp, tinybox, tinyruntime, tinydocs,
+tinyvoice, tinyjuice, tinyconnectors, tinyskills, tinycomputer, tinysearch —
+`.gitmodules` is the list). The desktop shell itself uses
 Tauri with the Wry webview, not CEF. You must initialize the submodules before
 installing dependencies or desktop builds will fail:
 
@@ -339,8 +340,8 @@ For your first contribution, `pnpm dev` is all you need.
 | Area                 | Where it lives                       | Skills needed     |
 | -------------------- | ------------------------------------ | ----------------- |
 | UI components        | `app/src/`                           | React, TypeScript |
-| Styles / design      | `app/src/`, `app/tailwind.config.js` | CSS, Tailwind     |
-| Documentation        | `*.md` files, `gitbooks/`            | Writing           |
+| Styles / design      | `app/src/styles/`, `app/src/index.css` | CSS, Tailwind v4  |
+| Documentation        | `*.md` files, `docs/gitbooks/en/`            | Writing           |
 | Bug fixes (frontend) | `app/src/`                           | React, TypeScript |
 
 **Avoid for now**: anything under `crates/` (Rust core and Tauri shell) until you're comfortable with the codebase.
@@ -486,6 +487,6 @@ The desktop build requires the full Rust toolchain and vendored Tauri setup. For
 
 - Join the [Discord](https://guild.tinyhumans.ai/) and ask in the contributors channel
 - Comment on the issue you're working on
-- Check [`gitbooks/developing/getting-set-up.md`](../gitbooks/developing/getting-set-up.md) for deeper setup docs
+- Check [`docs/gitbooks/en/developing/getting-set-up.md`](../docs/gitbooks/en/developing/getting-set-up.md) for deeper setup docs
 
 Thank you for contributing to OpenHuman!

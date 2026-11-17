@@ -7,29 +7,78 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+# Every gate forwards to `openhuman-rpc` alone (chain: core -> embed ->
+# tinyhumans -> rpc -> app/cli/tui); `scripts/ci/check-feature-forwarding.mjs`
+# checks the link. `default` is the set the TUI ships with, named explicitly:
+# the core's contributor gates minus `http-server` (the TUI drives the core
+# in-process and never serves it), plus Sentry. It used to arrive implicitly
+# through a bare workspace `openhuman-core` dependency, which turned on the
+# core's whole `default`.
 [features]
-default = ["crash-reporting"]
-crash-reporting = ["dep:dotenvy", "dep:sentry", "openhuman-core/crash-reporting"]
+langfuse = ["openhuman-rpc/langfuse"]
+os-keyring = ["openhuman-rpc/os-keyring"]
+default = [
+    "os-keyring",
+    "crash-reporting",
+    "media",
+    "skills",
+    "flows",
+    "mcp",
+    "channels",
+    "scheduler-gate",
+    "file-logging",
+    "modules",
+    "storage-sqlite",
+    "storage-file",
+    "secret-file",
+    "legacy-import",
+]
+crash-reporting = ["openhuman-rpc/crash-reporting"]
+jev = ["openhuman-rpc/jev"]
+http-server = ["openhuman-rpc/http-server"]
+inference = ["openhuman-rpc/inference"]
+documents = ["openhuman-rpc/documents"]
+hosting = ["openhuman-rpc/hosting"]
+inbound-queues = ["openhuman-rpc/inbound-queues"]
+modules = ["openhuman-rpc/modules"]
+security-module = ["openhuman-rpc/security-module"]
+voice = ["openhuman-rpc/voice"]
+web3 = ["openhuman-rpc/web3"]
+# Storage drivers for `[storage] url` / `OPENHUMAN_STORAGE_URL`.
+storage-sqlite = ["openhuman-rpc/storage-sqlite"]
+storage-mongodb = ["openhuman-rpc/storage-mongodb"]
+storage-s3 = ["openhuman-rpc/storage-s3"]
+storage-file = ["openhuman-rpc/storage-file"]
+storage-rabbitmq = ["openhuman-rpc/storage-rabbitmq"]
+secret-file = ["openhuman-rpc/secret-file"]
+legacy-import = ["openhuman-rpc/legacy-import"]
+media = ["openhuman-rpc/media"]
+flows = ["openhuman-rpc/flows"]
+skills = ["openhuman-rpc/skills"]
+mcp = ["openhuman-rpc/mcp"]
+channels = ["openhuman-rpc/channels"]
+file-logging = ["openhuman-rpc/file-logging"]
+scheduler-gate = ["openhuman-rpc/scheduler-gate"]
+e2e-test-support = ["openhuman-rpc/e2e-test-support"]
 
 [[bin]]
 name = "openhuman-tui"
 path = "src/main.rs"
 
 [dependencies]
-openhuman-core.workspace = true
-openhuman-rpc.workspace = true
-openhuman-tinyhumans.workspace = true
+# The only openhuman crate the TUI names: its `host::tui` boot, the embed
+# facades (`openhuman_rpc::embed`) and the session owner
+# (`openhuman_rpc::tinyhumans`) all come through it.
+openhuman-rpc = { workspace = true, features = ["session-store"] }
 anyhow = "1"
 base64 = "0.22"
 chrono = "0.4"
 crossterm = "0.29"
-dotenvy = { version = "0.15", optional = true }
 log = "0.4"
 ratatui = "0.30"
 serde_json = "1"
-sentry = { version = "0.47.0", default-features = false, optional = true, features = ["backtrace", "contexts", "panic", "tracing", "debug-images", "httpdate"] }
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util"] }
 unicode-width = "0.2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"

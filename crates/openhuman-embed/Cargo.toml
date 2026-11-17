@@ -8,33 +8,68 @@ repository.workspace = true
 readme = "README.md"
 publish = false
 
+# Core errors are intentionally carried by this facade's public fallible APIs;
+# keep the same size baseline as the underlying core crate under `-D warnings`.
+[lints.clippy]
+result_large_err = "allow"
+
 [features]
-default = ["openhuman-core/default"]
+langfuse = ["openhuman-core/langfuse", "tinyagents-harness/langfuse"]
+# `channels` is in core's default set already; enabling it here too compiles
+# the `Runtime::channels` facade in a default build.
+default = ["openhuman-core/default", "channels", "modules"]
+testkit = ["tinyagents-session/testkit"]
 http-server = ["openhuman-core/http-server"]
 inference = ["openhuman-core/inference"]
 documents = ["openhuman-core/documents"]
 hosting = ["openhuman-core/hosting"]
-modules = ["openhuman-core/modules"]
+inbound-queues = ["openhuman-core/inbound-queues"]
+modules = ["openhuman-core/modules", "tinybus/modules"]
+security-module = ["openhuman-core/security-module"]
 voice = ["openhuman-core/voice"]
 web3 = ["openhuman-core/web3"]
-runtime-node = ["openhuman-core/runtime-node"]
+# Storage drivers for `[storage] url` (see the core `storage` domain).
+storage-sqlite = ["openhuman-core/storage-sqlite"]
+storage-mongodb = ["openhuman-core/storage-mongodb"]
+storage-s3 = ["openhuman-core/storage-s3"]
+storage-file = ["openhuman-core/storage-file"]
+storage-rabbitmq = ["openhuman-core/storage-rabbitmq"]
+secret-file = ["openhuman-core/secret-file"]
+legacy-import = ["openhuman-core/legacy-import"]
 media = ["openhuman-core/media"]
 flows = ["openhuman-core/flows"]
 skills = ["openhuman-core/skills"]
 mcp = ["openhuman-core/mcp"]
-crash-reporting = ["openhuman-core/crash-reporting"]
-channels = ["openhuman-core/channels"]
-whatsapp-web = ["openhuman-core/whatsapp-web"]
+# Also carries `process::sentry`, the shared Sentry options + before_send chain.
+crash-reporting = ["dep:sentry", "openhuman-core/crash-reporting"]
+# The in-process SaaS profile facade (`ProfileRuntime`). Headless: it does not
+# pull in tinychannels or axum. Relaying a platform message into a profile
+# (`ProfileHandle::relay_inbound`) is a channel transport and needs `channels`.
+profiles = []
+channels = ["profiles", "openhuman-core/channels"]
 file-logging = ["openhuman-core/file-logging"]
 scheduler-gate = ["openhuman-core/scheduler-gate"]
+# Exposes the destructive `openhuman.test_reset` RPC for E2E builds only.
+# Default-OFF everywhere; forwarded so the desktop E2E build can reach it
+# through the chain instead of naming the core directly.
+e2e-test-support = ["openhuman-core/e2e-test-support"]
 
 [dependencies]
+futures-core = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
 async-trait = "0.1"
 openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false }
 anyhow = "1"
+# `JobSchedule::At` converts to and from the core's `chrono` instants.
+chrono = "0.4"
 log = "0.4"
+jsonschema = { version = "0.58", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `process::sentry` (crash-reporting): the client options and before_send
+# chain hosts share. Same version and minimal features as the core's, which
+# carries the transport/backtrace features through `openhuman-core/crash-reporting`.
+sentry = { version = "0.47.0", default-features = false, optional = true }
 tempfile = "3"
 thiserror = "2"
 # The memory facade (`memory`) speaks TinyMemory's contract types; same path as
@@ -43,15 +78,53 @@ tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api" }
 tinymemory-tools = { path = "../../vendor/tinymemory/crates/tinymemory-tools" }
 # Construct the owned wire config directly; core adds host disclosure policy.
 tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus" }
+# The session store port (`SessionStoreProvider`) a host implements to keep
+# conversations in its own database, and the in-memory provider; same path as
+# the core's so one copy resolves.
+tinyagents-hooks = { workspace = true }
+tinyagents-harness-tools = { workspace = true, default-features = false, features = ["todos"] }
+tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
+tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
+tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session" }
+# Native persisted todo codec exposed by the existing session-store contract.
+# Native cancellation contract, exposed unchanged by the existing stream API.
+tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false }
+# The wire request/response types `complete` converts to; same path as the
+# core's so one copy resolves.
+tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
+tinyinference-embeddings = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }
+# `RuntimeBuilder::tool_ranker` takes `tinytools::ToolRanker`; same vendored
+# path as the core's so the trait unifies.
+# `AgentDefinitionSpec::tool_rules` takes the shared tool-rule vocabulary too.
+tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# `test-keyring-consent` lets the suite answer TinySecurity's prompts as
+# openhuman-cli's does; dev-dependency features never reach a shipped build.
+openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false, features = ["test-keyring-consent"] }
 async-trait = "0.1"
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["conformance"] }
+tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["testkit"] }
+tinystoragedrivers-testkit = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-testkit" }
 dirs = "6"
+zeroize = "1"
+# `cron_tests` builds core `CronJob`s, whose schedule types live in the
+# tinyflows bus contract.
+tinyflows-bus = { path = "../../vendor/tinyflows/crates/tinyflows-bus" }
+# The real tinyflows module, linked into the test binaries (never the product):
+# the scheduler runtime and job store that `cron` reaches over the bus.
+tinyflows-module = { path = "../../vendor/tinyflows/crates/tinyflows-module", features = ["static-link"] }
 env_logger = "0.11"
+# The real tinymcp module, linked into the MCP module smoke test (never the
+# product): `mcp_call_tool` reaches it over the bus.
+tinymcp = { path = "../../vendor/tinymcp/crates/tinymcp", features = ["static-link"] }
+# The profile tests and example implement a stub `BackendTransport`, whose
+# `http_client` hands out a `reqwest::Client`. Same features as the core's, so
+# the dev graph adds no reqwest feature (see the unification note below).
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream", "http2", "multipart", "socks"] }
 wiremock = "0.6"
 # Feature unification with openhuman-cli's dev-dependencies. Cargo builds the
 # core once per distinct feature set of its dependencies, and the tests of
@@ -62,3 +135,79 @@ wiremock = "0.6"
 sentry = { version = "0.47.0", default-features = false, features = ["test"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "mcp"
+required-features = ["mcp"]
+
+[[example]]
+name = "skills"
+required-features = ["skills"]
+
+[[example]]
+name = "telegram"
+required-features = ["channels"]
+
+[[example]]
+name = "storage"
+required-features = ["storage-sqlite"]
+
+# SaaS profiles need `profiles`; these two also relay platform messages, which
+# needs `channels`.
+[[test]]
+name = "saas_profiles"
+required-features = ["channels"]
+
+# Host capability regression exercises the authenticated profile facade.
+[[test]]
+name = "profile_host_capabilities"
+required-features = ["channels"]
+
+# Due agent jobs of hosted profiles run once, as their own profile.
+[[test]]
+name = "profile_direct_providers"
+required-features = ["profiles"]
+
+[[test]]
+name = "profile_system_prompt"
+required-features = ["profiles"]
+
+[[test]]
+name = "profile_cron_sweep"
+required-features = ["profiles"]
+
+# A scheduled reminder always delivers; only a conditional job may stay silent.
+[[test]]
+name = "cron_reminder_no_reply"
+required-features = ["profiles"]
+
+# Operator-admitted cron and time tools, the iteration cap, no backend credential.
+[[test]]
+name = "profile_operator_tools"
+required-features = ["channels"]
+
+# A refused tool call must not fail a turn in a thread that already ran `cron`.
+[[test]]
+name = "profile_refused_tool_generation"
+required-features = ["channels"]
+
+[[example]]
+name = "profiles"
+required-features = ["profiles"]
+
+# One host smoke test for tinymcp: an embedded runtime calls a tool on a
+# scripted HTTP MCP server through the module.
+[[test]]
+name = "mcp_module"
+required-features = ["mcp", "modules", "skills", "storage-sqlite"]
+
+# While the runtime that admitted TinySecurity is live, another secret scope is
+# refused the module. Calls the core's security module directly, so it needs
+# the feature by name. Ignored by default: it needs the module's release.
+[[test]]
+name = "security_live_scope"
+required-features = ["security-module"]

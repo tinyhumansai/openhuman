@@ -1,24 +1,12 @@
-/**
- * `useFollowBottom` — the contract, at unit level.
- *
- * The e2e specs cover the integrated behaviour but they missed a real defect:
- * the turn-start alignment (`scrollIntoView({ block: 'start' })`) scrolls UP,
- * which the follow listener read as the reader leaving the bottom. E2E did not
- * catch it because the listener checks proximity first, and after a SHORT user
- * message the viewport is still within the 80px threshold — so the bug only
- * appears for a user message tall enough to push past it. A browser test would
- * need a fixture sized to that boundary; here the geometry is set directly.
- *
- * jsdom performs no layout, so every metric is assigned explicitly and the
- * observable is the imperative `scrollTo` call, not a resulting `scrollTop` —
- * the same approach as `thread.openScroll.test.tsx`.
+/** Behaviour tests for assistant-ui's native viewport over the OpenHuman adapter.
+ * jsdom has no layout, so scroll geometry and resize notifications are supplied.
  */
 import { AssistantUiRuntimeProvider } from '@/providers/AssistantUiRuntimeProvider';
 import chatRuntimeReducer from '@/store/chatRuntimeSlice';
 import threadReducer, { loadThreadMessages } from '@/store/threadSlice';
 import type { ThreadMessage } from '@/types/thread';
 import { configureStore } from '@reduxjs/toolkit';
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { act } from 'react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
@@ -130,7 +118,41 @@ function renderThread() {
   return { container, store, viewport: viewportOf(container) };
 }
 
-describe('useFollowBottom', () => {
+describe('assistant-ui native scroll anchoring', () => {
+  it('offers a labelled scroll anchor away from the bottom and jumps instantly', () => {
+    const { viewport } = renderThread();
+    setGeometry(viewport, 500, 1000);
+    act(() => viewport.dispatchEvent(new Event('scroll')));
+    expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeDisabled();
+
+    setGeometry(viewport, 100, 1000);
+    readerScrolls(viewport);
+    const anchor = screen.getByRole('button', { name: 'Scroll to bottom' });
+    expect(anchor).toBeEnabled();
+    expect(anchor).toHaveTextContent('Scroll to bottom');
+    scrollToSpy.mockClear();
+    fireEvent.click(anchor);
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'instant' });
+  });
+
+  it('resumes following after clicking the scroll anchor', () => {
+    const { viewport } = renderThread();
+    setGeometry(viewport, 500, 1000);
+    act(() => viewport.dispatchEvent(new Event('scroll')));
+    setGeometry(viewport, 100, 1000);
+    readerScrolls(viewport);
+    scrollToSpy.mockImplementation(function (this: HTMLElement, options: ScrollToOptions) {
+      this.scrollTop = Math.min(options.top ?? 0, this.scrollHeight - this.clientHeight);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll to bottom' }));
+    act(() => viewport.dispatchEvent(new Event('scroll')));
+    expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeDisabled();
+    scrollToSpy.mockClear();
+    setGeometry(viewport, 500, 1400);
+    growContent();
+    expect(followedBottom(viewport)).toBe(true);
+  });
+
   it('follows content growth for a reader at the bottom', () => {
     const { viewport } = renderThread();
     setGeometry(viewport, 500, 1000);
@@ -148,7 +170,7 @@ describe('useFollowBottom', () => {
     setGeometry(viewport, 500, 1000);
     act(() => viewport.dispatchEvent(new Event('scroll')));
 
-    // Up, and past the 80px threshold — a deliberate move into history.
+    // A deliberate move into history.
     setGeometry(viewport, 100, 1000);
     readerScrolls(viewport);
     scrollToSpy.mockClear();
@@ -181,36 +203,14 @@ describe('useFollowBottom', () => {
     expect(followedBottom(viewport)).toBe(true);
   });
 
-  it('keeps following after the turn-start alignment scrolls the viewport UP', () => {
-    // `ThreadBottomFollower` aligns a new user message with
-    // `scrollIntoView({ block: 'start' })`. For a reader at the bottom that
-    // LOWERS `scrollTop` — the message sits above the trailing margin and the
-    // status slot — which is indistinguishable from the reader moving into
-    // history unless the follower claims its own scroll.
-    //
-    // Ordering is the whole point: the alignment is synchronous, its `scroll`
-    // event is not. Setting the follow flag inside the effect is not enough,
-    // because the later event sees a drop against a stale baseline and clears
-    // it again. `claimScroll` re-baselines while `scrollTop` already holds the
-    // post-alignment value, so that event becomes a no-op.
-    //
-    // The e2e suite cannot reach this without a fixture sized to the 80px
-    // boundary: with a short user message the viewport stays within the
-    // threshold and the proximity branch masks it.
+  it('follows new user-message growth at the bottom without a custom top alignment', () => {
     const { store, viewport } = renderThread();
     setGeometry(viewport, 500, 1000);
     act(() => viewport.dispatchEvent(new Event('scroll')));
-
-    // Make the alignment behave like the real one: `scrollIntoView` on a
-    // message above the trailing margin LOWERS `scrollTop`, synchronously,
-    // inside the effect. A no-op mock cannot reproduce the ordering this test
-    // exists to check — `claimScroll` would capture the pre-alignment value
-    // and the test would pass for the wrong reason.
-    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {
-      viewport.scrollTop = 150;
-    });
-
-    act(() => {
+    scrollToSpy.mockClear();
+    const alignment = vi.spyOn(Element.prototype, 'scrollIntoView');
+    setGeometry(viewport, 500, 1400);
+    act(() =>
       store.dispatch({
         type: loadThreadMessages.fulfilled.type,
         payload: {
@@ -218,77 +218,22 @@ describe('useFollowBottom', () => {
           messages: [
             msg('1', 'user', 'hi'),
             msg('2', 'agent', 'hello'),
-            msg('3', 'user', 'a tall follow-up question'),
+            msg('3', 'user', 'follow-up'),
           ],
         },
-      });
-    });
-
-    // The alignment's own scroll event arrives now.
-    act(() => viewport.dispatchEvent(new Event('scroll')));
-    scrollToSpy.mockClear();
-
-    // The reply streams.
-    setGeometry(viewport, 150, 1600);
-    growContent();
-
-    expect(followedBottom(viewport)).toBe(true);
-  });
-
-  it('ignores the growth that prompted a claim, so the alignment survives', () => {
-    // The user message grows the content box, which queues a resize
-    // notification; the alignment then claims the scroll. Following that queued
-    // callback would scroll to the bottom and erase the alignment before it is
-    // painted — making it pointless rather than short-lived.
-    const { store, viewport } = renderThread();
-    setGeometry(viewport, 500, 1000);
-    act(() => viewport.dispatchEvent(new Event('scroll')));
-
-    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {
-      viewport.scrollTop = 150;
-    });
-
-    // The new user message has already grown the box to 1400 when the alignment
-    // runs and claims at that height. `scrollTop` must put the reader AT the
-    // bottom (1400 - 500 clientHeight = 900), or `ThreadBottomFollower` returns
-    // early on its own proximity guard and never aligns or claims at all —
-    // which would make this test pass for the wrong reason.
-    setGeometry(viewport, 900, 1400);
-    act(() => {
-      store.dispatch({
-        type: loadThreadMessages.fulfilled.type,
-        payload: {
-          threadId: 't1',
-          messages: [
-            msg('1', 'user', 'hi'),
-            msg('2', 'agent', 'hello'),
-            msg('3', 'user', 'a tall follow-up question'),
-          ],
-        },
-      });
-    });
-    scrollToSpy.mockClear();
-
-    // The queued notification for THAT growth must not move the viewport.
-    growContent();
-    expect(followedBottom(viewport)).toBe(false);
-
-    // The reply arriving is growth beyond the claim, and is followed.
-    setGeometry(viewport, 150, 1900);
+      })
+    );
     growContent();
     expect(followedBottom(viewport)).toBe(true);
+    expect(alignment).not.toHaveBeenCalled();
   });
 
-  it('keeps following when scrollTop drops with no reader input behind it', () => {
-    // A disclosure collapsing, content shrinking as parts are swapped, and
-    // assistant-ui's `useScrollLock` writing an old `scrollTop` back all lower
-    // `scrollTop` past the threshold with nobody touching anything. Each used
-    // to read as the reader leaving and stop following mid-turn.
+  it('keeps following when collapsing content changes the scroll geometry', () => {
     const { viewport } = renderThread();
     setGeometry(viewport, 500, 1000);
     act(() => viewport.dispatchEvent(new Event('scroll')));
 
-    setGeometry(viewport, 100, 1000);
+    setGeometry(viewport, 100, 600);
     act(() => viewport.dispatchEvent(new Event('scroll')));
     scrollToSpy.mockClear();
 

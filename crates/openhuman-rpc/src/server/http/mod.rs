@@ -12,14 +12,18 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
-use openhuman_core::core::types::AppState;
+use crate::core_host::core::types::AppState;
 
 pub(crate) mod cors;
-mod dictation;
 mod events;
+mod events_bind_tokens;
 mod health;
+mod live_voice;
 mod oauth_mcp;
 mod pages;
+#[cfg(test)]
+#[path = "preflight_tests.rs"]
+mod preflight_tests;
 mod rpc_handler;
 
 pub use rpc_handler::rpc_handler;
@@ -39,10 +43,31 @@ const MAX_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
 ///
 /// Middleware order (outermost → innermost):
 /// 1. `cors_middleware`       — handles `OPTIONS` preflight and adds CORS headers
-/// 2. `rpc_auth_middleware`   — validates `Authorization: Bearer <token>` on protected paths
+/// 2. `rpc_auth_middleware`   — validates `Authorization: Bearer <token>` on matched protected routes
 /// 3. `http_request_log_middleware` — logs non-RPC HTTP requests with timing
 pub fn build_core_http_router(socketio_enabled: bool) -> Router {
+    build_core_http_router_mode(socketio_enabled, None)
+}
+
+/// Builds the regular router with an initially restricted, per-server
+/// preflight gate. Used only while desktop startup decrypts config secrets.
+pub(crate) fn build_core_http_router_with_preflight(
+    socketio_enabled: bool,
+    gate: crate::server::auth::PreflightGate,
+) -> Router {
+    build_core_http_router_mode(socketio_enabled, Some(gate))
+}
+
+fn build_core_http_router_mode(
+    socketio_enabled: bool,
+    preflight_gate: Option<crate::server::auth::PreflightGate>,
+) -> Router {
     crate::http_host::ensure_registered();
+    events_bind_tokens::install();
+    let rpc_route = match &preflight_gate {
+        Some(_) => post(rpc_handler::preflight_rpc_handler),
+        None => post(rpc_handler::rpc_handler),
+    };
     let router = Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health::health_handler))
@@ -62,9 +87,9 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         // localhost cap is safe.
         .route(
             "/rpc",
-            post(rpc_handler::rpc_handler).route_layer(DefaultBodyLimit::max(MAX_RPC_BODY_BYTES)),
+            rpc_route.route_layer(DefaultBodyLimit::max(MAX_RPC_BODY_BYTES)),
         )
-        .route("/ws/dictation", get(dictation::dictation_ws_handler))
+        .route("/ws/live-voice", get(live_voice::live_voice_ws_handler))
         .route(
             "/oauth/mcp/callback",
             get(oauth_mcp::oauth_mcp_callback_handler),
@@ -75,7 +100,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
             get(crate::server::dev_connect::dev_connect_handler),
         )
         // OpenAI-compatible inference endpoint (/v1/chat/completions, /v1/models)
-        .nest("/v1", openhuman_core::inference::http::router())
+        .nest("/v1", crate::core_host::inference::http::router())
         // Apply `AppState` here so the outer router becomes `Router<()>` and
         // matches any state-less sub-router merged into it.
         .with_state(AppState {
@@ -85,18 +110,73 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
     let router = router
         .fallback(not_found_handler)
         .layer(middleware::from_fn(http_request_log_middleware))
-        .layer(middleware::from_fn(
+        .route_layer(middleware::from_fn(
             crate::server::auth::rpc_auth_middleware,
-        ))
-        .layer(middleware::from_fn(cors::cors_middleware));
-
+        ));
+    let socket_preflight_gate = preflight_gate.clone();
+    let router = if let Some(gate) = preflight_gate.clone() {
+        router
+            .layer(axum::Extension(gate.clone()))
+            .route_layer(middleware::from_fn_with_state(
+                gate,
+                crate::server::auth::preflight_surface_middleware,
+            ))
+    } else {
+        router
+    };
+    // Socket.IO is off (`--jsonrpc-only`): answer its path before the bearer
+    // middleware can mistake the handshake for an unauthenticated request.
+    // Sits inside CORS so browser clients can read the body.
     if socketio_enabled {
-        let (socket_layer, io) = crate::server::socketio::attach_socketio();
+        let (socket_layer, io) =
+            crate::server::socketio::attach_socketio_with_preflight(socket_preflight_gate);
         crate::server::socketio::spawn_web_channel_bridge(io);
-        return router.layer(socket_layer);
+        let router = router.layer(socket_layer);
+        let router = if let Some(gate) = preflight_gate {
+            router.layer(middleware::from_fn_with_state(
+                gate,
+                crate::server::auth::preflight_socketio_middleware,
+            ))
+        } else {
+            router
+        };
+        return router.layer(middleware::from_fn(cors::cors_middleware));
     }
 
     router
+        .layer(middleware::from_fn(socketio_disabled_middleware))
+        .layer(middleware::from_fn(cors::cors_middleware))
+}
+
+/// Stable machine-readable `error` code of the "Socket.IO is off" response.
+/// Clients (the app's connection test) match on it.
+pub const SOCKETIO_DISABLED_ERROR: &str = "socketio_disabled";
+
+/// Replies `503` with a JSON body naming the cause to any `/socket.io` request.
+///
+/// Only installed when Socket.IO is disabled. Without it the request falls
+/// through to the bearer middleware, which logs and returns a misleading 401
+/// (the Socket.IO handshake carries its token in the `auth` payload, never in
+/// an `Authorization` header) (#5656).
+async fn socketio_disabled_middleware(req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    if path == "/socket.io" || path.starts_with("/socket.io/") {
+        log::info!(
+            "[http] {} {} -> 503 socketio_disabled (core started with --jsonrpc-only; realtime is off)",
+            req.method(),
+            path
+        );
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "ok": false,
+                "error": SOCKETIO_DISABLED_ERROR,
+                "message": "Socket.IO (realtime) is disabled on this core. It was started with --jsonrpc-only; restart it without that flag to enable realtime chat and events."
+            })),
+        )
+            .into_response();
+    }
+    next.run(req).await
 }
 
 /// Middleware for logging incoming HTTP requests.
@@ -129,9 +209,9 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
 
 /// Handler for the root endpoint, returning server information and available endpoints.
 async fn root_handler() -> impl IntoResponse {
-    let api_server = match openhuman_core::config::Config::load_or_init().await {
-        Ok(cfg) => openhuman_core::backend::base_url(&cfg.api_url).ok(),
-        Err(_) => openhuman_core::backend::base_url(&None).ok(),
+    let api_server = match crate::core_host::config::Config::load_or_init().await {
+        Ok(cfg) => cfg.resolved_endpoints.control_plane_url.clone(),
+        Err(_) => None,
     };
 
     (
@@ -172,3 +252,7 @@ async fn not_found_handler() -> impl IntoResponse {
 #[cfg(test)]
 #[path = "inference_route_tests.rs"]
 mod inference_route_tests;
+
+#[cfg(test)]
+#[path = "socketio_disabled_tests.rs"]
+mod socketio_disabled_tests;

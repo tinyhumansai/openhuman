@@ -116,7 +116,8 @@ async fn resolve_dirs_uses_active_user_when_present() {
         .unwrap();
     let expected_pre_login_dir = root.join("users").join(PRE_LOGIN_USER_ID);
     assert_eq!(oh_dir, expected_pre_login_dir);
-    assert_eq!(ws_dir, expected_pre_login_dir.join("workspace"));
+    // A brand-new profile is layout v2: its workspace is `files/`.
+    assert_eq!(ws_dir, expected_pre_login_dir.join("files"));
     assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
 
     // With active user → scopes to user dir.
@@ -126,7 +127,7 @@ async fn resolve_dirs_uses_active_user_when_present() {
         .unwrap();
     let expected_user_dir = root.join("users").join("u-test");
     assert_eq!(oh_dir, expected_user_dir);
-    assert_eq!(ws_dir, expected_user_dir.join("workspace"));
+    assert_eq!(ws_dir, expected_user_dir.join("files"));
     assert_eq!(source, ConfigResolutionSource::ActiveUser);
 
     if let Some(value) = prior_workspace {
@@ -336,68 +337,6 @@ fn classify_shell_hide_window_distinguishes_unset_from_unrecognized() {
 }
 
 #[test]
-fn apply_env_overrides_web_search_limits_only() {
-    let _g = env_lock();
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-        "WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-    let mut cfg = Config::default();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
-    }
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.web_search.max_results, 5);
-    assert_eq!(cfg.web_search.timeout_secs, 20);
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-}
-
-#[test]
-fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
-    let _g = env_lock();
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-        "WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-    let mut cfg = Config::default();
-    cfg.web_search.max_results = 3;
-    cfg.web_search.timeout_secs = 10;
-
-    // Valid values apply.
-    unsafe {
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
-    }
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.web_search.max_results, 5);
-    assert_eq!(cfg.web_search.timeout_secs, 20);
-
-    // Out-of-range (>10 for max_results, 0 for timeout) — ignored.
-    unsafe {
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "999");
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "0");
-    }
-    cfg.apply_env_overrides();
-    assert_eq!(
-        cfg.web_search.max_results, 5,
-        "out-of-range must be ignored"
-    );
-    assert_eq!(cfg.web_search.timeout_secs, 20);
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-}
-
-#[test]
 fn apply_env_overrides_searxng_config() {
     let _g = env_lock();
     clear_env(&[
@@ -534,7 +473,7 @@ async fn empty_env_workspace_falls_through_to_active_user() {
     let expected = root.join("users").join("u-fallthrough");
     assert_eq!(source, ConfigResolutionSource::ActiveUser);
     assert_eq!(oh_dir, expected);
-    assert_eq!(ws_dir, expected.join("workspace"));
+    assert_eq!(ws_dir, expected.join("files"));
 }
 
 #[tokio::test]
@@ -551,7 +490,7 @@ async fn missing_env_workspace_uses_pre_login_default() {
     let expected = root.join("users").join(PRE_LOGIN_USER_ID);
     assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
     assert_eq!(oh_dir, expected);
-    assert_eq!(ws_dir, expected.join("workspace"));
+    assert_eq!(ws_dir, expected.join("files"));
 }
 
 // ── resolve_config_dir_for_workspace ───────────────────────────
@@ -660,45 +599,6 @@ fn env_overlay_toggles_agent_tracing_capture_content() {
     assert!(cfg.observability.agent_tracing.capture_content);
 }
 
-#[test]
-fn env_overlay_runtime_pool_workers_and_enabled() {
-    // Baseline: master switch on, both pools at the default worker count.
-    let mut cfg = Config::default();
-    assert!(cfg.runtime_pool.enabled, "master switch defaults on");
-    assert_eq!(cfg.runtime_pool.node.max_workers, 2);
-    assert_eq!(cfg.runtime_pool.python.max_workers, 2);
-
-    // Valid overrides land; `enabled` parses via the shared bool parser.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new()
-            .with("OPENHUMAN_RUNTIME_POOL_ENABLED", "off")
-            .with("OPENHUMAN_RUNTIME_POOL_NODE_MAX_WORKERS", "7")
-            .with("OPENHUMAN_RUNTIME_POOL_PYTHON_MAX_WORKERS", "3"),
-    );
-    assert!(!cfg.runtime_pool.enabled, "explicit off disables the pool");
-    assert_eq!(cfg.runtime_pool.node.max_workers, 7);
-    assert_eq!(cfg.runtime_pool.python.max_workers, 3);
-
-    // Unparseable worker counts are ignored (the warn arm) — the previously
-    // applied values survive rather than resetting to a default or zero.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new()
-            .with("OPENHUMAN_RUNTIME_POOL_NODE_MAX_WORKERS", "not-a-number")
-            .with("OPENHUMAN_RUNTIME_POOL_PYTHON_MAX_WORKERS", ""),
-    );
-    assert_eq!(
-        cfg.runtime_pool.node.max_workers, 7,
-        "invalid node worker count keeps the prior value"
-    );
-    assert_eq!(
-        cfg.runtime_pool.python.max_workers, 3,
-        "empty python worker count keeps the prior value"
-    );
-}
-
-/// #6958: the iteration cap could only be raised by patching `agent.toml`.
-/// `OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS` sets the explicit override that wins
-/// over the agent definition's cap.
 #[test]
 fn env_overlay_agent_max_tool_iterations_override() {
     let mut cfg = Config::default();

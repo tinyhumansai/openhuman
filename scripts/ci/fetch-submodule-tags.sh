@@ -10,15 +10,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-for module in \
-  vendor/tinydocs vendor/tinywallet vendor/tinymemory vendor/tinyjuice \
-  vendor/tinyvoice vendor/tinyruntime vendor/tinymcp vendor/tinyconnectors \
-  vendor/tinysearch vendor/tinybox vendor/tinychannels vendor/tinyhosts
-do
+# Resolve the exact repositories the gate inspects, including shared sources
+# and providers, from its authoritative inventory. Keep inventory failures fatal.
+modules="$(node --input-type=module -e '
+  import { modulePinRepositories } from "./scripts/lib/module-pin-inventory.mjs";
+  console.log(modulePinRepositories().join("\n"));
+')"
+while IFS= read -r module; do
+  [ -n "$module" ] || continue
   if [ "$(git -C "$module" rev-parse --is-shallow-repository)" = true ]; then
     git -C "$module" fetch --quiet --no-recurse-submodules --unshallow --tags origin
   else
     git -C "$module" fetch --quiet --no-recurse-submodules --tags origin
   fi
-done
+done <<< "$modules"
 echo "[ci][submodule-tags] fetched tags for module submodules"

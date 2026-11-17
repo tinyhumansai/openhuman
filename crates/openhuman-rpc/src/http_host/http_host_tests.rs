@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use axum::http::StatusCode;
 
+use crate::core_host::core::runtime::DispatchCtx;
 use crate::http_host::auth::{
     resolve_default_auth_username_from_user_value, sanitize_basic_auth_username,
 };
@@ -45,6 +46,54 @@ fn resolve_request_path_rejects_traversal() {
     assert!(err.contains("path traversal"));
 }
 
+#[cfg(unix)]
+#[test]
+fn resolve_request_path_rejects_a_symlink_out_of_the_hosted_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap().join("shared");
+    let outside = std::fs::canonicalize(tmp.path()).unwrap().join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.txt"), "not shared").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+
+    let err = resolve_request_path(&root, "link/secret.txt").unwrap_err();
+    assert!(err.contains("escapes"), "{err}");
+}
+
+#[test]
+fn basic_auth_accepts_only_the_exact_credentials() {
+    use axum::http::{header, HeaderMap, HeaderValue};
+    use base64::Engine as _;
+
+    let auth = crate::http_host::types::HostedDirAuth {
+        enabled: true,
+        username: Some("ada".into()),
+        password: Some("s3cret".into()),
+    };
+    let headers_for = |user: &str, pass: &str| {
+        let token = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Basic {token}")).unwrap(),
+        );
+        headers
+    };
+    let check = |user: &str, pass: &str| {
+        crate::http_host::auth::ensure_authorized(&headers_for(user, pass), &auth).is_ok()
+    };
+    assert!(check("ada", "s3cret"));
+    for (user, pass) in [
+        ("ada", "s3cre"),
+        ("ada", "s3cretX"),
+        ("adb", "s3cret"),
+        ("", ""),
+    ] {
+        assert!(!check(user, pass), "{user}:{pass} must be refused");
+    }
+}
+
 #[tokio::test]
 async fn start_serves_files_with_basic_auth() {
     let _guard = TEST_MUTEX.lock().unwrap();
@@ -55,14 +104,17 @@ async fn start_serves_files_with_basic_auth() {
     let mut file = std::fs::File::create(&file_path).unwrap();
     writeln!(file, "hello from hosted dir").unwrap();
 
-    let server = start_hosted_dir_server(StartHostedDirParams {
-        directory: tmp.path().display().to_string(),
-        port: 0,
-        bind_host: "127.0.0.1".to_string(),
-        server_name: Some("test".to_string()),
-        disable_auth: false,
-        username: Some("tester".to_string()),
-    })
+    let server = start_hosted_dir_server(
+        &DispatchCtx::host_default(),
+        StartHostedDirParams {
+            directory: tmp.path().display().to_string(),
+            port: 0,
+            bind_host: "127.0.0.1".to_string(),
+            server_name: Some("test".to_string()),
+            disable_auth: false,
+            username: Some("tester".to_string()),
+        },
+    )
     .await
     .unwrap();
 
@@ -102,7 +154,7 @@ async fn start_serves_files_with_basic_auth() {
 fn register_controllers_adds_http_host_namespace_idempotently() {
     crate::http_host::register_controllers().expect("first registration");
     crate::http_host::register_controllers().expect("re-registration is a no-op");
-    let schemas = openhuman_core::core::all::all_controller_schemas();
+    let schemas = crate::core_host::core::all::all_controller_schemas();
     let functions: Vec<&str> = schemas
         .iter()
         .filter(|s| s.namespace == "http_host")

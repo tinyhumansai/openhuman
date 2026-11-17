@@ -12,22 +12,6 @@
 /// The agent tool that fetches a public URL (`tinytools` `web_fetch`).
 pub(super) const WEB_FETCH_TOOL: &str = "web_fetch";
 
-/// The HTTP status of a `web_fetch` error result. Anchored to the start of the
-/// text, so a status quoted later (a response excerpt, another tool's output)
-/// is not read, and to the whole shape, so a bare `HTTP 403` or `403 Forbidden`
-/// from some other source is not either.
-pub(super) fn fetched_site_status(text: &str) -> Option<u16> {
-    let rest = text.trim_start().strip_prefix("HTTP ")?;
-    let code = rest
-        .get(..3)
-        .filter(|c| c.bytes().all(|b| b.is_ascii_digit()))?;
-    let rest = rest[3..].strip_prefix(' ')?;
-    let status: u16 = code.parse().ok().filter(|s| (400..=599).contains(s))?;
-    let (_reason, after_from) = rest.lines().next()?.split_once(" from ")?;
-    let (host, _guidance) = after_from.split_once(';')?;
-    (!host.is_empty() && !host.contains(char::is_whitespace)).then_some(status)
-}
-
 /// Recovery policy for a `web_fetch` error carrying a fetched site's status:
 /// `None` when `tool`/`error` are not that shape (the caller classifies as
 /// usual), otherwise the policy to return, itself `None` for an ordinary
@@ -42,18 +26,16 @@ pub(super) fn fetched_site_policy(
     tool: &str,
     error: &str,
 ) -> Option<Option<(&'static str, usize)>> {
-    if tool != WEB_FETCH_TOOL {
-        return None;
-    }
-    let status = fetched_site_status(error)?;
+    use tinytools::status::FetchedSiteRecovery;
+    let failure = tinytools::status::classify_web_fetch_status(tool, error, false)?;
     tracing::debug!(
-        status,
+        status = failure.status,
         "[tinyagents::mw] web_fetch site status — not a credential failure"
     );
-    Some(match status {
-        401 | 403 => Some(("site_refused", 2)),
-        429 | 500..=599 => Some(("transient", 2)),
-        _ => None,
+    Some(match failure.recovery {
+        FetchedSiteRecovery::SiteRefused => Some(("site_refused", 2)),
+        FetchedSiteRecovery::Transient => Some(("transient", 2)),
+        FetchedSiteRecovery::Ordinary => None,
     })
 }
 
@@ -74,9 +56,10 @@ pub(super) fn fetch_host_scope(tool: &str, field: &str, value: &str) -> Option<S
 /// failure into a terminal inference or transient tool failure. Everything else
 /// is read whole.
 pub(super) fn heuristic_text<'a>(tool: &str, failure_text: &'a str) -> &'a str {
-    if fetched_site_policy(tool, failure_text) == Some(None) {
-        failure_text.lines().next().unwrap_or(failure_text)
-    } else {
-        failure_text
+    match tinytools::status::classify_web_fetch_status(tool, failure_text, false) {
+        Some(failure) if failure.recovery == tinytools::status::FetchedSiteRecovery::Ordinary => {
+            failure.headline(failure_text)
+        }
+        _ => failure_text,
     }
 }

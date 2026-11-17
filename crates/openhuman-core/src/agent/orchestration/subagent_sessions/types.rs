@@ -29,7 +29,7 @@ impl DurableSubagentStatus {
     }
 
     pub fn reusable(self) -> bool {
-        matches!(self, Self::Running | Self::Idle)
+        matches!(self, Self::Running | Self::Idle | Self::AwaitingUser)
     }
 }
 
@@ -60,6 +60,16 @@ pub struct DurableSubagentSession {
     pub task_key: String,
     pub task_title: String,
     pub current_task_id: Option<String>,
+    /// TinyAgents' full lifecycle identity for the current task. Older rows
+    /// do not contain this field; hosts recover those identities from the
+    /// validated checkpoint before resuming or controlling a live child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_key: Option<tinyagents_orchestration::subagent::SubagentTaskKey>,
+    /// Parent lifecycle generation admitted for `current_task_id`. Older rows
+    /// intentionally remain `None`; callers must never synthesize a new epoch
+    /// when settling a legacy paused child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_epoch: Option<u64>,
     pub status: DurableSubagentStatus,
     pub reusable: bool,
     #[serde(default, with = "crate::agent::messages::history_wire::option")]
@@ -137,11 +147,18 @@ pub struct SubagentSessionUpsert {
     pub task_title: String,
     pub worker_thread_id: Option<String>,
     pub task_id: String,
+    /// Full TinyAgents lifecycle identity when the caller owns one. `None` is
+    /// retained for legacy host paths and rows written before this field was
+    /// introduced.
+    pub lifecycle_key: Option<tinyagents_orchestration::subagent::SubagentTaskKey>,
+    /// Admission generation captured for this exact current task.
+    pub parent_epoch: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SubagentSessionStore {
     pub workspace_dir: PathBuf,
+    pub(crate) context: Option<std::sync::Arc<crate::core::runtime::CoreContext>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

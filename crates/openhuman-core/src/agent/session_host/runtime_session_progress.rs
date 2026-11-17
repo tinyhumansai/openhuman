@@ -1,7 +1,8 @@
 //! Post-commit progress delivery for a chat turn.
 
-use crate::agent::progress::AgentProgress;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
+use crate::progress::AgentProgress;
+use tinyagents_harness::turn_stop::TurnStop;
 use tinyagents_runtime::CommitReceipt;
 
 /// Preserve the response path if a progress receiver stays open but stops
@@ -17,8 +18,27 @@ pub(super) async fn send_receipt_progress(
     output: &str,
     iterations: u32,
 ) -> bool {
+    // How the driver says the turn ended: a turn the harness stopped early
+    // (breaker, wind-down, iteration cap) still commits, so the stop rides on
+    // the terminal event for the trace collector to close it at WARNING.
+    let stop = receipt
+        .options
+        .context
+        .session_sidecar
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .stop
+        .clone();
+    if let Some(stop) = &stop {
+        log::debug!(
+            "[agent_session] committed turn was stopped early; carrying it on TurnCompleted {}",
+            stop.status_message()
+        );
+    }
     match receipt.options.context.progress.as_ref() {
-        Some(progress) => send_committed_turn_progress(progress, input, output, iterations).await,
+        Some(progress) => {
+            send_committed_turn_progress(progress, input, output, iterations, stop).await
+        }
         None => false,
     }
 }
@@ -31,6 +51,7 @@ pub(super) async fn send_committed_turn_progress(
     input: &str,
     output: &str,
     iterations: u32,
+    stop: Option<TurnStop>,
 ) -> bool {
     let content = AgentProgress::TurnContent {
         input: Some(input.to_string()),
@@ -47,7 +68,7 @@ pub(super) async fn send_committed_turn_progress(
     };
     let completed = match tokio::time::timeout(
         COMMITTED_TURN_PROGRESS_TIMEOUT,
-        progress.send(AgentProgress::TurnCompleted { iterations }),
+        progress.send(AgentProgress::TurnCompleted { iterations, stop }),
     )
     .await
     {

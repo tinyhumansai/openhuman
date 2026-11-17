@@ -13,7 +13,7 @@
 //! support logs. We do **not** auto-repair the registry — writing the wrong
 //! exe path can brick a working install — but the diagnostic surface is now
 //! sufficient to point users at the documented manual repair in
-//! `gitbooks/overview/troubleshooting-sign-in.md`.
+//! `docs/gitbooks/en/overview/troubleshooting-sign-in.md`.
 //!
 //! The string-parsing helpers are cross-platform so the developer host (macOS
 //! / Linux) can run their unit tests; the actual registry read sits behind

@@ -64,6 +64,9 @@ async function bootWithSession(
   await bootRuntimeReadyGuestPage(page);
   await callCoreRpc('openhuman.auth_store_session', {
     token: sessionToken(userId, kind === 'local' ? 'local' : 'sig'),
+    ...(kind === 'local'
+      ? { user: { _id: 'local', id: 'local', name: 'Local User', email: 'local@openhuman.local' } }
+      : {}),
   });
   await callCoreRpc('openhuman.config_set_onboarding_completed', { value: false });
   await page.goto(`/#${startHash}`);

@@ -4,8 +4,6 @@
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::core::Outcome;
-
 pub(super) fn read_required<T: DeserializeOwned>(
     params: &Map<String, Value>,
     key: &str,
@@ -42,8 +40,4 @@ pub(super) fn read_optional<T: DeserializeOwned>(
             .map(Some)
             .map_err(|e| format!("invalid '{key}': {e}")),
     }
-}
-
-pub(super) fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

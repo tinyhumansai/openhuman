@@ -12,6 +12,7 @@ import { renderWithProviders } from '../../../../test/test-utils';
 
 const hoisted = vi.hoisted(() => ({
   testCoreRpcConnection: vi.fn(),
+  probeCoreRealtime: vi.fn(),
   clearCoreRpcUrlCache: vi.fn(),
   clearCoreRpcTokenCache: vi.fn(),
   restartApp: vi.fn(),
@@ -23,6 +24,7 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../../../../services/coreRpcClient', () => ({
   testCoreRpcConnection: hoisted.testCoreRpcConnection,
+  probeCoreRealtime: hoisted.probeCoreRealtime,
   clearCoreRpcUrlCache: hoisted.clearCoreRpcUrlCache,
   clearCoreRpcTokenCache: hoisted.clearCoreRpcTokenCache,
 }));
@@ -60,6 +62,8 @@ describe('CoreConnectionPanel', () => {
   beforeEach(() => {
     vi.resetModules();
     hoisted.testCoreRpcConnection.mockReset();
+    hoisted.probeCoreRealtime.mockReset();
+    hoisted.probeCoreRealtime.mockResolvedValue('ok');
     hoisted.clearCoreRpcUrlCache.mockReset();
     hoisted.clearCoreRpcTokenCache.mockReset();
     hoisted.restartApp.mockReset();
@@ -170,6 +174,21 @@ describe('CoreConnectionPanel', () => {
 
     fireEvent.click(screen.getByText('Test Connection'));
     await waitFor(() => expect(screen.getByTestId('core-test-ok')).toBeInTheDocument());
+  });
+
+  test('Test connection flags a core that has realtime (Socket.IO) disabled', async () => {
+    hoisted.testCoreRpcConnection.mockResolvedValue(okResponse());
+    hoisted.probeCoreRealtime.mockResolvedValue('disabled');
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />, { preloadedState: CLOUD_STATE });
+
+    await waitFor(() => expect(screen.getByText('Connected to remote core')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Test Connection'));
+    await waitFor(() =>
+      expect(screen.getByTestId('core-test-socket-disabled')).toHaveTextContent('--jsonrpc-only')
+    );
+    expect(screen.queryByTestId('core-test-ok')).not.toBeInTheDocument();
   });
 
   test('Test connection reports an auth failure', async () => {

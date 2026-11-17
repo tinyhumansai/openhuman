@@ -23,8 +23,8 @@ constructed and executable but unadvertised: the agent sees one small tool,
   `callable_pack_ids` all read this table. The `pub(crate)`
   `DELIBERATELY_UNPACKED_FLEET_TOOLS` list names the delegation family that is
   kept *off* packs because it is used on almost every turn;
-  `agent/orchestration/tools/collapsed_delegation.rs` collapses that family
-  into `delegate_to` instead and explains the trade.
+  Tool packs withhold their schemas from the model until a matching pack is
+  requested; hidden tools remain registered for dispatch.
 - `tools::UseSkillTool` (`USE_SKILL = "use_skill"`) is the one always-on proxy
   tool. Called with `skill` alone it renders that pack's tool schemas into the
   conversation; with `skill` + `tool` + `args` it resolves the real tool
@@ -35,15 +35,15 @@ constructed and executable but unadvertised: the agent sees one small tool,
   session-scoped listing (`render_pack_filtered` + `route_sentence`) is
   produced by the tinyagents policy middleware, which is the only layer that
   holds the session (see below).
-- `tinyagents_harness::tool::packs::PackRegistryHandle` is the late-bound, non-owning (`Weak`) view the
-  proxy dispatches through. It holds two registries: the durable tool `Arc`
-  and the agent's `synthesized_tools` `Arc`, where every `delegate_*` tool
-  lives. Each must be rebound after its `Arc` is replaced, or packed
-  tools degrade to "skill unavailable" / "no tool in skill". The handle rides
+- `tinyagents_harness_tools::skills::PackRegistryHandle` is the late-bound, non-owning (`Weak`) view the
+  proxy dispatches through. It holds the durable tool `Arc` and can hold a
+  second synthesized-tools `Arc` when the host provides synthesized tools.
+  Rebind both after replacement, or packed tools degrade to "skill unavailable"
+  / "no tool in skill". The handle rides
   on `Tool::host_extension` and is read back by
   `tools::host_extensions::pack_registry_handle`. The proxy itself
   (`UseSkillTool`, `PackCatalog`, `ToolPack`, the listing/scoping renderers) lives in
-  `tinyagents_harness::tool::packs`; this module keeps the pack table
+  `tinyagents_harness_tools::skills`; this module keeps the pack table
   (`registry::PACKS`, handed over as `registry::CATALOG`), the group posture and the
   registry binding.
 - `ops::strip_packed_from_visible` does the actual compression: it removes a
@@ -92,7 +92,8 @@ pack summary and the tool schemas when the pack is loaded. Packs with a guide
 today: `coding` (search, edit, run scripts, test, lint, review a diff, git),
 `web3` (wallet, swaps, bridges, contract calls, x402), `system` (config,
 health, diagnostics, costs, service lifecycle, credentials, app updates),
-`scheduling` (`cron`), `docs` (`gitbooks_search` / `gitbooks_get_page`) and
+`scheduling` (`cron_add`, `cron_list`, `cron_update`, `cron_remove`,
+`cron_run`, `cron_runs`), `docs` (`gitbooks_search` / `gitbooks_get_page`) and
 `mcp` (MCP registry search, connect, status, tool calls). The other packs are
 plain schema bundles with an empty guide.
 
@@ -104,17 +105,19 @@ context, a model call and a hand-off envelope on every use. As a guide it is
 roughly 500 tokens, paid once when the skill is loaded, and the orchestrator
 calls the tools itself. Those tools are `ToolExposure::Deferred` rather than
 on any belt, so `tool_search` finds a single one of them without loading the
-whole skill.
+whole skill. The `scheduling` members are the exception: they stay `Direct`,
+so a host that advertises the pack puts each on the wire with its own small
+schema, and a withheld pack still strips them.
 
 What does not go in a guide: a rule that has to bind before the model thinks
 to load the skill. The two such rules (an explicit yes before moving funds or
 executing a swap, bridge or contract call, and an explicit yes before
 stopping, shutting down, uninstalling or updating OpenHuman's service) live
 in the orchestrator prompt's `## Skills` section
-(`agent/registry/agents/orchestrator/prompt.md`). Lookup detail and the step
+(`agent_registry/agents/orchestrator/prompt.md`). Lookup detail and the step
 by step loop belong in the guide.
 
-`toolpacks_tests.rs` keeps guides honest: every guided pack must carry a
+[`toolpacks_tests.rs`](./toolpacks_tests.rs) keeps guides honest: every guided pack must carry a
 non-empty guide, every guide stays under `GUIDE_BUDGET_BYTES` (2,400 bytes,
 about 550 tokens), no guide may name a removed specialist's hand-off tool
 (`run_code`, `do_crypto`, `manage_settings`, ...), every tool in a guided
@@ -122,12 +125,9 @@ pack must be named in its guide, and a loaded skill renders its guide before
 its schemas.
 
 Running an installed skill is not a pack concern: the orchestrator uses its
-own `run_workflow`. The install hand-off `setup_skills` (into `skill_setup`)
-is a member of the `skills` pack, like the other packed hand-offs
-(`build_workflow`, `manage_tasks`): it was ~270 tokens on every orchestrator
-request for a family used a few times a week. Being packed, it no longer
-closes the `skills` pack through `ops::closed_by_direct_handoff`, so the
-listing offers the hand-off beside the raw registry tools.
+own `run_workflow`. Skill installation, workflow authoring, task management,
+image understanding, and presentation generation are routed through
+`spawn_subagent` with the corresponding specialist `agent_id`.
 
 ## Called by
 
@@ -138,10 +138,10 @@ listing offers the hand-off beside the raw registry tools.
 - `core/runtime/builder.rs` and `core/runtime/context.rs`: `CoreBuilder::tool_groups` and the ambient `ToolGroups` on `CoreContext`.
 - `agent/session_host/builder/`: `builder_build.rs` strips packed names
   from the agent's visible set and binds both registries once the tool `Arc`s
-  exist; `mod.rs` calls `scope_use_skill_spec` so the advertised `use_skill`
+  exist; [`mod.rs`](./mod.rs) calls `scope_use_skill_spec` so the advertised `use_skill`
   spec lists only packs this session can call something in, and drops the
   spec entirely when that is none.
-- `agent/session_host/turn/tools.rs`: rebinds the synthesized registry
+- `integrations/prelude_integrations.rs`: rebinds the synthesized registry
   after every delegation refresh and re-strips packed names;
   `agent/session_host/runtime/accessors.rs` re-strips after
   materializing the visible set.
@@ -158,16 +158,24 @@ listing offers the hand-off beside the raw registry tools.
   tool-policy session lets that tool run (`blocks_execution()` is false), and
   never on a turn without a session (sub-agent, channel/CLI), where an
   unregistered name was excluded by the registration allowlist.
-- `agent/registry/agents/orchestrator/prompt.rs`: `pack_for_tool` to tell
+- `agent_registry/agents/orchestrator/prompt.rs`: `pack_for_tool` to tell
   the orchestrator which pack a withheld delegate lives in.
 - `crates/openhuman-embed/`: re-exports `GroupMode` and `ToolGroups` and
   exposes `Harness::builder().tool_groups(..)`.
 
 ## Tests
 
-`toolpacks_tests.rs` (pack-table invariants, owner rules,
+[`toolpacks_tests.rs`](./toolpacks_tests.rs) (pack-table invariants, owner rules,
 `strip_packed_from_visible`, `use_skill` dispatch and permission / timeout /
 effect forwarding, dual-registry binding) and
-`toolpacks_tests_scoping_and_visibility_tests.rs`
+[`toolpacks_tests_scoping_and_visibility_tests.rs`](./toolpacks_tests_scoping_and_visibility_tests.rs)
 (`scope_use_skill_spec`, `render_pack_filtered` filtering, `route_sentence`,
-rebinding); `groups_tests.rs` (`GroupMode` defaults and narrowing rules).
+rebinding); [`groups_tests.rs`](./groups_tests.rs) (`GroupMode` defaults and narrowing rules).
+
+## Further reading
+
+- [Parent module (`tools`)](../README.md)
+- [Native tools overview](../../../../../docs/gitbooks/en/features/native-tools/README.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Approval gate](../../../../../docs/gitbooks/en/features/approval-gate.md)
+- [tinyagents submodule](../../../../../vendor/tinyagents/README.md)

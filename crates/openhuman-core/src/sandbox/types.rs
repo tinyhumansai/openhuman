@@ -11,10 +11,28 @@ pub enum SandboxBackendKind {
     /// No sandbox — commands execute directly on the host.
     #[default]
     None,
-    /// OS-level process jail via `cwd_jail` (Landlock/Seatbelt/AppContainer).
+    /// Module-owned native process jail selected by TinyBox.
     Local,
     /// Docker container isolation.
     Docker,
+    /// The tenant's long-lived OpenShell box (`sandbox::boxes`).
+    #[serde(rename = "openshell")]
+    OpenShell,
+    /// The tenant's retained box on the hosted agent37 service
+    /// (`sandbox::agent37`, over `sandbox::boxes`).
+    #[serde(rename = "agent37")]
+    Agent37,
+}
+
+impl SandboxBackendKind {
+    /// Whether the backend keeps a box per tenant between commands, so a file
+    /// an agent makes stays in that tenant's box and is not on the host.
+    /// [`Self::OpenShell`] and [`Self::Agent37`] do; a backend that joins
+    /// them answers `true` here and gets the box-side behavior of every
+    /// caller that asks.
+    pub fn keeps_boxes(self) -> bool {
+        matches!(self, Self::OpenShell | Self::Agent37)
+    }
 }
 
 /// Per-session sandbox policy resolved from agent definition, session
@@ -30,17 +48,29 @@ pub struct SandboxPolicy {
     /// local jail's output capture, lives under it so nothing appears in
     /// `workspace_root` while a command runs.
     pub state_dir: PathBuf,
-    /// Additional read-only mounts (e.g. `/usr/lib`, managed node).
+    /// Additional read-only mounts (e.g. `/usr/lib`).
     pub read_only_mounts: Vec<PathBuf>,
     /// Additional read-write mounts (e.g. `~/.cargo`). Local jail only.
     #[serde(default)]
     pub read_write_mounts: Vec<PathBuf>,
     /// Whether outbound network is allowed inside the sandbox.
     pub allow_network: bool,
+    /// Whether the configured executor mounts the workspace into its namespace.
+    #[serde(default = "default_mount_workspace")]
+    pub mount_workspace: bool,
     /// Environment variables to passthrough into the sandbox.
     pub env_passthrough: Vec<String>,
     /// Docker-specific overrides (image, resource limits).
     pub docker_overrides: Option<DockerOverrides>,
+    /// The agent opted into a files-only jail (`AgentExt::sandbox_filesystem_only`):
+    /// with the host network, its plan asks the executor to enforce only the file
+    /// grants (`spawn_plan::files_only`). Never set for text the host did not author.
+    #[serde(default)]
+    pub filesystem_only: bool,
+}
+
+fn default_mount_workspace() -> bool {
+    true
 }
 
 /// Docker-specific sandbox overrides layered on top of the global
@@ -93,6 +123,20 @@ pub struct SandboxBackendHandle {
     pub status: SandboxStatus,
     /// Container ID for Docker backends; jail label for local.
     pub backend_id: Option<String>,
+    /// How strongly a ready local jail confines commands; `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<SandboxIsolation>,
+}
+
+/// The confinement a local native jail actually provides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxIsolation {
+    /// Kernel (or stronger) process isolation: fit for untrusted code.
+    Isolated,
+    /// Writes confined to the selected folder (macOS Seatbelt); no process
+    /// isolation.
+    FolderConfined,
 }
 
 /// Health/lifecycle status of a sandbox backend.
@@ -108,27 +152,6 @@ pub enum SandboxStatus {
     /// Backend encountered an error and needs restart/cleanup.
     Error,
 }
-
-/// Operations that explicitly require host-level access and cannot run
-/// inside a sandbox. The elevated path is audited and requires the
-/// caller to declare the reason.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ElevatedOp {
-    /// The tool or operation name requesting elevation.
-    pub tool_name: String,
-    /// Human-readable reason this operation needs host access.
-    pub reason: String,
-    /// The command or action to execute on the host.
-    pub command: String,
-}
-
-/// Well-known tool names that always require host access.
-pub const ELEVATED_TOOLS: &[&str] = &[
-    "git_operations",
-    "install_tool",
-    "docker_management",
-    "process_management",
-];
 
 #[cfg(test)]
 #[path = "types_tests.rs"]

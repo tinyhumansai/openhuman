@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "description": "Registered sub-agent id (for example `planner`, `code_executor`, `critic`)."
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Task prompt for the sub-agent. Include the context it needs because this is a fresh session."
+    }
+  },
+  "required": [
+    "agent_id",
+    "prompt"
+  ],
+  "additionalProperties": false
+}

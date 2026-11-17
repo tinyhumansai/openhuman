@@ -6,24 +6,40 @@ authoritative spec; this is an index so a CI failure log points somewhere.
 
 | File | Checks |
 | --- | --- |
-| `check-openhuman-rust-layout.mjs` (`pnpm rust:layout`) | Every file under `crates/openhuman-core/src` stays under a 750-line ceiling, warning (without failing) past 725; oversized files are pinned at their exact size in `LEGACY_LIMIT_ENTRIES`, once each, and a pinned file that shrinks must lower or drop its pin; forbids inline `#[cfg(test)] mod` blocks and `tests.rs`/`test.rs` filenames; and asserts every root `tests/*.rs` / `examples/*.rs` has a matching `[[test]]`/`[[example]]` entry in `crates/openhuman-core/Cargo.toml`. |
-| `check-feature-forwarding.mjs` | The Tauri shell (`crates/openhuman-app/Cargo.toml`, which sets `default-features = false`) forwards exactly the gates in `product-features.txt` — no more, no less — and the library chain that re-declares the core's gates (`openhuman-embed` → `openhuman-tinyhumans` → `openhuman-cli`) forwards every one of them, by target and not just by name. Logic lives in `scripts/lib/feature-forwarding.mjs` (openhuman#4919, openhuman#6364). |
-| `product-features.txt` / `product-features.sh` | Source of truth for the shipped desktop product's Cargo feature gates, distinct from `[features] default` (the contributor build). The `.sh` prints them comma-separated for `cargo --features "$(scripts/ci/product-features.sh)"`. |
-| `check-module-pins.mjs` + `module-pin-exemptions.json` | A loadable module's registry pin (`crates/openhuman-core/src/modules/registry.rs`) and its `vendor/*` submodule pin must describe the same release (openhuman#5727). The exemptions file records known, expected drift — not a way to silence the gate. Logic lives in `scripts/lib/module-pins.mjs`. |
-| `check-submodule-monotonic.mjs` | A `vendor/*` submodule pin may never move backwards onto a commit that is an ancestor of what the base branch already has. |
-| `check-toolchain-image.mjs` | The CI image's toolchain, the version-pinned `dtolnay/rust-toolchain@<version>` workflow steps, and `.github/Dockerfile` all match the channel pinned in `rust-toolchain.toml`. |
-| `rust-coverage.sh` | Runs the complete product-feature Rust suite under `cargo-llvm-cov`, including every core integration target and the root Rust support crates. |
-| `assert-coverage-presence.sh` + `coverage-presence-allowlist.txt` | Fails when an eligible Rust source file produced no lcov records at all, meaning the full product suite never compiled it (openhuman#5593). Allowlist entries must document, inline, which gate excludes the file and why that's intended. |
-| `list-feature-gated-rust-tests.mjs` | Prints every file under `crates/openhuman-core/src` that carries tests behind a product feature gate (`voice`, `media`, `web3`, `meet`, `mcp`, `skills`, `flows`, `channels`, `contacts`). `ci-lite.yml`'s `rust-feature-gate-smoke` job diffs the output against a checked-in EXPECTED list so a new gated test file forces the gate-contract test filters to be reviewed (#5022). |
-| `orch-ip-gate.sh` | Blocks the server-side orchestration "brain" (reasoning/wake graph, its prompts, per-agent model-selection metadata) from re-entering this open client repo. |
+| [`check-openhuman-rust-layout.mjs`](check-openhuman-rust-layout.mjs) (`pnpm rust:layout`) | Every file under `crates/openhuman-core/src` stays under a 750-line ceiling, warning (without failing) past 725; oversized files are pinned at their exact size in `LEGACY_LIMIT_ENTRIES`, once each, and a pinned file that shrinks must lower or drop its pin; forbids inline `#[cfg(test)] mod` blocks and `tests.rs`/`test.rs` filenames; and asserts every root `tests/*.rs` / `examples/*.rs` has a matching `[[test]]`/`[[example]]` entry in `crates/openhuman-cli/Cargo.toml`, and that the core manifest declares no target tables. |
+| [`check-feature-forwarding.mjs`](check-feature-forwarding.mjs) | The Tauri shell ([`crates/openhuman-app/Cargo.toml`](../../crates/openhuman-app/Cargo.toml), which sets `default-features = false`) forwards exactly the gates in `product-features.txt`, no more, no less, and the library chain that re-declares the core's gates (`openhuman-embed` → `openhuman-tinyhumans` → `openhuman-rpc` → `openhuman-cli` / `openhuman-tui`) forwards every one of them, by target and not just by name. The shell's list is read from its `openhuman-rpc` dependency. Logic lives in [`scripts/lib/feature-forwarding.mjs`](../lib/feature-forwarding.mjs) (openhuman#4919, openhuman#6364). |
+| [`check-crate-chain.mjs`](check-crate-chain.mjs) | The crate chain holds: each OpenHuman crate's normal dependencies name only the layer below it (core: none; embed: core; tinyhumans: embed; rpc: tinyhumans; app/cli/tui: rpc), and host `src/` never names `__host`, `core_host` or `openhuman_core::`. Dev-dependencies are exempt. Runs as part of `pnpm rust:layout`. |
+| [`product-features.txt`](product-features.txt) / [`product-features.sh`](product-features.sh) | Source of truth for the shipped desktop product's Cargo feature gates, distinct from `[features] default` (the contributor build). The `.sh` prints them comma-separated for `cargo --features "$(scripts/ci/product-features.sh)"`. |
+| [`check-module-pins.mjs`](check-module-pins.mjs) + [`module-pin-exemptions.json`](module-pin-exemptions.json) | A loadable module's registry pin ([`crates/openhuman-core/src/modules/registry.rs`](../../crates/openhuman-core/src/modules/registry.rs)) and its `vendor/*` submodule pin must describe the same release (openhuman#5727). The exemptions file records known, expected drift, not a way to silence the gate. Logic lives in [`scripts/lib/module-pins.mjs`](../lib/module-pins.mjs). |
+| [`check-ci-module-source.mjs`](check-ci-module-source.mjs) | CI selects the pinned, digest-checked release only: no module-source environment override, no linked or source mode, no non-product linked feature, and no call to the local module build script. Every module, tinyconnectors included, is downloaded from its release (#7618); nothing is compiled from source in CI. |
+| [`check-submodule-monotonic.mjs`](check-submodule-monotonic.mjs) | A `vendor/*` submodule pin may never move backwards onto a commit that is an ancestor of what the base branch already has. |
+| [`check-toolchain-image.mjs`](check-toolchain-image.mjs) | The CI image's toolchain, the version-pinned `dtolnay/rust-toolchain@<version>` workflow steps, and [`.github/Dockerfile`](../../.github/Dockerfile) all match the channel pinned in [`rust-toolchain.toml`](../../rust-toolchain.toml). |
+| [`rust-coverage.sh`](rust-coverage.sh) | Runs the complete product-feature Rust suite under `cargo-llvm-cov`, including every core integration target and the root Rust support crates. |
+| [`assert-coverage-presence.sh`](assert-coverage-presence.sh) + [`coverage-presence-allowlist.txt`](coverage-presence-allowlist.txt) | Fails when an eligible Rust source file produced no lcov records at all, meaning the full product suite never compiled it (openhuman#5593). Allowlist entries must document, inline, which gate excludes the file and why that's intended. |
+| [`list-feature-gated-rust-tests.mjs`](list-feature-gated-rust-tests.mjs) | Prints every file under `crates/openhuman-core/src` that carries tests behind a product feature gate (`voice`, `media`, `web3`, `meet`, `mcp`, `skills`, `flows`, `channels`, `contacts`). `ci-lite.yml`'s `rust-feature-gate-smoke` job diffs the output against a checked-in EXPECTED list so a new gated test file forces the gate-contract test filters to be reviewed (#5022). |
+| [`check-saas-ambient.mjs`](check-saas-ambient.mjs) + [`saas-ambient-baseline.json`](saas-ambient-baseline.json) (`pnpm saas:ambient`) | Ratchets code in `crates/openhuman-core/src` that reaches past a SaaS user agent's `CoreContext`: bare `tokio::spawn` / `spawn_blocking` / `std::thread::spawn` (use `DispatchCtx::spawn` / `spawn_blocking`), direct `Config::load_or_init`, `env::set_var` / `remove_var`, and `home_dir()`. Each existing site is baselined exactly; a new one fails, and a fixed one must be removed with `--write-baseline`. |
+| [`orch-ip-gate.sh`](orch-ip-gate.sh) | Blocks the server-side orchestration "brain" (reasoning/wake graph, its prompts, per-agent model-selection metadata) from re-entering this open client repo. |
 
 The complete Rust and frontend coverage suites feed the PR CI Gate's
 changed-line diff-cover check (>= 80%) in `ci-lite.yml`.
 
 ## Running locally
 
-Only `check-openhuman-rust-layout.mjs` is wired to a pnpm script
-(`pnpm rust:layout`); the rest are invoked directly, e.g.
+The module boundary audit (`pnpm rust:module-boundaries`) resolves the root and
+excluded desktop host with all features, traversing normal and build edges on
+all platforms. It also resolves each bus contract independently with default
+and all features, outside the owning module workspace, to avoid feature
+unification with implementation crates. It runs in the Rust scripts lane.
+Temporary exceptions in [`module-boundaries.json`](module-boundaries.json) must
+have reasons; unused exceptions fail the audit. A passing transitional audit is
+not a completed migration. `pnpm rust:module-boundaries:complete` additionally
+rejects all exceptions and pending contracts. Cargo failure is an audit failure.
+Generated probes and lockfiles stay in the checkout's `target/module-boundaries/`.
+
+`check-openhuman-rust-layout.mjs`, `check-crate-chain.mjs` and
+`check-storage-owner.mjs` and `check-storage-schema.mjs` run through `pnpm rust:layout`. The module-boundary audit has the two pnpm commands above,
+and the ambient-access ratchet runs through `pnpm saas:ambient`. Other gates
+are invoked directly, e.g.
 `node scripts/ci/check-feature-forwarding.mjs` or
 `bash scripts/ci/orch-ip-gate.sh`, and can be run the same way locally. Every
 gate here runs from `.github/workflows/ci-lite.yml`; `ci-full.yml` does not
@@ -32,4 +48,11 @@ call any of them, and only reaches `product-features.sh` indirectly through
 invocation and any required environment.
 
 Long-running CI commands (the coverage lanes) go through
-`scripts/ci-cancel-aware.sh`, which lives directly under `scripts/`, not here.
+[`scripts/ci-cancel-aware.sh`](../ci-cancel-aware.sh), which lives directly under `scripts/`, not here.
+
+## Further reading
+
+- [`scripts/README.md`](../README.md), the map of the rest of `scripts/`.
+- [Testing strategy](../../docs/gitbooks/en/developing/testing-strategy.md) for how the coverage gate fits the test layers.
+- [Loadable modules](../../docs/gitbooks/en/developing/loadable-modules.md), which the module-pin gates protect.
+- [`AGENTS.md`](../../AGENTS.md) for the layout and feature-forwarding rules these scripts enforce.

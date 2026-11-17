@@ -2,10 +2,21 @@ use super::*;
 
 impl CoreContext {
     pub fn current() -> Option<Arc<CoreContext>> {
-        CURRENT_CONTEXT
-            .try_with(|ctx| ctx.clone())
-            .ok()
-            .or_else(|| DEFAULT_CONTEXT.get().cloned())
+        Self::scoped().or_else(|| DEFAULT_CONTEXT.get().cloned())
+    }
+
+    /// The context scoped onto the current task, with no fallback to the
+    /// process default. SaaS uses it: there, a task that lost its scope must
+    /// fail rather than act as the operator.
+    pub fn scoped() -> Option<Arc<CoreContext>> {
+        Self::scoped_for_turn().filter(|ctx| !ctx.bare)
+    }
+
+    /// [`scoped`](Self::scoped) including a [`bare`](Self::bare) context: what
+    /// the turn-origin readers and the spawn helpers that carry an origin use.
+    /// Everything else must treat a bare context as absent.
+    pub(crate) fn scoped_for_turn() -> Option<Arc<CoreContext>> {
+        CURRENT_CONTEXT.try_with(|ctx| ctx.clone()).ok()
     }
 
     /// The process default context (first built), independent of any active
@@ -14,10 +25,52 @@ impl CoreContext {
         DEFAULT_CONTEXT.get().cloned()
     }
 
+    /// A minimal context for a caller that needs to carry per-turn authority
+    /// but runs where no core was booted (a unit test, a library caller that
+    /// never built a runtime). It carries the turn origin and nothing else:
+    /// [`current`](Self::current) and [`scoped`](Self::scoped) skip it, so every
+    /// other reader (state slots, workspace, config, tenant) answers exactly as
+    /// it does when nothing is scoped.
+    pub(crate) fn bare() -> Arc<CoreContext> {
+        Arc::new(CoreContext {
+            host_kind: HostKind::Cli,
+            workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
+                workspace_dir: None,
+                config_path: None,
+            }))),
+            domains: crate::core::runtime::DomainSet::full(),
+            tool_groups: Default::default(),
+            autonomy_tier_source: AutonomyTierSource::LiveConfig,
+            autonomy_tier_ceiling: None,
+            components: Default::default(),
+            embedder_config: None,
+            latest_embedder_config: None,
+            user_skill_roots: true,
+            extensions: Default::default(),
+            turn_origin: None,
+            host_secret_grant: None,
+            channel_thread: None,
+            session_agent: None,
+            profile: None,
+            profile_admission: Arc::new(()),
+            agent: Default::default(),
+            bare: true,
+        })
+    }
+
+    /// The turn origin bound to this context, if its entry point supplied one.
+    pub(crate) fn turn_origin(
+        &self,
+    ) -> Option<&crate::core::runtime::turn_origin::AgentTurnOrigin> {
+        self.turn_origin.as_ref()
+    }
+
     /// Typed origin bound to this immutable per-turn context, if supplied by
     /// its entrypoint. Missing authority retains library/CLI behavior.
-    pub fn current_turn_origin() -> Option<crate::agent::turn_origin::AgentTurnOrigin> {
-        Self::current().and_then(|ctx| ctx.turn_origin.clone())
+    pub fn current_turn_origin() -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
+        Self::scoped_for_turn()
+            .or_else(|| DEFAULT_CONTEXT.get().cloned())
+            .and_then(|ctx| ctx.turn_origin.clone())
     }
 
     /// Run a turn under a derived immutable context carrying its explicit
@@ -25,10 +78,39 @@ impl CoreContext {
     /// untouched.
     pub async fn scope_with_turn_origin<F: Future>(
         ctx: Arc<CoreContext>,
-        origin: Option<crate::agent::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         fut: F,
     ) -> F::Output {
-        let context = Arc::new(CoreContext {
+        CURRENT_CONTEXT
+            .scope(ctx.derive_channel_turn(None, origin), fut)
+            .await
+    }
+
+    /// The relay thread of the current task, without an operator fallback.
+    pub(crate) fn current_channel_thread() -> Option<String> {
+        Self::scoped().and_then(|ctx| ctx.channel_thread.clone())
+    }
+
+    /// Bind channel facts to this agent context, preserving its tenant,
+    /// tools, workspace and capability ceiling. No shared context is mutated.
+    pub(crate) fn derive_channel_turn(
+        &self,
+        thread: Option<String>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+    ) -> Arc<CoreContext> {
+        Arc::new(self.copy_with(thread, origin, None))
+    }
+
+    /// A copy of this context with `thread`, `origin` and `grant` replacing
+    /// its own where given.
+    pub(super) fn copy_with(
+        &self,
+        thread: Option<String>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+        grant: Option<Arc<crate::security::approval::gate::HostSecretGrant>>,
+    ) -> CoreContext {
+        let ctx = self;
+        CoreContext {
             host_kind: ctx.host_kind,
             workspace_binding: RwLock::new(
                 ctx.workspace_binding
@@ -38,11 +120,21 @@ impl CoreContext {
             ),
             domains: ctx.domains,
             tool_groups: ctx.tool_groups.clone(),
+            autonomy_tier_source: ctx.autonomy_tier_source,
+            autonomy_tier_ceiling: ctx.autonomy_tier_ceiling,
+            components: ctx.components,
             embedder_config: ctx.embedder_config.clone(),
+            latest_embedder_config: ctx.latest_embedder_config.as_ref().map(Arc::clone),
             user_skill_roots: ctx.user_skill_roots,
-            backend_transport: ctx.backend_transport.clone(),
+            extensions: ctx.extensions.clone(),
             turn_origin: origin.or_else(|| ctx.turn_origin.clone()),
-        });
-        CURRENT_CONTEXT.scope(context, fut).await
+            host_secret_grant: grant.or_else(|| ctx.host_secret_grant.clone()),
+            channel_thread: thread.or_else(|| ctx.channel_thread.clone()),
+            session_agent: ctx.session_agent.clone(),
+            profile: ctx.profile.clone(),
+            profile_admission: Arc::clone(&ctx.profile_admission),
+            agent: ctx.agent.clone(),
+            bare: ctx.bare,
+        }
     }
 }

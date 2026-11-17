@@ -140,25 +140,6 @@ fn a_resolved_secret_redacts_the_value_under_debug() {
 }
 
 #[test]
-fn the_wrapper_is_needed_because_zeroizing_debug_prints_the_secret() {
-    // Guards the premise rather than the fix. `Zeroizing` is a
-    // `#[derive(Debug)]` tuple struct, and a derived Debug prints the field
-    // whatever its visibility — so returning `Zeroizing<String>` from
-    // `resolve` would have rendered the secret at any `{:?}` call site.
-    //
-    // If this ever fails, zeroize changed its Debug and `ResolvedSecret`'s
-    // redaction may have become redundant — which is worth knowing rather
-    // than carrying a wrapper whose reason has quietly expired.
-    const SECRET_VALUE: &str = "sk-live-9f3a-do-not-print-me";
-
-    let bare = zeroize::Zeroizing::new(SECRET_VALUE.to_string());
-    assert!(
-        format!("{bare:?}").contains(SECRET_VALUE),
-        "zeroize no longer leaks through Debug — re-check whether ResolvedSecret is still needed"
-    );
-}
-
-#[test]
 fn no_error_display_can_carry_a_name_or_a_secret() {
     // This is the property `memory::binding`'s FallbackReason depends on: any
     // of these may be rendered into `subsystems_status`, which is pinned by
@@ -282,34 +263,39 @@ fn preflight_never_reports_a_missing_entry() {
 #[test]
 fn keyring_error_kinds_are_fixed_labels_that_carry_no_key() {
     // The classifier exists so a backend failure can be logged without
-    // formatting a `KeyringError`, whose `Display` *and* `diagnostic()` both
+    // formatting a `SecretStorageError`, whose `Display` *and* `diagnostic()` both
     // interpolate the key. Every label must therefore be free of it.
-    use crate::security::keyring::KeyringError;
+    use crate::security::secret_storage::SecretStorageError;
 
     let invalid_utf8 = String::from_utf8(vec![0xff]).expect_err("0xff is not utf-8");
-    let cases: Vec<(KeyringError, &str)> = vec![
+    let cases: Vec<(SecretStorageError, &str)> = vec![
         (
-            KeyringError::Os {
-                key: SECRET_NAME.to_string(),
-                source: ::keyring::Error::NoEntry,
-            },
-            "os-backend",
+            SecretStorageError::Backend(SECRET_NAME.to_string()),
+            "backend",
         ),
         (
-            KeyringError::InvalidUtf8 {
+            SecretStorageError::InvalidUtf8 {
                 key: SECRET_NAME.to_string(),
                 source: invalid_utf8,
             },
             "invalid-utf8",
         ),
-        (KeyringError::Crypto(SECRET_NAME.to_string()), "crypto"),
         (
-            KeyringError::VerifyFailed {
+            SecretStorageError::Crypto(SECRET_NAME.to_string()),
+            "crypto",
+        ),
+        (
+            SecretStorageError::VerifyFailed {
                 key: SECRET_NAME.to_string(),
             },
             "backend",
         ),
     ];
+
+    assert_eq!(
+        keyring_error_kind(&SecretStorageError::MasterKeyUnavailable),
+        "master-key-unavailable"
+    );
 
     for (err, expected) in cases {
         let kind = keyring_error_kind(&err);

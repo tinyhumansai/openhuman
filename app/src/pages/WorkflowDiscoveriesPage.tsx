@@ -13,6 +13,7 @@ export default function WorkflowDiscoveriesPage() {
   return (
     <div className="h-full p-4">
       <SettingsTabbedPage
+        fullWidth
         title={t('flows.discoveries.title')}
         description={t('flows.discoveries.description')}>
         {/* No wrapper padding: SettingsTabbedPage's body already renders

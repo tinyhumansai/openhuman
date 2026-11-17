@@ -21,3 +21,9 @@ SDK's raw primitive, which still applies the SDK's route policy.
 The core's `oauth_connect_url` / `oauth_list` agent tools reach these through
 the controller registry, so they report `BACKEND_UNAVAILABLE:` on a core
 without `openhuman_tinyhumans::install`.
+
+## Further reading
+
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`crates/openhuman-tinyhumans/src/hosted/README.md`](../README.md): hosted proxies.
+- [`vendor/tinyhumans-sdk/README.md`](../../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

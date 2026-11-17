@@ -8,7 +8,6 @@
 use serde_json::Value;
 
 use crate::agent::session_host::OpenHumanSessionHost;
-use crate::agent::subagent_host::with_autonomous_iter_cap;
 use crate::config::Config;
 use crate::skills::{preflight, registry, run_log};
 
@@ -28,19 +27,21 @@ pub struct WorkflowRunStarted {
     pub log_path: std::path::PathBuf,
 }
 
-/// Spawn a single autonomous workflow_run as a detached `tokio::spawn`. Used by
+/// Spawn a single autonomous workflow_run as a detached task acting for `ctx`. Used by
 /// both the `openhuman.skills_run` JSON-RPC controller and the `run_workflow`
 /// agent tool (which lets the orchestrator chain one skill into another —
 /// e.g. `github-issue-crusher` → `pr-review-shepherd` once the draft PR is
 /// open).
 ///
 /// Returns immediately with the run handle; the actual work runs in the
-/// background until DONE / DEGENERATE / FAILED. Errors (unknown skill,
+/// background until DONE / STOPPED / DEGENERATE / FAILED. Errors (unknown skill,
 /// missing required inputs) surface as `Err(String)` *before* the spawn so
 /// callers can reject malformed invocations synchronously.
 pub async fn spawn_workflow_run_background(
+    ctx: &crate::core::runtime::DispatchCtx,
     skill_id_param: String,
     inputs_param: Option<Value>,
+    parent_origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> Result<WorkflowRunStarted, String> {
     let workspace = resolve_workspace_dir().await;
     let skill = registry::get_workflow(&workspace, &skill_id_param)
@@ -88,6 +89,7 @@ pub async fn spawn_workflow_run_background(
                  detail: {body}"
             );
             if let Err(e) = run_log::write_header(
+                &workspace,
                 &gate_log_path,
                 &skill.definition.id,
                 &gate_run_id,
@@ -101,7 +103,9 @@ pub async fn spawn_workflow_run_background(
                     "[skills] preflight gate: failed to write run-log header"
                 );
             }
-            if let Err(e) = run_log::write_footer(&gate_log_path, "FAILED", 0, &body).await {
+            if let Err(e) =
+                run_log::write_footer(&workspace, &gate_log_path, "FAILED", 0, &body).await
+            {
                 tracing::warn!(
                     error = %e,
                     "[skills] preflight gate: failed to write run-log footer"
@@ -126,7 +130,7 @@ pub async fn spawn_workflow_run_background(
     // the task prompt as guidelines + the resolved inputs; the
     // orchestrator's own system prompt and full tool access are kept.
     let guidelines = match &skill.definition.system_prompt {
-        crate::agent::harness::definition::PromptSource::Inline(s) => s.clone(),
+        tinyagents_definition::PromptSource::Inline(s) => s.clone(),
         _ => String::new(),
     };
     let inputs_block = registry::render_inputs_block(&skill.inputs, &inputs);
@@ -149,17 +153,27 @@ pub async fn spawn_workflow_run_background(
     // toolchain are loaded fresh per run; the parent returns the handle
     // immediately. Same flow handle_skills_run used to inline — extracted
     // so the `run_workflow` agent tool can re-use it for skill chaining.
-    let inherited_origin = crate::agent::turn_origin::current()
-        .unwrap_or(crate::agent::turn_origin::AgentTurnOrigin::Cli);
+    let inherited_origin =
+        parent_origin.unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::Unknown);
     {
         let run_id = run_id.clone();
         let workflow_id = workflow_id.clone();
         let inputs = inputs.clone();
         let log_path = log_path.clone();
+        let workspace = workspace.clone();
         let inherited_origin = inherited_origin.clone();
-        tokio::spawn(async move {
-            if let Err(e) =
-                run_log::write_header(&log_path, &workflow_id, &run_id, &inputs, &task_prompt).await
+        let ctx = ctx.clone();
+        let dispatch = ctx.clone();
+        dispatch.spawn(async move {
+            if let Err(e) = run_log::write_header(
+                &workspace,
+                &log_path,
+                &workflow_id,
+                &run_id,
+                &inputs,
+                &task_prompt,
+            )
+            .await
             {
                 tracing::warn!(run_id = %run_id, error = %e, "[skills] workflow_run: header write failed");
             }
@@ -167,6 +181,7 @@ pub async fn spawn_workflow_run_background(
                 Ok(c) => c,
                 Err(e) => {
                     let _ = run_log::write_footer(
+                        &workspace,
                         &log_path,
                         "FAILED",
                         0,
@@ -183,10 +198,13 @@ pub async fn spawn_workflow_run_background(
                 config.http_request.allowed_domains = vec!["*".to_string()];
             }
             let mut agent =
-                match OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator") {
+                match OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+                    .await
+                {
                     Ok(a) => a,
                     Err(e) => {
                         let _ = run_log::write_footer(
+                            &workspace,
                             &log_path,
                             "FAILED",
                             0,
@@ -203,6 +221,7 @@ pub async fn spawn_workflow_run_background(
             // a post-construction override rather than a pre-set on `config`
             // (which the builder would otherwise clobber).
             agent.set_max_tool_iterations(WORKFLOW_RUN_MAX_ITERATIONS);
+            agent.set_autonomous_iter_cap(Some(WORKFLOW_RUN_MAX_ITERATIONS));
             tracing::debug!(
                 run_id = %run_id,
                 max_tool_iterations = WORKFLOW_RUN_MAX_ITERATIONS,
@@ -212,11 +231,12 @@ pub async fn spawn_workflow_run_background(
             agent.set_event_context(run_id.clone(), "skill");
             agent.set_agent_definition_name(format!(
                 "orchestrator-skill-{}",
-                &run_id.get(..8).unwrap_or(&run_id)
+                run_id.get(..8).unwrap_or(&run_id)
             ));
             let (tx, rx) = tokio::sync::mpsc::channel(256);
             agent.set_on_progress(Some(tx));
-            let bridge = tokio::spawn(run_log::drain_to_log(rx, log_path.clone()));
+            let bridge =
+                run_log::spawn_drain_to_log(&ctx, rx, workspace.clone(), log_path.clone());
 
             // Register the cancellation token now (after the run can actually
             // start) so `skills_cancel` can stop it; a config/agent-build
@@ -236,26 +256,42 @@ pub async fn spawn_workflow_run_background(
             let result = tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => None,
-                r = crate::agent::turn_origin::with_origin(
+                r = crate::core::runtime::turn_origin::with_origin(
                     inherited_origin,
-                    with_autonomous_iter_cap(
-                        WORKFLOW_RUN_MAX_ITERATIONS,
-                        agent.run_single(&task_prompt),
-                    ),
+                    agent.run_single(&task_prompt),
                 ) => Some(r),
             };
             agent.set_on_progress(None);
             drop(agent);
-            let _ = bridge.await;
+            let stop = bridge.await.ok().flatten();
 
             let ms = started.elapsed().as_millis() as u64;
             run_log::unregister_run_cancel(&run_id);
             match result {
                 None => {
-                    let _ =
-                        run_log::write_footer(&log_path, "CANCELLED", ms, "Run stopped by user.")
-                            .await;
+                    let _ = run_log::write_footer(
+                        &workspace,
+                        &log_path,
+                        "CANCELLED",
+                        ms,
+                        "Run stopped by user.",
+                    )
+                    .await;
                     tracing::info!(run_id = %run_id, "[workflows] workflow_run: cancelled");
+                }
+                Some(Ok(out)) if stop.is_some() => {
+                    // The harness stopped the run's turn early (breaker,
+                    // wind-down, iteration cap): it did not finish, so it is
+                    // not `DONE`. `run_workflow` reports `STOPPED` as a failure.
+                    let summary = stop
+                        .as_ref()
+                        .map(|s| s.status_message())
+                        .unwrap_or_default();
+                    let _ = run_log::write_footer(&workspace, &log_path, "STOPPED", ms, &out).await;
+                    tracing::warn!(
+                        run_id = %run_id,
+                        "[skills] workflow_run: turn stopped early, not marking DONE {summary}"
+                    );
                 }
                 Some(Ok(out)) => {
                     if let Some((line, count)) = run_log::detect_repeated_line(&out, 30, 4) {
@@ -267,19 +303,29 @@ pub async fn spawn_workflow_run_background(
                              repeated line (truncated to 160 chars):\n  {preview}\n\n\
                              full final output follows below for forensic review:\n\n{out}",
                         );
-                        let _ = run_log::write_footer(&log_path, "DEGENERATE", ms, &body).await;
+                        let _ =
+                            run_log::write_footer(&workspace, &log_path, "DEGENERATE", ms, &body)
+                                .await;
                         tracing::warn!(
                             run_id = %run_id,
                             repeats = count,
                             "[skills] workflow_run: degenerate final response rejected"
                         );
                     } else {
-                        let _ = run_log::write_footer(&log_path, "DONE", ms, &out).await;
+                        let _ =
+                            run_log::write_footer(&workspace, &log_path, "DONE", ms, &out).await;
                         tracing::info!(run_id = %run_id, "[skills] workflow_run: completed");
                     }
                 }
                 Some(Err(e)) => {
-                    let _ = run_log::write_footer(&log_path, "FAILED", ms, &format!("{e:#}")).await;
+                    let _ = run_log::write_footer(
+                        &workspace,
+                        &log_path,
+                        "FAILED",
+                        ms,
+                        &format!("{e:#}"),
+                    )
+                    .await;
                     tracing::warn!(run_id = %run_id, error = ?e, "[skills] workflow_run: failed");
                 }
             }
@@ -295,7 +341,7 @@ pub async fn spawn_workflow_run_background(
 
 /// Poll a spawned run's log file until its terminal footer lands or the
 /// `budget` elapses. Returns `Some(outcome)` the moment the footer is
-/// readable (DONE / DEGENERATE / FAILED), or `None` if the run is still
+/// readable (DONE / STOPPED / DEGENERATE / FAILED), or `None` if the run is still
 /// `RUNNING` when the budget runs out — the caller then auto-detaches and
 /// hands back the `run_id` so the work continues in the background.
 ///
@@ -303,6 +349,7 @@ pub async fn spawn_workflow_run_background(
 /// the model issues one `run_workflow` tool call and gets either the result
 /// or a "still running" handle back, never a busy-wait it has to drive.
 pub async fn await_run_outcome(
+    workspace: &std::path::Path,
     log_path: &std::path::Path,
     budget: std::time::Duration,
 ) -> Option<run_log::RunOutcome> {
@@ -311,7 +358,7 @@ pub async fn await_run_outcome(
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
     let deadline = tokio::time::Instant::now() + budget;
     loop {
-        if let Some(outcome) = run_log::read_terminal_outcome(log_path) {
+        if let Some(outcome) = run_log::read_terminal_outcome(workspace, log_path) {
             return Some(outcome);
         }
         if tokio::time::Instant::now() >= deadline {
@@ -321,7 +368,3 @@ pub async fn await_run_outcome(
         tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
     }
 }
-
-#[cfg(test)]
-#[path = "run_machinery_tests.rs"]
-mod tests;

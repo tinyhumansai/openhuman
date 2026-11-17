@@ -88,13 +88,13 @@ export function ImageGeneration({
           className={cn(
             mono,
             'absolute end-2.5 top-2.5 tabular-nums',
-            generating ? 'text-foreground/35' : 'text-white/70'
+            generating ? 'text-muted-foreground' : 'text-white/70'
           )}>
           {dimensions}
         </span>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-foreground/45 min-w-0 flex-1 truncate text-xs">
+        <p className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
           {generating ? (
             <ShimmerLabel className="relative">{generatingLabel}</ShimmerLabel>
           ) : (

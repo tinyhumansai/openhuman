@@ -25,21 +25,19 @@
 //! positive here.
 #![allow(clippy::await_holding_lock)]
 
-use crate::env_guard::env_lock_async;
 use crate::env_guard::EnvVarGuard;
+use crate::env_guard::env_lock_async;
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-use openhuman_core::agent::goals::{runtime as goal_runtime, store as goal_store};
-use openhuman_core::agent::harness::definition::{
-    AgentDefinition, AgentDefinitionRegistry, ToolScope,
-};
-use openhuman_core::agent::session_host::TurnOverrides;
 use openhuman_core::agent::OpenHumanSessionHost;
+use openhuman_core::agent::session_host::TurnOverrides;
+use openhuman_core::agent_registry::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use openhuman_core::config::{AgentConfig, ContextConfig};
+use tinyagents_definition::ToolScope;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
@@ -218,6 +216,18 @@ fn workspace(label: &str) -> (TempDir, PathBuf) {
     (temp, path)
 }
 
+async fn seed_goal(
+    workspace: &std::path::Path,
+    thread_id: &str,
+    objective: &str,
+) -> Result<(), String> {
+    let store = openhuman_core::storage::sessions::stores_or_ephemeral(workspace).kv;
+    tinyagents_harness_tools::goals::store::set(&store, thread_id, objective, None)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 /// The session's own root authority.
 ///
 /// Every session turn is a hosted root invocation: it resolves its agent id
@@ -256,6 +266,7 @@ fn agent_with(
     dispatcher: Box<dyn tinytools_agent::dialect::ToolDialect>,
 ) -> OpenHumanSessionHost {
     OpenHumanSessionHost::builder()
+        .model_name("test/session-fixture".to_string())
         .chat_model(model)
         .tools(tools)
         .tool_dispatcher(dispatcher)
@@ -317,7 +328,7 @@ async fn suppress_active_goal_keeps_the_thread_goal_out_of_the_prompt_inner() {
     {
         // CONTROL — without the override the goal reaches the prompt.
         let control_guard = EnvVarGuard::set_path("OPENHUMAN_WORKSPACE", &control_workspace);
-        goal_store::set(&control_workspace, THREAD, OBJECTIVE, None)
+        seed_goal(&control_workspace, THREAD, OBJECTIVE)
             .await
             .expect("seed an active thread goal for the control");
         let control_model = ScriptedModel::new(vec![text("control final")]);
@@ -342,7 +353,7 @@ async fn suppress_active_goal_keeps_the_thread_goal_out_of_the_prompt_inner() {
         // SUPPRESSED — a goal seeded identically, in a workspace no other agent
         // has ever written a transcript into, must not appear.
         let _workspace_guard = EnvVarGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
-        goal_store::set(&workspace_path, THREAD, OBJECTIVE, None)
+        seed_goal(&workspace_path, THREAD, OBJECTIVE)
             .await
             .expect("seed an active thread goal for the measured agent");
         let model = ScriptedModel::new(vec![text("chat final")]);
@@ -585,7 +596,7 @@ async fn thread_goal_complete_and_clear_stop_the_goal_reaching_later_turns_inner
     {
         // CONTROL — an Active goal reaches a turn.
         let control_guard = EnvVarGuard::set_path("OPENHUMAN_WORKSPACE", &control_workspace);
-        goal_store::set(&control_workspace, THREAD, OBJECTIVE, None)
+        seed_goal(&control_workspace, THREAD, OBJECTIVE)
             .await
             .expect("seed an active thread goal for the control");
         let control_model = ScriptedModel::new(vec![text("pre-completion reply")]);
@@ -607,18 +618,24 @@ async fn thread_goal_complete_and_clear_stop_the_goal_reaching_later_turns_inner
         // MEASURED — seed the same goal in a pristine workspace, settle it via
         // the API under test, then run the only turn that workspace ever sees.
         let _workspace_guard = EnvVarGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
-        goal_store::set(&workspace_path, THREAD, OBJECTIVE, None)
+        seed_goal(&workspace_path, THREAD, OBJECTIVE)
             .await
             .expect("seed an active thread goal for the measured agent");
-        let seeded = goal_runtime::load_for_thread(&workspace_path, Some(THREAD))
+        let goal_store = tinyagents_harness_tools::goals::GoalStore::new(
+            openhuman_core::storage::sessions::stores_or_ephemeral(&workspace_path).kv,
+        );
+        let seeded = goal_store
+            .get(THREAD)
             .await
+            .ok()
+            .flatten()
             .expect("the seeded goal must load before completion");
         assert_eq!(
             seeded.objective, OBJECTIVE,
             "control: the goal must be loadable before completing it"
         );
 
-        goal_runtime::complete_for_thread(&workspace_path, Some(THREAD)).await;
+        goal_store.complete(THREAD).await.expect("complete goal");
 
         // A completed goal renders no context block, so a later turn is clean
         // with no per-turn override set at all.
@@ -641,11 +658,9 @@ async fn thread_goal_complete_and_clear_stop_the_goal_reaching_later_turns_inner
              later turns; found it in: {prompt}"
         );
 
-        goal_runtime::clear_for_thread(&workspace_path, Some(THREAD)).await;
+        goal_store.clear(THREAD).await.expect("clear goal");
         assert!(
-            goal_runtime::load_for_thread(&workspace_path, Some(THREAD))
-                .await
-                .is_none(),
+            goal_store.get(THREAD).await.unwrap().is_none(),
             "clear_for_current_thread must remove the goal row outright"
         );
 
@@ -655,11 +670,14 @@ async fn thread_goal_complete_and_clear_stop_the_goal_reaching_later_turns_inner
         // ACTIVE goal would pass everything above it. Seed a fresh active goal
         // and clear that one too.
         const ACTIVE_OBJECTIVE: &str = "turn-overrides-active-goal-to-be-cleared";
-        goal_store::set(&workspace_path, THREAD, ACTIVE_OBJECTIVE, None)
+        seed_goal(&workspace_path, THREAD, ACTIVE_OBJECTIVE)
             .await
             .expect("seed a second, still-active thread goal");
-        let active = goal_runtime::load_for_thread(&workspace_path, Some(THREAD))
+        let active = goal_store
+            .get(THREAD)
             .await
+            .ok()
+            .flatten()
             .expect("the second goal must load while it is still active");
         assert_eq!(
             active.objective, ACTIVE_OBJECTIVE,
@@ -667,11 +685,9 @@ async fn thread_goal_complete_and_clear_stop_the_goal_reaching_later_turns_inner
              proves nothing"
         );
 
-        goal_runtime::clear_for_thread(&workspace_path, Some(THREAD)).await;
+        goal_store.clear(THREAD).await.expect("clear active goal");
         assert!(
-            goal_runtime::load_for_thread(&workspace_path, Some(THREAD))
-                .await
-                .is_none(),
+            goal_store.get(THREAD).await.unwrap().is_none(),
             "clear_for_current_thread must remove an ACTIVE goal, not only a completed one"
         );
 

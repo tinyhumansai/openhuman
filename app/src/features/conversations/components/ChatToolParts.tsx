@@ -144,6 +144,7 @@ const ASK_USER_CLARIFICATION_TOOL = 'ask_user_clarification';
  */
 const ElicitationCall: ToolCallMessagePartComponent = ({ args, result }) => {
   const aui = useAui();
+  const { t } = useT();
   const question = (args as { question?: string } | undefined)?.question ?? '';
   const answer = useCallback(
     (text: string) => {
@@ -151,12 +152,19 @@ const ElicitationCall: ToolCallMessagePartComponent = ({ args, result }) => {
     },
     [aui]
   );
+  // Declining is an answer too: the run is parked until a user turn arrives,
+  // so a Decline that sent nothing left the turn waiting forever. It sends a
+  // plain "carry on without it" reply the orchestrator reads like any other.
+  const decline = useCallback(() => {
+    answer(t('chat.elicitation.declineReply'));
+  }, [answer, t]);
   return (
     <ElicitationAdapter
       server="OpenHuman"
       message={question}
       pending={result === undefined}
       onAnswer={answer}
+      onDecline={decline}
       testId="assistant-ui-elicitation"
     />
   );

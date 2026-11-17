@@ -1,48 +1,74 @@
 # Installing OpenHuman
 
-Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page. For terminal installs, the native package paths below are preferred because they use your OS package manager or native installer where available.
+## Download the app (recommended)
 
-## Recommended install (native packages)
+Download the desktop app from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or the [latest release](https://github.com/tinyhumansai/openhuman/releases/latest).
 
-These paths use native installer surfaces. Homebrew and MSI provide their normal signing/integrity checks; Debian/Ubuntu uses `apt-get` to install the release `.deb` and resolve system dependencies.
+| Platform | File |
+| --- | --- |
+| macOS (Apple Silicon) | `OpenHuman_<version>_aarch64.dmg` |
+| macOS (Intel) | `OpenHuman_<version>_x64.dmg` |
+| Windows | `OpenHuman_<version>_x64_en-US.msi` (or the `x64-setup.exe`) |
+| Debian / Ubuntu | `OpenHuman_<version>_amd64.deb` or `_arm64.deb` |
+| Other Linux | `OpenHuman_<version>_amd64.AppImage` or `_aarch64.AppImage` |
 
-**macOS (Homebrew Cask):**
+On Debian and Ubuntu, install the `.deb` with `apt-get` so it pulls in the system libraries it needs:
 
 ```bash
-brew install --cask openhuman
-```
-
-**Linux (Debian/Ubuntu, release `.deb`):**
-
-```bash
-# Download OpenHuman_<version>_amd64.deb or OpenHuman_<version>_arm64.deb
-# from https://github.com/tinyhumansai/openhuman/releases/latest, then:
-# Replace amd64 with arm64 on arm64 hosts.
 sudo apt-get install -y --no-install-recommends ./OpenHuman_*_amd64.deb
 ```
 
-**Linux (Arch, AUR):** the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/) is in the repo. Once published, Arch users can install it with `yay -S openhuman-bin`.
+Use `arm64` in place of `amd64` on ARM machines.
 
-**Windows:** download the signed `.msi` from the [latest release](https://github.com/tinyhumansai/openhuman/releases/latest) and run it.
+## Install script
 
-**Manual `.dmg` / `.deb` / `.AppImage` / `.msi`:** grab the installer for your platform directly from the [latest release page](https://github.com/tinyhumansai/openhuman/releases/latest).
-
-> **Linux:** the AppImage can crash on launch under Wayland, miss host system libraries such as `libgbm.so.1`, or fail on Arch-based distros with `sharun: Interpreter not found!`. See [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds. The `.deb` package above avoids those failure modes on Debian/Ubuntu by letting apt resolve runtime dependencies.
-
-## Alternative: script install (no integrity check)
-
-> **Warning: unverified install.** These scripts are served live from `raw.githubusercontent.com` and do **not** ship a separate signature, so `curl … | bash` and `irm … | iex` have no way to detect tampering of the script bytes. Prefer the **native package** paths above whenever possible. If you must use the script, see "Verified script install status" below.
+The install script works out your platform, downloads the matching file from the latest release, checks its SHA-256 against the one GitHub publishes for the release, and installs it.
 
 ```bash
-# macOS or Linux x64
+# macOS and Linux
 curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+```
 
+```powershell
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
-On Debian/Ubuntu, `install.sh` resolves the latest release `.deb` first and installs it with `apt-get` so runtime dependencies are handled by apt. Set `OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage` to force the AppImage path.
+On Windows, the installer adds OpenHuman's install directory to your user
+`PATH`. Open a new PowerShell or Windows Terminal session before running
+`OpenHuman`.
 
-## Verified script install status
+What it installs:
 
-A separately signed script-install path is not currently available. Issue [#2620](https://github.com/tinyhumansai/openhuman/issues/2620) is closed after the native package paths were promoted, but current release assets do not include `install.sh.asc` / `install.ps1.asc` for pre-execution script verification. Treat the script install path as unverified and prefer the native package options above when possible.
+- macOS: the `.dmg` (or the `.app.tar.gz` on Intel).
+- Windows: the `.msi`, falling back to the `.exe` installer.
+- Debian and Ubuntu: the `.deb`, through `apt-get`. Set `OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage` to get the AppImage instead.
+- Other Linux: the AppImage.
+
+To see what it would do without changing anything, run it with `--dry-run`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash -s -- --dry-run
+```
+
+The script checks the file it downloads, but the script itself is not signed. It is served live from GitHub, so if you want to be sure of what you run, download it, read it, then run it.
+
+## Homebrew
+
+A Homebrew cask also exists (`brew install --cask openhuman`). It can lag a release behind, so prefer the download or the script above.
+
+## Troubleshooting
+
+The AppImage can crash on launch under Wayland, miss host libraries such as `libgbm.so.1`, or fail on Arch-based distros with `sharun: Interpreter not found!`. See [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and workarounds. On Debian and Ubuntu, the `.deb` avoids these problems because apt resolves the dependencies.
+
+If a PowerShell profile does not exist yet, create it and its parent directory
+before opening it in an editor:
+
+```powershell
+$profileDirectory = Split-Path -Parent $PROFILE
+New-Item -ItemType Directory -Force -Path $profileDirectory | Out-Null
+if (-not (Test-Path -LiteralPath $PROFILE)) {
+  New-Item -ItemType File -Force -Path $PROFILE | Out-Null
+}
+notepad $PROFILE
+```

@@ -39,7 +39,7 @@ budget and CI-gate ceiling for the embedded agent roster (#5046).
 
 ## Process trees
 
-`sample_tree` (in `tree.rs`) measures a process and all of its descendants,
+`sample_tree` (in [`tree.rs`](./tree.rs)) measures a process and all of its descendants,
 the interpreter children a skill run or shell tool spawns, returning a
 `TreeSample` (`self_sample`, `children: Vec<ChildSample>`, `tree_rss_kib`).
 Descendant lookups that fail (a child that raced away, a permission error)
@@ -47,9 +47,16 @@ are skipped with a stderr note rather than aborting the sample.
 
 ## Used by
 
-- `crates/openhuman-cli/src/bin/rss_bench.rs` and `bin/library_profile/`
-  (feature `rss-bench`): the RSS/memory benchmark binaries this module was
-  built for.
-- [`docs/library-benchmarking.md`](../../../../../docs/library-benchmarking.md)
+- `profile/src/bin/rss_bench.rs` and `profile/src/bin/library_profile/` in
+  [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks) (feature `rss-bench`): the RSS/memory
+  benchmark binaries this module was built for.
+- [`profile/docs/library-benchmarking.md`](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/profile/docs/library-benchmarking.md)
  : documents the benchmark methodology and points readers here for the
   sampling implementation.
+
+## Further reading
+
+- [Parent module (`platform`)](../README.md)
+- [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)
+- [Tauri shell architecture](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [Architecture overview](../../../../../docs/gitbooks/en/developing/architecture.md)

@@ -147,10 +147,6 @@ describe('BrowserConnectionsPanel', () => {
             allowed_domains: [],
             session_name: null,
             backend: 'auto',
-            native_headless: true,
-            native_webdriver_url: 'http://127.0.0.1:9515',
-            native_chrome_path: null,
-            computer_use: { endpoint: 'http://127.0.0.1:8787/v1/actions', timeout_ms: 15000 },
           },
           http_request: { allowed_domains: ['selenium.dev'] },
         },
@@ -168,6 +164,7 @@ describe('BrowserConnectionsPanel', () => {
         'download_dir',
         'enabled',
         'headless',
+        'learn_from_tasks',
         'max_task_steps',
         'profile_mode',
         'profile_path',
@@ -177,6 +174,39 @@ describe('BrowserConnectionsPanel', () => {
       ].sort()
     );
     expect(sent).toMatchObject({ enabled: true, viewport_height: 800 });
+  });
+
+  it('saves learning from finished tasks off when switched off', async () => {
+    renderWithProviders(<BrowserConnectionsPanel />);
+    await screen.findByText('selenium.dev');
+    const learn = screen.getByLabelText('connections.browser.learnFromTasks');
+    expect(learn).toBeChecked();
+    fireEvent.click(learn);
+    fireEvent.click(screen.getByText('connections.browser.save'));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({ learn_from_tasks: false })
+      )
+    );
+  });
+
+  it('forgets what finished tasks learned through core RPC', async () => {
+    renderWithProviders(<BrowserConnectionsPanel />);
+    await screen.findByText('selenium.dev');
+    mocks.rpc.mockResolvedValueOnce({ forgotten: 3 });
+    fireEvent.click(screen.getByText('connections.browser.forgetSites'));
+    await waitFor(() =>
+      expect(mocks.rpc).toHaveBeenCalledWith({
+        method: 'openhuman.modules_browser_forget_sites',
+        params: {},
+      })
+    );
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'connections.browser.sitesForgotten'
+    );
+    mocks.rpc.mockRejectedValueOnce(new Error('could not forget'));
+    fireEvent.click(screen.getByText('connections.browser.forgetSites'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('could not forget'));
   });
 
   it('checks Chrome by opening and closing a core browser session', async () => {

@@ -5,8 +5,10 @@
  * {@link useLoadThreadGoal}).
  */
 import { useEffect, useRef } from 'react';
+import { useStore } from 'react-redux';
 
 import { threadApi } from '../../../services/api/threadApi';
+import type { RootState } from '../../../store';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { setThreadGoal, type ThreadGoalView } from '../../../store/threadGoalSlice';
 
@@ -26,18 +28,21 @@ export function useThreadGoal(threadId: string | null): ThreadGoalView | null {
  * Loads the thread's current goal once per `threadId` via
  * `openhuman.threads_goal_get`, mirroring {@link useLoadThreadTodos}.
  */
-export function useLoadThreadGoal(threadId: string | null): void {
+export function useLoadThreadGoal(threadId: string | null, revision = ''): void {
+  const store = useStore<RootState>();
   const dispatch = useAppDispatch();
   const requestedFor = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!threadId || requestedFor.current === threadId) return;
-    requestedFor.current = threadId;
+    const key = `${threadId}:${revision}`;
+    if (!threadId || requestedFor.current === key) return;
+    requestedFor.current = key;
+    const before = store.getState().threadGoal.byThread[threadId];
     let cancelled = false;
     void (async () => {
       try {
         const goal = await threadApi.getGoal(threadId);
-        if (cancelled) return;
+        if (cancelled || store.getState().threadGoal.byThread[threadId] !== before) return;
         dispatch(setThreadGoal({ threadId, goal }));
       } catch {
         // Older core without the RPC, or a transient failure — the live
@@ -47,5 +52,5 @@ export function useLoadThreadGoal(threadId: string | null): void {
     return () => {
       cancelled = true;
     };
-  }, [threadId, dispatch]);
+  }, [threadId, revision, dispatch, store]);
 }

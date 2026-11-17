@@ -5,7 +5,7 @@ import { consumeIdentityFlipSeed, markIdentityFlipSeed } from '../store/userScop
  * boot, before `primeActiveUserId(...)` runs.
  *
  * Three source shapes:
- *   1. Mascot/notch native windows — no Tauri IPC, cannot invoke commands.
+ *   1. Mascot native window — no Tauri IPC, cannot invoke commands.
  *   2. Any remote core mode — cloud, or a gateway this app provisioned in a
  *      container or on another machine. The local `~/.openhuman/active_user.toml`
  *      is either empty (no prior local session) or bound to a prior LOCAL

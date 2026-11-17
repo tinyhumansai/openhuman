@@ -635,6 +635,68 @@ alert_threshold = 0.9
         "limit is documented as clamped to [1, 1000]: {capped}"
     );
     assert_eq!(capped.get("days").and_then(Value::as_u64), Some(1));
+
+    // --- cost_report / cost_cache_report ------------------------------------
+    let report = harness
+        .call(56, "openhuman.cost_report", json!({ "groupBy": ["model"] }))
+        .await;
+    let report = peel(assert_no_error(&report, "cost_report"));
+    let totals = report
+        .get("totals")
+        .unwrap_or_else(|| panic!("report must carry `totals`: {report}"));
+    assert_eq!(totals.get("calls").and_then(Value::as_u64), Some(3));
+    assert_eq!(totals.get("cost_usd").and_then(Value::as_f64), Some(10.5));
+    assert_eq!(
+        totals.get("estimated_usd").and_then(Value::as_f64),
+        Some(10.5),
+        "seeded records are all estimated, none provider-charged: {report}"
+    );
+    assert_eq!(totals.get("charged_usd").and_then(Value::as_f64), Some(0.0));
+    assert!(
+        report
+            .get("rows")
+            .and_then(Value::as_array)
+            .is_some_and(|rows| !rows.is_empty()
+                && rows.iter().all(|r| r["key"].get("model").is_some())),
+        "rows are grouped by the requested key: {report}"
+    );
+
+    let cache = harness
+        .call(57, "openhuman.cost_cache_report", json!({}))
+        .await;
+    let cache = peel(assert_no_error(&cache, "cost_cache_report"));
+    assert_eq!(
+        cache.get("calls").and_then(Value::as_array).map(Vec::len),
+        Some(3),
+        "one cache row per seeded call: {cache}"
+    );
+    // The seeded records predate attribution: no thread, so no call can be a
+    // repeat, none is cold, and nothing was read from the cache.
+    assert_eq!(cache.get("cold_calls").and_then(Value::as_u64), Some(0), "{cache}");
+    assert_eq!(cache.get("cache_hit_ratio").and_then(Value::as_f64), Some(0.0), "{cache}");
+    assert_eq!(cache.get("cached_input_tokens").and_then(Value::as_u64), Some(0), "{cache}");
+    assert!(
+        cache
+            .get("uncached_premium_usd")
+            .and_then(Value::as_f64)
+            .is_some_and(|p| p >= 0.0),
+        "{cache}"
+    );
+    let misspelt = harness
+        .call(
+            59,
+            "openhuman.cost_cache_report",
+            json!({ "filter": { "threadId": "t1" } }),
+        )
+        .await;
+    assert_error(&misspelt, "cost_cache_report with a misspelt filter key");
+
+    // The wire spelling is `groupBy`; anything the schema does not declare is
+    // refused rather than silently ignored.
+    let snake = harness
+        .call(58, "openhuman.cost_report", json!({ "group_by": ["model"] }))
+        .await;
+    assert_error(&snake, "cost_report with an undeclared param");
 }
 
 /// The empty-workspace path: no `costs.jsonl` at all must still answer, not error.

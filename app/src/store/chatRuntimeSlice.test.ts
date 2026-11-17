@@ -6,8 +6,12 @@ import chatRuntimeReducer, {
   appendProcessingProse,
   beginInferenceTurn,
   clearAllChatRuntime,
+  clearPendingApprovalForThread,
+  clearPendingApprovalIfRequest,
   clearQueueStatusForThread,
   clearRuntimeForThread,
+  clearTurnApprovalForThread,
+  dropDetachedApprovalsForThread,
   hydrateRuntimeFromRunLedger,
   hydrateRuntimeFromSnapshot,
   hydrateThreadUsage,
@@ -15,11 +19,13 @@ import chatRuntimeReducer, {
   type QueueStatus,
   recordChatTurnUsage,
   resetSessionTokenUsage,
+  resolvePendingApprovalForThread,
   setPendingApprovalForThread,
   setQueueStatusForThread,
   setStreamingAssistantForThread,
   setToolTimelineForThread,
   setWorkflowProposalForThread,
+  turnSettled,
 } from './chatRuntimeSlice';
 
 function makeRun(id: string, status: AgentRunStatus): AgentRun {
@@ -28,9 +34,19 @@ function makeRun(id: string, status: AgentRunStatus): AgentRun {
     kind: 'subagent',
     status,
     agentId: 'research_agent',
+    checkpoint: {},
+    checkpointPath: null,
+    completedAt: null,
+    error: null,
     metadata: { displayName: 'Research Agent' },
+    parentRunId: null,
+    parentThreadId: null,
+    promptRef: null,
     startedAt: '2026-06-23T00:00:00Z',
+    summary: null,
+    telemetry: null,
     updatedAt: '2026-06-23T00:00:00Z',
+    workerThreadId: null,
   };
 }
 
@@ -114,6 +130,7 @@ describe('chatRuntimeSlice recordChatTurnUsage', () => {
       outputTokens: 15,
       costUsd: 0.003,
       runs: 2,
+      costSource: 'charged',
     });
     expect(subs.coder.runs).toBe(1);
     expect(subs.coder.inputTokens).toBe(80);
@@ -148,6 +165,24 @@ describe('chatRuntimeSlice recordChatTurnUsage', () => {
     );
     // Single-agent path is unchanged: nothing to subtract.
     expect(store.getState().chatRuntime.sessionTokenUsage.lastTurnContextUsed).toBe(920);
+  });
+
+  it('fills the gauge from the final call, not the summed spend of a many-call turn', () => {
+    const store = makeStore();
+    // A 72-call tool loop: 5.7M input summed across calls, ~104k in the last one.
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 5_710_657,
+        outputTokens: 30_790,
+        contextWindow: 1_048_576,
+        contextTokens: 103_900,
+      })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.lastTurnContextUsed).toBe(103_900);
+    // Spend is untouched: the turn still cost what it cost.
+    expect(usage.lastTurnInputTokens).toBe(5_710_657);
+    expect(usage.inputTokens).toBe(5_710_657);
   });
 
   it('clamps the gauge numerator to zero when sub-agents exceed the turn total (#4271)', () => {
@@ -247,6 +282,7 @@ describe('chatRuntimeSlice recordChatTurnUsage', () => {
       outputTokens: 80,
       costUsd: 0.006,
       runs: 2,
+      costSource: 'charged',
     });
 
     // A live turn for the same thread adds on top of the seeded base.
@@ -257,6 +293,27 @@ describe('chatRuntimeSlice recordChatTurnUsage', () => {
     expect(bucket.inputTokens).toBe(1200);
     expect(bucket.turns).toBe(4);
     expect(bucket.costUsd).toBeCloseTo(0.024, 6);
+  });
+
+  it('hydrateThreadUsage fills the gauge from the persisted final-call context', () => {
+    const store = makeStore();
+    store.dispatch(
+      hydrateThreadUsage({
+        threadId: 'thr-long',
+        inputTokens: 7_021_942,
+        outputTokens: 42_669,
+        cachedTokens: 6_466_688,
+        costUsd: 4.25,
+        turns: 3,
+        contextWindow: 1_048_576,
+        lastTurnInputTokens: 5_710_657,
+        lastTurnOutputTokens: 30_790,
+        lastTurnContextTokens: 103_900,
+      })
+    );
+    const bucket = store.getState().chatRuntime.usageByThread['thr-long'];
+    expect(bucket.lastTurnContextUsed).toBe(103_900);
+    expect(bucket.lastTurnContextUsed).toBeLessThanOrEqual(bucket.contextWindow);
   });
 });
 
@@ -991,5 +1048,200 @@ describe('hydrateRuntimeFromSnapshot — sub-agent transcript fallback (fix 4)',
     // Falls back to tool-only items so an old snapshot still shows the sequence.
     expect(transcript).toHaveLength(1);
     expect(transcript[0].kind).toBe('tool');
+  });
+});
+
+// Regression: an async sub-agent's approval (`detached`) was routed to the
+// parent thread while the parent turn ran, then wiped by that turn's
+// `chat_done` — "a parked gate cannot outlive its turn" — though its gate was
+// still parked. Every async `image_agent` approval then expired unseen at
+// 600s. A detached card survives turn-end clears and goes on its decision.
+describe('detached approvals', () => {
+  const detached = {
+    requestId: 'req-sub',
+    toolName: 'media_generate_image',
+    message: 'Run media_generate_image',
+    detached: true,
+  };
+
+  it('survives the parent turn ending', () => {
+    const store = makeStore();
+    store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: detached }));
+    store.dispatch(clearTurnApprovalForThread({ threadId: 't1' }));
+    store.dispatch(turnSettled({ threadId: 't1' }));
+    store.dispatch(clearRuntimeForThread({ threadId: 't1' }));
+    expect(store.getState().chatRuntime.pendingApprovalByThread['t1']?.requestId).toBe('req-sub');
+  });
+
+  it('still clears an in-turn approval at the turn end', () => {
+    const store = makeStore();
+    store.dispatch(
+      setPendingApprovalForThread({
+        threadId: 't1',
+        approval: { requestId: 'req-main', toolName: 'shell', message: 'Run ls' },
+      })
+    );
+    store.dispatch(clearTurnApprovalForThread({ threadId: 't1' }));
+    expect(store.getState().chatRuntime.pendingApprovalByThread['t1']).toBeUndefined();
+  });
+
+  it('clears on its own decision but not on another request', () => {
+    const store = makeStore();
+    store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: detached }));
+    store.dispatch(clearPendingApprovalIfRequest({ threadId: 't1', requestId: 'req-other' }));
+    expect(store.getState().chatRuntime.pendingApprovalByThread['t1']).toBeDefined();
+    store.dispatch(clearPendingApprovalIfRequest({ threadId: 't1', requestId: 'req-sub' }));
+    expect(store.getState().chatRuntime.pendingApprovalByThread['t1']).toBeUndefined();
+  });
+
+  // Two async sub-agents parked on the same parent thread: the second card
+  // replaced the first, whose gate then expired unanswered.
+  describe('several on one thread', () => {
+    const second = { ...detached, requestId: 'req-sub-2', toolName: 'media_generate_video' };
+    const shown = (store: ReturnType<typeof makeStore>) =>
+      store.getState().chatRuntime.pendingApprovalByThread['t1']?.requestId;
+
+    it('queues a second detached approval behind the shown one, then promotes it', () => {
+      const store = makeStore();
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: detached }));
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: second }));
+      expect(shown(store)).toBe('req-sub');
+      // A replay of the queued request does not duplicate it.
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: second }));
+      store.dispatch(clearPendingApprovalForThread({ threadId: 't1' }));
+      expect(shown(store)).toBe('req-sub-2');
+      store.dispatch(clearPendingApprovalForThread({ threadId: 't1' }));
+      expect(shown(store)).toBeUndefined();
+    });
+
+    it('drops a queued approval on its own decision or expiry, keeping the shown one', () => {
+      const store = makeStore();
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: detached }));
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: second }));
+      store.dispatch(clearPendingApprovalIfRequest({ threadId: 't1', requestId: 'req-sub-2' }));
+      expect(shown(store)).toBe('req-sub');
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: second }));
+      store.dispatch(
+        resolvePendingApprovalForThread({
+          threadId: 't1',
+          requestId: 'req-sub-2',
+          resolution: 'expired',
+        })
+      );
+      store.dispatch(clearPendingApprovalIfRequest({ threadId: 't1', requestId: 'req-sub' }));
+      expect(shown(store)).toBeUndefined();
+    });
+
+    it("never displaces the parent turn's waiting approval with a detached one", () => {
+      const store = makeStore();
+      store.dispatch(
+        setPendingApprovalForThread({
+          threadId: 't1',
+          approval: { requestId: 'req-main', toolName: 'shell', message: 'Run ls' },
+        })
+      );
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: detached }));
+      expect(shown(store)).toBe('req-main');
+      store.dispatch(clearTurnApprovalForThread({ threadId: 't1' }));
+      expect(shown(store)).toBe('req-sub');
+    });
+
+    it("shows the parent turn's own approval first and keeps the detached one queued", () => {
+      const store = makeStore();
+      store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: detached }));
+      store.dispatch(
+        setPendingApprovalForThread({
+          threadId: 't1',
+          approval: { requestId: 'req-main', toolName: 'shell', message: 'Run ls' },
+        })
+      );
+      expect(shown(store)).toBe('req-main');
+      store.dispatch(clearTurnApprovalForThread({ threadId: 't1' }));
+      expect(shown(store)).toBe('req-sub');
+    });
+  });
+
+  // A core restart (or a missed `approval_decided`) leaves a detached card the
+  // core no longer holds. Disconnect reconciliation drops every detached card
+  // so the rejoin replay re-sends only the parks still live.
+  it('drops every detached approval on the thread for reconciliation', () => {
+    const store = makeStore();
+    store.dispatch(setPendingApprovalForThread({ threadId: 't1', approval: detached }));
+    store.dispatch(
+      setPendingApprovalForThread({
+        threadId: 't1',
+        approval: { ...detached, requestId: 'req-sub-2' },
+      })
+    );
+    store.dispatch(dropDetachedApprovalsForThread({ threadId: 't1' }));
+    expect(store.getState().chatRuntime.pendingApprovalByThread['t1']).toBeUndefined();
+    expect(store.getState().chatRuntime.queuedApprovalsByThread['t1']).toBeUndefined();
+  });
+});
+
+describe('chatRuntimeSlice cost certainty', () => {
+  it('adds reported charges and keeps the thread charged', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 10, outputTokens: 1, costUsd: 0.2, costSource: 'charged' })
+    );
+    store.dispatch(recordChatTurnUsage({ inputTokens: 10, outputTokens: 1, costUsd: 0.1 }));
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.costUsd).toBeCloseTo(0.3, 9);
+    expect(usage.costSource).toBe('charged');
+  });
+
+  it('marks the thread unknown when a turn reports no cost, and adds nothing for it', () => {
+    // The core sends `null` instead of a guessed rate; it once sent $4.25 for
+    // a glm-5.3-flash thread the provider billed about $0.30.
+    const store = makeStore();
+    store.dispatch(recordChatTurnUsage({ inputTokens: 10, outputTokens: 1, costUsd: 0.2 }));
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 5_710_657,
+        outputTokens: 30_790,
+        costUsd: null,
+        costSource: 'unknown',
+      })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.costSource).toBe('unknown');
+    expect(usage.costUsd).toBeCloseTo(0.2, 9);
+  });
+
+  it('carries an estimate as estimated, and a sub-agent with no cost as unknown', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 10,
+        outputTokens: 1,
+        costUsd: 0.05,
+        costSource: 'estimated',
+        subAgents: [{ agentId: 'researcher', inputTokens: 3, outputTokens: 1, costUsd: null }],
+      })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.costSource).toBe('estimated');
+    expect(usage.subAgents.researcher.costSource).toBe('unknown');
+  });
+
+  it('hydrates an unknown thread cost from the usage RPC', () => {
+    const store = makeStore();
+    store.dispatch(
+      hydrateThreadUsage({
+        threadId: 'thr-unknown',
+        inputTokens: 7_021_942,
+        outputTokens: 42_669,
+        cachedTokens: 6_466_688,
+        costUsd: null,
+        turns: 3,
+        contextWindow: 1_048_576,
+        lastTurnInputTokens: 5_710_657,
+        lastTurnOutputTokens: 30_790,
+      })
+    );
+    const bucket = store.getState().chatRuntime.usageByThread['thr-unknown'];
+    expect(bucket.costSource).toBe('unknown');
+    expect(bucket.costUsd).toBe(0);
   });
 });

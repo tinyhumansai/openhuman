@@ -1,9 +1,9 @@
 # openhuman-bin AUR package
 
-This directory contains the Arch Linux `openhuman-bin` package recipe. It uses
-the official x86_64 AppImage from GitHub Releases as the binary source, extracts
-its bundled application tree during `makepkg`, installs a desktop entry, and
-adds `/usr/bin/openhuman` as a launcher.
+This directory contains the Arch Linux `openhuman-bin` package recipe ([`PKGBUILD`](./PKGBUILD)). It uses
+the official x86_64 AppImage from [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases) as the binary source, extracts
+its bundled application tree during `makepkg`, installs a desktop entry ([`openhuman.desktop`](./openhuman.desktop)), and
+adds `/usr/bin/openhuman` as a launcher ([`openhuman`](./openhuman)).
 
 The package does not launch the AppImage runtime directly. Arch-family distros
 have reported `Interpreter not found!` from the bundled AppImage runtime on
@@ -33,3 +33,9 @@ makepkg --printsrcinfo > .SRCINFO
 
 The AUR repository should contain `PKGBUILD`, `.SRCINFO`, `openhuman`,
 `openhuman.desktop`, and `openhuman.svg`.
+
+## Further reading
+
+- [Getting set up](../../../docs/gitbooks/en/developing/getting-set-up.md) for the other install paths.
+- [Release policy](../../../docs/gitbooks/en/developing/release-policy.md) for how versions are cut.
+- [`scripts/release/`](../../../scripts/release) for the release tooling that produces the AppImage this package repackages.

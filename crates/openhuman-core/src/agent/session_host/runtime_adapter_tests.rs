@@ -1,43 +1,24 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use tinyagents_harness::tool::ToolSnapshot;
 use tinyagents_runtime::{
-    DriverFailure, DriverOutcome, DriverRequest, PrefixSnapshot, ResumeMode, SessionDriver,
-    SessionTerminal, SessionTurnRequest, ToolSnapshot, TranscriptCodec, TranscriptTurnOptions,
+    DriverFailure, DriverOutcome, DriverRequest, PrefixSnapshot, ResumeMode, SessionBuilder,
+    SessionDriver, SessionTerminal, SessionTurnRequest, TranscriptCodec, TranscriptTurnOptions,
     TurnOptions,
 };
-use tinyagents_session::transcript::{FileTranscriptLocator, TranscriptMeta};
+use tinyagents_session::port::{InMemorySessionStores, SessionStoreProvider};
+use tinyagents_session::transcript::TranscriptMeta;
 use tinyinference_llm::message::Message;
 
-use super::announcement_notes::{
+use super::runtime_session::{account_committed_turn_against_goal, holistic_last_turn_usage};
+use super::{OpenHumanSessionHooks, OpenHumanTranscriptCodec};
+use crate::agent::tinyagents::host::OpenHumanRunContext;
+use crate::integrations::announcement_notes::{
     integration_announcement_note, mcp_announcement_note, skill_announcement_note,
 };
-use super::runtime_session::{
-    account_committed_turn_against_goal, begin_turn_resume, holistic_last_turn_usage,
-    reconcile_synthesized_visibility, OpenHumanSessionState,
-};
-use super::{OpenHumanSessionFactory, OpenHumanSessionHooks, OpenHumanTranscriptCodec};
-use crate::agent::tinyagents::host::OpenHumanRunContext;
 
 struct RecordingDriver(Arc<Mutex<Vec<OpenHumanRunContext>>>);
-
-#[test]
-fn transcript_suppression_is_applied_before_resume() {
-    let mut state = OpenHumanSessionState::default();
-    state.pending_turn_overrides = super::TurnOverrides {
-        suppress_transcript_autoload: true,
-        suppress_tools: true,
-        ..Default::default()
-    };
-    let mut resume = ResumeMode::LatestForAgent;
-
-    begin_turn_resume(&mut state, &mut resume);
-
-    assert_eq!(resume, ResumeMode::Never);
-    assert!(state.pending_turn_overrides == super::TurnOverrides::default());
-    assert!(state.active_turn_overrides.suppress_transcript_autoload);
-    assert!(state.active_turn_overrides.suppress_tools);
-}
 
 #[async_trait]
 impl SessionDriver<OpenHumanRunContext> for RecordingDriver {
@@ -56,6 +37,8 @@ impl SessionDriver<OpenHumanRunContext> for RecordingDriver {
             output: Some("done".into()),
             partial: None,
             interrupted: false,
+            outcome: None,
+            tool_outcomes: Vec::new(),
         })
     }
 }
@@ -64,7 +47,7 @@ impl SessionDriver<OpenHumanRunContext> for RecordingDriver {
 fn codec_marks_failed_tool_rows_from_the_explicit_turn_sidecar() {
     let context = OpenHumanRunContext::new();
     context.session_sidecar.lock().unwrap().tool_outcomes.push(
-        crate::agent::tinyagents::ToolCallOutcome {
+        tinyagents_harness::turn_outcome::ToolCallOutcome {
             call_id: "call-1".into(),
             name: "dangerous_tool".into(),
             arguments: serde_json::json!({"path": "secret"}),
@@ -111,11 +94,16 @@ fn codec_attaches_only_this_agents_own_sidecar_usage_to_atomic_append() {
         sidecar.input_tokens = 13;
         sidecar.output_tokens = 8;
         sidecar.cached_input_tokens = 3;
-        sidecar.cost_usd = 0.004;
+        sidecar.cost = tinyagents_harness::cost::CostTally {
+            known_usd: 0.004,
+            source: tinyagents_harness::cost::CostSource::Charged,
+        };
         sidecar.context_window = 128_000;
+        sidecar.last_call_input_tokens = 9;
+        sidecar.last_call_output_tokens = 2;
         sidecar
             .tool_outcomes
-            .push(crate::agent::tinyagents::ToolCallOutcome {
+            .push(tinyagents_harness::turn_outcome::ToolCallOutcome {
                 call_id: "call-usage".into(),
                 name: "read_file".into(),
                 arguments: serde_json::json!({"path": "Cargo.toml"}),
@@ -127,11 +115,12 @@ fn codec_attaches_only_this_agents_own_sidecar_usage_to_atomic_append() {
     context.append_subagent_usage(crate::agent::tinyagents::host::SubagentUsageEntry {
         task_id: "child-usage".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 5,
             output_tokens: 2,
             cached_input_tokens: 1,
             charged_amount_usd: 0.001,
+            cost_source: tinyagents_harness::cost::CostSource::Charged,
         },
     });
     // `OpenHumanRunContext` is `Clone` and its child ledger is an `Arc`, so this
@@ -163,6 +152,12 @@ fn codec_attaches_only_this_agents_own_sidecar_usage_to_atomic_append() {
         "the parent's own cache reads, NOT 4"
     );
     assert_eq!(usage.usage.context_window, 128_000);
+    // The final call's size is persisted beside the summed spend, so a thread
+    // reopened later can still fill the context gauge correctly.
+    assert_eq!(
+        (usage.usage.last_call_input, usage.usage.last_call_output),
+        (9, 2)
+    );
     assert!(
         (usage.usage.cost_usd - 0.004).abs() < f64::EPSILON,
         "the parent's own cost, NOT 0.005"
@@ -190,35 +185,42 @@ fn last_turn_usage_reports_the_same_holistic_totals_as_transcript_billing() {
         input_tokens: 13,
         output_tokens: 8,
         cached_input_tokens: 3,
-        cost_usd: 0.004,
+        cost: tinyagents_harness::cost::CostTally {
+            known_usd: 0.004,
+            source: tinyagents_harness::cost::CostSource::Charged,
+        },
         context_window: 128_000,
+        last_call_input_tokens: 9,
+        last_call_output_tokens: 2,
         ..Default::default()
     };
-    sidecar
-        .subagents
-        .push(crate::agent::tinyagents::host::SubagentUsageEntry {
-            task_id: "child-ui".into(),
-            agent_id: "researcher".into(),
-            usage: crate::agent::subagent_host::SubagentUsage {
-                input_tokens: 5,
-                output_tokens: 2,
-                cached_input_tokens: 1,
-                charged_amount_usd: 0.001,
-            },
-        });
-
+    let child = crate::agent::tinyagents::host::SubagentUsageEntry {
+        task_id: "child-ui".into(),
+        agent_id: "researcher".into(),
+        usage: crate::progress::SubagentUsage {
+            input_tokens: 5,
+            output_tokens: 2,
+            cached_input_tokens: 1,
+            charged_amount_usd: 0.001,
+            cost_source: tinyagents_harness::cost::CostSource::Charged,
+        },
+    };
+    sidecar.subagents.push(child.clone());
     let usage = holistic_last_turn_usage(&sidecar);
     assert_eq!(usage.input_tokens, 18);
     assert_eq!(usage.output_tokens, 10);
     assert_eq!(usage.cached_input_tokens, 4);
-    assert!((usage.cost_usd - 0.005).abs() < f64::EPSILON);
+    assert!((usage.cost_usd.expect("all calls charged") - 0.005).abs() < f64::EPSILON);
     assert_eq!(usage.context_window, 128_000);
+    // The gauge numerator is the root's final call alone: neither the turn's
+    // summed spend nor the child's tokens, which ran in their own window.
+    assert_eq!(usage.context_tokens, 11);
     assert_eq!(usage.subagents.len(), 1, "detail breakdown is retained");
 }
 
 #[test]
 fn explicit_hidden_delegate_stays_hidden_across_dynamic_refreshes() {
-    let mut visible = ["read_file".to_string()]
+    let visible = ["read_file".to_string()]
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
     let prior = [
@@ -234,25 +236,29 @@ fn explicit_hidden_delegate_stays_hidden_across_dynamic_refreshes() {
     .into_iter()
     .collect::<std::collections::HashSet<_>>();
 
-    reconcile_synthesized_visibility(&mut visible, &prior, &refreshed, false);
+    let mut managed = tinyagents_runtime::ManagedToolNames {
+        visible,
+        ..Default::default()
+    };
+    managed.refresh_synthesized(&prior, &refreshed, false);
 
     assert!(
-        !visible.contains("delegate_research"),
+        !managed.visible.contains("delegate_research"),
         "an explicitly hidden existing delegate remains hidden after refresh"
     );
     assert!(
-        !visible.contains("delegate_drive"),
+        !managed.visible.contains("delegate_drive"),
         "a new connection cannot bypass an explicit visibility restriction"
     );
     assert!(
-        !visible.contains("delegate_calendar"),
+        !managed.visible.contains("delegate_calendar"),
         "a revoked connection leaves the surface"
     );
 }
 
 #[test]
 fn wildcard_delegate_visibility_admits_new_connections_and_removes_revoked_ones() {
-    let mut visible = ["read_file".to_string(), "delegate_calendar".to_string()]
+    let visible = ["read_file".to_string(), "delegate_calendar".to_string()]
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
     let prior = ["delegate_calendar".to_string()]
@@ -262,57 +268,80 @@ fn wildcard_delegate_visibility_admits_new_connections_and_removes_revoked_ones(
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
 
-    reconcile_synthesized_visibility(&mut visible, &prior, &refreshed, true);
+    let mut managed = tinyagents_runtime::ManagedToolNames {
+        visible,
+        ..Default::default()
+    };
+    managed.refresh_synthesized(&prior, &refreshed, true);
 
-    assert!(visible.contains("delegate_drive"));
-    assert!(!visible.contains("delegate_calendar"));
-    assert!(visible.contains("read_file"));
+    assert!(managed.visible.contains("delegate_drive"));
+    assert!(!managed.visible.contains("delegate_calendar"));
+    assert!(managed.visible.contains("read_file"));
 }
 
 #[tokio::test]
 async fn committed_goal_accounting_uses_direct_and_completed_child_usage() {
     let workspace = tempfile::tempdir().unwrap();
-    crate::agent::goals::store::set(
-        workspace.path(),
-        "receipt-goal",
-        "finish migration",
-        Some(20),
-    )
-    .await
-    .unwrap();
-    let mut sidecar = crate::agent::tinyagents::host::run_context::SessionTurnSidecar {
-        input_tokens: 9,
-        output_tokens: 4,
-        duration: Some(std::time::Duration::from_secs(2)),
-        ..Default::default()
-    };
-    sidecar
-        .subagents
-        .push(crate::agent::tinyagents::host::SubagentUsageEntry {
+    let core = crate::core::runtime::CoreContext::for_test(
+        crate::core::runtime::DomainSet::full(),
+        Some(workspace.path().to_path_buf()),
+    );
+    crate::core::runtime::CoreContext::scope(core, async {
+        let goal_store = crate::storage::sessions::stores_or_ephemeral(workspace.path()).kv;
+        tinyagents_harness_tools::goals::store::set(
+            &goal_store,
+            "receipt-goal",
+            "finish migration",
+            Some(20),
+        )
+        .await
+        .unwrap();
+        assert!(
+            tinyagents_harness_tools::goals::store::get(&goal_store, "receipt-goal")
+                .await
+                .unwrap()
+                .is_some(),
+            "the scoped goal store must contain the fixture before accounting"
+        );
+        let mut sidecar = crate::agent::tinyagents::host::run_context::SessionTurnSidecar {
+            input_tokens: 9,
+            output_tokens: 4,
+            duration: Some(std::time::Duration::from_secs(2)),
+            ..Default::default()
+        };
+        let child = crate::agent::tinyagents::host::SubagentUsageEntry {
             task_id: "child-goal".into(),
             agent_id: "researcher".into(),
-            usage: crate::agent::subagent_host::SubagentUsage {
+            usage: tinyagents_harness::progress::SubagentUsage {
                 input_tokens: 5,
                 output_tokens: 3,
                 ..Default::default()
             },
-        });
+        };
+        sidecar.subagents.push(child);
+        account_committed_turn_against_goal(
+            workspace.path(),
+            &crate::core::runtime::DispatchCtx::ambient(),
+            Some("receipt-goal"),
+            &sidecar,
+        )
+        .await;
 
-    account_committed_turn_against_goal(workspace.path(), Some("receipt-goal"), &sidecar).await;
-
-    let goal = crate::agent::goals::store::get(workspace.path(), "receipt-goal")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        goal.tokens_used, 21,
-        "receipt accounts direct + child usage"
-    );
-    assert_eq!(
-        goal.status,
-        crate::agent::goals::ThreadGoalStatus::BudgetLimited,
-        "receipt-backed accounting advances continuation/budget state"
-    );
+        let goal = tinyagents_harness_tools::goals::store::get(&goal_store, "receipt-goal")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            goal.tokens_used, 21,
+            "receipt accounts direct + child usage"
+        );
+        assert_eq!(
+            goal.status,
+            tinyagents_harness_tools::goals::ThreadGoalStatus::BudgetLimited,
+            "receipt-backed accounting advances continuation/budget state"
+        );
+    })
+    .await;
 }
 
 fn meta() -> TranscriptMeta {
@@ -329,6 +358,7 @@ fn meta() -> TranscriptMeta {
         updated: chrono::Utc::now().to_rfc3339(),
         turn_count: 0,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -371,22 +401,19 @@ async fn runtime_adapter_passes_host_context_commits_before_finalize_and_emits_o
             }
         },
     ));
-    let root = std::env::temp_dir().join(format!(
-        "openhuman-session-adapter-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let locator = InMemorySessionStores::new()
+        .for_agent("adapter-test")
+        .transcripts;
     let context = OpenHumanRunContext::new();
     let cancellation = context.cancellation.clone();
-    let mut session = OpenHumanSessionFactory::build(
-        Arc::new(RecordingDriver(Arc::clone(&seen_context))),
-        hooks,
-        PrefixSnapshot::default(),
-        ToolSnapshot::default(),
-        Arc::new(FileTranscriptLocator::new(&root)),
-        "adapter-test",
-        meta(),
-    )
-    .unwrap();
+    let mut session = SessionBuilder::new(Arc::new(RecordingDriver(Arc::clone(&seen_context))))
+        .codec(Arc::new(OpenHumanTranscriptCodec))
+        .hooks(hooks)
+        .prefix(PrefixSnapshot::default())
+        .tool_snapshot(ToolSnapshot::default())
+        .transcript(Arc::clone(&locator), "adapter-test", meta())
+        .build()
+        .unwrap();
 
     session
         .turn(
@@ -400,6 +427,7 @@ async fn runtime_adapter_passes_host_context_commits_before_finalize_and_emits_o
                 cancellation: cancellation.clone(),
                 run_context: context
                     .into_tinyagents(tinyagents_harness::context::RunConfig::new("adapter-turn")),
+                controls: Default::default(),
             },
         )
         .await
@@ -412,10 +440,10 @@ async fn runtime_adapter_passes_host_context_commits_before_finalize_and_emits_o
         [SessionTerminal::Completed(_)]
     ));
     assert!(
-        root.join("session_raw").exists(),
+        locator.latest_for_agent("adapter-test").is_some()
+            || locator.root_for_thread("thread-1").is_some(),
         "commit precedes finalization"
     );
-    let _ = std::fs::remove_dir_all(root);
 }
 
 /// Mid-conversation availability notes are prepended to the user's next
@@ -455,19 +483,24 @@ fn availability_notes_are_status_not_instructions() {
 /// is genuinely its own transcript. It must therefore not claim the
 /// conversation's durable session identity, or two concurrent workers on one
 /// thread would write into the same file.
-#[test]
-fn a_subagent_thread_binding_claims_no_session_identity() {
+#[tokio::test]
+async fn a_subagent_thread_binding_claims_no_session_identity() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..crate::config::Config::default()
     };
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
 
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
     let mut root =
-        super::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+            .await
+            .unwrap();
     root.set_thread_id(Some("thread-1"));
     // The exact stem encoding (sanitisation, per-component digest, generation
     // suffix) belongs to tinyagents and is pinned by its own tests. What
@@ -482,7 +515,9 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
     );
 
     let mut child =
-        super::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+            .await
+            .unwrap();
     child.session_parent_prefix = Some("1713000000_orchestrator".into());
     child.set_thread_id(Some("thread-1"));
     assert_eq!(child.session_id(), None);
@@ -491,150 +526,5 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
 /// The resume hook and builder must name the same transcript locator instance.
 /// A distinct locator for the same directory lets a new thread commit, then
 /// rejects a cold resumed thread before inference with InvalidSessionState (#6608).
-#[test]
-fn a_cold_resumed_thread_can_send_again() {
-    std::thread::Builder::new()
-        .stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
-        .spawn(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("test runtime")
-                .block_on(cold_resumed_thread_can_send_again());
-        })
-        .expect("test thread")
-        .join()
-        .expect("test thread panicked");
-}
-
-async fn cold_resumed_thread_can_send_again() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
-        Arc::new(tinyagents_harness::testkit::ScriptedModel::new(vec![
-            tinyinference_llm::model::ModelResponse::assistant("first reply"),
-            tinyinference_llm::model::ModelResponse::assistant("second reply"),
-        ]));
-    let new_host = || {
-        crate::agent::SessionHostBuilder::new()
-            .chat_model(model.clone())
-            .tools(Vec::new())
-            .workspace_dir(root.path().join("workspace"))
-            .action_dir(root.path().to_path_buf())
-            .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
-            .build()
-            .expect("session build")
-    };
-    let mut host = new_host();
-    host.set_thread_id(Some("thread-resume-regression"));
-
-    assert_eq!(host.turn("first message").await.unwrap(), "first reply");
-    drop(host);
-    let mut host = new_host();
-    host.set_thread_id(Some("thread-resume-regression"));
-    assert_eq!(host.turn("second message").await.unwrap(), "second reply");
-}
-
-/// The PRODUCTION turn path must wire an artifact store, rooted outside the
-/// project the agent works in (#6408).
-///
-/// Two assertions, and both were dead code before this PR. The existing artifact
-/// tests construct `TurnContextMiddleware` with `artifact_store: Some(..)`
-/// themselves, so they prove the offload code works while saying nothing about
-/// whether production ever reaches it — and it did not: the production
-/// constructor hard-coded `None`, which is how a whole feature shipped dead.
-///
-/// The root matters as much as the wiring, and it is the workspace's
-/// `artifacts/tool-results`, never a directory the agent works in. Rooted at
-/// `action_dir` (or a descriptor's root) every oversized output was a stray file
-/// in the user's project, swept into its diff. The pointer is absolute, so it
-/// no longer has to match whichever root `file_read` resolves relative paths
-/// against (#6483). This drives a real host with a descriptor whose root is not
-/// `action_dir`, and pins that the store followed neither.
-#[tokio::test]
-async fn production_turn_path_wires_an_artifact_store_outside_the_project() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let action_dir = tempfile::tempdir().expect("tempdir");
-    let turn_root = tempfile::tempdir().expect("turn root");
-    assert_ne!(
-        action_dir.path(),
-        turn_root.path(),
-        "the two roots must differ or this test cannot tell them apart"
-    );
-
-    let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
-        Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
-    let mut host = crate::agent::SessionHostBuilder::new()
-        .chat_model(model)
-        .tools(Vec::new())
-        .workspace_dir(workspace.path().to_path_buf())
-        .action_dir(action_dir.path().to_path_buf())
-        .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
-        .workspace_descriptor(Some(
-            tinytools::WorkspaceDescriptor::new(turn_root.path().to_path_buf())
-                .with_policy_id("turn-workspace"),
-        ))
-        .build()
-        .expect("session build");
-
-    host.ensure_runtime_session()
-        .expect("ensure runtime session");
-
-    let state = host
-        .runtime_state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let middleware = state
-        .context_middleware
-        .as_ref()
-        .expect("the turn path must retain its context middleware");
-    let store = middleware.artifact_store.as_ref().expect(
-        "the production turn path must wire an artifact store, or oversized \
-         tool results are truncated with their tail discarded (#6408)",
-    );
-    assert!(store.is_detached(), "the pointer must be absolute");
-    assert_eq!(
-        store.root(),
-        crate::security::policy::tool_result_artifacts_dir(workspace.path()),
-        "the store must live under the workspace, not in the project the agent edits"
-    );
-    assert!(!store.root().starts_with(action_dir.path()));
-    assert!(!store.root().starts_with(turn_root.path()));
-}
-
-/// Without a descriptor the answer is the same: the workspace, not
-/// `action_dir`. The mirror of the test above, so neither branch can regress
-/// back into the project.
-#[tokio::test]
-async fn artifact_store_stays_in_the_workspace_without_a_descriptor() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let action_dir = tempfile::tempdir().expect("tempdir");
-    let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
-        Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
-    let mut host = crate::agent::SessionHostBuilder::new()
-        .chat_model(model)
-        .tools(Vec::new())
-        .workspace_dir(workspace.path().to_path_buf())
-        .action_dir(action_dir.path().to_path_buf())
-        .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
-        .build()
-        .expect("session build");
-
-    host.ensure_runtime_session()
-        .expect("ensure runtime session");
-
-    let state = host
-        .runtime_state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let store = state
-        .context_middleware
-        .as_ref()
-        .expect("context middleware")
-        .artifact_store
-        .as_ref()
-        .expect("artifact store");
-    assert_eq!(
-        store.root(),
-        crate::security::policy::tool_result_artifacts_dir(workspace.path())
-    );
-}
+#[path = "runtime_adapter_continuation_tests.rs"]
+mod continuation_tests;

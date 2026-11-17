@@ -9,6 +9,7 @@ fn session_entry(client: Arc<BrowserClient>, id: SessionId, last_used: Instant) 
         last_used,
         config_fingerprint,
         bound_origin: None,
+        password_typed: false,
     }
 }
 
@@ -17,7 +18,7 @@ fn browser_tools_are_deferred_and_task_is_bounded() {
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 0);
+    let tool = BrowserTool::new(client, 0);
     assert_eq!(tool.exposure(), tinytools::ToolExposure::Deferred);
     assert_eq!(tool.max_steps, 1);
     let actions = tool.parameters_schema()["properties"]["action"]["enum"]
@@ -53,7 +54,8 @@ fn every_direct_or_controller_action_that_can_submit_needs_confirmation() {
         delay_ms: None
     }));
     assert!(needs_host_confirmation(&Action::Press {
-        key: "Enter".into()
+        key: "Enter".into(),
+        target: None
     }));
     assert!(!needs_host_confirmation(&Action::Hover {
         target: Target::reference("e1")
@@ -84,49 +86,53 @@ fn approval_describes_selector_and_locator_targets() {
     });
     assert!(locator.contains("Role locator") && locator.contains("Email"));
     assert!(!locator.contains("private@example.com"));
+
+    let press_action = Action::Press {
+        key: "Enter".into(),
+        target: Some(Target::reference("e7")),
+    };
+    let (reference, press) = approval_target(&press_action);
+    assert_eq!(reference, Some("e7"));
+    assert_eq!(press, " @e7");
+    let (_, untargeted) = approval_target(&Action::Press {
+        key: "Enter".into(),
+        target: None,
+    });
+    assert!(untargeted.is_empty());
 }
 
 #[test]
-fn direct_actions_use_typed_targets_and_reject_unbounded_inputs() {
+fn direct_actions_decode_through_the_bus_tool_args() {
     assert!(
-        matches!(parse_action(&json!({"action":"click","selector":"@e1"})).unwrap(), Action::Click { target: Target::Ref { value }, .. } if value == "e1")
+        matches!(direct_action(&json!({"action":"click","selector":"@e1"})).unwrap(), Action::Click { target: Target::Ref { value }, .. } if value == "e1")
     );
-    assert!(parse_action(&json!({"action":"click"})).is_err());
-    assert!(parse_action(&json!({"action":"scroll","direction":"diagonal"})).is_err());
-    assert!(parse_action(&json!({"action":"arbitrary_script"})).is_err());
-}
-
-#[test]
-fn browser_action_parser_covers_supported_direct_and_find_actions() {
-    for args in [
-        json!({"action":"fill","selector":"#email","value":"x"}),
-        json!({"action":"type","text":"hello"}),
-        json!({"action":"get_text","selector":"#title"}),
-        json!({"action":"is_visible","selector":"#title"}),
-        json!({"action":"hover","selector":"#title"}),
-        json!({"action":"press","key":"Enter"}),
-        json!({"action":"scroll","direction":"left","pixels":32}),
-        json!({"action":"wait","text":"Ready","ms":5,"timeout_ms":25}),
-    ] {
-        assert!(parse_action(&args).is_ok(), "{args}");
-    }
-
-    for find_action in ["click", "fill", "text", "hover"] {
-        let mut args = json!({
-            "action":"find", "by":"role", "value":"button", "find_action":find_action
-        });
-        if find_action == "fill" {
-            args["fill_value"] = json!("hello");
-        }
-        assert!(parse_action(&args).is_ok(), "{find_action}");
-    }
-
-    assert!(parse_action(&json!({"action":"scroll","direction":"up","pixels":u64::MAX})).is_ok());
-    assert!(parse_action(
+    assert!(direct_action(&json!({"action":"click"})).is_err());
+    assert!(direct_action(&json!({"action":"scroll","direction":"diagonal"})).is_err());
+    assert!(direct_action(&json!({"action":"arbitrary_script"})).is_err());
+    assert!(direct_action(
         &json!({"action":"find","by":"text","value":"Save","find_action":"text"})
     )
     .is_ok());
-    assert!(parse_action(&json!({"action":"wait","selector":"#ready"})).is_ok());
+}
+
+#[test]
+fn model_visible_browser_schema_is_the_bus_schema() {
+    let tool = BrowserTool::new(
+        std::sync::Arc::new(BrowserClient::new(std::sync::Arc::new(
+            crate::config::Config::default(),
+        ))),
+        3,
+    );
+    let schema = tinytools::Tool::parameters_schema(&tool);
+    assert_eq!(schema, tinycomputer_bus::browser::tool::parameters_schema());
+    assert_eq!(schema["required"], json!(["action"]));
+    assert_eq!(
+        schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .len(),
+        22
+    );
 }
 
 #[test]
@@ -147,7 +153,7 @@ async fn needs_approval_view_is_held_behind_a_token_and_cleared_by_other_states(
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let tool = BrowserTool::new(client, 3);
     let paused: TaskView = serde_json::from_value(json!({
         "id": "t-1",
         "status": {"state": "needs_approval", "action": "Send the message", "target": "Send"},
@@ -185,9 +191,9 @@ async fn confirm_pending_without_a_held_action_is_refused() {
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let tool = BrowserTool::new(client, 3);
     let error = tool
-        .run(&json!({"action":"confirm_pending","token":"x"}))
+        .run(&json!({"action":"confirm_pending","token":"x"}), None)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("No pending"), "{error}");
@@ -209,9 +215,9 @@ async fn task_without_allowed_websites_is_refused_before_the_module() {
         crate::config::Config::default(),
     )));
     if client.task_origins().is_empty() {
-        let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+        let tool = BrowserTool::new(client, 3);
         let error = tool
-            .run(&json!({"action":"task","goal":"Read the news"}))
+            .run(&json!({"action":"task","goal":"Read the news"}), None)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("allowed origin"), "{error}");
@@ -229,11 +235,11 @@ async fn a_second_turn_reuses_the_thread_session_and_close_removes_it() {
         key.clone(),
         session_entry(client.clone(), id.clone(), Instant::now()),
     );
-    let first = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    let first = BrowserTool::new(client.clone(), 3);
     *first.thread_key.lock().unwrap() = Some(key.clone());
     assert_eq!(first.session().await.unwrap(), id);
     drop(first);
-    let second = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let second = BrowserTool::new(client, 3);
     *second.thread_key.lock().unwrap() = Some(key.clone());
     assert_eq!(second.session().await.unwrap(), id);
     // The module is absent in this test; close still removes the thread entry
@@ -250,7 +256,7 @@ async fn evicted_session_is_not_reused_by_the_same_tool() {
     let key = format!("test:{}", uuid::Uuid::new_v4());
     let old = SessionId::new("evicted-browser");
     let replacement = SessionId::new("replacement-browser");
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    let tool = BrowserTool::new(client.clone(), 3);
     *tool.thread_key.lock().unwrap() = Some(key.clone());
     thread_sessions().lock().await.insert(
         key.clone(),
@@ -274,7 +280,7 @@ async fn stale_tool_close_preserves_a_newer_thread_session() {
         crate::config::Config::default(),
     )));
     let key = format!("test:{}", uuid::Uuid::new_v4());
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    let tool = BrowserTool::new(client.clone(), 3);
     *tool.thread_key.lock().unwrap() = Some(key.clone());
     *tool.session.lock().await = Some(SessionId::new("old-browser"));
     thread_sessions().lock().await.insert(
@@ -295,7 +301,7 @@ async fn stale_tool_close_preserves_a_newer_thread_session() {
     thread_sessions().lock().await.remove(&key);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn changed_browser_policy_retires_cached_session_for_same_thread() {
     let mut old_config = crate::config::Config::default();
     old_config.http_request.allowed_domains = vec!["example.com".into(), "other.test".into()];
@@ -321,7 +327,7 @@ async fn changed_browser_policy_retires_cached_session_for_same_thread() {
         key.clone(),
         session_entry(old_client, old_id.clone(), Instant::now()),
     );
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), new_client, 3);
+    let tool = BrowserTool::new(new_client, 3);
     *tool.thread_key.lock().unwrap() = Some(key.clone());
     *tool.session.lock().await = Some(old_id.clone());
     let result = tool.session().await;
@@ -406,9 +412,12 @@ async fn task_rejects_a_malformed_flow_before_the_module() {
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let tool = BrowserTool::new(client, 3);
     let error = tool
-        .run(&json!({"action":"task","goal":"Read the news","flow":{"steps":"not a list"}}))
+        .run(
+            &json!({"action":"task","goal":"Read the news","flow":{"steps":"not a list"}}),
+            None,
+        )
         .await
         .unwrap_err();
     assert!(error.to_string().contains("Invalid flow"), "{error}");
@@ -433,4 +442,92 @@ fn a_task_that_found_no_chrome_tells_the_agent_to_ask_for_its_path() {
         host_hint(&failed("the last three actions changed nothing")),
         None
     );
+    // TinyComputer 0.11's own words: the step's note names a missing Chrome,
+    // or a Chrome path that names no Chrome it can start.
+    assert_eq!(
+        host_hint(&failed(
+            "https://www.amazon.in could not be opened: BROWSER_UNAVAILABLE (browser unavailable: no Chrome or Chromium was found on this machine; give the path of the browser to use)"
+        )),
+        Some(crate::modules::browser::CHROME_NOT_FOUND_HINT)
+    );
+    assert_eq!(
+        host_hint(&failed(
+            "https://www.amazon.in could not be opened: BROWSER_UNAVAILABLE (browser unavailable: the browser binary given could not be started (Chrome exited before providing DevTools URL); check that its path names Chrome or Chromium)"
+        )),
+        Some(crate::modules::browser::CHROME_PATH_HINT)
+    );
+}
+
+struct ThreadOnly(&'static str);
+
+impl tinytools::ToolRunContext for ThreadOnly {
+    fn thread_id(&self) -> Option<&str> {
+        Some(self.0)
+    }
+}
+
+#[tokio::test]
+async fn two_agents_on_one_thread_get_distinct_browser_session_keys() {
+    use crate::core::runtime::agent_scope::test_agent_context;
+    use crate::core::runtime::{context::CoreContext, DomainSet};
+    let root = CoreContext::for_test(DomainSet::full(), None);
+    let client = Arc::new(BrowserClient::new(Arc::new(
+        crate::config::Config::default(),
+    )));
+    let key_under = |ctx: Arc<CoreContext>| {
+        let client = client.clone();
+        async move {
+            CoreContext::scope(ctx, async move {
+                let tool = BrowserTool::new(client, 3);
+                let _ = tool
+                    .execute_with_context(
+                        json!({}),
+                        ToolCallOptions::default(),
+                        Some(&ThreadOnly("browser-shared-thread")),
+                    )
+                    .await;
+                let key = tool.thread_key.lock().unwrap().clone();
+                drop(tool);
+                key
+            })
+            .await
+        }
+    };
+
+    let alpha = key_under(test_agent_context(&root, "alpha")).await;
+    let beta = key_under(test_agent_context(&root, "beta")).await;
+
+    assert!(alpha.is_some() && beta.is_some());
+    assert_ne!(alpha, beta);
+}
+
+#[tokio::test]
+async fn a_session_that_typed_a_password_stays_unpictured_for_the_next_tool() {
+    let client = Arc::new(BrowserClient::new(Arc::new(
+        crate::config::Config::default(),
+    )));
+    let key = format!("capture-ban-test:{}", uuid::Uuid::new_v4());
+    thread_sessions().lock().await.insert(
+        key.clone(),
+        session_entry(client.clone(), SessionId::new("pooled"), Instant::now()),
+    );
+
+    // The first tool types a keychain password: it and the pooled session
+    // are marked.
+    let first = BrowserTool::new(client.clone(), 3);
+    *first.thread_key.lock().unwrap() = Some(key.clone());
+    first.mark_password_typed().await;
+    assert!(thread_sessions().lock().await[&key].password_typed);
+
+    // A later turn's tool reuses the pooled session and inherits the ban.
+    let next = BrowserTool::new(client, 3);
+    *next.thread_key.lock().unwrap() = Some(key.clone());
+    assert!(!next
+        .password_typed
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(next.session().await.unwrap(), SessionId::new("pooled"));
+    assert!(next
+        .password_typed
+        .load(std::sync::atomic::Ordering::SeqCst));
+    thread_sessions().lock().await.remove(&key);
 }

@@ -1,10 +1,10 @@
 use super::*;
 use crate::config::Config;
 use crate::flows::store;
-use crate::flows::types::SuggestionStatus;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tinyflows_bus::catalog::SuggestionStatus;
 
 fn test_config(tmp: &TempDir) -> Arc<Config> {
     let config = Config {

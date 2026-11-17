@@ -65,9 +65,9 @@ What the rows say:
   `EmbeddingToolRanker`, one proxy round trip. Family-then-decide scores a
   few points higher on Composio at a second round trip and stays available
   through `JevRankerConfig::with_strategy`. Catalogue embeddings are computed
-  once per process (19 batches of 64 for this catalogue) and cached on disk
-  under `<workspace>/cache/tool_search_embeddings.json`, keyed by the
-  provider's signature; every later search embeds only the intent.
+  once per process (19 batches of 64 for this catalogue) and cached through
+  the configured storage backend, keyed by the provider's signature; every
+  later search embeds only the intent.
 - **No embedder, no Jev search.** When the configured embedding provider is
   `none`, `TinyHumansJevRanker` returns an error and the harness answers with
   its own BM25 catalogue — a Jev decision over a lexical shortlist would only
@@ -87,10 +87,12 @@ What the rows say:
 
 ## Reproducing
 
+`tool-search-bench` now lives in the `profile/` crate of [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks); run these from a checkout of that repository.
+
 ```text
-cargo run -p openhuman-cli --bin tool-search-bench -- --ranker all --misses
-cargo run -p openhuman-cli --bin tool-search-bench -- --ranker jev --family --embedding
-cargo run -p openhuman-cli --bin tool-search-bench -- --dump-catalogue
+cargo run --manifest-path profile/Cargo.toml --bin tool-search-bench -- --ranker all --misses
+cargo run --manifest-path profile/Cargo.toml --bin tool-search-bench -- --ranker jev --family --embedding
+cargo run --manifest-path profile/Cargo.toml --bin tool-search-bench -- --dump-catalogue
 ```
 
 `OPENHUMAN_BACKEND_API_KEY` (or `TYPESAFE_API_KEY`) selects the key; without

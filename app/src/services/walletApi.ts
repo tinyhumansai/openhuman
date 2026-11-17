@@ -27,6 +27,21 @@ export interface WalletAccount {
   chain: WalletChain;
   address: string;
   derivationPath: string;
+  /** Account index on the chain; absent for the primary (index 0) account. */
+  index?: number;
+  /** Label of a secondary account (`giveaway`). */
+  label?: string;
+}
+
+export interface WalletRecoveryMaterial {
+  /** Standard BIP-39 seed; consumed and cleared by the storage-key KDF. */
+  seed: Uint8Array;
+  accounts: WalletAccount[];
+}
+
+export interface GeneratedRecoveryPhrase {
+  phrase: string;
+  wordCount: number;
 }
 
 export interface WalletStatus {
@@ -37,6 +52,8 @@ export interface WalletStatus {
   source: WalletSetupSource | null;
   mnemonicWordCount: number | null;
   accounts: WalletAccount[];
+  /** Secondary accounts (index 1 and up), absent when there are none. */
+  additionalAccounts?: WalletAccount[];
   updatedAtMs: number | null;
 }
 
@@ -60,6 +77,35 @@ export const fetchWalletStatus = async (): Promise<WalletStatus> => {
     method: 'openhuman.wallet_status',
   });
   return response.result;
+};
+
+/** Generate recovery material through the confidentially called TinyWallet module. */
+export const generateRecoveryPhrase = async (): Promise<GeneratedRecoveryPhrase> => {
+  const response = await callCoreRpc<{ result: GeneratedRecoveryPhrase }>({
+    method: 'openhuman.wallet_generate_mnemonic',
+    params: { wordCount: 12 },
+  });
+  return response.result;
+};
+
+/** Validate an imported phrase in the TinyWallet module without local derivation. */
+export const validateRecoveryPhrase = async (phrase: string): Promise<boolean> => {
+  const response = await callCoreRpc<{ result: { valid: boolean } }>({
+    method: 'openhuman.wallet_validate_mnemonic',
+    params: { phrase },
+  });
+  return response.result.valid;
+};
+
+/** Derive the generic storage-key seed and public accounts through TinyWallet. */
+export const deriveRecoveryMaterial = async (phrase: string): Promise<WalletRecoveryMaterial> => {
+  const response = await callCoreRpc<{ result: { seed: number[]; accounts: WalletAccount[] } }>({
+    method: 'openhuman.wallet_derive_recovery_material',
+    params: { phrase },
+  });
+  const seed = Uint8Array.from(response.result.seed);
+  response.result.seed.fill(0);
+  return { seed, accounts: response.result.accounts };
 };
 
 export const setupLocalWallet = async (params: SetupWalletParams): Promise<WalletStatus> => {

@@ -76,6 +76,7 @@ pub struct SessionState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[allow(clippy::large_enum_variant)] // Keep the public event's state inline.
 pub enum SessionEvent {
     /// The credential or the current user changed.
     Changed(SessionState),
@@ -166,10 +167,17 @@ impl<L: CoreLink> SessionManager<L> {
         credential: &Credential,
         user_id: Option<&str>,
         user: Option<&Value>,
+        issuing_backend: Option<&str>,
     ) -> Result<CoreAuthState, SessionError> {
-        let state = link::push_credential(self.link.as_ref(), credential, user_id, user)
-            .await
-            .map_err(SessionError::Core)?;
+        let state = link::push_bound_credential(
+            self.link.as_ref(),
+            credential,
+            user_id,
+            user,
+            issuing_backend,
+        )
+        .await
+        .map_err(SessionError::Core)?;
         identity::set_user_id(state.user_id.clone());
         Ok(state)
     }
@@ -186,11 +194,47 @@ impl<L: CoreLink> SessionManager<L> {
         login_token: &str,
     ) -> Result<SessionState, SessionError> {
         let client = self.client().await?;
+        self.login_with_client(login_token, client).await
+    }
+
+    /// Complete a browser callback only against its original backend.
+    /// The same captured client exchanges and validates the credential.
+    pub async fn login_with_token_for_backend(
+        self: &Arc<Self>,
+        login_token: &str,
+        expected_backend: &str,
+    ) -> Result<SessionState, SessionError> {
+        let client = self.client_for_expected_backend(expected_backend).await?;
+        self.login_with_client(login_token, client).await
+    }
+
+    async fn client_for_expected_backend(
+        &self,
+        expected_backend: &str,
+    ) -> Result<Arc<SessionClient>, SessionError> {
+        let expected = crate::session::client::normalize_backend_origin(expected_backend)
+            .map_err(|_| SessionError::Backend("invalid expected login backend".into()))?;
+        let client = self.client().await?;
+        if client.base_url() != expected {
+            return Err(SessionError::Backend(
+                "SESSION_BACKEND_MISMATCH: the backend changed during sign-in; start sign-in again"
+                    .into(),
+            ));
+        }
+        Ok(client)
+    }
+
+    async fn login_with_client(
+        self: &Arc<Self>,
+        login_token: &str,
+        client: Arc<SessionClient>,
+    ) -> Result<SessionState, SessionError> {
         let jwt = client
             .consume_login_token(login_token)
             .await
             .map_err(|e| SessionError::ConsumeFailed(e.to_string()))?;
-        self.store_session_token(&jwt, None).await
+        self.store_session_token_with_client(&jwt, None, Some(client))
+            .await
     }
 
     /// Store a session JWT (or a local offline token) after validating it.
@@ -207,6 +251,29 @@ impl<L: CoreLink> SessionManager<L> {
         token: &str,
         user: Option<Value>,
     ) -> Result<SessionState, SessionError> {
+        self.store_session_token_with_client(token, user, None)
+            .await
+    }
+
+    /// Validate a browser callback against its expected issuer before sending
+    /// any credential. Configuration changes cannot change the captured client.
+    pub async fn store_session_token_for_backend(
+        self: &Arc<Self>,
+        token: &str,
+        user: Option<Value>,
+        expected_backend: &str,
+    ) -> Result<SessionState, SessionError> {
+        let client = self.client_for_expected_backend(expected_backend).await?;
+        self.store_session_token_with_client(token, user, Some(client))
+            .await
+    }
+
+    async fn store_session_token_with_client(
+        self: &Arc<Self>,
+        token: &str,
+        user: Option<Value>,
+        client: Option<Arc<SessionClient>>,
+    ) -> Result<SessionState, SessionError> {
         let guard = self.mutation.lock().await;
         let credential = Credential::classify(token);
         if credential.secret.is_empty() {
@@ -221,7 +288,7 @@ impl<L: CoreLink> SessionManager<L> {
                 ));
             }
             self.cancel_revalidation();
-            self.push(&credential, None, user.as_ref()).await?;
+            self.push(&credential, None, user.as_ref(), None).await?;
             self.cache.forget();
             drop(guard);
             return self.changed().await;
@@ -234,7 +301,10 @@ impl<L: CoreLink> SessionManager<L> {
             return Err(SessionError::Expired);
         }
 
-        let client = self.client().await?;
+        let client = match client {
+            Some(client) => client,
+            None => self.client().await?,
+        };
         match client.validate_for_store(&credential).await {
             Ok(me) => {
                 let user_id = user_id_from_profile_payload(&me)
@@ -251,8 +321,13 @@ impl<L: CoreLink> SessionManager<L> {
                 // provisional with nothing to confirm it, possibly
                 // indefinitely for an idle TUI or host (#6318 review
                 // follow-up).
-                self.push(&credential, user_id.as_deref(), Some(&me))
-                    .await?;
+                self.push(
+                    &credential,
+                    user_id.as_deref(),
+                    Some(&me),
+                    Some(client.base_url()),
+                )
+                .await?;
                 self.cancel_revalidation();
                 self.cache.seed(&client, &credential, me);
                 drop(guard);
@@ -280,10 +355,15 @@ impl<L: CoreLink> SessionManager<L> {
                 );
                 let pending = json!({ PENDING_BACKEND_VALIDATION_FIELD: true });
                 self.cancel_revalidation();
-                self.push(&credential, Some(&user_id), Some(&pending))
-                    .await?;
+                self.push(
+                    &credential,
+                    Some(&user_id),
+                    Some(&pending),
+                    Some(client.base_url()),
+                )
+                .await?;
                 self.cache.forget();
-                self.spawn_revalidation(credential);
+                self.spawn_revalidation(credential, client.base_url().to_string());
                 drop(guard);
                 self.changed().await
             }
@@ -298,12 +378,12 @@ impl<L: CoreLink> SessionManager<L> {
             return Err(SessionError::Invalid("api key is required".to_string()));
         }
         self.cancel_revalidation();
-        self.push(&credential, None, None).await?;
+        self.push(&credential, None, None, None).await?;
         drop(guard);
         self.changed().await
     }
 
-    fn spawn_revalidation(self: &Arc<Self>, credential: Credential) {
+    fn spawn_revalidation(self: &Arc<Self>, credential: Credential, issuing_backend: String) {
         let manager = Arc::clone(self);
         let handle = tokio::spawn(async move {
             let mut delay = REVALIDATION_INITIAL_DELAY;
@@ -313,6 +393,11 @@ impl<L: CoreLink> SessionManager<L> {
                     delay = (delay * 2).min(REVALIDATION_MAX_DELAY);
                     continue;
                 };
+                if client.base_url() != issuing_backend {
+                    // A pending credential must never be tested against a
+                    // deployment other than the one it was submitted to.
+                    return;
+                }
                 // The core is the store of record; if it no longer holds this
                 // token (logout, or a newer login), this loop is stale.
                 match link::core_session_token(manager.link.as_ref()).await {
@@ -345,7 +430,12 @@ impl<L: CoreLink> SessionManager<L> {
                         // forever despite a confirmed backend answer (#6318
                         // review follow-up).
                         match manager
-                            .push(&credential, user_id.as_deref(), Some(&me))
+                            .push(
+                                &credential,
+                                user_id.as_deref(),
+                                Some(&me),
+                                Some(client.base_url()),
+                            )
                             .await
                         {
                             Ok(_) => {
@@ -502,6 +592,14 @@ impl<L: CoreLink> SessionManager<L> {
         if core.kind() != Some(CredentialKind::Session) {
             return Ok(stored());
         }
+        let client = self.client().await?;
+        if core
+            .issuing_backend
+            .as_deref()
+            .is_some_and(|issuing| issuing != client.base_url())
+        {
+            return Err(SessionError::Backend("SESSION_BACKEND_MISMATCH: stored session belongs to a different backend; restore its backend or sign in again".into()));
+        }
         let Some(secret) = link::core_session_token(self.link.as_ref())
             .await
             .map_err(SessionError::Core)?
@@ -509,7 +607,6 @@ impl<L: CoreLink> SessionManager<L> {
             return Ok(stored());
         };
         let credential = Credential::session(secret);
-        let client = self.client().await?;
         match self.cache.get_or_refresh(&client, &credential, force).await {
             Ok(cached) => {
                 if cached.user.is_some() && user_is_pending(core.user.as_ref()) {
@@ -519,7 +616,12 @@ impl<L: CoreLink> SessionManager<L> {
                     if self.core_still_holds(&credential.secret).await {
                         let user_id = cached.user.as_ref().and_then(user_id_from_profile_payload);
                         if let Err(e) = self
-                            .push(&credential, user_id.as_deref(), cached.user.as_ref())
+                            .push(
+                                &credential,
+                                user_id.as_deref(),
+                                cached.user.as_ref(),
+                                Some(client.base_url()),
+                            )
                             .await
                         {
                             log::warn!(

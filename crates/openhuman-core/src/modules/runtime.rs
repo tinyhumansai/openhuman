@@ -1,294 +1,236 @@
-//! Calling the `tinyruntime` module: resolving a language runtime and running
-//! code on it, over the bus.
+//! The process-wide module runtime and the host callbacks it serves.
 //!
-//! Everything the core used to own about managed toolchains — probing the host
-//! for a compatible interpreter, downloading a distribution, verifying its
-//! digest, unpacking it, keeping it across restarts, and pooling warm worker
-//! processes in front of it — lives in that module now. What is left here is the
-//! host half of four calls.
+//! The runtime itself (a dedicated thread with its own broker, connection and
+//! loader) is `tinybus::module::ModuleRuntime`; this file only decides when it
+//! starts and which host objects are served on its bus before any module can
+//! load.
 //!
-//! # Three modules, one call
+//! # Why modules get their own bus
 //!
-//! `tinyruntime` is a router and knows no languages on its own; the language
-//! knowledge is in `tinyruntime-nodejs` and `tinyruntime-python`. So a call for
-//! JavaScript needs two modules loaded, not one, and [`ensure_language`] loads
-//! both. Load order does not matter — the router contacts providers per call
-//! rather than at setup — but a router without its provider reports the language
-//! unavailable, which is a confusing way to discover a missing module.
+//! The core already runs a bus — `core::bus::BUS`, a `OnceBus<DomainEvent>` — but
+//! it cannot be reused here. `OnceBus::init_in_process` constructs its `Broker`
+//! internally and never hands it out, and the module host needs a `Broker` to
+//! attach loaded modules to. So modules run on a second in-process broker, and a
+//! module on it can serve requests but cannot publish a `DomainEvent`.
 //!
-//! # Configuration travels with the call
+//! # What loading a module means
 //!
-//! The module holds none of its own. Every request carries the version pin, the
-//! cache directory, and the pool tuning it should be served under, which is why
-//! [`settings_for`] reads this host's config on each call rather than at load.
-//! A user who changes `node.version` sees it take effect on the next run instead
-//! of on the next restart.
+//! `dlopen` runs code before anything can inspect it. tinybus's ABI descriptor,
+//! manifest and digest gates decide whether a module is *admitted*, not whether
+//! it is *safe*: once loaded it can read and write this process's memory, and a
+//! native fault in it takes the core down. tinybus also never unloads a library,
+//! so a module that fails is failed until restart, which is why the resolver
+//! caches failures instead of retrying (see [`super::ops`]).
 //!
-//! # Deadlines belong to the caller
+//! Admission is deliberately permissive, tinybus's default. Strict mode also
+//! refuses a module whose rustc version string differs from the host's, and
+//! released artifacts are built by CI on whatever toolchain that runner had, so
+//! strict mode refused the real published artifact outright. Everything that
+//! protects the address space is still enforced: the ABI revision, the
+//! descriptor layout, the target triple, pointer width, endianness, feature bits
+//! and the refusal of a `panic=abort` module.
 //!
-//! Nothing here imposes one. An install is a multi-hundred-megabyte download and
-//! a caller that wants to bound it knows what it is willing to wait; a deadline
-//! chosen here would make the effective limit the smaller of two numbers nobody
-//! picked together. `Execute` carries its own per-job deadline in the request,
-//! which the worker honours and reports back.
+//! Everything here is created once and lives for the process. There is no
+//! shutdown path because there is nothing a shutdown could reclaim.
 
-use tinyruntime_bus::{
-    names, ExecRequest, ExecResponse, Language, LanguagesResponse, PoolSettings, PoolStatsResponse,
-    ResolveRequest, ResolveResponse, ResolvedRuntime, RuntimeSettings,
-};
+use std::sync::OnceLock;
+use std::time::Duration;
 
-use super::{host, ops, registry};
-use crate::config::Config;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tinybus::module::{ModuleRuntime, RuntimeNames, RuntimeOptions, SearchPathConfig};
 
-/// Registry id of the router.
-pub const MODULE_ID: &str = "tinyruntime";
+/// The module bus, built once on first use.
+static RUNTIME: OnceLock<Result<ModuleRuntime, String>> = OnceLock::new();
 
-/// Registry id of the Node.js provider.
-pub const NODEJS_PROVIDER_ID: &str = "tinyruntime-nodejs";
+/// Host callbacks installed on the runtime's bus, once.
+static CALLBACKS: tokio::sync::OnceCell<Result<(), String>> = tokio::sync::OnceCell::const_new();
 
-/// Registry id of the Python provider.
-pub const PYTHON_PROVIDER_ID: &str = "tinyruntime-python";
-
-/// Why a runtime call did not produce what was asked for.
-///
-/// Three variants rather than one string because callers act on them
-/// differently: a missing module disables a feature, a bad request is worth
-/// reporting to whoever made it, and a failure mid-flight is worth retrying or
-/// surfacing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeCallError {
-    /// The module is not loaded and cannot be: no artifact for this host,
-    /// downloads off, disabled in config, or a load that already failed in this
-    /// process.
-    Unavailable(String),
-    /// The request was rejected — an unknown language, a version that is not one,
-    /// a language the host has disabled.
-    InvalidRequest(String),
-    /// Resolution, installation, or execution failed.
-    Failed(String),
-}
-
-impl std::fmt::Display for RuntimeCallError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unavailable(message) | Self::InvalidRequest(message) | Self::Failed(message) => {
-                f.write_str(message)
-            }
-        }
-    }
-}
-
-impl std::error::Error for RuntimeCallError {}
-
-/// The registry id of the provider module serving `language`, if this build
-/// ships one.
-///
-/// A language with no provider record is not an error here: the router accepts
-/// any language its own configuration routes, and a host may have put a
-/// third-party provider on the module search path.
-#[must_use]
-pub fn provider_id(language: &Language) -> Option<&'static str> {
-    match language.as_str() {
-        tinyruntime_bus::NODEJS => Some(NODEJS_PROVIDER_ID),
-        tinyruntime_bus::PYTHON => Some(PYTHON_PROVIDER_ID),
-        _ => None,
-    }
-}
-
-/// Load the router and, when this build ships one, `language`'s provider.
+/// The process-wide module runtime, standing it up on first use.
 ///
 /// # Errors
 ///
-/// [`RuntimeCallError::Unavailable`] naming which of the two could not be
-/// loaded.
-pub async fn ensure_language(config: &Config, language: &Language) -> Result<(), RuntimeCallError> {
-    ops::ensure_loaded(config, MODULE_ID)
+/// Returns an error if the broker's in-memory transport cannot be connected, or
+/// a host callback cannot be served. The outcome is cached: a runtime that
+/// failed to start does not start on a later call.
+pub async fn runtime() -> tinybus::Result<&'static ModuleRuntime> {
+    let runtime = runtime_now()?;
+    CALLBACKS
+        .get_or_init(|| async {
+            // On the module runtime, not the caller's: the callbacks serve
+            // objects that must outlive whichever runtime asked first.
+            match runtime.spawn(install_callbacks(runtime)).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(error) => Err(format!("the module callbacks did not finish: {error}")),
+            }
+        })
         .await
-        .map_err(RuntimeCallError::Unavailable)?;
-    if let Some(provider) = provider_id(language) {
-        ops::ensure_loaded(config, provider)
-            .await
-            .map_err(RuntimeCallError::Unavailable)?;
+        .as_ref()
+        .map_err(|error| tinybus::Error::Transport(error.clone()))?;
+    Ok(runtime)
+}
+
+/// Schedule host lifecycle cleanup without loading a module or installing callbacks.
+pub(crate) fn spawn_cleanup<F>(future: F) -> tinybus::Result<tokio::task::JoinHandle<F::Output>>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    Ok(runtime_now()?.spawn(future))
+}
+
+/// Run `future` on the module bus's own executor, starting the bus if needed
+/// but without awaiting its host callbacks. The task outlives whichever caller
+/// spawned it; work that needs the callbacks awaits [`runtime`] inside it.
+pub(crate) fn spawn_on_bus<F>(future: F) -> tinybus::Result<tokio::task::JoinHandle<F::Output>>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    Ok(runtime_now()?.spawn(future))
+}
+
+fn runtime_now() -> tinybus::Result<&'static ModuleRuntime> {
+    let started = RUNTIME.get_or_init(|| {
+        let names = RuntimeNames {
+            thread: "openhuman-module-bus".to_string(),
+            worker: "openhuman-module-worker".to_string(),
+        };
+        let runtime = ModuleRuntime::start_with_options(
+            &names,
+            None,
+            RuntimeOptions {
+                thread_stack_size: Some(crate::core::runtime::AGENT_WORKER_STACK_BYTES),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        runtime
+            .host()
+            .set_search_path_config(Some(SearchPathConfig::new(
+                "OPENHUMAN_MODULE_PATH",
+                "openhuman/modules",
+            )));
+        Ok(runtime)
+    });
+    let runtime = started
+        .as_ref()
+        .map_err(|error| tinybus::Error::Transport(error.clone()))?;
+    Ok(runtime)
+}
+
+/// Serve the host objects modules call back into, before any module loads.
+async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<()> {
+    let connection = runtime.connection();
+
+    #[cfg(feature = "security-module")]
+    super::security::callbacks::install(connection).await?;
+    #[cfg(all(feature = "security-module", feature = "modules"))]
+    super::browser_egress_host::install(connection).await?;
+
+    // The summary callback exists for the module alone; with the component off
+    // the module never loads, so nothing would call it.
+    let host = crate::core::runtime::DispatchCtx::host_default();
+    if host.components().juice {
+        super::tokenjuice_host::install(connection).await?;
+    } else {
+        tracing::debug!("[modules] juice component off; MlHost not served");
+    }
+    super::site_memory_host::install(connection).await?;
+    super::storage_host::install(connection, runtime.host()).await?;
+    #[cfg(feature = "web3")]
+    super::wallet_host::install(connection).await?;
+    // Deliver / ClassifySalience for the inbound event queues; with the
+    // component off the module never loads, so nothing would call them.
+    #[cfg(feature = "inbound-queues")]
+    {
+        if host.components().eventqueues {
+            crate::inbound::host::install(connection).await?;
+        } else {
+            tracing::debug!("[modules] eventqueues component off; inbound Host not served");
+        }
     }
     Ok(())
 }
 
-/// Resolve a runtime for `language`, installing one when `install` allows it.
+/// Whether the module runtime has been stood up.
 ///
-/// Returns `None` when `install` is `false` and nothing is provisioned yet —
-/// which is the whole point of a non-installing probe: it answers "is this
-/// ready?" without committing the caller to a download.
-///
-/// # Errors
-///
-/// [`RuntimeCallError`] describing whether the module, the request, or the
-/// resolution was at fault.
-pub async fn resolve(
-    config: &Config,
-    language: &Language,
-    install: bool,
-) -> Result<Option<ResolvedRuntime>, RuntimeCallError> {
-    ensure_language(config, language).await?;
-    let settings = settings_for(config, language);
-    let request = if install {
-        ResolveRequest::new(language.clone(), settings)
-    } else {
-        ResolveRequest::probe(language.clone(), settings)
-    };
-
-    let response: ResolveResponse = call(names::methods::RESOLVE, (request,)).await?;
-    Ok(response.runtime)
-}
-
-/// Run `code` on `language`, resolving and provisioning it first.
-///
-/// # Errors
-///
-/// [`RuntimeCallError`]. Note that a job which *ran* and threw is not an error:
-/// it comes back as an [`ExecResponse`] with a non-zero exit code, because that
-/// is output the caller wants rather than a failure of this call.
-pub async fn execute(
-    config: &Config,
-    language: &Language,
-    code: impl Into<String>,
-    cwd: Option<String>,
-    timeout: Option<std::time::Duration>,
-) -> Result<ExecResponse, RuntimeCallError> {
-    ensure_language(config, language).await?;
-
-    let mut request = ExecRequest::new(language.clone(), settings_for(config, language), code);
-    request.pool = pool_settings_for(config, language);
-    request.cwd = cwd;
-    request.timeout_ms =
-        timeout.map(|budget| u64::try_from(budget.as_millis()).unwrap_or(u64::MAX));
-
-    call(names::methods::EXECUTE, (request,)).await
-}
-
-/// Every language the router can route to, and whether it currently can.
-///
-/// Loads the router but not the providers: the point of this call is to find out
-/// which providers are there, and loading them first would make the answer
-/// always yes.
-///
-/// # Errors
-///
-/// [`RuntimeCallError::Unavailable`] when the router itself cannot be loaded.
-pub async fn languages(config: &Config) -> Result<LanguagesResponse, RuntimeCallError> {
-    ops::ensure_loaded(config, MODULE_ID)
-        .await
-        .map_err(RuntimeCallError::Unavailable)?;
-    call(names::methods::LANGUAGES, ()).await
-}
-
-/// Every live worker pool's counters.
-///
-/// # Errors
-///
-/// [`RuntimeCallError::Unavailable`] when the router cannot be loaded.
-pub async fn pool_stats(config: &Config) -> Result<PoolStatsResponse, RuntimeCallError> {
-    ops::ensure_loaded(config, MODULE_ID)
-        .await
-        .map_err(RuntimeCallError::Unavailable)?;
-    call(names::methods::POOL_STATS, ()).await
-}
-
-/// The settings this host wants `language` served under.
-///
-/// Read per call rather than cached, because the module holds no configuration
-/// of its own: a user who edits a version pin sees it on the next run.
+/// Lets status reporting answer without starting a broker as a side effect of
+/// being asked a question.
 #[must_use]
-pub fn settings_for(config: &Config, language: &Language) -> RuntimeSettings {
-    match language.as_str() {
-        tinyruntime_bus::PYTHON => {
-            let python = &config.runtime_python;
-            let mut settings = RuntimeSettings::new(python.minimum_version.clone());
-            settings.enabled = python.enabled;
-            settings.prefer_system = python.prefer_system;
-            settings.maximum_version = python.maximum_version.clone();
-            settings.cache_dir = python.cache_dir.clone();
-            settings.release_tag = python.managed_release_tag.clone();
-            settings.preferred_command = python.preferred_command.clone();
-            settings
-        }
-        // Node.js is the default rather than a match arm of its own: a language
-        // this build ships no configuration block for still gets a usable
-        // request, and the router refuses it by name if nothing routes it.
-        _ => {
-            let node = &config.node;
-            let mut settings = RuntimeSettings::new(node.version.clone());
-            settings.enabled = node.enabled;
-            settings.prefer_system = node.prefer_system;
-            settings.cache_dir = node.cache_dir.clone();
-            settings
-        }
-    }
+pub fn is_started() -> bool {
+    RUNTIME.get().is_some_and(Result::is_ok)
 }
 
-/// The pool tuning this host wants for `language`.
-///
-/// Python defaults off where Node defaults on, and that asymmetry is real rather
-/// than an oversight: a pooled Node job runs in its own worker thread with a
-/// fresh module graph, while a pooled Python job shares the interpreter with
-/// every other job on that worker. Opting into the second is a decision.
-#[must_use]
-pub fn pool_settings_for(config: &Config, language: &Language) -> PoolSettings {
-    let pool = &config.runtime_pool;
-    let (lang_config, default_enabled) = match language.as_str() {
-        tinyruntime_bus::PYTHON => (&pool.python, false),
-        _ => (&pool.node, true),
-    };
-
-    let mut settings = PoolSettings::default();
-    settings.enabled = pool.enabled && lang_config.is_enabled(default_enabled);
-    settings.max_workers = lang_config.effective_max_workers();
-    settings.idle_ttl_secs = lang_config.idle_ttl_secs;
-    settings.recycle_after_jobs = lang_config.recycle_after_jobs;
-    settings.max_queue_depth = lang_config.effective_max_queue_depth();
-    settings
+/// Returns the current runtime only when it was already started and its host
+/// callbacks are serving. Unlike [`runtime`], this accessor never starts a
+/// runtime or installs callbacks.
+pub(crate) fn existing_runtime() -> Option<&'static ModuleRuntime> {
+    let runtime = RUNTIME.get()?.as_ref().ok()?;
+    CALLBACKS.get()?.as_ref().ok()?;
+    Some(runtime)
 }
 
-/// Make one call on the router's object.
-async fn call<A, R>(member: &str, arguments: A) -> Result<R, RuntimeCallError>
+/// A safe, sanitized result for a call through the already-serving module bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExistingModuleCallError {
+    Unavailable,
+    Failed,
+}
+
+/// Call a read-only capability on a module that is already ready. This never
+/// starts the module runtime, loads a module, or retries through a ModuleClient.
+pub(crate) async fn call_if_ready<Request, Reply>(
+    id: &str,
+    member: &str,
+    request: Request,
+    timeout: Duration,
+) -> Result<Option<Reply>, ExistingModuleCallError>
 where
-    A: serde::Serialize,
-    R: serde::de::DeserializeOwned,
+    Request: Serialize + Send,
+    Reply: DeserializeOwned,
 {
-    let record = registry::find(MODULE_ID)
-        .ok_or_else(|| RuntimeCallError::Unavailable(format!("unknown module '{MODULE_ID}'")))?;
-    let runtime = host::runtime()
-        .await
-        .map_err(|_| RuntimeCallError::Unavailable("the module bus is not running".to_string()))?;
+    if super::ops::state_of(id) != super::types::ModuleState::Ready {
+        return Ok(None);
+    }
+    let Some(runtime) = existing_runtime() else {
+        return Ok(None);
+    };
+    let record = super::registry::find(id).ok_or(ExistingModuleCallError::Unavailable)?;
     let proxy = runtime
         .proxy(record.bus_name, record.object_path)
-        .map_err(|error| RuntimeCallError::Failed(error.to_string()))?;
-
-    proxy
-        .call(member, arguments)
-        .await
-        .map_err(|error| classify(&error))
+        .map_err(|_| ExistingModuleCallError::Unavailable)?
+        .with_timeout(timeout);
+    match tokio::time::timeout(
+        timeout,
+        proxy.call_confidential::<Reply>(member, (request,)),
+    )
+    .await
+    {
+        Ok(Ok(reply)) => Ok(Some(reply)),
+        Ok(Err(_)) | Err(_) => Err(ExistingModuleCallError::Failed),
+    }
 }
 
-/// Map a bus failure onto the shape a caller can act on.
-///
-/// The router's own errors arrive as messages rather than distinct wire names,
-/// so the classification is on the text it produces — which is stable, because
-/// those messages are the module's public contract with a host that renders
-/// them. An unrecognised failure is [`RuntimeCallError::Failed`] rather than
-/// `InvalidRequest`: telling a caller its request was wrong when it was not
-/// sends it into a pointless rewrite.
-fn classify(error: &tinybus::Error) -> RuntimeCallError {
-    let message = error.to_string();
-    if message.contains("ModuleUnavailable") || error.wire_name().contains("ModuleUnavailable") {
-        return RuntimeCallError::Unavailable(message);
-    }
-    if message.contains("no runtime provider is registered")
-        || message.contains("named no language")
-        || message.contains("is disabled")
-    {
-        return RuntimeCallError::InvalidRequest(message);
-    }
-    RuntimeCallError::Failed(message)
+/// Whether `id` is admitted and currently serving on an already-started
+/// module runtime. This is a read-only snapshot; it never starts the runtime.
+#[must_use]
+pub fn is_module_serving(id: &str) -> bool {
+    let Some(record) = crate::modules::registry::find(id) else {
+        return false;
+    };
+    let Some(Ok(runtime)) = RUNTIME.get() else {
+        return false;
+    };
+    runtime.host().list().into_iter().any(|module| {
+        module.manifest.bus_name.as_str() == record.bus_name
+            && module.manifest.object_path.as_str() == record.object_path
+            && module.enabled
+            && matches!(
+                module.state,
+                tinybus::module::ModuleState::Ready | tinybus::module::ModuleState::Serving
+            )
+    })
 }
 
 #[cfg(test)]

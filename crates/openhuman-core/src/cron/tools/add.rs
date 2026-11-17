@@ -1,84 +1,17 @@
 use crate::config::Config;
-use crate::cron::{self, DeliveryConfig, JobType, Schedule, SessionTarget};
+use crate::cron::job_builder::{create_agent_job, AgentJobInput};
+use crate::cron::origin::{current_job_origin, current_turn_may_skip_approval};
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
-
-/// Look up the configured `allowed_users` list for a channel by name.
-/// Returns `None` if the channel is unknown or unconfigured. An empty
-/// `Some(&[])` means the channel is configured but accepts any sender.
-fn allowed_users_for_channel<'a>(config: &'a Config, channel: &str) -> Option<&'a [String]> {
-    let ch = channel.trim().to_ascii_lowercase();
-    let cc = &config.channels_config;
-    match ch.as_str() {
-        "telegram" => cc.telegram.as_ref().map(|c| c.allowed_users.as_slice()),
-        "discord" => cc.discord.as_ref().map(|c| c.allowed_users.as_slice()),
-        "slack" => cc.slack.as_ref().map(|c| c.allowed_users.as_slice()),
-        "mattermost" => cc.mattermost.as_ref().map(|c| c.allowed_users.as_slice()),
-        "matrix" => cc.matrix.as_ref().map(|c| c.allowed_users.as_slice()),
-        "irc" => cc.irc.as_ref().map(|c| c.allowed_users.as_slice()),
-        "lark" => cc.lark.as_ref().map(|c| c.allowed_users.as_slice()),
-        "dingtalk" => cc.dingtalk.as_ref().map(|c| c.allowed_users.as_slice()),
-        "qq" => cc.qq.as_ref().map(|c| c.allowed_users.as_slice()),
-        _ => None,
-    }
-}
-
-/// Validate a `DeliveryConfig` at cron-create time.
-///
-/// For `mode: "announce"` we require both `channel` and `to`, and we
-/// reject `to` values that are not in the channel's configured
-/// `allowed_users` list. This blocks an LLM (or RPC caller) from
-/// scheduling a cron whose output gets sent to an arbitrary chat id —
-/// see the "no cross-tenant `to`" acceptance criterion in #928.
-///
-/// `proactive` and `none` modes are not channel-targeted and are not
-/// validated here.
-fn validate_delivery(config: &Config, delivery: &DeliveryConfig) -> Result<(), String> {
-    let mode = delivery.mode.trim().to_ascii_lowercase();
-    if mode != "announce" {
-        return Ok(());
-    }
-
-    let channel = delivery
-        .channel
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "delivery.channel is required for announce mode".to_string())?;
-    let to = delivery
-        .to
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "delivery.to is required for announce mode".to_string())?;
-
-    // "web" announce is a degenerate case (web has no allowed_users
-    // gate). Other unknown channels (e.g. "email") fall through to the
-    // generic reject.
-    if channel.eq_ignore_ascii_case("web") {
-        return Ok(());
-    }
-
-    match allowed_users_for_channel(config, channel) {
-        Some([]) => Ok(()),
-        Some(list) => {
-            if list.iter().any(|u| u == to) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "delivery target '{to}' on channel '{channel}' is not in allowed_users \
-                     for that channel; refusing to schedule cross-tenant delivery"
-                ))
-            }
-        }
-        None => Err(format!(
-            "delivery channel '{channel}' is not configured; cannot validate target"
-        )),
-    }
-}
+use tinyagents_harness_tools::static_schema;
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
+use {
+    crate::cron, tinyflows_bus::schedule::types::DeliveryConfig,
+    tinyflows_bus::schedule::types::JobType, tinyflows_bus::schedule::types::Schedule,
+    tinyflows_bus::schedule::types::SessionTarget,
+};
 
 pub struct CronAddTool {
     config: Arc<Config>,
@@ -93,102 +26,17 @@ impl CronAddTool {
 
 #[async_trait]
 impl Tool for CronAddTool {
-    /// Superseded by the `cron` tool, which dispatches every scheduler
-    /// operation on one `action` field. Kept registered and dispatchable so a
-    /// replayed transcript or a saved skill naming `cron_*` keeps working;
-    /// hidden from the wire so six schemas do not ship where one does.
-    fn exposure(&self) -> ToolExposure {
-        ToolExposure::Hidden
-    }
-
     fn name(&self) -> &str {
         "cron_add"
     }
 
     fn description(&self) -> &str {
-        "Create a scheduled cron job (shell or agent) with cron/at/every schedules. \
-         Standardizes on device-local timezone unless 'tz' is set. The scheduler polls on an \
-         interval (default 15s, minimum 5s) and does not 'catch up' missed runs.\n\
-         Delivery: agent jobs default to `mode: \"proactive\"` which lands in the in-app/web \
-         stream. When the current turn includes a `[Channel context]` block (e.g. Telegram, \
-         Discord, Slack), set `delivery` to `{ \"mode\": \"announce\", \"channel\": <channel>, \
-         \"to\": <reply target from the context block> }` so the reminder is delivered back to \
-         the same chat instead of the desktop. Only use the default proactive mode when the \
-         user explicitly asks for an in-app notification or when no channel context is present.\n\
-         Agent jobs must be scheduled at least 5 minutes apart; a tighter cron expression or \
-         every_ms is rejected."
+        "Schedule a job: once (`at`) or repeating (`cron`, `every`; agent jobs \
+         at least 5 minutes apart)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "description": "Short human-readable name for the job (e.g. 'drink_water_reminder'). Always provide a name." },
-                "schedule": {
-                    "description": "Schedule: cron expression, one-shot at time, or fixed interval.",
-                    "oneOf": [
-                        {
-                            "type": "object",
-                            "description": "Repeating cron schedule. 'tz' is an IANA timezone (e.g. 'America/Los_Angeles'); defaults to device-local timezone.",
-                            "properties": {
-                                "kind": { "type": "string", "const": "cron" },
-                                "expr": { "type": "string", "description": "Cron expression (5, 6, or 7 fields). For agent jobs, consecutive runs must be at least 5 minutes apart." },
-                                "tz": { "type": "string", "description": "Optional IANA timezone name" },
-                                "active_hours": {
-                                    "type": "object",
-                                    "description": "Optional: only run during these local hours",
-                                    "properties": {
-                                        "start": { "type": "string", "description": "Start time HH:MM (e.g. '09:00')" },
-                                        "end": { "type": "string", "description": "End time HH:MM (e.g. '17:00')" }
-                                    },
-                                    "required": ["start", "end"],
-                                    "additionalProperties": false
-                                }
-                            },
-                            "required": ["kind", "expr"],
-                            "additionalProperties": false
-                        },
-                        {
-                            "type": "object",
-                            "description": "One-shot job that runs once at a specific UTC instant.",
-                            "properties": {
-                                "kind": { "type": "string", "const": "at" },
-                                "at": { "type": "string", "description": "ISO-8601 UTC timestamp" }
-                            },
-                            "required": ["kind", "at"],
-                            "additionalProperties": false
-                        },
-                        {
-                            "type": "object",
-                            "description": "Repeating job that fires every N milliseconds.",
-                            "properties": {
-                                "kind": { "type": "string", "const": "every" },
-                                "every_ms": { "type": "integer", "description": "Interval in milliseconds (must be > 0; at least 300000 = 5 minutes for agent jobs)" }
-                            },
-                            "required": ["kind", "every_ms"],
-                            "additionalProperties": false
-                        }
-                    ]
-                },
-                "job_type": { "type": "string", "enum": ["shell", "agent"] },
-                "command": { "type": "string" },
-                "prompt": { "type": "string" },
-                "session_target": { "type": "string", "enum": ["isolated", "main"] },
-                "model": { "type": "string" },
-                "delivery": {
-                    "type": "object",
-                    "description": "Delivery config. Defaults to proactive (notifies user). Modes: proactive, announce (needs channel+to), none (silent).",
-                    "properties": {
-                        "mode": { "type": "string", "enum": ["proactive", "announce", "none"] },
-                        "channel": { "type": "string", "description": "Required for announce mode" },
-                        "to": { "type": "string", "description": "Required for announce mode" },
-                        "best_effort": { "type": "boolean", "default": true }
-                    }
-                },
-                "delete_after_run": { "type": "boolean" }
-            },
-            "required": ["name", "schedule"]
-        })
+        static_schema!(include_str!("parameters/cron_add.json"))
     }
 
     fn supports_markdown(&self) -> bool {
@@ -211,6 +59,21 @@ impl Tool for CronAddTool {
         true
     }
 
+    fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
+        // An agent job that replies only into the channel conversation that
+        // asked for it needs no approval: the asker is the sole recipient and
+        // its runs stay gated as that channel's turns. Everything else keeps
+        // the unconditional gate above.
+        // The trait predicate carries no run context, so it reads the calling
+        // task's turn scope.
+        !current_turn_may_skip_approval(
+            args,
+            crate::core::runtime::DispatchCtx::ambient_turn()
+                .turn_origin()
+                .as_ref(),
+        )
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         self.execute_with_options(args, ToolCallOptions::default())
             .await
@@ -221,6 +84,17 @@ impl Tool for CronAddTool {
         args: serde_json::Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, options, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+        tool_context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let origin =
+            crate::agent::tinyagents::host::run_context::turn_origin_for_tool(tool_context);
         if !self.config.cron.enabled {
             return Ok(ToolResult::error(
                 "cron is disabled by config (cron.enabled=false)".to_string(),
@@ -298,10 +172,14 @@ impl Tool for CronAddTool {
                     }
                 };
 
-                if !self.security.is_command_allowed(command) {
-                    return Ok(ToolResult::error(format!(
-                        "Command blocked by security policy: {command}"
-                    )));
+                if let Err(reason) = super::super::scheduler::shell_job::authorize_shell_command(
+                    &self.config,
+                    &self.security,
+                    command,
+                )
+                .await
+                {
+                    return Ok(ToolResult::error(reason));
                 }
 
                 cron::add_shell_job(&self.config, name, schedule, command)
@@ -318,12 +196,12 @@ impl Tool for CronAddTool {
 
                 let session_target = match args.get("session_target") {
                     Some(v) => match serde_json::from_value::<SessionTarget>(v.clone()) {
-                        Ok(target) => target,
+                        Ok(target) => Some(target),
                         Err(e) => {
                             return Ok(ToolResult::error(format!("Invalid session_target: {e}")));
                         }
                     },
-                    None => SessionTarget::Isolated,
+                    None => None,
                 };
 
                 let model = args
@@ -338,30 +216,23 @@ impl Tool for CronAddTool {
                             return Ok(ToolResult::error(format!("Invalid delivery config: {e}")));
                         }
                     },
-                    None => Some(DeliveryConfig {
-                        mode: "proactive".to_string(),
-                        channel: None,
-                        to: None,
-                        best_effort: true,
-                    }),
+                    None => None,
                 };
 
-                if let Some(ref cfg) = delivery {
-                    if let Err(msg) = validate_delivery(&self.config, cfg) {
-                        return Ok(ToolResult::error(msg));
-                    }
-                }
-
-                cron::add_agent_job(
+                create_agent_job(
                     &self.config,
-                    name,
-                    schedule,
-                    prompt,
-                    session_target,
-                    model,
-                    delivery,
-                    delete_after_run,
+                    AgentJobInput {
+                        name,
+                        schedule,
+                        prompt: prompt.to_string(),
+                        session_target,
+                        model,
+                        delivery,
+                        delete_after_run,
+                    },
+                    current_job_origin(origin.as_ref()),
                 )
+                .map_err(anyhow::Error::msg)
             }
             // `job_type` above is derived only from `Some("agent")`/`Some("shell")`/
             // the `prompt`-presence heuristic, so this arm is unreachable in
@@ -384,7 +255,9 @@ impl Tool for CronAddTool {
                     "job_type": job.job_type,
                     "schedule": job.schedule,
                     "next_run": job.next_run,
-                    "enabled": job.enabled
+                    "enabled": job.enabled,
+                    "session_target": job.session_target,
+                    "delivery_mode": job.delivery.mode
                 });
                 let mut tr = ToolResult::success(serde_json::to_string_pretty(&payload)?);
                 if options.prefer_markdown {
@@ -407,3 +280,7 @@ impl Tool for CronAddTool {
 #[cfg(test)]
 #[path = "add_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "add_schema_tests.rs"]
+mod schema_tests;

@@ -1,10 +1,11 @@
 import debug from 'debug';
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useAppSelector } from '../../../store/hooks';
 import {
   selectChatMascotExpanded,
   selectChatMascotListening,
+  selectChatMascotLiveVoicePhase,
   selectCustomMascotGifUrl,
   selectCustomPrimaryColor,
   selectCustomSecondaryColor,
@@ -20,6 +21,7 @@ import {
 } from '../Mascot';
 import { useMascotManifest } from '../Mascot/manifest/useMascotManifest';
 import { useHumanMascot } from '../useHumanMascot';
+import { useAmplitudeLipsync } from '../voice/useAmplitudeLipsync';
 import { useChatMascot, useDockNode } from './ChatMascotContext';
 import {
   boxTransform,
@@ -77,19 +79,53 @@ function measure(el: HTMLElement | null): MascotBox | null {
  * [ui-flow] chat-mascot-overlay: docked ⇄ staged (rAF travel, TRANSITION_MS)
  */
 const ChatMascotOverlay = () => {
-  const { dockRef, stageRef } = useChatMascot();
+  const [replayViseme, setReplayViseme] = useState<string | null>(null);
+  const replayOwnerRef = useRef<string | null>(null);
+  useEffect(() => {
+    const onPlayback = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ owner: string; active: boolean; viseme: string; claim: boolean }>
+      ).detail;
+      if (!detail?.owner) return;
+      if (detail.active && detail.claim) {
+        replayOwnerRef.current = detail.owner;
+        setReplayViseme(detail.viseme);
+      } else if (detail.active && replayOwnerRef.current === detail.owner) {
+        setReplayViseme(detail.viseme);
+      } else if (replayOwnerRef.current === detail.owner) {
+        replayOwnerRef.current = null;
+        setReplayViseme(null);
+      }
+    };
+    window.addEventListener('voice-note-mascot', onPlayback);
+    return () => window.removeEventListener('voice-note-mascot', onPlayback);
+  }, []);
+  const { dockRef, stageRef, liveAudioRef } = useChatMascot();
   const dockNode = useDockNode();
   const expanded = useAppSelector(selectChatMascotExpanded);
   const listening = useAppSelector(selectChatMascotListening);
   const speakRepliesPref = useAppSelector(selectSpeakReplies);
+  const livePhase = useAppSelector(selectChatMascotLiveVoicePhase);
+  const liveVoiceOn = livePhase !== 'off';
 
   // Speech is a property of the *stage*, not of chat in general: a docked
   // mascot must not start talking over a text conversation just because the
   // preference defaults on. Collapsing therefore silences replies, and the
-  // switch in the stage governs the expanded state.
-  const speakReplies = speakRepliesPref && expanded;
+  // switch in the stage governs the expanded state. A live voice session owns
+  // the audio while it runs — the persisted transcript turns it writes into
+  // the thread must not be read out a second time by TTS.
+  const speakReplies = speakRepliesPref && expanded && !liveVoiceOn;
 
-  const { face, visemeCode } = useHumanMascot({ speakReplies, listening });
+  const { face: classicFace, visemeCode: classicViseme } = useHumanMascot({
+    speakReplies,
+    listening: listening || livePhase === 'listening',
+  });
+
+  // While the live agent is speaking its own audio drives the mouth (amplitude
+  // lip-sync); the rAF loop only exists while it speaks.
+  const liveLipsync = useAmplitudeLipsync(liveAudioRef, livePhase === 'speaking');
+  const face = liveLipsync.active || replayViseme !== null ? 'speaking' : classicFace;
+  const visemeCode = liveLipsync.active ? liveLipsync.visemeCode : (replayViseme ?? classicViseme);
 
   const mascotColor = useAppSelector(selectMascotColor);
   const customPrimary = useAppSelector(selectCustomPrimaryColor);

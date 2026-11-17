@@ -1,87 +1,44 @@
 //! Crash-reporting client ownership for the standalone terminal binary.
+//!
+//! The client options come from embed's shared chain
+//! (`openhuman_rpc::embed::process::sentry`): the same noise filters, secret
+//! scrubbing, PII-off defaults and transport as the CLI and the desktop shell.
+//! Only the DSN, release and environment are resolved here.
+
+#[cfg(feature = "crash-reporting")]
+use openhuman_rpc::embed::process::{self, sentry};
 
 /// Initialize the Sentry client before the TUI installs its tracing subscriber.
 ///
 /// The returned guard must live for the whole process. A build without the
 /// `crash-reporting` feature retains the same call site and compiles to a no-op.
 #[cfg(feature = "crash-reporting")]
-pub fn init_crash_reporting() -> sentry::ClientInitGuard {
+pub fn init_crash_reporting() -> sentry::sdk::ClientInitGuard {
     // Match the core binary: startup consumers must see a repository-local
     // `.env`, while explicit process variables continue to take precedence.
-    let _ = dotenvy::dotenv();
+    // Failure is not fatal here; `run_from_cli` loads it again and reports it.
+    let _ = process::load_dotenv_for_cli();
 
-    sentry::init(sentry::ClientOptions {
-        dsn: sentry_dsn(),
-        release: Some(std::borrow::Cow::Owned(build_release_tag())),
-        environment: Some(std::borrow::Cow::Owned(resolve_environment())),
-        send_default_pii: false,
-        before_send: Some(std::sync::Arc::new(|mut event| {
-            event.server_name = None;
-            for exception in &mut event.exception.values {
-                if let Some(value) = exception.value.take() {
-                    exception.value =
-                        Some(openhuman_core::core::log_redaction::scrub_secrets(&value));
-                }
-            }
-            if let Some(message) = event.message.take() {
-                event.message = Some(openhuman_core::core::log_redaction::scrub_secrets(&message));
-            }
-            Some(event)
-        })),
-        sample_rate: 1.0,
-        transport: Some(std::sync::Arc::new(
-            openhuman_core::core::sentry_transport::factory,
-        )),
-        ..sentry::ClientOptions::default()
-    })
+    let config = sentry::SentryConfig::new(
+        sentry::core_dsn(
+            option_env!("OPENHUMAN_CORE_SENTRY_DSN"),
+            option_env!("OPENHUMAN_SENTRY_DSN"),
+        ),
+        build_release_tag(),
+        sentry::resolve_environment(std::env::var("OPENHUMAN_APP_ENV").ok()),
+    );
+    sentry::sdk::init(sentry::client_options(config))
 }
 
 #[cfg(not(feature = "crash-reporting"))]
 pub fn init_crash_reporting() {}
 
 #[cfg(feature = "crash-reporting")]
-fn sentry_dsn() -> Option<sentry::types::Dsn> {
-    std::env::var("OPENHUMAN_CORE_SENTRY_DSN")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| std::env::var("OPENHUMAN_SENTRY_DSN").ok())
-        .filter(|value| !value.is_empty())
-        .or_else(|| option_env!("OPENHUMAN_CORE_SENTRY_DSN").map(str::to_owned))
-        .filter(|value| !value.is_empty())
-        .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(str::to_owned))
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse().ok())
-}
-
-#[cfg(feature = "crash-reporting")]
 fn build_release_tag() -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    let short_sha: String = option_env!("OPENHUMAN_BUILD_SHA")
-        .unwrap_or("")
-        .trim()
-        .chars()
-        .take(12)
-        .collect();
-    if short_sha.is_empty() {
-        format!("openhuman@{version}")
-    } else {
-        format!("openhuman@{version}+{short_sha}")
-    }
-}
-
-#[cfg(feature = "crash-reporting")]
-fn resolve_environment() -> String {
-    if let Ok(value) = std::env::var("OPENHUMAN_APP_ENV") {
-        let value = value.trim().to_ascii_lowercase();
-        if !value.is_empty() {
-            return value;
-        }
-    }
-    if cfg!(debug_assertions) {
-        "development".to_string()
-    } else {
-        "production".to_string()
-    }
+    sentry::release_tag(
+        env!("CARGO_PKG_VERSION"),
+        option_env!("OPENHUMAN_BUILD_SHA"),
+    )
 }
 
 #[cfg(all(test, feature = "crash-reporting"))]

@@ -1,6 +1,6 @@
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
@@ -80,11 +80,11 @@ fn schema() -> ControllerSchema {
     }
 }
 
-fn handle_list(params: Map<String, Value>) -> ControllerFuture {
+fn handle_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[mcp_audit] handle_list enter params={params:?}");
         log::trace!("[mcp_audit] handle_list loading config");
-        let config = match config_rpc::load_config_with_timeout().await {
+        let config = match ctx.load_config().await {
             Ok(config) => {
                 log::trace!(
                     "[mcp_audit] handle_list config loaded workspace={}",
@@ -113,7 +113,7 @@ fn handle_list(params: Map<String, Value>) -> ControllerFuture {
             "[mcp_audit] handle_list querying store workspace={} query={query:?}",
             config.workspace_dir.display()
         );
-        let records = match crate::mcp::audit::list_writes(&config, &query) {
+        let records = match crate::mcp::audit::list_writes(&config, &query).await {
             Ok(records) => {
                 log::trace!(
                     "[mcp_audit] handle_list store success records={}",

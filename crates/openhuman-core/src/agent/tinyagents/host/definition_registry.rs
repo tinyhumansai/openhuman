@@ -3,13 +3,13 @@
 //! Adapts two OpenHuman domains onto
 //! [`tinyagents_harness::host::DefinitionRegistry`]:
 //!
-//! * [`crate::agent::harness::definition::AgentDefinitionRegistry`] —
-//!   the harness registry of built-in ([`load_builtins`](crate::agent::registry::agents::load_builtins)-parsed
+//! * [`crate::agent_registry::host_definition::AgentDefinitionRegistry`] —
+//!   the harness registry of built-in ([`load_builtins`](crate::agent_registry::agents::load_builtins)-parsed
 //!   `agent.toml`)
 //!   and workspace-override agent definitions, plus the config-backed
 //!   user-authored fallback
-//!   ([`crate::agent::registry::find_custom_in_config`] →
-//!   [`crate::agent::registry::definition_from_registry_entry`]).
+//!   ([`crate::agent_registry::find_custom_in_config`] →
+//!   [`crate::agent_registry::definition_from_registry_entry`]).
 //!
 //! This is `docs/specs/plan-agents.md` Phase 4. The crate-side
 //! [`AgentDefinition`] is inert (`serde` + `std`); OpenHuman's harness
@@ -23,7 +23,7 @@
 //! this: an agent may list a subagent id that a feature gate compiled out of
 //! the build (`presentation_agent` without `documents`), and both existing resolution sites
 //! tolerate it (`collect_orchestrator_tools` warns and skips;
-//! [`validate_tier_hierarchy`](crate::agent::registry::agents::validate_tier_hierarchy) explicitly `continue`s past unknown ids). So
+//! `DefinitionSet::validate_tier_hierarchy` explicitly continues past unknown ids). So
 //! `OpenHumanDefinitionRegistry::resolve` returns `Ok(None)` for every miss
 //! and this adapter has no error path at all.
 //!
@@ -31,32 +31,19 @@
 //! `AgentDefinition::subagents` is only what an agent *declares*;
 //! `delegates_for` must return the **authorized** set. OpenHuman's authority is
 //! the tier hierarchy, so `delegates_for` applies
-//! [`validate_tier_transition`](crate::agent::harness::definition::validate_tier_transition)
+//! [`validate_tier_transition`](tinyagents_definition::validate_tier_transition)
 //! — the same single source of truth
-//! [`validate_tier_hierarchy`](crate::agent::registry::agents::validate_tier_hierarchy) walks at boot — per declared pair. A `Worker`
+//! `DefinitionSet::validate_tier_hierarchy` walks at boot — per declared pair. A `Worker`
 //! parent yields an empty list; a tier-illegal child is dropped. Unknown child
-//! ids are **kept**, matching both [`validate_tier_hierarchy`](crate::agent::registry::agents::validate_tier_hierarchy)'s `continue` and
+//! ids are **kept**, matching the owner's validator and
 //! the trait's note that an authorized id may still fail to resolve.
 //!
-//! **3. `ToolScope::Wildcard` has no crate representation.** The crate models
-//! tools as an explicit `Vec<String>` in which **empty means unrestricted**,
-//! matching the session builder ("an empty `visible` set means no filter" —
-//! `agent/session_host/builder/factory.rs`). So an unrestricted wildcard
-//! agent maps to an empty `tools` vec.
-//!
-//! That one value must not be made to carry three meanings. Three distinct
-//! situations would otherwise all collapse onto "empty", and each would read
-//! back as *every tool*:
-//!
-//! * a named scope configured with **no** tools,
-//! * a named scope whose every entry the denylist removed,
-//! * a wildcard scope carrying a denylist the crate cannot express.
-//!
-//! [`ResolvedScope`] therefore models wildcard-ness explicitly and never infers
-//! it from emptiness. A genuinely empty scope emits
-//! [`NO_TOOLS_SENTINEL`] — an unregistered name that matches nothing —
-//! and a wildcard-with-denylist is materialized against
-//! [`Self::with_registered_tools`], failing closed when that is absent.
+//! **3. Tool scopes remain host-materialized.** The portable definition
+//! carries an explicit named scope, after the host applies discovery,
+//! companion-tool and denylist policy. Wildcards are materialized against
+//! [`Self::with_registered_tools`] and fail closed when no catalogue exists.
+//! Empty scopes retain [`NO_TOOLS_SENTINEL`] for compatibility with the host's
+//! existing tool visibility contract; they never become portable wildcards.
 //!
 //! **4. `SubagentEntry::Skills` entries are omitted.** A `{ skills = "*" }`
 //! entry is not an agent id — it expands to the connected integrations'
@@ -71,13 +58,13 @@ use async_trait::async_trait;
 use tinyagents_definition::Result;
 use tinyagents_definition::{AgentDefinition, DefinitionRegistry};
 
-use crate::agent::harness::definition::NO_TOOLS_SENTINEL;
-use crate::agent::harness::definition::{
-    AgentDefinition as HostAgentDefinition, AgentDefinitionRegistry, AgentTier, ModelSpec,
-    SubagentEntry, ToolScope,
+use crate::agent_registry::host_definition::NO_TOOLS_SENTINEL;
+use crate::agent_registry::host_definition::{
+    AgentDefinition as HostAgentDefinition, AgentDefinitionRegistry,
 };
-use crate::agent::registry::{definition_from_registry_entry, find_custom_in_config};
+use crate::agent_registry::{definition_from_registry_entry, find_custom_in_config};
 use crate::config::Config;
+use tinyagents_definition::{AgentTier, ToolScope};
 
 // ── Registry handle ───────────────────────────────────────────────────────────
 
@@ -133,8 +120,8 @@ pub struct OpenHumanDefinitionRegistry {
     /// Every tool name registered for this session, used to materialize a
     /// [`ToolScope::Wildcard`] definition that also carries a denylist.
     ///
-    /// The crate models tools as an explicit `Vec<String>` with no wildcard
-    /// marker, so a denylist can only be honoured against a concrete list. When
+    /// The host projects named scopes after applying its denylist against a
+    /// concrete catalogue. When
     /// this is absent, a wildcard definition whose `disallowed_tools` is
     /// non-empty cannot be projected faithfully and [`Self::tools_for`] fails
     /// closed rather than re-granting the denied tools.
@@ -168,10 +155,8 @@ pub struct OpenHumanDefinitionRegistry {
 
 /// Outcome of resolving a definition's own scope.
 ///
-/// Modelled explicitly because the crate's `Vec<String>` overloads *empty* to
-/// mean "unrestricted". Inferring wildcard from emptiness is what let a
-/// denylist-emptied scope, an explicitly tool-less scope, and a true wildcard
-/// all collapse onto the same value.
+/// Modelled explicitly so a denylist-emptied scope, an explicitly tool-less
+/// scope and a true wildcard never collapse onto the same host allowlist.
 enum ResolvedScope {
     /// Every registered tool, with no denylist to apply.
     Wildcard,
@@ -207,9 +192,9 @@ impl OpenHumanDefinitionRegistry {
     /// Attaches the session's registered tool names.
     ///
     /// Required to project a [`ToolScope::Wildcard`] definition that also
-    /// carries a `disallowed_tools` denylist: the crate has no wildcard marker,
-    /// so "everything except these" can only be expressed by materializing the
-    /// list. Without it such a definition fails closed — see [`Self::tools_for`].
+    /// carries a `disallowed_tools` denylist: the host materializes the allowed
+    /// names before passing the scope to the harness. Without it such a
+    /// definition fails closed — see [`Self::tools_for`].
     pub fn with_registered_tools(mut self, tools: Arc<Vec<String>>) -> Self {
         self.registered_tools = Some(tools);
         self
@@ -293,17 +278,27 @@ impl OpenHumanDefinitionRegistry {
     fn project(&self, def: &HostAgentDefinition) -> AgentDefinition {
         AgentDefinition {
             id: def.id.clone(),
-            name: def.display_name().to_string(),
+            display_name: Some(def.display_name().to_string()),
             // `when_to_use` is exactly the trait's "capability summary shown to
             // a delegating parent" — the same string the harness feeds into a
             // synthesised `delegate_*` tool description.
-            description: def.when_to_use.clone(),
+            when_to_use: def.when_to_use.clone(),
             // The definition's validated tier is the host assertion the model
             // resolver consumes for workload routing.
             role: Some(def.agent_tier.to_string()),
-            model: model_for(&def.model),
-            subagents: declared_subagent_ids(def),
-            tools: self.tools_for(def),
+            agent_tier: def.agent_tier,
+            model: def.model.clone(),
+            subagents: def
+                .allowed_subagent_ids()
+                .into_iter()
+                .map(tinyagents_definition::SubagentEntry::AgentId)
+                .collect(),
+            tools: tinyagents_definition::ToolScope::Named(self.tools_for(def)),
+            // The definition's rule layer (its `tool_rules` plus its
+            // `disallowed_tools` as a deny), enforced by the harness gate on
+            // the catalogue, `tool_search` and every call of a hosted run.
+            tool_rules: crate::tools::rules::agent_rule_layer(def),
+            ..Default::default()
         }
     }
 
@@ -318,10 +313,7 @@ impl OpenHumanDefinitionRegistry {
         match &def.tools {
             ToolScope::Named(named) => {
                 let mut names = named.clone();
-                if named
-                    .iter()
-                    .any(|name| name == crate::tools::implementations::meta::TOOL_SEARCH_NAME)
-                {
+                if named.iter().any(|name| name == tinytools::TOOL_SEARCH_NAME) {
                     if let Some(deferred) = self.deferred_tools.as_deref() {
                         names.extend(deferred.iter().cloned());
                     }
@@ -351,7 +343,9 @@ impl OpenHumanDefinitionRegistry {
                 // named scope. Under `Wildcard` it is meaningless — everything
                 // is already in scope.
                 names.extend(def.extra_tools.iter().cloned());
-                names.retain(|name| !disallows_tool(&def.disallowed_tools, name));
+                names.retain(|name| {
+                    !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
+                });
                 dedupe_preserving_order(&mut names);
                 // Deliberately *not* collapsed to `Wildcard` when empty: an
                 // agent configured with no tools, or one whose whole scope was
@@ -365,7 +359,9 @@ impl OpenHumanDefinitionRegistry {
                 Some(registered) => {
                     let mut names: Vec<String> = registered
                         .iter()
-                        .filter(|name| !disallows_tool(&def.disallowed_tools, name))
+                        .filter(|name| {
+                            !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
+                        })
                         .cloned()
                         .collect();
                     dedupe_preserving_order(&mut names);
@@ -405,29 +401,27 @@ impl OpenHumanDefinitionRegistry {
 
     /// Tier-checked delegate ids for `def`.
     ///
-    /// Reuses [`crate::agent::harness::definition::validate_tier_transition`]
-    /// — the single source of truth [`validate_tier_hierarchy`](crate::agent::registry::agents::validate_tier_hierarchy) walks at boot —
+    /// Reuses [`tinyagents_definition::validate_tier_transition`]
+    /// — the single source of truth `DefinitionSet::validate_tier_hierarchy` walks at boot —
     /// so this seam can never disagree with the host's boot-time validation.
     fn authorized_delegates(&self, def: &HostAgentDefinition) -> Vec<String> {
         if def.agent_tier == AgentTier::Worker {
-            // `validate_tier_hierarchy` hard-fails a worker that lists any
+            // the owner validator hard-fails a worker that lists any
             // agent id, so a worker's authorized set is empty by construction.
             return Vec::new();
         }
 
         let mut out = Vec::new();
-        for id in declared_subagent_ids(def) {
+        for id in def.allowed_subagent_ids() {
             let Some(child) = self.host_definition(&id) else {
-                // Unknown child: `validate_tier_hierarchy` `continue`s past it
+                // Unknown child: the owner validator tolerates it
                 // rather than failing, and the trait explicitly allows an
                 // authorized id that does not resolve in this build.
                 out.push(id);
                 continue;
             };
-            match crate::agent::harness::definition::validate_tier_transition(
-                def.agent_tier,
-                child.agent_tier,
-            ) {
+            match tinyagents_definition::validate_tier_transition(def.agent_tier, child.agent_tier)
+            {
                 Ok(()) => out.push(id),
                 Err(reason) => {
                     tracing::warn!(
@@ -448,55 +442,6 @@ impl OpenHumanDefinitionRegistry {
 }
 
 // ── Free helpers ──────────────────────────────────────────────────────────────
-
-/// Declared subagent **agent ids** only.
-///
-/// [`SubagentEntry::Skills`] entries are skipped: they are a wildcard that
-/// expands to searchable integration actions, not an agent the parent may
-/// address by id.
-fn declared_subagent_ids(def: &HostAgentDefinition) -> Vec<String> {
-    def.subagents
-        .iter()
-        .filter_map(|entry| match entry {
-            SubagentEntry::AgentId(id) => Some(id.clone()),
-            SubagentEntry::Skills(_) => None,
-        })
-        .collect()
-}
-
-/// Maps a host [`ModelSpec`] onto the crate's `Option<String>` model pin.
-///
-/// [`ModelSpec::Inherit`] becomes `None`, which is precisely the crate's "no
-/// preference, the session default applies". `Hint` is resolved through
-/// [`ModelSpec::resolve`] (whose `parent_model` argument is unused for the hint
-/// arm) so the `hint:{hint}` alias spelling has one implementation.
-fn model_for(spec: &ModelSpec) -> Option<String> {
-    match spec {
-        ModelSpec::Inherit => None,
-        ModelSpec::Exact(name) => Some(name.clone()),
-        ModelSpec::Hint(_) => Some(spec.resolve("")),
-    }
-}
-
-/// Whether `name` is blocked by a definition's `disallowed_tools`.
-///
-/// Mirrors the private `definition_disallows_tool` in
-/// `agent/session_host/builder/factory.rs`, including its trailing-`*`
-/// prefix-match form. Duplicated rather than imported because that helper is
-/// module-private and Phase 4 must not edit existing files.
-///
-/// TODO(phase4): make `definition_disallows_tool` `pub(crate)` in
-/// `agent/session_host/builder/factory.rs` and delete this copy, so the
-/// denylist grammar has one implementation.
-fn disallows_tool(disallowed: &[String], name: &str) -> bool {
-    disallowed.iter().any(|entry| {
-        if let Some(prefix) = entry.strip_suffix('*') {
-            name.starts_with(prefix)
-        } else {
-            entry == name
-        }
-    })
-}
 
 /// Drops repeated names while keeping first-occurrence order.
 ///

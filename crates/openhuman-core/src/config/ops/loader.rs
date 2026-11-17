@@ -6,9 +6,11 @@ mod reset_local_data;
 mod runtime_flags;
 mod snapshot;
 
+#[cfg(test)]
+pub(crate) use load::normalize_loaded_config;
 pub use load::{
-    load_config_for_workspace_with_timeout, load_config_with_timeout, reload_config_from_paths,
-    reload_config_snapshot_with_timeout,
+    load_config_for_workspace_with_timeout, load_config_in, load_config_with_timeout,
+    load_current_or_init, reload_config_from_paths, reload_config_snapshot_with_timeout,
 };
 pub(crate) use paths::fallback_workspace_dir;
 #[cfg(test)]
@@ -17,7 +19,9 @@ pub(crate) use paths::{active_workspace_marker_path, config_openhuman_dir, defau
 pub(crate) use reset_local_data::reset_local_data_for_paths;
 #[cfg(all(test, windows))]
 pub(crate) use reset_local_data::reset_local_data_remove_error;
-pub use reset_local_data::{get_data_paths, get_data_paths_for_user, reset_local_data};
+pub use reset_local_data::{
+    get_data_paths, get_data_paths_for_user, get_data_paths_to_clear, reset_local_data,
+};
 pub use runtime_flags::{
     agent_server_status, core_rpc_url_from_env, get_runtime_flags, set_browser_allow_all,
     RuntimeFlagsOut,
@@ -43,3 +47,15 @@ mod model_registry_seed_tests;
 #[cfg(test)]
 #[path = "loader_io_chain_tests.rs"]
 mod loader_io_chain_tests;
+
+#[cfg(test)]
+#[path = "loader_current_tests.rs"]
+mod loader_current_tests;
+
+#[cfg(test)]
+#[path = "loader_explicit_ctx_tests.rs"]
+mod loader_explicit_ctx_tests;
+
+#[cfg(test)]
+#[path = "loader_snapshot_secrets_tests.rs"]
+mod loader_snapshot_secrets_tests;

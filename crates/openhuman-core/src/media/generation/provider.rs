@@ -1,41 +1,25 @@
-//! Host adapter: OpenRouter media generators reached through the OpenHuman
-//! backend's `/agent-integrations/openrouter` proxy.
+//! The image and video generators the media tools run over.
 //!
-//! TinyInference owns the wire contract (`POST /images`, `POST /videos`,
-//! `GET /videos/{id}`, `GET /videos/{id}/content`); this module supplies only
-//! what the host owns:
-//!
-//! - **Endpoint and headers** — the backend transport's `raw_client()` (which
-//!   already carries `x-sdk-name` and the version headers) and the
-//!   `/agent-integrations/openrouter` base URL.
-//! - **Credential** — a per-request resolver over
-//!   [`resolve_backend_credential`], so a desktop session JWT and a library
-//!   API key both work and a refreshed session is picked up.
-//! - **Policy** — local-only enforcement and the egress disclosure before any
-//!   request leaves the device, and the managed-credit budget gate before a
-//!   billed submit. These are the same gates `IntegrationClient` applies to
-//!   every `/agent-integrations/*` call.
+//! TinyInference owns the wire contract; a host supplies the generators (the
+//! endpoint, credential and policy that go with them) and hands them to the
+//! tools built in [`super::tools`]. The core ships no generators of its own: a
+//! host that has a media service registers a tool source that builds
+//! [`MediaGenerators`] and calls
+//! [`media_tools_for_config`](super::tools::media_tools_for_config).
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use tinyagents_harness::tinyinference_image::{
-    self as ti_image, BearerResolver, GeneratedMedia, ImageGenerator, ImageRequest, ImageResponse,
-    MediaAuth, MediaModel, MediaTransport, OpenRouterImageGenerator,
-};
-use tinyagents_harness::tinyinference_video::{
-    self as ti_video, OpenRouterVideoGenerator, VideoGenerator, VideoJob, VideoJobStatus,
-    VideoRequest,
-};
+use tinyagents_harness::tinyinference_image::ImageGenerator;
+use tinyagents_harness::tinyinference_video::VideoGenerator;
 
-use crate::backend::BackendClient;
-use crate::config::Config;
-use crate::security::credentials::session_support::{
-    resolve_backend_credential, BackendCredential,
-};
+use crate::security::approval::ApprovalChatContext;
 
-/// Backend route prefix that proxies OpenRouter's media API.
-pub const OPENROUTER_PROXY_PATH: &str = "/agent-integrations/openrouter";
+/// Rebuilds the generators so their egress disclosures reach `chat`.
+pub type GeneratorRouter = Arc<
+    dyn Fn(Option<ApprovalChatContext>) -> (Arc<dyn ImageGenerator>, Arc<dyn VideoGenerator>)
+        + Send
+        + Sync,
+>;
 
 /// The image and video generators for this process.
 pub struct MediaGenerators {
@@ -43,156 +27,53 @@ pub struct MediaGenerators {
     pub image: Arc<dyn ImageGenerator>,
     /// Video generation.
     pub video: Arc<dyn VideoGenerator>,
+    /// Binds the generators to a turn's chat so their egress disclosures reach
+    /// it. `None` for generators with no disclosures to route (mocks).
+    router: Option<GeneratorRouter>,
 }
 
-/// Builds generators against the managed backend, or `None` when no backend
-/// transport is installed (a core with no TinyHumans connection).
-pub fn managed_generators(config: &Config) -> Option<MediaGenerators> {
-    let client = match BackendClient::from_config(config) {
-        Ok(client) => client,
-        Err(error) => {
-            tracing::debug!(%error, "[media_generation] no backend client; media tools skipped");
-            return None;
+impl MediaGenerators {
+    /// Generators whose egress disclosures can be bound to a turn's chat:
+    /// `router` rebuilds the pair around a given chat.
+    pub fn with_router(
+        image: Arc<dyn ImageGenerator>,
+        video: Arc<dyn VideoGenerator>,
+        router: GeneratorRouter,
+    ) -> Self {
+        Self {
+            image,
+            video,
+            router: Some(router),
         }
-    };
-    let http = match client.raw_client() {
-        Ok(http) => http,
-        Err(error) => {
-            tracing::debug!(%error, "[media_generation] no backend transport; media tools skipped");
-            return None;
+    }
+
+    /// Generators with no egress routing.
+    pub fn new(image: Arc<dyn ImageGenerator>, video: Arc<dyn VideoGenerator>) -> Self {
+        Self {
+            image,
+            video,
+            router: None,
         }
-    };
-    let base = match client.url_for(OPENROUTER_PROXY_PATH) {
-        Ok(url) => url,
-        Err(error) => {
-            tracing::debug!(%error, "[media_generation] cannot build proxy URL; media tools skipped");
-            return None;
-        }
-    };
-    let config = Arc::new(config.clone());
-    let transport = MediaTransport::new(MediaAuth::Bearer(bearer_resolver(Arc::clone(&config))))
-        .with_client(http)
-        .with_base_url(base.as_str());
-    tracing::debug!(base = %base, "[media_generation] managed OpenRouter media generators ready");
-    Some(MediaGenerators {
-        image: Arc::new(GuardedImage {
-            inner: OpenRouterImageGenerator::with_transport(transport.clone()),
-            guard: Guard {
-                config: Arc::clone(&config),
+    }
+
+    /// The generators for one call of a turn whose chat routing is `chat`: the
+    /// egress disclosures they raise are surfaced to that chat. An explicit
+    /// value, so a call made off the chat task still discloses to its own chat.
+    pub fn routed(&self, chat: Option<&ApprovalChatContext>) -> MediaGenerators {
+        match &self.router {
+            Some(router) => {
+                let (image, video) = router(chat.cloned());
+                MediaGenerators {
+                    image,
+                    video,
+                    router: self.router.clone(),
+                }
+            }
+            None => MediaGenerators {
+                image: Arc::clone(&self.image),
+                video: Arc::clone(&self.video),
+                router: None,
             },
-        }),
-        video: Arc::new(GuardedVideo {
-            inner: OpenRouterVideoGenerator::with_transport(transport),
-            guard: Guard { config },
-        }),
-    })
-}
-
-/// Resolves the backend credential on every request, so a session refreshed
-/// mid-run is used and an API-key host needs no session at all.
-pub(crate) fn bearer_resolver(config: Arc<Config>) -> BearerResolver {
-    Arc::new(move || match resolve_backend_credential(&config) {
-        Ok(BackendCredential::Session(token) | BackendCredential::ApiKey(token)) => Ok(token),
-        Err(error) => Err(ti_image::Error::Auth(error)),
-    })
-}
-
-/// Host policy applied before a request leaves the device.
-struct Guard {
-    config: Arc<Config>,
-}
-
-impl Guard {
-    /// Local-only enforcement, then the egress disclosure. A blocked call is
-    /// neither disclosed nor sent.
-    fn admit(&self, route: &str) -> ti_image::Result<()> {
-        let descriptor = crate::security::egress::EgressDescriptor::integration(format!(
-            "{OPENROUTER_PROXY_PATH}/{route}"
-        ));
-        crate::security::egress::enforce_egress(&descriptor).map_err(|error| {
-            tracing::info!(route, %error, "[media_generation] blocked by privacy policy");
-            ti_image::Error::Validation(format!("blocked by the privacy policy: {error}"))
-        })?;
-        crate::security::egress::emit_external_transfer(descriptor);
-        Ok(())
-    }
-
-    /// Refuses a billed submit when managed credits are exhausted.
-    async fn budget(&self) -> ti_image::Result<()> {
-        if crate::integrations::client::budget_gate::managed_tool_budget_exhausted(&self.config)
-            .await
-        {
-            tracing::info!("[media_generation] managed credits exhausted; submit refused");
-            return Err(ti_image::Error::Validation(
-                "Managed cloud tools are disabled because your OpenHuman AI credits are exhausted. \
-                 Add credits or route the task to user-supplied providers."
-                    .into(),
-            ));
         }
-        Ok(())
-    }
-}
-
-struct GuardedImage {
-    inner: OpenRouterImageGenerator,
-    guard: Guard,
-}
-
-#[async_trait]
-impl ImageGenerator for GuardedImage {
-    fn name(&self) -> &str {
-        "openhuman-openrouter"
-    }
-
-    fn default_model(&self) -> &str {
-        self.inner.default_model()
-    }
-
-    async fn generate(&self, request: ImageRequest) -> ti_image::Result<ImageResponse> {
-        self.guard.admit("images")?;
-        self.guard.budget().await?;
-        self.inner.generate(request).await
-    }
-
-    async fn list_models(&self) -> ti_image::Result<Vec<MediaModel>> {
-        self.guard.admit("images/models")?;
-        self.inner.list_models().await
-    }
-}
-
-struct GuardedVideo {
-    inner: OpenRouterVideoGenerator,
-    guard: Guard,
-}
-
-#[async_trait]
-impl VideoGenerator for GuardedVideo {
-    fn name(&self) -> &str {
-        "openhuman-openrouter"
-    }
-
-    fn default_model(&self) -> &str {
-        self.inner.default_model()
-    }
-
-    async fn submit(&self, request: VideoRequest) -> ti_video::Result<VideoJob> {
-        self.guard.admit("videos")?;
-        self.guard.budget().await?;
-        self.inner.submit(request).await
-    }
-
-    async fn poll(&self, job_id: &str) -> ti_video::Result<VideoJobStatus> {
-        self.guard.admit("videos/{jobId}")?;
-        self.inner.poll(job_id).await
-    }
-
-    async fn content(&self, job_id: &str, index: usize) -> ti_video::Result<GeneratedMedia> {
-        self.guard.admit("videos/{jobId}/content")?;
-        self.inner.content(job_id, index).await
-    }
-
-    async fn list_models(&self) -> ti_video::Result<Vec<MediaModel>> {
-        self.guard.admit("videos/models")?;
-        self.inner.list_models().await
     }
 }

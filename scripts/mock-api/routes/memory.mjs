@@ -13,6 +13,9 @@ import { behavior } from "../state.mjs";
  * Behaviour switches (via `setMockBehavior`):
  *   memoryForceStatus  "402" | "401" | "429" | ...  every /memory/* call fails
  *                      with that status and its canonical errorCode.
+ *   memoryForceCode    with memoryForceStatus, the errorCode to answer instead,
+ *                      e.g. "403" + "MEMORY_PLAN_REQUIRED": memory is not in
+ *                      the account's plan (#8081).
  *
  * Like the real memory API:
  *   - a reused `Idempotency-Key` header is a 409 `CONFLICT`, never forwarded;
@@ -27,8 +30,18 @@ import { behavior } from "../state.mjs";
  *     letters) they hold, honours `view: "descend"`, the metadata `labels`
  *     filter and `budgets.per_layer_limits.events`, and mints a `pack_<n>` id
  *     that `/memory/answer` must be given as `use_pack_id`;
+ *   - `/memory/forget` honours `cascade`: the default, `derived_only`, keeps
+ *     the events (it only drops what was derived from them), `redact_events`
+ *     removes them, anything else is a 400 `INVALID_CASCADE`;
+ *   - `POST /memory/v1/erasures` is memory-api's scoped erasure, answered
+ *     unwrapped: `{scope, audit_note}` only (else 400 `UNKNOWN_FIELD`), the
+ *     root is a 422 `ROOT_ERASURE_REFUSED`, and it erases the scope and every
+ *     scope below it synchronously: `{erased, scope, scopes, erasure_ids}`;
+ *     `GET /memory/v1/erasures/:id` reads one back (404 otherwise);
  *   - `/memory/answer` answers deterministically from the pack it is given:
- *     "grounded answer for <question>" followed by the pack's top event text.
+ *     "grounded answer for <question>" followed by the pack's top event text;
+ *   - `DELETE /memory` erases the caller's whole store and answers
+ *     `{erased: true, scopes}`.
  *
  * Everything is in memory and deterministic; `resetMockMemory()` clears it.
  */
@@ -90,6 +103,19 @@ function fail(res, status, code, error) {
   });
 }
 
+/** Fails `res` as `memoryForceStatus` asks; false when it asks nothing. */
+function failForced(res) {
+  const forced = Number(behavior().memoryForceStatus || 0);
+  if (forced < 400) return false;
+  const code = behavior().memoryForceCode || STATUS_CODES[forced] || "UPSTREAM_ERROR";
+  const error =
+    code === "MEMORY_PLAN_REQUIRED"
+      ? "memory is not included in this account's plan; nothing was processed"
+      : "forced by mock";
+  fail(res, forced, code, error);
+  return true;
+}
+
 function ok(res, data, status = 200) {
   json(res, status, { success: true, data });
 }
@@ -131,12 +157,41 @@ function rendered(event) {
   return { ...event, content: { ...event.content, text: `[${role}] ${text}` } };
 }
 
+/**
+ * `DELETE /memory`: erases the caller's entire hosted memory (every scope of
+ * this bearer's store) and reports how many scopes held anything.
+ */
+function eraseAll({ req, res }) {
+  const token = bearerOf(req);
+  if (!token) {
+    fail(res, 401, "UNAUTHORIZED", "missing bearer");
+    return true;
+  }
+  if (failForced(res)) return true;
+  const store = storeFor(token);
+  const scopes = new Set(store.events.map((e) => e.scope)).size;
+  store.events = [];
+  store.packs.clear();
+  store.idempotency.clear();
+  store.claims.clear();
+  ok(res, { erased: true, scopes });
+  return true;
+}
+
 export async function handleMemory(ctx) {
   const { method, url, res, req, parsedBody } = ctx;
   const path = url.split("?")[0];
+  if ((path === "/memory" || path === "/memory/") && method === "DELETE") {
+    return eraseAll(ctx);
+  }
   if (!path.startsWith("/memory/")) return false;
   let route = path.slice("/memory/".length).replace(/\/+$/, "");
   let eventId = null;
+  let erasureId = null;
+  if (route.startsWith("v1/erasures/")) {
+    erasureId = decodeURIComponent(route.slice("v1/erasures/".length));
+    route = "v1/erasures";
+  }
   if (route.startsWith("events/")) {
     eventId = decodeURIComponent(route.slice("events/".length));
     route = "events";
@@ -148,6 +203,7 @@ export async function handleMemory(ctx) {
     "forget",
     "scopes",
     "answer",
+    "v1/erasures",
   ]);
   if (!known.has(route)) return false;
 
@@ -156,11 +212,7 @@ export async function handleMemory(ctx) {
     fail(res, 401, "UNAUTHORIZED", "missing bearer");
     return true;
   }
-  const forced = Number(behavior().memoryForceStatus || 0);
-  if (forced >= 400) {
-    fail(res, forced, STATUS_CODES[forced] || "UPSTREAM_ERROR", "forced by mock");
-    return true;
-  }
+  if (failForced(res)) return true;
 
   const store = storeFor(token);
   const body = parsedBody && typeof parsedBody === "object" ? parsedBody : {};
@@ -299,6 +351,16 @@ export async function handleMemory(ctx) {
       fail(res, 422, "EMPTY_SELECTOR_WITHOUT_CONFIRMATION");
       return true;
     }
+    const cascade = body.cascade === undefined ? "derived_only" : body.cascade;
+    if (cascade !== "derived_only" && cascade !== "redact_events") {
+      fail(res, 400, "INVALID_CASCADE");
+      return true;
+    }
+    if (cascade === "derived_only") {
+      // Only what was derived goes; the events stay.
+      ok(res, { deleted: { events: 0 }, requested: ids.length, matched: 0 });
+      return true;
+    }
     const before = store.events.length;
     const requestedIds = new Set(ids);
     store.events = selective
@@ -310,6 +372,46 @@ export async function handleMemory(ctx) {
       requested: ids.length,
       matched: deleted,
     });
+    return true;
+  }
+
+  if (route === "v1/erasures" && method === "GET" && erasureId !== null) {
+    const job = store.erasures?.get(erasureId);
+    if (!job) {
+      json(res, 404, { error_code: "NOT_FOUND" });
+      return true;
+    }
+    json(res, 200, job);
+    return true;
+  }
+
+  if (route === "v1/erasures" && method === "POST" && erasureId === null) {
+    const unknown = Object.keys(body).find((k) => k !== "scope" && k !== "audit_note");
+    if (unknown) {
+      json(res, 400, { error_code: "UNKNOWN_FIELD", message: unknown });
+      return true;
+    }
+    const scope = String(body.scope ?? "").replace(/\/+$/, "");
+    if (!scope || scope === "/") {
+      json(res, 422, { error_code: "ROOT_ERASURE_REFUSED" });
+      return true;
+    }
+    const below = `${scope}/`;
+    const held = [
+      ...new Set(
+        store.events
+          .map((e) => e.scope)
+          .filter((s) => s === scope || s.startsWith(below)),
+      ),
+    ];
+    store.events = store.events.filter((e) => !held.includes(e.scope));
+    store.erasures ??= new Map();
+    const ids = held.map((s) => {
+      const id = `erasure_${store.erasures.size + 1}`;
+      store.erasures.set(id, { erasure_id: id, scope: s, status: "completed", phase: "done" });
+      return id;
+    });
+    json(res, 200, { erased: true, scope, scopes: ids.length, erasure_ids: ids });
     return true;
   }
 

@@ -1,0 +1,158 @@
+{
+  "implementationPackages": [
+    "tinyjuice",
+    "tinyconnectors",
+    "tinyconnectors-sync",
+    "tinymcp",
+    "tinychannels",
+    "tinychannels-runtime",
+    "tinyhosts",
+    "tinybox-core",
+    "tinybox-jail",
+    "tinybox-docker",
+    "tinybox-host",
+    "tinybox-ssh",
+    "tinycomputer-accessibility",
+    "tinyvoice",
+    "tinywallet-crypto",
+    "tinywallet-web3",
+    "tinywallet-x402",
+    "pdf-extract",
+    "calamine",
+    "tinybox-linux",
+    "tinybox-microvm",
+    "tinybox-sync",
+    "tinydocs",
+    "tinydocs-core",
+    "tinydocs-extract",
+    "tinysearch",
+    "tinysearch-core",
+    "cpal",
+    "tinyflows-module",
+    "tinyflows",
+    "tinyflows-catalog",
+    "tinyflows-copilot",
+    "tinyflows-drivers",
+    "tinyflows-schedule",
+    "tinyeventqueues"
+  ],
+  "implementationPrefixes": [
+    "tinyjuice-",
+    "tinyconnectors-",
+    "tinymcp-",
+    "tinychannels-",
+    "tinyhosts-",
+    "tinybox-",
+    "tinywallet-",
+    "tinycomputer-",
+    "tinyvoice-",
+    "tinydocs-",
+    "tinysearch-"
+  ],
+  "hostAdapterPackages": [
+    "tinyjuice-host"
+  ],
+  "contracts": [
+    {
+      "name": "tinyjuice-bus",
+      "manifest": "vendor/tinyjuice/crates/tinyjuice-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyjuice"
+    },
+    {
+      "name": "tinyconnectors-bus",
+      "manifest": "vendor/tinyconnectors/crates/tinyconnectors-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyconnectors"
+    },
+    {
+      "name": "tinymcp-bus",
+      "manifest": "vendor/tinymcp/crates/tinymcp-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinymcp"
+    },
+    {
+      "name": "tinychannels-bus",
+      "manifest": "vendor/tinychannels/crates/tinychannels-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinychannels"
+    },
+    {
+      "name": "tinywallet-bus",
+      "manifest": "vendor/tinywallet/crates/tinywallet-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinywallet"
+    },
+    {
+      "name": "tinycomputer-bus",
+      "manifest": "vendor/tinycomputer/crates/tinycomputer-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinycomputer"
+    },
+    {
+      "name": "tinyvoice-bus",
+      "manifest": "vendor/tinyvoice/crates/tinyvoice-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyvoice"
+    },
+    {
+      "name": "tinydocs-bus",
+      "manifest": "vendor/tinydocs/crates/tinydocs-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinydocs"
+    },
+    {
+      "name": "tinysearch-bus",
+      "manifest": "vendor/tinysearch/crates/tinysearch-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinysearch"
+    },
+    {
+      "name": "tinyhosts-bus",
+      "manifest": "vendor/tinyhosts/crates/tinyhosts-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyhosts"
+    },
+    {
+      "name": "tinybox-bus",
+      "manifest": "vendor/tinybox/crates/tinybox-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinybox"
+    },
+    {
+      "name": "tinyflows-bus",
+      "manifest": "vendor/tinyflows/crates/tinyflows-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyflows"
+    },
+    {
+      "name": "tinyeventqueues-bus",
+      "manifest": "vendor/tinyeventqueues/crates/tinyeventqueues-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyeventqueues"
+    }
+  ],
+  "linkedHost": {
+    "package": "openhuman-modules-linked",
+    "allowedParents": [
+      "openhuman-cli"
+    ]
+  },
+  "pendingContracts": [],
+  "exceptions": [
+    {
+      "scope": "tinyconnectors-bus",
+      "package": "hmac",
+      "reason": "TinyConnectors #72 adds optional pure Composio webhook verification helpers to the bus contract for hosts that own the endpoint; this edge is enabled only by its opt-in webhook feature and is recorded for contract-boundary review."
+    },
+    {
+      "scope": "tinyconnectors-bus",
+      "package": "sha2",
+      "reason": "TinyConnectors #72 adds optional pure Composio webhook verification helpers to the bus contract for hosts that own the endpoint; this edge is enabled only by its opt-in webhook feature and is recorded for contract-boundary review."
+    },
+    {
+      "scope": "tinyflows-bus",
+      "package": "chrono",
+      "reason": "tinyflows-bus schedule contract v3 carries the job, run and schedule records (CronJob, CronRun, Schedule, DeliveryConfig, ...) with their DateTime<Utc> fields so hosts redeclare none of them. chrono is time arithmetic and RFC3339 serde only, with no I/O or runtime; the schedule maths themselves (cron expressions, time zones) run in the module. Recorded for contract-boundary review (tinyflows#143, openhuman cron cutover #7397)."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinyflows",
+      "parent": "openhuman",
+      "reason": "OpenHuman still uses TinyFlows graph types and compatibility helpers in the flows and run projection adapters while its implementation remains behind tinyflows-bus. Moving the remaining adapter surface and legacy import path is part of the openhuman core shrink tracked in #7390 (including the cron importer decision in #8055)."
+    }
+  ],
+  "excludedSubsystems": [
+    {
+      "owner": "tinyruntime",
+      "reason": "Excluded by user: TinyRuntime removal is being implemented separately. This migration does not change its host or module."
+    }
+  ]
+}

@@ -41,6 +41,14 @@ function listJsFiles(dir) {
 
 const requiredMarkers = [
   {
+    label: "Japanese picker label",
+    needles: ["日本語", "\\u65e5\\u672c\\u8a9e"],
+  },
+  {
+    label: "Japanese language setting translation",
+    needles: ["言語", "\\u8a00\\u8a9e"],
+  },
+  {
     label: "zh-CN locale key",
     needles: ["zh-CN"],
   },

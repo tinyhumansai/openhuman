@@ -21,15 +21,8 @@ use std::path::Path;
 use crate::core::all::RegisteredController;
 use crate::core::ControllerSchema;
 
-// ---------------------------------------------------------------------------
-// Type surface — re-exported from the ungated carve-out, NOT re-declared.
-// Mirrors the `pub use ops::*` → `pub use super::ops_types::{…}` chain that the
-// real build exposes at the `skills` root (`skills::Workflow`, etc.).
-// ---------------------------------------------------------------------------
-
-pub use super::ops_types::{
-    Workflow, WorkflowFrontmatter, WorkflowScope, MAX_WORKFLOW_RESOURCE_BYTES,
-};
+// Disabled discovery returns the same portable skill metadata as an enabled host.
+use tinyskills::Skill as Workflow;
 
 // ---------------------------------------------------------------------------
 // Discovery surface (mirrors `ops_discover::*` re-exported at the skills root)
@@ -44,6 +37,33 @@ pub fn load_workflow_metadata(_workspace_dir: &Path) -> Vec<Workflow> {
     Vec::new()
 }
 
+/// Always empty: the disabled skills facade cannot discover configured skills.
+pub fn load_workflow_metadata_for(
+    _ctx: &crate::core::runtime::DispatchCtx,
+    _config: &crate::config::Config,
+) -> Vec<Workflow> {
+    Vec::new()
+}
+
+/// Refuse resource reads when the skills domain is compiled out.
+pub fn read_workflow_resource(
+    _workspace_dir: &Path,
+    _skill_id: &str,
+    _relative_path: &Path,
+) -> Result<String, String> {
+    Err("skills are unavailable in this build".to_string())
+}
+
+/// Refuse scoped resource reads when the skills domain is compiled out.
+pub fn read_workflow_resource_for(
+    _ctx: &crate::core::runtime::DispatchCtx,
+    _config: &crate::config::Config,
+    _skill_id: &str,
+    _relative_path: &Path,
+) -> Result<String, String> {
+    Err("skills are unavailable in this build".to_string())
+}
+
 /// No-op: with skills compiled out nothing can discover a bundled skill, so
 /// writing one into the workspace would only leave files nothing reads.
 ///
@@ -51,13 +71,6 @@ pub fn load_workflow_metadata(_workspace_dir: &Path) -> Vec<Workflow> {
 /// inside the gated tree, and the one caller only logs it.
 pub fn install_bundled_skills(_workspace_dir: &Path) {
     log::debug!("[skills-stub] install_bundled_skills skipped (skills disabled)");
-}
-
-/// No-op success: with skills compiled out there is no skills directory to
-/// provision, and workspace bootstrap must not fail because of it.
-pub fn init_workflows_dir(_workspace_dir: &Path) -> Result<(), String> {
-    log::debug!("[skills-stub] init_workflows_dir skipped (skills disabled)");
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -99,9 +112,18 @@ pub mod bus {
     pub fn ensure_triggered_workflow_subscriber(_workspace: &std::path::Path) {
         log::debug!("[skills-stub] ensure_triggered_workflow_subscriber skipped (skills disabled)");
     }
+
+    /// No-op with skills compiled out.
+    pub fn ensure_triggered_workflow_subscriber_for(
+        _ctx: &crate::core::runtime::DispatchCtx,
+        _config: &crate::config::Config,
+        _domains: Option<crate::core::runtime::DomainSet>,
+    ) {
+        log::debug!("[skills-stub] scoped triggered-workflow subscriber skipped (skills disabled)");
+    }
 }
 
 // NOTE: no `tools` module here. The `pub use skills::tools::*` glob in
 // `tools/mod.rs` is `#[cfg(feature = "skills")]` instead — mirroring the
-// `voice` gate's handling of the `audio_toolkit::tools::*` glob. An empty stub
+// feature-specific domain globs. An empty stub
 // module would re-export nothing and trip `unused_imports` at the glob site.

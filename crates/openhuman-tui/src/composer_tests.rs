@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn mouse_cursor_uses_wrapped_cells_and_combining_marks() {
+    let mut composer = Composer::default();
+    composer.set_text("界e\u{301}界");
+    composer.click(1, 0, 3);
+    let (_, row, col) = composer.display(3);
+    assert_eq!((row, col), (1, 0));
+    composer.insert_char('X');
+    assert_eq!(composer.text(), "界e\u{301}X界");
+}
+
+#[test]
 fn unicode_editing_uses_character_indices() {
     let mut c = Composer::default();
     c.insert_str("a🦀b");

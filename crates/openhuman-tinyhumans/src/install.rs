@@ -3,16 +3,19 @@
 //!
 //! Hosts that build the core through [`crate::RuntimeBuilder`] do not need
 //! this; it is for hosts that boot the core themselves
-//! (`run_server_embedded_with_ready`, `run_core_from_args`, `CoreBuilder`)
-//! and for test fixtures. Idempotent: calling it again re-installs an
+//! (`run_core_from_args`, `CoreBuilder`) and for test fixtures. The shared host
+//! boot (`openhuman_rpc::host`) connects the backend on its own. Idempotent: calling it again re-installs an
 //! equivalent transport and is harmless.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use openhuman_embed::__host::agent::tinyagents::discovery::install_tool_ranker;
+use openhuman_embed::__host::core::all::register_controller_extension;
+use openhuman_embed::seams::ControllerExtension;
+use tinytools::ToolRanker;
 
 use crate::backend::{set_product_identity, ProductIdentity};
-use openhuman_core::backend::transport::{install_backend_transport, installed_backend_transport};
-use openhuman_core::core::all::register_controller_extension;
-
 use crate::transport::SdkBackendTransport;
 
 /// What [`install`] sets up.
@@ -77,68 +80,164 @@ pub enum InstallError {
     Registry(String),
 }
 
-static INSTALLED: OnceLock<Mutex<Option<Arc<SdkBackendTransport>>>> = OnceLock::new();
+static INSTALLED: AtomicBool = AtomicBool::new(false);
 
-/// Install the SDK-backed backend transport as the process-global transport
-/// (and optionally set the product identity first).
+/// What a TinyHumans connection contributes to a core, resolved from
+/// [`InstallOptions`]. The one code path both entry points share:
+/// [`install`] applies it to the process globals, and
+/// [`RuntimeBuilder`](crate::RuntimeBuilder) hands it to the embed builder's
+/// seam options (`controller_extension`, `tool_ranker`).
+pub(crate) struct Wiring {
+    /// The process-wide SDK transport ([`crate::client::shared_transport`]).
+    /// Hosted callers fetch it themselves; kept so tests can pin that every
+    /// connect shares one instance.
+    #[cfg(test)]
+    pub(crate) transport: Arc<SdkBackendTransport>,
+    /// The hosted RPC proxies, unless [`InstallOptions::hosted_controllers`]
+    /// is off.
+    pub(crate) controllers: Option<ControllerExtension>,
+    /// OpenAI OAuth controllers owned by this host layer.
+    pub(crate) provider_oauth: ControllerExtension,
+    /// The Jev `tool_search` ranker, unless [`InstallOptions::tool_ranker`]
+    /// is off or the `jev` feature is compiled out.
+    pub(crate) ranker: Option<Arc<dyn ToolRanker>>,
+}
+
+impl std::fmt::Debug for Wiring {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wiring")
+            .field(
+                "controllers",
+                &self.controllers.as_ref().map(|ext| ext.group),
+            )
+            .field("ranker", &self.ranker.as_ref().map(|ranker| ranker.kind()))
+            .field("provider_oauth", &self.provider_oauth.group)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Set the product identity (if any) and resolve the seams `options` asks
+/// for, without touching the controller registry or the ranker slot.
 ///
-/// Returns the transport so a host that also builds the core through
-/// `CoreBuilder` can bind it there explicitly with
-/// `CoreBuilder::backend_transport`; binding is optional because the core
-/// resolves the process global when a context carries none.
-pub fn install(options: InstallOptions) -> Result<Arc<SdkBackendTransport>, InstallError> {
-    let slot = INSTALLED.get_or_init(|| Mutex::new(None));
-    let mut guard = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-
+/// A new identity drops the cached transport, because a transport captures
+/// its attribution headers once; [`connect_transport`] then rebuilds it.
+fn prepare(
+    options: &InstallOptions,
+    doctor_registration: crate::register::DoctorRegistration<'_>,
+) -> (Option<ControllerExtension>, Option<Arc<dyn ToolRanker>>) {
     if let Some(identity) = options.product_identity.clone() {
         log::debug!(
             "[tinyhumans] install: product identity {}",
             identity.as_str()
         );
         set_product_identity(identity);
-        // A new identity means new attribution headers; rebuild below.
-        *guard = None;
+        // A new identity means new attribution headers: the shared transport
+        // captured the old ones, so drop it and rebuild on connect.
+        crate::client::reset_shared_transport();
     }
 
-    if options.hosted_controllers {
-        // Idempotent in the core: an identical re-registration is a no-op.
-        register_controller_extension(crate::hosted::extension())
-            .map_err(InstallError::Registry)?;
-    }
+    // Plug every area into the core's generic registries (idempotent).
+    crate::register::register_all(options, doctor_registration);
+
+    let controllers = options.hosted_controllers.then(crate::hosted::extension);
 
     #[cfg(feature = "jev")]
-    if options.tool_ranker {
-        // Idempotent in the core: the slot is replaced in place. The ranker
-        // resolves the credential per search, so nothing here needs a login.
-        crate::jev::install_jev_ranker();
-    }
+    let ranker = options.tool_ranker.then(|| {
+        // The ranker resolves the credential per search, so nothing here
+        // needs a login.
+        Arc::new(crate::jev::TinyHumansJevRanker::new()) as Arc<dyn ToolRanker>
+    });
+    #[cfg(not(feature = "jev"))]
+    let ranker = None;
 
-    if let Some(existing) = guard.as_ref() {
-        // Re-install into the core slot in case something cleared it (tests).
-        if installed_backend_transport().is_none() {
-            install_backend_transport(existing.clone());
-        }
-        log::trace!("[tinyhumans] install: already installed");
-        return Ok(existing.clone());
-    }
+    log::trace!(
+        "[tinyhumans] install: prepared hosted_controllers={} tool_ranker={}",
+        controllers.is_some(),
+        ranker.is_some()
+    );
+    (controllers, ranker)
+}
 
-    let transport = Arc::new(SdkBackendTransport::new().map_err(InstallError::Transport)?);
-    install_backend_transport(transport.clone());
-    *guard = Some(transport.clone());
-    log::info!("[tinyhumans] install: backend transport installed");
+/// The process's SDK transport, built once and shared by every hosted caller.
+fn connect_transport() -> Result<Arc<SdkBackendTransport>, InstallError> {
+    let transport = crate::client::shared_transport().map_err(InstallError::Transport)?;
+    if !INSTALLED.swap(true, Ordering::SeqCst) {
+        log::info!("[tinyhumans] install: backend transport ready");
+    }
     Ok(transport)
 }
 
-/// Whether [`install`] has run in this process (and its transport is still
-/// the core's global one).
-pub fn is_installed() -> bool {
-    INSTALLED
-        .get()
-        .and_then(|slot| {
-            slot.lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .as_ref()
-                .map(|_| installed_backend_transport().is_some())
-        })
-        .unwrap_or(false)
+/// Resolve everything a TinyHumans connection wires in and connect the
+/// transport. The builder's path; [`install`] runs the same two steps with
+/// the registry and ranker applied in between, in its historical order.
+pub(crate) fn wiring(
+    options: &InstallOptions,
+    extensions: &openhuman_embed::__host::core::slots::Extensions,
+) -> Result<Wiring, InstallError> {
+    let (controllers, ranker) = prepare(
+        options,
+        crate::register::DoctorRegistration::Context(extensions),
+    );
+    // Connecting builds the process transport; only tests read it back.
+    #[cfg_attr(not(test), allow(unused_variables))]
+    let transport = connect_transport()?;
+    Ok(Wiring {
+        #[cfg(test)]
+        transport,
+        controllers,
+        provider_oauth: crate::provider_oauth::extension(),
+        ranker,
+    })
 }
+
+/// Connect the TinyHumans layer for this process: set the product identity
+/// (if any), plug every area into the core's generic registries and build the
+/// shared SDK transport.
+///
+/// The compatibility entry point for hosts that boot the core themselves;
+/// [`RuntimeBuilder`](crate::RuntimeBuilder) wires the same pieces through
+/// the embed builder instead. Order: product identity, hosted controllers
+/// (process registry), Jev ranker (process slot), transport.
+///
+/// The core holds no transport of its own; the returned handle is the one
+/// every hosted caller in this crate sends through.
+pub fn install(options: InstallOptions) -> Result<Arc<SdkBackendTransport>, InstallError> {
+    let (controllers, ranker) = prepare(&options, crate::register::DoctorRegistration::Process);
+
+    register_controller_extension(crate::provider_oauth::extension())
+        .map_err(InstallError::Registry)?;
+
+    if let Some(extension) = controllers {
+        // Idempotent in the core: an identical re-registration is a no-op.
+        register_controller_extension(extension).map_err(InstallError::Registry)?;
+    }
+
+    if let Some(ranker) = ranker {
+        // Idempotent in the core: the slot is replaced in place.
+        install_tool_ranker(ranker);
+    }
+
+    connect_transport()
+}
+
+/// Register the hooks a config *load* depends on, and nothing else.
+///
+/// A host that reads configuration before it connects (the CLI and TUI open
+/// their storage-backed session store first) must call this before any
+/// config read: the config enricher is what tells the load-time migrations
+/// which endpoints are managed, and with none registered a legacy managed
+/// config is mistaken for a custom one. Cheap and idempotent;
+/// [`install`] and the builder's connect register the same hook again.
+pub fn register_hooks() {
+    log::trace!("[tinyhumans] register_hooks: config enricher");
+    crate::client::register(&InstallOptions::default());
+}
+
+/// Whether [`install`] (or the builder's connect) has run in this process.
+pub fn is_installed() -> bool {
+    INSTALLED.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+#[path = "install_tests.rs"]
+mod tests;

@@ -12,8 +12,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::harness::definition::{AgentDefinition, PromptSource};
-use crate::skills::Workflow;
+use crate::agent_registry::host_definition::AgentDefinition;
+use tinyagents_definition::PromptSource;
+use tinyskills::Skill as Workflow;
 
 /// One declared input — a parameter the skill needs, with a human description.
 /// `required` inputs must be supplied at run time; `kind` is an optional type
@@ -171,7 +172,7 @@ fn load_workflows_and_discovered(workspace_dir: &Path) -> (Vec<WorkflowDefinitio
 
     let mut workflows: Vec<WorkflowDefinition> = Vec::new();
 
-    if let Ok(builtins) = crate::agent::registry::agents::load_builtins() {
+    if let Ok(builtins) = crate::agent_registry::agents::load_builtins() {
         for definition in builtins {
             workflows.push(WorkflowDefinition {
                 definition,

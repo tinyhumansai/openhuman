@@ -15,6 +15,7 @@ import {
   completeDeepLinkAuthProcessing,
   failDeepLinkAuthProcessing,
 } from '../store/deepLinkAuthState';
+import { E2E_RESTART_APP_AS_RELOAD, IS_DEV_LIKE } from './config';
 import { getStoredCoreMode } from './configPersistence';
 import {
   CORE_CONFIG_UNREADABLE_I18N_KEY,
@@ -33,6 +34,10 @@ import { getSessionToken } from './tauriCommands';
 import { isTauri as coreIsTauri } from './tauriCommands/common';
 
 const SESSION_TOKEN_UPDATED_EVENT = 'core-state:session-token-updated';
+
+/** Thrown when the session owner reports success but the core holds no token. */
+const CORE_NO_SESSION_TOKEN_ERROR =
+  'CORE: session owner reported success but the core holds no session token';
 
 /**
  * CSRF / session-fixation protection for `openhuman://auth` deep links (finding
@@ -198,7 +203,7 @@ const applySessionToken = async (install: () => Promise<void>): Promise<void> =>
   // the secret through the renderer.
   const sessionToken = await getSessionToken();
   if (!sessionToken) {
-    throw new Error('CORE: session owner reported success but the core holds no session token');
+    throw new Error(CORE_NO_SESSION_TOKEN_ERROR);
   }
   patchCoreStateSnapshot({ snapshot: { sessionToken } });
   window.dispatchEvent(new CustomEvent(SESSION_TOKEN_UPDATED_EVENT, { detail: { sessionToken } }));
@@ -296,7 +301,15 @@ const handleAuthDeepLink = async (parsed: URL, requireStateNonce = true) => {
         { requiresAppDataReset: true }
       );
     } else {
-      const kind = classifyAuthStoreFailure(rawMessage);
+      const kind = classifyAuthStoreFailure(error);
+      // The native E2E harness cannot observe WebView console warnings. Expose
+      // only this stable, PII-free bucket so failed auth setup can be diagnosed
+      // without leaking the backend response or credential into test logs.
+      if (E2E_RESTART_APP_AS_RELOAD && typeof window !== 'undefined') {
+        (
+          window as Window & { __OPENHUMAN_E2E_AUTH_STORE_FAILURE__?: string }
+        ).__OPENHUMAN_E2E_AUTH_STORE_FAILURE__ = kind;
+      }
       // Capture a SYNTHETIC error keyed only by `kind` — never the raw error.
       // Two reasons (both raised in review):
       //  1. PII: the upstream `/auth/me` failure embeds the verbatim backend
@@ -362,7 +375,14 @@ const isDecryptionFailure = (message: string): boolean => {
  * place the bounce becomes debuggable. Returns a stable enum-like string (no URLs,
  * no tokens) safe to use as a Sentry tag / fingerprint.
  */
-export const classifyAuthStoreFailure = (message: string): string => {
+export const classifyAuthStoreFailure = (failure: unknown): string => {
+  const message = authStoreFailureMessage(failure);
+  // A rejection with no message at all (a Tauri invoke rejects with whatever
+  // the command serialized): `String(obj)` is "[object Object]", which told
+  // the `other` bucket nothing.
+  if (message === null) return 'non_error';
+  // Our own fail-closed check after a "successful" store; exact, so first.
+  if (message === CORE_NO_SESSION_TOKEN_ERROR) return 'core_no_session_token';
   // The session owner prefixes its errors with a stable kind; map those first
   // so the buckets do not depend on the prose behind the prefix.
   switch (sessionErrorKind(message)) {
@@ -388,9 +408,30 @@ export const classifyAuthStoreFailure = (message: string): string => {
   if (/\b401\b|unauthorized/.test(m)) return 'auth_me_unauthorized';
   if (/\b50[234]\b|bad gateway|service unavailable|gateway timeout/.test(m))
     return 'auth_me_gateway';
-  if (/network|fetch failed|connection|dns|unreachable/.test(m)) return 'network';
+  if (/network|fetch failed|connection|connect|refused|dns|unreachable/.test(m)) return 'network';
   if (/auth\/me|session validation failed/.test(m)) return 'auth_me_other';
+  // The owner's remaining prefixes (Rust `SessionError::{Core, Backend,
+  // Invalid}`), checked after the content buckets above so a `CORE:`-wrapped
+  // timeout or unreadable config still lands in its specific kind.
+  if (message.startsWith('BACKEND:')) return 'backend';
+  if (message.startsWith('CORE:')) return 'core';
+  if (message.startsWith('INVALID:')) return 'invalid';
   return 'other';
+};
+
+/**
+ * The text of a store failure, or `null` when it carries none. A Tauri invoke
+ * rejects with the command's serialized error — a string, or an object that
+ * may hold a `message`.
+ */
+const authStoreFailureMessage = (failure: unknown): string | null => {
+  if (failure instanceof Error) return failure.message;
+  if (typeof failure === 'string') return failure;
+  if (typeof failure === 'object' && failure !== null && 'message' in failure) {
+    const { message } = failure as { message: unknown };
+    if (typeof message === 'string') return message;
+  }
+  return null;
 };
 
 /**
@@ -700,7 +741,9 @@ export const setupDesktopDeepLinkListener = async () => {
       void handleDeepLinkUrls(urls);
     });
 
-    if (typeof window !== 'undefined') {
+    // Dev/E2E builds only: the helper mints a CSRF `state` nonce, so in a
+    // shipped binary any script in the WebView could inject a login token.
+    if (IS_DEV_LIKE && typeof window !== 'undefined') {
       // window.__simulateDeepLink('openhuman://auth?token=1234567890')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&provider=notion')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&skillId=discord')

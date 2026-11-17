@@ -10,23 +10,52 @@ impl Config {
         if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.update.enabled = true,
-                "0" | "false" | "no" | "off" => self.update.enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.update.enabled = true;
+                    self.record_env_override(
+                        env,
+                        "update.enabled",
+                        &["OPENHUMAN_AUTO_UPDATE_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.update.enabled = false;
+                    self.record_env_override(
+                        env,
+                        "update.enabled",
+                        &["OPENHUMAN_AUTO_UPDATE_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
         if let Some(val) = env.get("OPENHUMAN_AUTO_UPDATE_INTERVAL_MINUTES") {
             if let Ok(minutes) = val.trim().parse::<u32>() {
                 self.update.interval_minutes = minutes;
+                self.record_env_override(
+                    env,
+                    "update.interval_minutes",
+                    &["OPENHUMAN_AUTO_UPDATE_INTERVAL_MINUTES"],
+                );
             }
         }
         if let Some(raw) = env.get("OPENHUMAN_AUTO_UPDATE_RESTART_STRATEGY") {
             match raw.trim().to_ascii_lowercase().as_str() {
                 "self_replace" | "self-replace" | "self" => {
                     self.update.restart_strategy = UpdateRestartStrategy::SelfReplace;
+                    self.record_env_override(
+                        env,
+                        "update.restart_strategy",
+                        &["OPENHUMAN_AUTO_UPDATE_RESTART_STRATEGY"],
+                    );
                 }
                 "supervisor" | "stage_only" | "stage-only" => {
                     self.update.restart_strategy = UpdateRestartStrategy::Supervisor;
+                    self.record_env_override(
+                        env,
+                        "update.restart_strategy",
+                        &["OPENHUMAN_AUTO_UPDATE_RESTART_STRATEGY"],
+                    );
                 }
                 other => {
                     tracing::warn!(
@@ -42,6 +71,11 @@ impl Config {
                 parse_env_bool("OPENHUMAN_AUTO_UPDATE_RPC_MUTATIONS_ENABLED", &flag)
             {
                 self.update.rpc_mutations_enabled = enabled;
+                self.record_env_override(
+                    env,
+                    "update.rpc_mutations_enabled",
+                    &["OPENHUMAN_AUTO_UPDATE_RPC_MUTATIONS_ENABLED"],
+                );
             }
         }
     }

@@ -88,8 +88,8 @@ pub(super) fn restrict_builder_toolset(agent: &mut crate::agent::OpenHumanSessio
 ///
 /// PR3 (flows-copilot-live-run-approval): when a chat thread is attached
 /// (`stream.is_some()`), `flows_build` now runs the builder under
-/// [`AgentTurnOrigin::WebChat`] with [`APPROVAL_CHAT_CONTEXT`] scoped
-/// alongside it — the exact same double-scope the main web-chat delegate uses
+/// [`AgentTurnOrigin::WebChat`] with the chat approval context handed to
+/// the same turn — the exact same pairing the main web-chat delegate uses
 /// (`web_chat::ops::run_turn_under_cancel_and_deadline`). Under that origin
 /// the [`crate::security::approval::ApprovalGate`] no longer auto-allows
 /// `external_effect` tools; it PARKS them for a real human decision, routed
@@ -133,10 +133,9 @@ pub(super) fn restrict_builder_toolset_for_copilot(agent: &mut crate::agent::Ope
     tracing::info!(
         target: "flows",
         hidden = ?FLOWS_BUILD_COPILOT_HIDDEN_TOOLS,
-        "[flows] flows_build: streaming copilot turn — run_flow/resume_flow_run/cancel_flow_run \
-         stay visible (all three gated behind the WebChat approval surface; cancel_flow_run also \
-         ownership-checks the target run's flow_id — T-M3 fix); only the unrelated legacy \
-         run_workflow is hidden"
+        "[flows] flows_build: streaming copilot turn — run_flow/resume_flow_run stay visible \
+         behind the WebChat approval surface; cancel_flow_run and the unrelated legacy \
+         run_workflow are hidden"
     );
     agent.hide_tools(FLOWS_BUILD_COPILOT_HIDDEN_TOOLS);
 }

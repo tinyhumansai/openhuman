@@ -9,7 +9,7 @@ use super::*;
 /// ask for all of them in one shot instead of parking the run node-by-node.
 ///
 /// Mirrors — never re-implements — the runtime gating in
-/// `crate::flows::tinyflows::caps` (`OpenHumanTools::invoke` /
+/// `crate::flows::caps_host` (`OpenHumanTools::invoke` /
 /// `OpenHumanHttp` / `OpenHumanCode`) and `approval::gate`'s Workflow-origin
 /// branch. Because Rule 2 (`enforce_side_effect_approval`) forces
 /// `require_approval: true` onto every graph with outbound side-effect nodes,
@@ -33,186 +33,45 @@ use super::*;
 /// Curated Composio Read actions are excluded entirely: `CommandClass::Read`
 /// is `Allow` under every tier and the runtime skips the gate for them, so
 /// listing them would request grants that are never checked.
-pub async fn compute_approval_manifest(config: &Config, graph: &WorkflowGraph) -> Vec<Value> {
-    use crate::flows::tinyflows::caps::classify_composio_action_for_tier;
-    use crate::security::{CommandClass, GateDecision, SecurityPolicy};
-
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
-
-    let mut entries: Vec<Value> = Vec::new();
-    // Approvable/blocked rows dedupe on the trust key (`tool_name`) — two
-    // nodes calling the same tool need one grant, so they get one row.
-    let mut seen_tools: HashSet<String> = HashSet::new();
-
-    let push_gated = |entries: &mut Vec<Value>,
-                      seen_tools: &mut HashSet<String>,
-                      node_id: &str,
-                      tool_name: String,
-                      label: String,
-                      class: CommandClass| {
-        if !seen_tools.insert(tool_name.clone()) {
-            return;
-        }
-        let kind = if security.gate_decision(class) == GateDecision::Block {
-            "blocked"
-        } else {
-            "approvable"
-        };
-        entries.push(json!({
-            "kind": kind,
-            "node_id": node_id,
-            "tool_name": tool_name,
-            "label": label,
-            "class": format!("{class:?}"),
-        }));
-    };
-
-    for node in &graph.nodes {
-        match node.kind {
-            NodeKind::HttpRequest => {
-                let url = node
-                    .config
-                    .get("url")
-                    .and_then(Value::as_str)
-                    .unwrap_or("HTTP request");
-                push_gated(
-                    &mut entries,
-                    &mut seen_tools,
-                    &node.id,
-                    "flows_http_request".to_string(),
-                    format!("Call {url}"),
-                    CommandClass::Network,
-                );
-            }
-            NodeKind::Code => {
-                push_gated(
-                    &mut entries,
-                    &mut seen_tools,
-                    &node.id,
-                    "flows_code".to_string(),
-                    "Run sandboxed code".to_string(),
-                    CommandClass::Write,
-                );
-            }
-            NodeKind::ToolCall => {
-                let slug = node.config.get("slug").and_then(Value::as_str);
-                match slug {
-                    Some(s) if s.trim_start().starts_with('=') => {
-                        tracing::debug!(
-                            target: "flows",
-                            node_id = %node.id,
-                            "[flows] approval manifest: dynamic `=` slug — cannot pre-approve"
-                        );
-                        entries.push(json!({
-                            "kind": "dynamic",
-                            "node_id": node.id,
-                            "label": "Tool chosen at run time",
-                        }));
-                    }
-                    Some(s) if s.starts_with(crate::flows::tinyflows::caps::NATIVE_TOOL_PREFIX) => {
-                        let tool_name = s
-                            .trim_start_matches(crate::flows::tinyflows::caps::NATIVE_TOOL_PREFIX)
-                            .trim()
-                            .to_string();
-                        if tool_name.is_empty() {
-                            continue; // structurally invalid; validate rejects elsewhere
-                        }
-                        let args = node.config.get("args").cloned().unwrap_or(json!({}));
-                        // Same classifier the runtime dispatch uses. Args may
-                        // contain unresolved `=` bindings, so a classification
-                        // error (unknown tool, etc.) degrades conservatively
-                        // to Network — over-asking is safe, under-asking
-                        // re-introduces the mid-run park this feature removes.
-                        let class = crate::runtime::node::ops::classify_tool_call(
-                            config, &tool_name, &args,
-                        )
-                        .unwrap_or(CommandClass::Network);
-                        push_gated(
-                            &mut entries,
-                            &mut seen_tools,
-                            &node.id,
-                            tool_name.clone(),
-                            format!("Use tool {tool_name}"),
-                            class,
-                        );
-                    }
-                    Some(s) if !s.trim().is_empty() => {
-                        let class = classify_composio_action_for_tier(s).await;
-                        if class == CommandClass::Read {
-                            // Curated read: runtime never gates it.
-                            continue;
-                        }
-                        push_gated(
-                            &mut entries,
-                            &mut seen_tools,
-                            &node.id,
-                            s.to_string(),
-                            format!("Use {s}"),
-                            class,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            NodeKind::Agent
-                if node
-                    .config
-                    .get("agent_ref")
-                    .and_then(Value::as_str)
-                    .is_some_and(|r| !r.trim().is_empty()) =>
-            {
-                entries.push(json!({
-                    "kind": "agent",
-                    "node_id": node.id,
-                    "label": "AI step — may ask for permission for its own actions",
-                }));
-            }
-            _ => {}
-        }
-    }
-
-    tracing::debug!(
-        target: "flows",
-        entries = entries.len(),
-        "[flows] approval manifest computed"
-    );
-    entries
+pub async fn compute_approval_manifest(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    graph: &Value,
+) -> Result<Vec<Value>, String> {
+    compute_approval_manifest_json(ctx, config, graph.clone()).await
 }
 
-/// Splits a manifest's approvable entries into the trust keys a run will have to
-/// ask for and the ones the flow already holds a grant for.
-///
-/// With no gate installed both lists are empty: nothing ever parks, so nothing
-/// is `missing` — and nothing was ever granted, so nothing is `already_trusted`
-/// either. Naming the approvable keys there would tell the save+enable card that
-/// permissions are authorized on a host that holds no grant for them.
-/// `gate_installed: false` is the caller's single signal, which is exactly what
-/// the sibling `approval_preauthorize_flow` reports for the same condition.
-pub(super) fn split_manifest_trust(
-    entries: &[Value],
-    gate_installed: bool,
-    trusted: &HashSet<String>,
-) -> (Vec<String>, Vec<String>) {
-    let mut missing: Vec<String> = Vec::new();
-    let mut already_trusted: Vec<String> = Vec::new();
-    if !gate_installed {
-        return (missing, already_trusted);
-    }
-    for entry in entries {
-        if entry.get("kind").and_then(Value::as_str) != Some("approvable") {
-            continue;
-        }
-        let Some(tool_name) = entry.get("tool_name").and_then(Value::as_str) else {
-            continue;
-        };
-        if trusted.contains(tool_name) {
-            already_trusted.push(tool_name.to_string());
-        } else {
-            missing.push(tool_name.to_string());
-        }
-    }
-    (missing, already_trusted)
+async fn compute_approval_manifest_json(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    graph: Value,
+) -> Result<Vec<Value>, String> {
+    let registration =
+        crate::flows::authoring_host::register(std::sync::Arc::new(config.clone()), ctx.clone())
+            .await?;
+    let proxy = crate::modules::tinyflows::catalog_proxy(config).await?;
+    let entries: Vec<Value> = proxy
+        .call(
+            tinyflows_bus::catalog::members::APPROVAL_MANIFEST,
+            &(tinyflows_bus::catalog::ApprovalManifestRequest {
+                graph,
+                native_prefix: crate::flows::caps_host::NATIVE_TOOL_PREFIX.into(),
+                host: registration.catalog.clone(),
+            },),
+        )
+        .await
+        .map_err(|error| error.wire_message())?;
+    tracing::debug!(target: "flows", entries = entries.len(), "[flows] approval manifest computed");
+    Ok(entries)
+}
+
+/// Approval manifest for a portable graph payload from the Copilot bus.
+pub(crate) async fn approval_manifest_json(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    graph: Value,
+) -> Result<Vec<Value>, String> {
+    compute_approval_manifest_json(ctx, config, graph).await
 }
 
 /// RPC: the approval manifest for a saved flow (by `id`) or a candidate
@@ -224,6 +83,7 @@ pub(super) fn split_manifest_trust(
 /// are both empty by definition and the card never shows — `gate_installed:
 /// false` is the only signal in that case.
 pub async fn flows_approval_manifest(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     id: Option<&str>,
     graph_json: Option<Value>,
@@ -235,13 +95,16 @@ pub async fn flows_approval_manifest(
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("flow not found: {id}"))?;
             // `store::get_flow` already returns a migrated, deserialized graph.
-            (flow.graph, Some(id.to_string()))
+            (
+                serde_json::to_value(flow.graph).map_err(|e| e.to_string())?,
+                Some(id.to_string()),
+            )
         }
-        (None, Some(graph_json)) => (migrate_and_deserialize_graph(graph_json)?, None),
+        (None, Some(graph_json)) => (graph_json, None),
         (None, None) => return Err("provide 'id' or 'graph'".to_string()),
     };
 
-    let entries = compute_approval_manifest(config, &graph).await;
+    let entries = compute_approval_manifest_json(ctx, config, graph).await?;
 
     let gate = crate::security::approval::ApprovalGate::try_global();
     let gate_installed = gate.is_some();
@@ -254,7 +117,22 @@ pub async fn flows_approval_manifest(
         _ => HashSet::new(),
     };
 
-    let (missing, already_trusted) = split_manifest_trust(&entries, gate_installed, &trusted);
+    let (mut missing, mut already_trusted) = (Vec::new(), Vec::new());
+    if gate_installed {
+        for entry in &entries {
+            if entry.get("kind").and_then(Value::as_str) != Some("approvable") {
+                continue;
+            }
+            let Some(tool_name) = entry.get("tool_name").and_then(Value::as_str) else {
+                continue;
+            };
+            if trusted.contains(tool_name) {
+                already_trusted.push(tool_name.to_string());
+            } else {
+                missing.push(tool_name.to_string());
+            }
+        }
+    }
 
     let log = format!(
         "[flows] approval manifest: {} entr{}, {} missing grant(s)",

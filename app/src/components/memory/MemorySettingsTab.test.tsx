@@ -54,6 +54,12 @@ describe('MemorySettingsTab', () => {
     expect(screen.queryByTestId('memory-settings-host-bound')).not.toBeInTheDocument();
   });
 
+  it('ends with the erase-all-memory control', async () => {
+    renderWithProviders(<MemorySettingsTab />);
+    expect(await screen.findByTestId('memory-erase-card')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-erase-open')).toHaveTextContent('Erase all memory');
+  });
+
   it('says when the host pins the root and agent', async () => {
     hoisted.get.mockResolvedValue({ ...POLICY, host_bound: true });
     renderWithProviders(<MemorySettingsTab />);

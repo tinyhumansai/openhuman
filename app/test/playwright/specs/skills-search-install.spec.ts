@@ -218,7 +218,9 @@ test.describe('Skills explorer — the install button', () => {
   async function firstInstallButton(page: import('@playwright/test').Page) {
     const button = page.locator('[data-testid^="registry-install-"]').first();
     await expect(button).toBeVisible({ timeout: 20_000 });
-    return button;
+    const testId = await button.getAttribute('data-testid');
+    expect(testId).toBeTruthy();
+    return page.getByTestId(testId!);
   }
 
   test('offers Install, and the button is enabled before it is pressed', async ({ page }) => {
@@ -238,6 +240,9 @@ test.describe('Skills explorer — the install button', () => {
       release = resolve;
     });
 
+    await openSkillsTab(page, 'pw-skills-install-inflight');
+    const button = await firstInstallButton(page);
+
     await page.route('**/rpc', async (route, request) => {
       let method = '';
       try {
@@ -251,8 +256,6 @@ test.describe('Skills explorer — the install button', () => {
       await route.continue();
     });
 
-    await openSkillsTab(page, 'pw-skills-install-inflight');
-    const button = await firstInstallButton(page);
     await button.click();
 
     await expect(button).toBeDisabled({ timeout: 10_000 });
@@ -276,6 +279,10 @@ test.describe('Skills explorer — the install button', () => {
       releaseInstall = resolve;
     });
     let installBody: { id?: unknown } = {};
+
+    await openSkillsTab(page, 'pw-skills-install-fail');
+    const button = await firstInstallButton(page);
+    await expect(button).toBeEnabled();
 
     await page.route('**/rpc', async (route, request) => {
       let body: { method?: string; id?: unknown } = {};
@@ -301,9 +308,6 @@ test.describe('Skills explorer — the install button', () => {
       await route.continue();
     });
 
-    await openSkillsTab(page, 'pw-skills-install-fail');
-    const button = await firstInstallButton(page);
-    await expect(button).toBeEnabled();
     await button.click();
 
     // The pending state must actually be reached before the failure.

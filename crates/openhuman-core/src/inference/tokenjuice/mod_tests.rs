@@ -1,32 +1,145 @@
 use super::*;
+use serde_json::json;
+use tinytools::Tool;
+
+#[test]
+fn host_tools_keep_the_published_recovery_names_and_schemas() {
+    // Pin the actual tool the registry constructs before removing the local
+    // forwarding wrapper; this protects the model-facing contract byte for
+    // byte across the ownership move to tinyjuice-host.
+    let retrieve =
+        tinyjuice_host::retrieve_tool::RetrieveToolOutputTool::new(std::sync::Arc::new(|_, _| {
+            Box::pin(async { Ok(None) })
+        }));
+    assert_eq!(retrieve.name(), "juice_retrieve");
+    assert_eq!(
+        retrieve.permission_level(),
+        tinytools::PermissionLevel::ReadOnly
+    );
+    assert!(!retrieve.external_effect());
+    assert_eq!(
+        serde_json::to_vec(&retrieve.parameters_schema()).unwrap(),
+        serde_json::to_vec(&json!({
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string",
+                    "description": "The token named in the output's footer (or a ⟦tj:…⟧ marker's hash)."
+                },
+                "range": {
+                    "type": "object",
+                    "description": "Optional slice of the original to return.",
+                    "properties": {
+                        "start": { "type": "integer", "minimum": 0 },
+                        "end": { "type": "integer", "minimum": 0 },
+                        "unit": { "type": "string", "enum": ["bytes", "lines"] }
+                    },
+                    "required": ["start", "end"]
+                }
+            },
+            "required": ["token"]
+        }))
+        .unwrap()
+    );
+
+    let expected = [
+        (
+            "juice_find",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "the handle named in the output's footer" },
+                    "query": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["text", "grep", "regex", "rank", "sed", "awk", "jq"] },
+                    "ignore_case": { "type": "boolean" },
+                    "context": { "type": "integer" },
+                    "top_k": { "type": "integer" },
+                    "scope": { "type": "string" },
+                    "unit": { "type": "string", "enum": ["lines", "chars"] }
+                },
+                "required": ["handle", "query"]
+            }),
+        ),
+        (
+            "juice_extract",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "the handle named in the output's footer" },
+                    "what": { "type": "string", "enum": ["links", "headings"] },
+                    "scope": { "type": "string" },
+                    "unit": { "type": "string", "enum": ["lines", "chars"] }
+                },
+                "required": ["handle", "what"]
+            }),
+        ),
+        (
+            "juice_summarize",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "the handle named in the output's footer" },
+                    "hint": { "type": "string", "description": "what you need from it" },
+                    "max_chars": { "type": "integer" },
+                    "scope": { "type": "string" },
+                    "unit": { "type": "string", "enum": ["lines", "chars"] }
+                },
+                "required": ["handle"]
+            }),
+        ),
+    ];
+    let tools = repl_tools();
+    assert_eq!(
+        tools.iter().map(|tool| tool.name()).collect::<Vec<_>>(),
+        expected.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+    );
+    for (tool, (name, schema)) in tools.iter().zip(expected) {
+        assert_eq!(tool.name(), name);
+        let actual = serde_json::to_vec(&tool.parameters_schema()).unwrap();
+        let expected = serde_json::to_vec(&schema).unwrap();
+        assert_eq!(
+            actual,
+            expected,
+            "schema changed for {name}: actual={}, expected={}",
+            String::from_utf8_lossy(&actual),
+            String::from_utf8_lossy(&expected),
+        );
+    }
+}
 
 #[test]
 fn recovery_tool_aliases_remain_stable() {
-    assert!(is_recovery_tool(RETRIEVE_TOOL_NAME));
-    assert!(is_recovery_tool(LEGACY_RETRIEVE_TOOL_NAME));
+    assert!(is_recovery_tool(tinyjuice_bus::tools::RETRIEVE));
+    assert!(is_recovery_tool(tinyjuice_bus::tools::LEGACY_RETRIEVE));
+    assert!(is_recovery_tool("retrieve_tool_output"));
     assert!(!is_recovery_tool("shell"));
 }
 
 /// Exercise the configured on-demand mode through the real module bus. Even
 /// with a registered model callback and a result above the summary threshold,
 /// ingest must return a recovery handle without calling the model.
-/// Runs where CI builds the module (`TINYJUICE_TEST_MODULE`).
+/// Runs where a tinyjuice library is provided (`scripts/modules/build.mjs`
+/// or the staged release on `OPENHUMAN_MODULE_PATH`).
 #[tokio::test]
 async fn the_module_defers_a_summary_until_requested() {
-    if std::env::var_os("TINYJUICE_TEST_MODULE").is_none() {
+    if crate::modules::local_artifact("tinyjuice").is_none() {
         eprintln!(
-            "SKIPPED (not run, not asserted): TINYJUICE_TEST_MODULE is not set. Build \
-             vendor/tinyjuice and export TINYJUICE_TEST_MODULE=<path to libtinyjuice_module>, \
-             or use scripts/test-rust-with-mock.sh"
+            "SKIPPED (not run, not asserted): no tinyjuice library. Run \
+             `node scripts/modules/build.mjs tinyjuice` and set OPENHUMAN_MODULE_SOURCE_DIR \
+             and OPENHUMAN_MODULE_SOURCE=source, or use scripts/test-rust-with-mock.sh"
         );
         return;
     }
-    let seen = std::sync::Arc::new(std::sync::Mutex::new(None::<types::GenerateRequest>));
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(
+        None::<tinyjuice_bus::wire::GenerateRequest>,
+    ));
     let sink = seen.clone();
-    let ticket = generate::register(Box::new(move |request: types::GenerateRequest| {
-        *sink.lock().unwrap() = Some(request);
-        Box::pin(async { Ok("the rate limit is 60 requests a minute".to_string()) })
-    }));
+    let ticket = generate::register(Box::new(
+        move |request: tinyjuice_bus::wire::GenerateRequest| {
+            *sink.lock().unwrap() = Some(request);
+            Box::pin(async { Ok("the rate limit is 60 requests a minute".to_string()) })
+        },
+    ));
     // Over the default 4000-token threshold the test config installs.
     let content = "Rate limiting. Requests are limited per key. ".repeat(500);
 
@@ -48,7 +161,7 @@ async fn the_module_defers_a_summary_until_requested() {
         .text
         .contains("the rate limit is 60 requests a minute"));
     assert!(
-        output.text.contains(RETRIEVE_TOOL_NAME),
+        output.text.contains(tinyjuice_bus::tools::RETRIEVE),
         "the original stays retrievable: {}",
         output.text
     );
@@ -62,7 +175,7 @@ async fn the_module_defers_a_summary_until_requested() {
 /// still says it is unsummarized, exactly as a module-side failure would.
 #[tokio::test]
 async fn an_unreachable_module_discloses_a_wanted_summary() {
-    if std::env::var_os("TINYJUICE_TEST_MODULE").is_some() {
+    if crate::modules::local_artifact("tinyjuice").is_some() {
         return; // A fixture forces the module on; this pins the host path.
     }
     let mut config = crate::config::Config::default();
@@ -130,29 +243,21 @@ async fn an_off_profile_still_discloses_a_registered_summary() {
 }
 
 /// A module disabled in configuration cannot install, even when the process
-/// also carries a `TINYJUICE_TEST_MODULE` fixture: the config check runs
+/// also carries a tinyjuice library: the config check runs
 /// first. Exercises the config-driven passthrough independent of whatever
 /// module happens to be installed for other tests in this binary.
 #[tokio::test]
 async fn a_module_disabled_in_configuration_discloses_a_wanted_summary() {
-    let _lock = crate::config::TEST_ENV_LOCK.lock().await;
-    let previous = std::env::var_os("TINYJUICE_TEST_MODULE");
-    // SAFETY: serialized by TEST_ENV_LOCK; restored below for every exit path.
-    unsafe { std::env::remove_var("TINYJUICE_TEST_MODULE") };
-    struct RestoreEnv(Option<std::ffi::OsString>);
-    impl Drop for RestoreEnv {
-        fn drop(&mut self) {
-            // SAFETY: still under TEST_ENV_LOCK for the guarded test's scope.
-            match self.0.take() {
-                Some(value) => unsafe { std::env::set_var("TINYJUICE_TEST_MODULE", value) },
-                None => unsafe { std::env::remove_var("TINYJUICE_TEST_MODULE") },
-            }
-        }
-    }
-    let _restore = RestoreEnv(previous);
-
     let mut config = crate::config::Config::default();
     config.modules.enabled = false;
+    let fixture_aware_call = client(&config)
+        .call::<()>("tinyjuice", methods::INSTALL, (install_request(&config),))
+        .await;
+    assert!(
+        fixture_aware_call.is_err(),
+        "a test module artifact must not override modules.enabled=false"
+    );
+
     let config = std::sync::Arc::new(config);
 
     let output = compact_tool_output(ToolOutputCompaction {
@@ -189,90 +294,6 @@ fn passthrough_discloses_a_notice_only_when_a_summary_was_wanted() {
     assert_eq!(disclosed.summarized_from_bytes, None);
 }
 
-fn synthetic_compact_response(text: &str) -> types::CompactResponse {
-    types::CompactResponse {
-        text: text.to_string(),
-        original_bytes: text.len(),
-        compacted_bytes: text.len(),
-        rule_id: "none/plain_text".into(),
-        applied: false,
-        content_kind: "plain_text".into(),
-        compressor: "none".into(),
-        original_tokens: text.len().div_ceil(4) as u64,
-        compacted_tokens: text.len().div_ceil(4) as u64,
-        notice: None,
-    }
-}
-
-fn unknown_method_error() -> tinybus::Error {
-    tinybus::Error::UnknownMethod {
-        interface: tinybus::InterfaceName::new("ai.tinyhumans.tinyjuice.Compaction").unwrap(),
-        member: tinybus::MemberName::new("CompactWith").unwrap(),
-    }
-}
-
-fn method_failed_error() -> tinybus::Error {
-    tinybus::Error::MethodFailed {
-        name: "ai.tinyhumans.tinyjuice.Error.Internal".into(),
-        message: "boom".into(),
-    }
-}
-
-#[test]
-fn a_successful_compact_with_reply_is_used_as_is() {
-    let response = synthetic_compact_response("compacted");
-    match classify_compact_with_reply(Ok(response.clone()), "shell") {
-        CompactWithOutcome::Response(got) => assert_eq!(got.text, response.text),
-        _ => panic!("expected Response"),
-    }
-}
-
-#[test]
-fn an_unknown_method_error_asks_to_retry_as_compact() {
-    assert!(matches!(
-        classify_compact_with_reply(Err(unknown_method_error()), "shell"),
-        CompactWithOutcome::RetryAsCompact
-    ));
-}
-
-#[test]
-fn any_other_compact_with_error_gives_up() {
-    assert!(matches!(
-        classify_compact_with_reply(Err(method_failed_error()), "shell"),
-        CompactWithOutcome::GiveUp
-    ));
-}
-
-#[test]
-fn a_legacy_compact_reply_gains_the_summary_notice_when_one_was_wanted_and_missing() {
-    let response = synthetic_compact_response("legacy");
-    let finished = finish_legacy_compact_reply(Ok(response), true)
-        .expect("a successful reply is never dropped");
-    assert_eq!(finished.notice, Some(summary_failed_notice()));
-}
-
-#[test]
-fn a_legacy_compact_reply_keeps_its_own_notice_when_it_already_has_one() {
-    let mut response = synthetic_compact_response("legacy");
-    response.notice = Some("module notice".to_string());
-    let finished =
-        finish_legacy_compact_reply(Ok(response), true).expect("a successful reply is kept");
-    assert_eq!(finished.notice, Some("module notice".to_string()));
-}
-
-#[test]
-fn a_legacy_compact_reply_is_silent_when_no_summary_was_wanted() {
-    let response = synthetic_compact_response("legacy");
-    let finished = finish_legacy_compact_reply(Ok(response), false)
-        .expect("a successful reply is never dropped");
-    assert_eq!(finished.notice, None);
-}
-
-#[test]
-fn a_failed_legacy_compact_reply_gives_up() {
-    assert!(finish_legacy_compact_reply(Err(method_failed_error()), true).is_none());
-}
-
 #[test]
 fn install_request_turns_on_the_handle_preview_by_default() {
     let config = crate::config::Config::default();
@@ -281,8 +302,7 @@ fn install_request_turns_on_the_handle_preview_by_default() {
     assert!(request.options.router_enabled);
     assert!(request.options.ccr_enabled);
     assert!(request.options.repl_handle);
-    // The plain-text copy on disk is opt-in.
-    assert_eq!(request.options.repl_save_dir, None);
+    assert!(!request.ccr_durable);
 }
 
 #[test]
@@ -296,26 +316,19 @@ fn install_request_handle_mode_follows_every_switch_it_needs() {
     ] {
         let mut config = crate::config::Config::default();
         flip(&mut config);
-        config.tokenjuice.repl_save_enabled = true;
         let request = install_request(&config);
         assert!(!request.options.repl_handle);
-        assert_eq!(
-            request.options.repl_save_dir, None,
-            "no handle, so nothing to save a copy of"
-        );
+        assert!(!request.ccr_durable);
     }
 }
 
 #[test]
-fn install_request_saves_a_copy_under_the_workspace_when_asked() {
+fn install_request_enables_durable_ccr_when_configured() {
     let mut config = crate::config::Config::default();
     config.workspace_dir = std::path::PathBuf::from("/ws");
-    config.tokenjuice.repl_save_enabled = true;
+    config.tokenjuice.ccr_disk_enabled = true;
     let request = install_request(&config);
-    assert_eq!(
-        request.options.repl_save_dir,
-        Some(std::path::PathBuf::from("/ws/.tokenjuice/repl"))
-    );
+    assert!(request.ccr_durable);
 }
 
 #[test]
@@ -325,8 +338,123 @@ fn install_request_summarizes_only_on_request_under_a_64k_cap() {
     assert!(request.options.llm_summary_enabled);
     assert_eq!(
         request.options.llm_summary_mode,
-        types::LlmSummaryMode::OnDemand,
+        tinyjuice_bus::types::LlmSummaryMode::OnDemand,
         "ingest must never call the summary model on its own"
     );
     assert_eq!(request.options.llm_summary_max_input_tokens, 64_000);
+}
+
+/// Run against the verified release with the host's pinned TinyBus loader.
+#[tokio::test]
+async fn released_queries_keep_cached_originals_in_the_module_and_accept_artifact_content() {
+    if crate::modules::local_artifact("tinyjuice").is_none() {
+        eprintln!("SKIPPED: no TinyJuice library provided");
+        return;
+    }
+    use tinyjuice_bus::{
+        repl::{FindMode, ReplLimits, ReplOp, ReplOutput, ScopeUnit},
+        wire::{QueryError, QueryRequest, QueryResponse, QueryTarget},
+    };
+    let workspace = tempfile::tempdir().unwrap();
+    let config = crate::config::Config {
+        workspace_dir: workspace.path().into(),
+        ..Default::default()
+    };
+    install_from_config(&config).await.unwrap();
+    let content = format!("{}\nmodule-owned-needle\n", "boring row\n".repeat(2000));
+    let compressed: tinyjuice_bus::types::CompressedOutput = client(&config)
+        .call(
+            "tinyjuice",
+            methods::COMPRESS,
+            (
+                content.clone(),
+                tinyjuice_bus::types::ContentHint::default(),
+            ),
+        )
+        .await
+        .unwrap();
+    let handle = compressed
+        .ccr_token
+        .expect("released module retains original");
+    let make_request = |target| QueryRequest {
+        target,
+        op: ReplOp::Find {
+            query: "module-owned-needle".into(),
+            mode: FindMode::Text,
+            ignore_case: false,
+            context: 0,
+            top_k: None,
+            scope: None,
+            unit: ScopeUnit::Lines,
+        },
+        limits: ReplLimits::default(),
+        context_token: None,
+        scope: None,
+    };
+    for target in [
+        QueryTarget::Handle { token: handle },
+        QueryTarget::Content { content },
+    ] {
+        let reply: QueryResponse = client(&config)
+            .call("tinyjuice", methods::QUERY, (make_request(target),))
+            .await
+            .unwrap();
+        assert!(
+            matches!(reply, Ok(ReplOutput::Lines {hits, ..}) if hits.iter().any(|hit| hit.text.contains("module-owned-needle")))
+        );
+    }
+    let missing: QueryResponse = client(&config)
+        .call(
+            "tinyjuice",
+            methods::QUERY,
+            (make_request(QueryTarget::Handle {
+                token: "neverstored123".into(),
+            }),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing, Err(QueryError::HandleNotFound));
+    let reply: tinyjuice_bus::wire::HtmlResponse = client(&config).call("tinyjuice", methods::EXTRACT_HTML, ("<html><body><h1>Fixture</h1><script>secret_script</script><p>hello</p></body></html>",)).await.unwrap();
+    let markdown = reply.unwrap();
+    assert!(markdown.contains("hello"));
+    assert!(!markdown.contains("secret_script"));
+}
+
+// ── [components] juice ────────────────────────────────────────────────
+
+fn juice_off() -> crate::config::Config {
+    let mut config = crate::config::Config::default();
+    config.components.juice = false;
+    config
+}
+
+#[test]
+fn juice_off_drops_handles_summaries_and_companion_tools() {
+    let on = crate::config::Config::default();
+    assert!(enabled(&on));
+    assert!(repl_handle_active(&on));
+    assert!(!companion_tool_names("orchestrator", &on).is_empty());
+
+    let off = juice_off();
+    assert!(!enabled(&off));
+    assert!(!repl_handle_active(&off));
+    assert!(!summarizes_tool_output("orchestrator", &off));
+    assert!(companion_tool_names("orchestrator", &off).is_empty());
+}
+
+// The module listing only exists with the `modules` feature.
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn juice_off_install_never_touches_the_module() {
+    let off = juice_off();
+    install_from_config(&off).await.expect("no-op");
+    // The resolution slot is process-global and other tests legitimately load
+    // tinyjuice into it, so its absolute state (`Available`) cannot be asserted
+    // here. The listing for a juice-off config reports `Disabled` with no
+    // source whatever the slot holds, which is what "never touches the module"
+    // means to a caller.
+    let statuses = crate::modules::ops::list(&off);
+    let status = statuses.iter().find(|s| s.id == "tinyjuice").unwrap();
+    assert_eq!(status.state, crate::modules::types::ModuleState::Disabled);
+    assert!(status.source.is_none());
 }

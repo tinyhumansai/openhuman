@@ -369,18 +369,20 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
         n.slug !== p.slug ||
         n.label !== p.label ||
         n.endpoint !== p.endpoint ||
+        n.ca_cert_pem !== p.ca_cert_pem ||
         n.auth_style !== p.auth_style
       );
     })
   ) {
     patch.cloud_providers = next.cloudProviders
       .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug.trim()))
-      .map(({ id, slug, label, endpoint, auth_style }) => ({
+      .map(({ id, slug, label, endpoint, auth_style, ca_cert_pem }) => ({
         id,
         slug,
         label,
         endpoint,
         auth_style,
+        ca_cert_pem,
       }));
   }
 

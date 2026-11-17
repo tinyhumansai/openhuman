@@ -1,6 +1,6 @@
 # referral
 
-Thin RPC adapter domain for the referral program. It does **not** own any business logic, state, or schema of its own — it calls the hosted backend's `/referral/*` endpoints through the TinyHumans SDK's typed `referral()` client and surfaces the raw `data` payloads to the CLI / JSON-RPC clients. It exists primarily because the desktop WebView `fetch` to the backend can fail with a generic "Load failed" (CORS / TLS / WebKit), so these ops run in-process like the billing domain.
+Thin RPC adapter domain for the referral program. It does **not** own any business logic, state, or schema of its own: it calls the hosted backend's `/referral/*` endpoints through the TinyHumans SDK's typed `referral()` client and surfaces the raw `data` payloads to the CLI / JSON-RPC clients. It exists primarily because the desktop WebView `fetch` to the backend can fail with a generic "Load failed" (CORS / TLS / WebKit), so these ops run in-process like the billing domain.
 
 ## Responsibilities
 
@@ -14,13 +14,13 @@ Thin RPC adapter domain for the referral program. It does **not** own any busine
 
 | File | Role |
 | --- | --- |
-| `crates/openhuman-tinyhumans/src/hosted/referral/mod.rs` | Export-only. Re-exports `ops::*` and the schema/controller pair (`all_referral_controller_schemas`, `all_referral_registered_controllers`, `referral_schemas`). |
-| `crates/openhuman-tinyhumans/src/hosted/referral/ops.rs` | Business logic: `get_stats`, `claim_referral`, each through `HostedClient` (see `../client.rs`). Tests in `ops_tests.rs` run against an Axum mock backend. |
-| `crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs` | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and helpers (`to_json`, `deserialize_params`, `json_output`). |
+| [`crates/openhuman-tinyhumans/src/hosted/referral/mod.rs`](mod.rs) | Export-only. Re-exports `ops::*` and the schema/controller pair (`all_referral_controller_schemas`, `all_referral_registered_controllers`, `referral_schemas`). |
+| [`crates/openhuman-tinyhumans/src/hosted/referral/ops.rs`](ops.rs) | Business logic: `get_stats`, `claim_referral`, each through `HostedClient` (see `../client.rs`). Tests in [`ops_tests.rs`](ops_tests.rs) run against an Axum mock backend. |
+| [`crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs`](schemas.rs) | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and the local `deserialize_params` helper; `to_json` and `json_output` come from the core's shared `util::params` (through `openhuman_embed::__host`). |
 
 ## Public surface
 
-From `mod.rs` re-exports:
+From [`mod.rs`](mod.rs) re-exports:
 
 - `get_stats(config: &Config) -> Result<Outcome<Value>, String>` (via `ops::*`).
 - `claim_referral(config: &Config, code: &str, device_fingerprint: Option<&str>) -> Result<Outcome<Value>, String>` (via `ops::*`).
@@ -31,31 +31,31 @@ From `mod.rs` re-exports:
 
 ## RPC / controllers
 
-Two controllers in the `referral` namespace, registered into the global registry via `crates/openhuman-core/src/core/all.rs`:
+Two controllers in the `referral` namespace, registered into the global registry via [`crates/openhuman-core/src/core/all.rs`](../../../../openhuman-core/src/core/all.rs):
 
 | Method | Inputs | Output | Backend call |
 | --- | --- | --- | --- |
 | `referral_get_stats` (`referral.get_stats`) | none | `stats` (JSON) | `GET /referral/stats` |
 | `referral_claim` (`referral.claim`) | `code` (string, required), `deviceFingerprint` (string, optional) | `result` (JSON) | `POST /referral/claim` |
 
-An unrecognized `function` name returns an `unknown` placeholder schema with an `error` output. Handlers load `Config` via `config_rpc::load_config_with_timeout()` and return CLI-compatible JSON through `Outcome::into_cli_compatible_json()`.
+An unrecognized `function` name returns an `unknown` placeholder schema with an `error` output. Handlers load `Config` via `DispatchCtx::load_config()` and return CLI-compatible JSON through `Outcome::into_cli_compatible_json()`.
 
 ## Persistence
 
-None of its own. The domain is stateless — it reads the backend credential through `HostedClient` but does not persist anything.
+None of its own. The domain is stateless: it reads the backend credential through `HostedClient` but does not persist anything.
 
 ## Dependencies
 
-- `crate::backend::url::effective_backend_api_url` — resolves the effective backend API base URL from `config.api_url`.
-- `crate::hosted::client::HostedClient` — resolves the core's backend credential first (no request without one), builds the SDK's `TinyHumansClient`, and maps SDK errors onto the core's RPC sentinels.
-- `crate::config::Config` — config struct passed into ops; `config::rpc::load_config_with_timeout` is used by the schema handlers.
-- `crate::core::all::{ControllerFuture, RegisteredController}` and `crate::core::{ControllerSchema, FieldSchema, TypeSchema}` — controller registry types.
-- `crate::rpc::RpcOutcome` — return wrapper carrying value + logs.
-- Test-only: `crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME}` for seeding session tokens in unit tests.
+- `crate::backend::url::effective_backend_api_url`: resolves the effective backend API base URL from `config.api_url`.
+- `crate::hosted::client::HostedClient`: resolves the core's backend credential first (no request without one), builds the SDK's `TinyHumansClient`, and maps SDK errors onto the core's RPC sentinels.
+- `crate::config::Config`: config struct passed into ops; `config::rpc::load_config_with_timeout` is used by the schema handlers.
+- `crate::core::all::{ControllerFuture, RegisteredController}` and `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`: controller registry types.
+- `crate::rpc::RpcOutcome`: return wrapper carrying value + logs.
+- Test-only: `crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME}` for seeding session tokens in unit tests.
 
 ## Used by
 
-- `crates/openhuman-core/src/core/all.rs`: registers `all_referral_registered_controllers()` into the controller registry (line ~213) and `all_referral_controller_schemas()` into the schema list (line ~345), exposing both methods to CLI and JSON-RPC.
+- [`crates/openhuman-core/src/core/all.rs`](../../../../openhuman-core/src/core/all.rs): registers `all_referral_registered_controllers()` into the controller registry (line ~213) and `all_referral_controller_schemas()` into the schema list (line ~345), exposing both methods to CLI and JSON-RPC.
 
 ## Notes / gotchas
 
@@ -64,3 +64,9 @@ None of its own. The domain is stateless — it reads the backend credential thr
 - Eligibility for `claim` ("only users who have not yet subscribed") is enforced **by the backend**, not in this module: it merely forwards the request.
 - Trimming/whitespace-dropping of `deviceFingerprint` happens in both `ops::claim_referral` and the schema handler `handle_referral_claim` (defensive, redundant filtering).
 - The module deliberately runs server-side like the billing domain to avoid WebView `fetch` "Load failed" failures.
+
+## Further reading
+
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`crates/openhuman-tinyhumans/src/hosted/README.md`](../README.md): hosted proxies.
+- [`vendor/tinyhumans-sdk/README.md`](../../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

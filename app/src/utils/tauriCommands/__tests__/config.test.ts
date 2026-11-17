@@ -6,6 +6,8 @@ import {
   openhumanClaudeCodeSetFullAccess,
   openhumanClaudeCodeSettings,
   openhumanGetClientConfig,
+  openhumanGetUserTimezone,
+  openhumanUpdateUserTimezone,
 } from '../config';
 
 vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
@@ -94,5 +96,30 @@ describe('Claude Code wrappers', () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce({} as never);
     await call();
     expect(vi.mocked(callCoreRpc)).toHaveBeenCalled();
+  });
+});
+
+describe('user time zone wrappers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reads the setting through openhuman.config_get_user_timezone', async () => {
+    const expected = { result: { timezone: null, device: 'UTC', effective: 'UTC' }, logs: [] };
+    vi.mocked(callCoreRpc).mockResolvedValueOnce(expected as never);
+    await expect(openhumanGetUserTimezone()).resolves.toEqual(expected);
+    expect(vi.mocked(callCoreRpc)).toHaveBeenCalledWith({
+      method: 'openhuman.config_get_user_timezone',
+    });
+  });
+
+  it('saves a zone, or null to follow the device, through config_update_user_timezone', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValue({ result: {}, logs: [] } as never);
+    await openhumanUpdateUserTimezone('Asia/Kolkata');
+    await openhumanUpdateUserTimezone(null);
+    expect(vi.mocked(callCoreRpc).mock.calls.map(([call]) => call)).toEqual([
+      { method: 'openhuman.config_update_user_timezone', params: { timezone: 'Asia/Kolkata' } },
+      { method: 'openhuman.config_update_user_timezone', params: { timezone: null } },
+    ]);
   });
 });

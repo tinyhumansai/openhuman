@@ -25,10 +25,10 @@ fn history_wire_writes_only_role_and_content() {
     let written = serde_json::to_value(&holder).unwrap();
     let rows = written["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].as_object().unwrap().keys().collect::<Vec<_>>(),
-        ["content", "role"]
-    );
+    let row = rows[0].as_object().unwrap();
+    assert_eq!(row.len(), 2);
+    assert!(row.contains_key("content"));
+    assert!(row.contains_key("role"));
     assert_eq!(rows[0]["role"], "tool");
     // Compared as JSON: key order inside the envelope depends on whether a
     // downstream build unifies serde_json's `preserve_order`.

@@ -7,7 +7,7 @@ async fn dry_run_flags_null_resolved_agent_input_context() {
     // since #4590, so a null-resolved `input_context` is just as
     // execution-breaking as a null `prompt` — the agent runs with no
     // upstream data at all. Must fail the dry run the same way.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -45,7 +45,7 @@ async fn dry_run_passes_when_agent_uses_input_context_instead_of_prompt_expressi
     // The FALSE-POSITIVE-PREVENTION case: the same data need, wired the
     // correct way — `input_context` carries the upstream item, `prompt`
     // stays a plain instruction with no leading `=`. This must dry-run green.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -84,7 +84,7 @@ async fn dry_run_warns_on_unexercised_agent_after_condition() {
     // could easily carry `active: true` and take the other branch, so the
     // dry run must still surface this as a warning even though `ok` stays
     // `true` — there's nothing here that flips it to a hard reject.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -125,7 +125,7 @@ async fn dry_run_warns_on_unexercised_agent_after_condition() {
 async fn dry_run_no_routing_divergence_warning_when_every_node_executes() {
     // FALSE-POSITIVE-PREVENTION: a condition whose taken branch under the
     // default mock input DOES reach the downstream agent must not warn.
-    let tool = DryRunWorkflowTool::new(test_config(&TempDir::new().unwrap()));
+    let tool = dry_run_workflow_tool(test_config(&TempDir::new().unwrap()));
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
@@ -153,19 +153,15 @@ async fn dry_run_no_routing_divergence_warning_when_every_node_executes() {
     );
 }
 
-/// (systemic tool-contract fix, Part 2b) A missing required Composio arg is
-/// now a HARD REJECT at `revise_workflow` — `validate_tool_contracts` runs
-/// ahead of the older advisory `graph_wiring_warnings` check and catches the
-/// exact same condition first, so the graph never gets far enough to merely
-/// warn about it. `graph_wiring_warnings`'s own required-arg warning (still
-/// exercised directly in `ops_tests.rs`) stays as a defense-in-depth
-/// fallback for any caller that doesn't also run `validate_tool_contracts`.
+/// A missing required Composio arg is a HARD REJECT at `revise_workflow` via
+/// `validate_tool_contracts`; TinyFlows wiring warnings cover output bindings
+/// and split paths, not required input arguments.
 #[tokio::test]
 async fn revise_workflow_rejects_a_missing_required_composio_arg() {
     seed_live_catalog_cache("gmail", vec![seeded_gmail_send_contract()]);
 
     let tmp = TempDir::new().unwrap();
-    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+    let tool = revise_workflow_tool(test_config(&tmp));
     let result = tool
         .execute(json!({
             "name": "Send mail",
@@ -197,7 +193,7 @@ async fn revise_workflow_rejects_a_missing_required_composio_arg() {
 #[tokio::test]
 async fn save_workflow_missing_flow_id_is_error() {
     let tmp = TempDir::new().unwrap();
-    let tool = SaveWorkflowTool::new(test_config(&tmp));
+    let tool = save_workflow_tool(test_config(&tmp));
     // Persisting a definition is a Write-class action (no external effect at
     // save time — the flow's own runs govern that).
     assert_eq!(tool.permission_level(), PermissionLevel::Write);
@@ -214,7 +210,7 @@ async fn save_workflow_missing_flow_id_is_error() {
 #[tokio::test]
 async fn save_workflow_unknown_flow_is_error() {
     let tmp = TempDir::new().unwrap();
-    let tool = SaveWorkflowTool::new(test_config(&tmp));
+    let tool = save_workflow_tool(test_config(&tmp));
 
     let result = tool
         .execute(json!({ "flow_id": "nope", "graph": valid_graph() }))
@@ -229,7 +225,7 @@ async fn save_workflow_persists_graph_and_name_onto_existing_flow() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let flow_id = seed_flow(&config, "Blank flow").await;
-    let tool = SaveWorkflowTool::new(config.clone());
+    let tool = save_workflow_tool(config.clone());
 
     let result = tool
         .execute(json!({
@@ -252,7 +248,7 @@ async fn save_workflow_persists_graph_and_name_onto_existing_flow() {
     // The graph + name really persisted.
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "AI News Digest");
-    assert_eq!(saved.graph.nodes.len(), 2);
+    assert_eq!(saved.graph["nodes"].as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -260,7 +256,7 @@ async fn save_workflow_rejects_invalid_graph_and_leaves_flow_intact() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let flow_id = seed_flow(&config, "Blank flow").await;
-    let tool = SaveWorkflowTool::new(config.clone());
+    let tool = save_workflow_tool(config.clone());
 
     let result = tool
         .execute(json!({
@@ -275,7 +271,7 @@ async fn save_workflow_rejects_invalid_graph_and_leaves_flow_intact() {
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "Blank flow");
     assert_eq!(
-        saved.graph.nodes.len(),
+        saved.graph["nodes"].as_array().unwrap().len(),
         1,
         "original graph must be untouched"
     );
@@ -299,7 +295,7 @@ async fn save_workflow_surfaces_auto_disarm_warning_on_manual_to_automatic_trans
         "precondition: a manual-trigger flow persists enabled from create"
     );
 
-    let tool = SaveWorkflowTool::new(config.clone());
+    let tool = save_workflow_tool(config.clone());
     let result = tool
         .execute(json!({
             "flow_id": flow_id,
@@ -342,7 +338,7 @@ async fn save_workflow_rejects_agent_binding_missing_declared_field() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let flow_id = seed_flow(&config, "Blank flow").await;
-    let tool = SaveWorkflowTool::new(config.clone());
+    let tool = save_workflow_tool(config.clone());
 
     let result = tool
         .execute(json!({ "flow_id": flow_id, "graph": unresolvable_binding_graph() }))
@@ -360,7 +356,7 @@ async fn save_workflow_rejects_agent_binding_missing_declared_field() {
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "Blank flow");
     assert_eq!(
-        saved.graph.nodes.len(),
+        saved.graph["nodes"].as_array().unwrap().len(),
         1,
         "original graph must be untouched"
     );
@@ -371,19 +367,25 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let flow_id = seed_flow(&config, "Blank flow").await;
-    let tool = SaveWorkflowTool::new(config.clone());
+    let tool = save_workflow_tool(config.clone());
 
     let graph = json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "summarize", "kind": "agent", "name": "Summarize",
-              "config": { "agent_ref": "planner", "prompt": "summarize",
+              "config": { "agent_ref": "workflow_builder", "prompt": "summarize",
                 "output_parser": { "schema": { "type": "object",
-                    "required": ["channel"],
-                    "properties": { "channel": { "type": "string" } } } } } },
+                        "required": ["channel", "text"],
+                        "properties": {
+                            "channel": { "type": "string" },
+                            "text": { "type": "string" }
+                        } } } } },
             { "id": "notify", "kind": "tool_call", "name": "Notify",
               "config": { "slug": "SLACK_SEND_MESSAGE",
-                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+                "args": {
+                    "channel": "=nodes.summarize.item.json.channel",
+                    "text": "=nodes.summarize.item.json.text"
+                } } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "summarize" },
@@ -396,6 +398,12 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
         .await
         .unwrap();
 
+    if result.is_error {
+        eprintln!(
+            "save_workflow rejected the fixture graph: {}",
+            result.output()
+        );
+    }
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     assert_eq!(parsed["type"], "workflow_saved");
@@ -403,21 +411,21 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
 
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "Summarize and notify");
-    assert_eq!(saved.graph.nodes.len(), 3);
+    assert_eq!(saved.graph["nodes"].as_array().unwrap().len(), 3);
 }
 
 #[tokio::test]
 async fn list_node_kinds_tool_returns_every_kind() {
-    let tool = ListNodeKindsTool::new();
+    let tool = list_node_kinds_tool(Arc::new(Config::default()));
     let result = tool.execute(json!({})).await.unwrap();
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     let kinds = parsed["node_kinds"].as_array().unwrap();
-    assert_eq!(kinds.len(), crate::flows::NODE_KINDS.len());
+    assert_eq!(kinds.len(), tinyflows_bus::node_kinds::NODE_KINDS.len());
     // The tool must advertise the whole catalog, not a subset that happens to
     // include the kinds someone remembered to name here — a kind the engine
     // knows but this tool omits is a kind the builder agent cannot reach.
-    for kind in crate::flows::NODE_KINDS {
+    for kind in tinyflows_bus::node_kinds::NODE_KINDS {
         assert!(
             kinds.iter().any(|k| k["kind"] == kind),
             "list_node_kinds omits `{kind}`"
@@ -429,7 +437,7 @@ async fn list_node_kinds_tool_returns_every_kind() {
 
 #[tokio::test]
 async fn get_node_kind_contract_tool_returns_contract_and_rejects_unknown() {
-    let tool = GetNodeKindContractTool::new();
+    let tool = get_node_kind_contract_tool(Arc::new(Config::default()));
 
     let ok = tool.execute(json!({ "kind": "tool_call" })).await.unwrap();
     assert!(!ok.is_error, "{}", ok.output());
@@ -450,9 +458,10 @@ async fn get_node_kind_contract_tool_returns_contract_and_rejects_unknown() {
     let bad = tool.execute(json!({ "kind": "nope" })).await.unwrap();
     assert!(bad.is_error);
     assert!(bad.output().contains("list_node_kinds"));
-    assert!(bad
-        .output()
-        .contains(&format!("{} valid kinds", crate::flows::NODE_KINDS.len())));
+    assert!(bad.output().contains(&format!(
+        "{} valid kinds",
+        tinyflows_bus::node_kinds::NODE_KINDS.len()
+    )));
 
     let missing = tool.execute(json!({})).await.unwrap();
     assert!(missing.is_error);
@@ -463,7 +472,7 @@ async fn get_node_kind_contract_tool_returns_contract_and_rejects_unknown() {
 #[tokio::test]
 async fn edit_workflow_applies_ops_to_inline_graph_and_returns_proposal() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
 
     // Add a merge node `b` and wire the agent into it.
     let result = tool
@@ -490,7 +499,7 @@ async fn edit_workflow_applies_ops_to_inline_graph_and_returns_proposal() {
 #[tokio::test]
 async fn edit_workflow_update_node_config_merge_patches() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
 
     let result = tool
         .execute(json!({
@@ -512,7 +521,7 @@ async fn edit_workflow_update_node_config_merge_patches() {
 #[tokio::test]
 async fn edit_workflow_requires_a_base() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
     let result = tool
         .execute(json!({ "ops": [ { "op": "remove_node", "id": "a" } ] }))
         .await
@@ -524,7 +533,7 @@ async fn edit_workflow_requires_a_base() {
 #[tokio::test]
 async fn edit_workflow_reports_failing_op_with_guidance() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
     let result = tool
         .execute(json!({
             "graph": valid_graph(),
@@ -541,7 +550,7 @@ async fn edit_workflow_reports_failing_op_with_guidance() {
 #[tokio::test]
 async fn edit_workflow_bad_op_reports_index_type_and_shape() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
     // ops 0 and 1 are well-formed; op 2 is an add_node missing its `node`.
     let result = tool
         .execute(json!({
@@ -566,7 +575,7 @@ async fn edit_workflow_bad_op_reports_index_type_and_shape() {
 #[tokio::test]
 async fn edit_workflow_missing_op_field_lists_valid_types() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
     let result = tool
         .execute(json!({
             "graph": valid_graph(),
@@ -584,7 +593,7 @@ async fn edit_workflow_missing_op_field_lists_valid_types() {
 #[tokio::test]
 async fn edit_workflow_add_node_exists_carries_ordering_hint() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
     // Re-adding an existing node id fails in-order; the hint should point at the
     // remove-first / patch-in-place fix.
     let result = tool
@@ -607,7 +616,7 @@ async fn edit_workflow_add_node_exists_carries_ordering_hint() {
 #[tokio::test]
 async fn edit_workflow_accepts_node_id_aliases_end_to_end() {
     let tmp = TempDir::new().unwrap();
-    let tool = EditWorkflowTool::new(test_config(&tmp));
+    let tool = edit_workflow_tool(test_config(&tmp));
     // A valid ops array using the `node_id` alias (the natural agent guess)
     // applies cleanly through edit_workflow.
     let result = tool

@@ -4,6 +4,8 @@ This directory contains the React context providers that manage the global state
 
 ## CoreStateProvider
 
+Source: [`CoreStateProvider.tsx`](./CoreStateProvider.tsx).
+
 Manages the authoritative global state of the application, including user authentication, session tokens, and the application snapshot.
 
 ### Turn-Boundary Refetch Contract
@@ -17,8 +19,18 @@ To ensure that the UI stays in sync with the backend state (especially during on
 
 ## ChatRuntimeProvider
 
+Source: [`ChatRuntimeProvider.tsx`](./ChatRuntimeProvider.tsx).
+
 Manages the live chat state, including message streaming, tool execution timeline, and subagent orchestration. It subscribes to socket events and updates the Redux store.
 
 ## SocketProvider
 
+Source: [`SocketProvider.tsx`](./SocketProvider.tsx).
+
 Manages the Socket.IO connection to the Rust core, providing the underlying transport for real-time chat events.
+
+## Further reading
+
+- [Frontend architecture](../../../docs/gitbooks/en/developing/architecture/frontend.md), including the provider chain generated from [`App.tsx`](../App.tsx).
+- [Chat](../../../docs/gitbooks/en/features/chat.md), the feature these providers drive.
+- [`app/README.md`](../../README.md).

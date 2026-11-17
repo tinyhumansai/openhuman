@@ -79,9 +79,7 @@ async fn run(s: &Scenario) -> Value {
         vec![ModelResponse::assistant("done")]
     }));
     let mut harness: AgentHarness<(), OpenHumanRunContext> = AgentHarness::new();
-    harness
-        .register_model("m", model.clone())
-        .set_default_model("m");
+    harness.with_model(model.clone());
     if s.with_tools {
         harness.register_tool(Arc::new(Lookup));
     }

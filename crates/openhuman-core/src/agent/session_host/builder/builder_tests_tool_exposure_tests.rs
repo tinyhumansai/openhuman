@@ -1,21 +1,26 @@
 use super::*;
 
-fn visible_names(agent_id: &str) -> std::collections::HashSet<String> {
-    let definition = crate::agent::harness::AgentDefinitionRegistry::builtins_only()
-        .get(agent_id)
-        .cloned()
-        .unwrap_or_else(|| panic!("built-in agent definition not found: {agent_id}"));
-    visible_names_for(&definition)
+async fn visible_names(agent_id: &str) -> std::collections::HashSet<String> {
+    let definition =
+        crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("built-in agent definition not found: {agent_id}"));
+    visible_names_for(&definition).await
 }
 
-fn visible_names_for(
-    definition: &crate::agent::harness::definition::AgentDefinition,
+async fn visible_names_for(
+    definition: &crate::agent_registry::host_definition::AgentDefinition,
 ) -> std::collections::HashSet<String> {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, definition)
-            .unwrap_or_else(|e| panic!("{} session build: {e}", definition.id));
+    let config = test_config(&tmp).await;
+    let agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        definition,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("{} session build: {e}", definition.id));
     agent
         .visible_tool_specs_arc()
         .iter()
@@ -23,14 +28,18 @@ fn visible_names_for(
         .collect()
 }
 
-#[test]
-fn resetting_wildcard_visibility_keeps_collapsed_exposure() {
+#[tokio::test]
+async fn resetting_wildcard_visibility_keeps_collapsed_exposure() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let definition = super::wildcard_probe_def();
-    let mut agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, &definition)
-            .expect("build wildcard agent");
+    let mut agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &definition,
+    )
+    .await
+    .expect("build wildcard agent");
 
     agent.set_visible_tool_names(std::collections::HashSet::new());
 
@@ -39,14 +48,18 @@ fn resetting_wildcard_visibility_keeps_collapsed_exposure() {
     assert!(!visible.iter().any(|spec| spec.name.starts_with("todo_")));
 }
 
-#[test]
-fn hiding_and_reseeding_wildcard_visibility_keeps_collapsed_exposure() {
+#[tokio::test]
+async fn hiding_and_reseeding_wildcard_visibility_keeps_collapsed_exposure() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let definition = super::wildcard_probe_def();
-    let mut agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, &definition)
-            .expect("build wildcard agent");
+    let mut agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &definition,
+    )
+    .await
+    .expect("build wildcard agent");
 
     agent.set_visible_tool_names(std::collections::HashSet::new());
     agent.hide_tools(&["todo"]);
@@ -65,9 +78,9 @@ fn hiding_and_reseeding_wildcard_visibility_keeps_collapsed_exposure() {
 /// `todo` beside the eight `todo_*` tools it replaces. The v1 `memory_*` tool
 /// family is gone for good (memory v2 has one `memory` tool, registered only
 /// while an engine is usable); none of it may come back.
-#[test]
-fn wildcard_belt_advertises_collapsed_tools_not_their_hidden_members() {
-    let visible = visible_names_for(&super::wildcard_probe_def());
+#[tokio::test]
+async fn wildcard_belt_advertises_collapsed_tools_not_their_hidden_members() {
+    let visible = visible_names_for(&super::wildcard_probe_def()).await;
 
     assert!(
         visible.contains("todo"),
@@ -112,6 +125,7 @@ fn build_with(
         std::sync::Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
     crate::agent::SessionHostBuilder::new()
         .chat_model(model)
+        .model_name("test/session-fixture".to_string())
         .tools(tools)
         .visible_tool_names(visible)
         .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
@@ -131,16 +145,16 @@ fn direct_and_deferred() -> Vec<Box<dyn tinytools::Tool>> {
 /// harness registers for its `tool_search` bridge, and classified `Allow` by
 /// the policy — a found tool the gate refuses as prompt-hidden is the
 /// unusable find this replaced.
-#[test]
-fn wildcard_belt_defers_but_keeps_reachable() {
+#[tokio::test]
+async fn wildcard_belt_defers_but_keeps_reachable() {
     let agent = build_with(direct_and_deferred(), std::collections::HashSet::new());
 
     assert_eq!(
-        agent.deferred_tool_names_for_test(),
-        &std::collections::HashSet::from(["rare".to_string()])
+        agent.deferred_tool_names,
+        std::collections::HashSet::from(["rare".to_string()])
     );
-    assert!(agent.visible_tool_names_for_test().contains("plain"));
-    assert!(!agent.visible_tool_names_for_test().contains("rare"));
+    assert!(agent.visible_tool_names.contains("plain"));
+    assert!(!agent.visible_tool_names.contains("rare"));
     assert!(
         !agent
             .visible_tool_specs_arc()
@@ -149,7 +163,7 @@ fn wildcard_belt_defers_but_keeps_reachable() {
         "a deferred tool must not be in the prompt's spec list"
     );
     assert!(
-        agent.tool_policy_session_for_test().is_allowed("rare"),
+        agent.tool_policy_session.is_allowed("rare"),
         "a deferred tool must be callable once found"
     );
 }
@@ -158,45 +172,44 @@ fn wildcard_belt_defers_but_keeps_reachable() {
 /// is the harness's intrinsic bridge and leaves the allowlist, every
 /// `Deferred` registration becomes reachable whether or not the belt named
 /// it, and the belt's own `Direct` entries stay exactly as written.
-#[test]
-fn named_belt_opts_into_discovery_by_naming_tool_search() {
-    let visible: std::collections::HashSet<String> = [
-        "plain",
-        crate::tools::implementations::meta::TOOL_SEARCH_NAME,
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+#[tokio::test]
+async fn named_belt_opts_into_discovery_by_naming_tool_search() {
+    let visible: std::collections::HashSet<String> = ["plain", tinytools::TOOL_SEARCH_NAME]
+        .into_iter()
+        .map(String::from)
+        .collect();
     let agent = build_with(direct_and_deferred(), visible);
 
     assert_eq!(
-        agent.visible_tool_names_for_test(),
-        &std::collections::HashSet::from(["plain".to_string()])
+        agent.visible_tool_names,
+        std::collections::HashSet::from(["plain".to_string()])
     );
     assert_eq!(
-        agent.deferred_tool_names_for_test(),
-        &std::collections::HashSet::from(["rare".to_string()])
+        agent.deferred_tool_names,
+        std::collections::HashSet::from(["rare".to_string()])
     );
-    assert!(agent.tool_policy_session_for_test().is_allowed("rare"));
+    assert!(agent.tool_policy_session.is_allowed("rare"));
 }
 
 /// A named belt that does not opt in reaches nothing beyond what it wrote
 /// down: no deferred set, and a deferred tool it did not name stays hidden.
-#[test]
-fn named_belt_without_tool_search_reaches_no_deferred_tool() {
+#[tokio::test]
+async fn named_belt_without_tool_search_reaches_no_deferred_tool() {
     let visible: std::collections::HashSet<String> = std::iter::once("plain".to_string()).collect();
     let agent = build_with(direct_and_deferred(), visible);
 
-    assert!(agent.deferred_tool_names_for_test().is_empty());
-    assert!(!agent.tool_policy_session_for_test().is_allowed("rare"));
+    assert!(agent.deferred_tool_names.is_empty());
+    assert!(!agent.tool_policy_session.is_allowed("rare"));
 }
 
 /// A hand-written `[tools] named` belt is left exactly as written: exposure is
-/// only for the wildcard belt. `critic` names `file_read` among its tools; it
-/// must keep it and gain nothing a wildcard would add.
-#[test]
-fn named_belt_keeps_its_listed_members() {
-    let visible = visible_names("critic");
+/// only for the wildcard belt. This test-owned definition names `file_read`;
+/// it must keep that tool and gain nothing a wildcard would add.
+#[tokio::test]
+async fn named_belt_keeps_its_listed_members() {
+    let mut definition = super::wildcard_probe_def();
+    definition.tools = tinyagents_definition::ToolScope::Named(vec!["file_read".to_owned()]);
+    let visible = visible_names_for(&definition).await;
     assert!(
         visible.contains("file_read"),
         "named belt must keep the members it lists; got {visible:?}"
@@ -216,43 +229,66 @@ fn named_belt_keeps_its_listed_members() {
 /// them), and callable once found. This is the whole bargain that let
 /// `settings_agent`, `scheduler_agent`, `help`, `code_executor` and `critic`
 /// go — a regression here silently takes those capabilities from chat.
-#[test]
-fn orchestrator_reaches_the_replaced_specialists_tools_through_discovery() {
+#[tokio::test]
+async fn orchestrator_reaches_the_replaced_specialists_tools_through_discovery() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let definition = crate::agent::harness::AgentDefinitionRegistry::builtins_only()
+    let config = test_config(&tmp).await;
+    let definitions = std::sync::Arc::new(
+        crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only(),
+    );
+    let definition = definitions
         .get("orchestrator")
         .cloned()
         .expect("orchestrator built-in definition");
-    let agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, &definition)
-            .expect("orchestrator session build");
-    let deferred = agent.deferred_tool_names_for_test();
-    let visible = agent.visible_tool_names_for_test();
-    let policy = agent.tool_policy_session_for_test();
-    // Unconditionally registered members only: `node_exec` / `npm_exec` need
-    // the managed Node runtime and the wallet family needs the `web3`
-    // feature, so a test profile without them cannot see them either way.
-    for tool in [
-        "cron",
-        "config_snapshot",
-        "service_restart",
-        "gitbooks_search",
-        "edit",
-        "curl",
-        "read_diff",
-        "run_linter",
-        "run_tests",
-        "mcp_registry_installed_list",
-    ] {
-        assert!(
-            deferred.contains(tool),
-            "`{tool}` must be deferred; got {deferred:?}"
-        );
-        assert!(!visible.contains(tool), "`{tool}` must stay off the wire");
-        assert!(
-            policy.is_allowed(tool),
-            "`{tool}` must be callable once found"
-        );
-    }
+    let core = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config.clone(),
+    )
+    .derive_with(
+        crate::core::runtime::ContextOverlay::new(
+            config.clone(),
+            crate::core::runtime::DomainSet::full(),
+            crate::tools::toolpacks::ToolGroups::packed(),
+        )
+        .definitions(definitions),
+    );
+
+    crate::core::runtime::CoreContext::scope(core, async {
+        let agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            &definition,
+        )
+        .await
+        .expect("orchestrator session build");
+        let deferred = agent.deferred_tool_names;
+        let visible = agent.visible_tool_names;
+        let policy = agent.tool_policy_session;
+        // Unconditionally registered members only: language commands run through shell and need
+        // host Node runtime and the wallet family needs the `web3`
+        // feature, so a test profile without them cannot see them either way.
+        for tool in [
+            "cron",
+            "config_snapshot",
+            "service_restart",
+            "gitbooks_search",
+            "edit",
+            "curl",
+            "read_diff",
+            "run_linter",
+            "run_tests",
+            "mcp_registry_installed_list",
+        ] {
+            assert!(
+                deferred.contains(tool),
+                "`{tool}` must be deferred; got {deferred:?}"
+            );
+            assert!(!visible.contains(tool), "`{tool}` must stay off the wire");
+            assert!(
+                policy.is_allowed(tool),
+                "`{tool}` must be callable once found"
+            );
+        }
+    })
+    .await;
 }

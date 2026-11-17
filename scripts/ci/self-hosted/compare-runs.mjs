@@ -183,11 +183,7 @@ function main(argv) {
           const per = Object.entries(laneMinutes(t))
             .map(([k, v]) => `${k}=${v}m`)
             .join(" ");
-          const hits = t.sccache?.stats?.cache_hits?.counts?.Rust;
-          const misses = t.sccache?.stats?.cache_misses?.counts?.Rust;
-          const sc =
-            hits != null ? ` sccache rust hits=${hits} misses=${misses}` : "";
-          console.log(`|   ↳ ${kind} lanes | ${per}${sc} | | | |`);
+          console.log(`|   ↳ ${kind} lanes | ${per} | | | |`);
         }
       }
     }

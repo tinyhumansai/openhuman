@@ -1,100 +1,160 @@
-//! Persistence for the skill registry: cached catalog entries.
+//! The skill-registry catalog cache on the host's storage ports.
 //!
-//! The cache lives at `~/.openhuman/skill-registry/cache.json` with a 1-hour
-//! TTL. Past the TTL the cache is kept (not deleted) so callers can serve it
-//! stale-while-revalidate; see [`load_cached_catalog_state`]. Set
-//! `OPENHUMAN_SKILL_REGISTRY_CACHE_DIR` to relocate the cache (used by tests).
+//! Fetched catalogs used to be one JSON file per registry under the cache
+//! directory (`~/.openhuman/skill-registry/hermes.json`, tinyskills'
+//! `FileCatalogStore`). They are now documents (`tinyskills_catalogs/<registry>`,
+//! tinyskills-drivers' `DocumentCatalogStore`) in the process's storage backend
+//! under the acting scope, so a SQLite desktop, a MongoDB deployment and a
+//! tenant each keep their own cache without a second layout.
+//!
+//! The cache directory is still the registry's identity: it names the legacy
+//! files to import and, when no backend is installed (a unit test, an embedder
+//! that skipped the host boot), the workspace whose default backend holds the
+//! documents ([`crate::storage::local`]).
+//!
+//! # Legacy files
+//!
+//! A catalog with no document is looked up as `<cache dir>/<registry>.json`
+//! the first time it is read. The file is parsed, written with
+//! `Precondition::Absent` (so a catalog a refresh saved since is never
+//! overwritten) and left in place; it is never modified or deleted. Once the
+//! document exists it is the only copy read, so a refreshed catalog is not
+//! replaced by the older file. A file that is a symlink, oversized, unparseable
+//! or in another format is ignored: the catalog is a cache and is refetched.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use tinyskills::{is_safe_segment, BoxFuture, CatalogStore, StoreError, StoredCatalog};
+use tinyskills_drivers::{DocumentCatalogStore, CATALOG_COLLECTION};
+use tinystoragedrivers_api::DocumentStore;
+use tinystoragedrivers_types::{ErrorKind, Precondition};
 
-use super::types::CatalogEntry;
+const DOMAIN: &str = "skill_registry";
+const LOG_PREFIX: &str = "[skill_registry][store]";
+/// The largest legacy catalog file read; matches the cap the file store had.
+const MAX_LEGACY_BYTES: u64 = 512 * 1024 * 1024;
 
-const CACHE_DIR: &str = "skill-registry";
-const CACHE_FILE: &str = "cache.json";
-const CACHE_TTL_SECS: u64 = 3600;
-const CACHE_DIR_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_CACHE_DIR";
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CatalogCache {
-    pub entries: Vec<CatalogEntry>,
-    pub fetched_at_epoch: u64,
+/// The catalog cache of the process-wide registry.
+#[derive(Debug, Clone)]
+pub(crate) struct HostCatalogStore {
+    /// The cache directory: legacy files live here and, with no backend
+    /// installed, so does the workspace default's `storage/` directory.
+    dir: PathBuf,
 }
 
-/// A cached catalog tagged by freshness relative to `CACHE_TTL_SECS`.
-pub enum CachedCatalog {
-    /// Within the TTL — safe to serve directly.
-    Fresh(Vec<CatalogEntry>),
-    /// Past the TTL — usable for stale-while-revalidate while a refresh runs.
-    Stale(Vec<CatalogEntry>),
-}
-
-fn registry_dir() -> Option<PathBuf> {
-    if let Some(raw) = std::env::var_os(CACHE_DIR_ENV) {
-        let trimmed = raw.to_string_lossy().trim().to_string();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
-        }
+impl HostCatalogStore {
+    pub(crate) fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
     }
-    dirs::home_dir().map(|h| h.join(".openhuman").join(CACHE_DIR))
-}
 
-fn now_epoch() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-/// Load the cached catalog regardless of age, tagged `Fresh`/`Stale` by TTL.
-/// Returns `None` only when no readable cache exists.
-pub fn load_cached_catalog_state() -> Option<CachedCatalog> {
-    let dir = registry_dir()?;
-    let path = dir.join(CACHE_FILE);
-    let data = std::fs::read_to_string(&path).ok()?;
-    let cache: CatalogCache = serde_json::from_str(&data).ok()?;
-
-    let age_secs = now_epoch().saturating_sub(cache.fetched_at_epoch);
-    if age_secs > CACHE_TTL_SECS {
-        tracing::debug!(age_secs, "[skill_registry] cache stale (past TTL)");
-        Some(CachedCatalog::Stale(cache.entries))
-    } else {
-        tracing::debug!(
-            count = cache.entries.len(),
-            age_secs,
-            "[skill_registry] cache fresh"
-        );
-        Some(CachedCatalog::Fresh(cache.entries))
+    /// The document store for this call's scope.
+    async fn documents(&self) -> Result<Arc<dyn DocumentStore>, StoreError> {
+        let dir = self.dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::storage::local::open(DOMAIN, &dir).and_then(|opened| opened.scoped())
+        })
+        .await
+        .map_err(|error| StoreError::Io(format!("storage open task failed: {error}")))?
+        .map(|scoped| Arc::clone(scoped.documents()))
+        .map_err(|error| StoreError::Io(error.to_string()))
     }
-}
 
-pub fn save_catalog_cache(entries: &[CatalogEntry]) {
-    let Some(dir) = registry_dir() else { return };
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!(error = %e, "[skill_registry] failed to create cache dir");
-        return;
-    }
-    let cache = CatalogCache {
-        entries: entries.to_vec(),
-        fetched_at_epoch: now_epoch(),
-    };
-    let path = dir.join(CACHE_FILE);
-    match serde_json::to_string_pretty(&cache) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                tracing::warn!(error = %e, "[skill_registry] failed to write cache");
+    /// Imports `<dir>/<registry>.json` once a read finds no document.
+    async fn import_legacy(
+        &self,
+        registry: &str,
+        documents: &Arc<dyn DocumentStore>,
+        store: &DocumentCatalogStore,
+    ) -> Result<Option<StoredCatalog>, StoreError> {
+        let path = self.dir.join(format!("{registry}.json"));
+        let Some(catalog) = read_legacy(&path).await else {
+            return Ok(None);
+        };
+        let doc =
+            serde_json::to_value(&catalog).map_err(|error| StoreError::Io(error.to_string()))?;
+        match documents
+            .put(CATALOG_COLLECTION, registry, doc, Precondition::Absent)
+            .await
+        {
+            Ok(_) => {
+                tracing::info!(
+                    registry,
+                    entries = catalog.entries.len(),
+                    "{LOG_PREFIX} imported the legacy catalog file"
+                );
+                Ok(Some(catalog))
             }
+            // A refresh saved a catalog between the read and the import: that
+            // one is newer than the file, so it wins.
+            Err(error)
+                if matches!(error.kind(), ErrorKind::Conflict | ErrorKind::AlreadyExists) =>
+            {
+                store.load(registry).await
+            }
+            Err(error) => Err(StoreError::Io(error.to_string())),
         }
-        Err(e) => tracing::warn!(error = %e, "[skill_registry] failed to serialize cache"),
     }
 }
 
-pub fn clear_cache() {
-    let Some(dir) = registry_dir() else { return };
-    let path = dir.join(CACHE_FILE);
-    let _ = std::fs::remove_file(&path);
-    tracing::debug!("[skill_registry] cache cleared");
+/// The legacy catalog file, or `None` when it is absent or unusable.
+async fn read_legacy(path: &Path) -> Option<StoredCatalog> {
+    let meta = match tokio::fs::symlink_metadata(path).await {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::debug!(error = %error, "{LOG_PREFIX} legacy catalog file unreadable");
+            return None;
+        }
+    };
+    if !meta.is_file() || meta.len() > MAX_LEGACY_BYTES {
+        tracing::warn!("{LOG_PREFIX} legacy catalog file is not a plain, bounded file; ignored");
+        return None;
+    }
+    let bytes = tokio::fs::read(path).await.ok()?;
+    match serde_json::from_slice::<StoredCatalog>(&bytes) {
+        Ok(catalog) if catalog.format == StoredCatalog::FORMAT => Some(catalog),
+        Ok(_) => {
+            tracing::debug!("{LOG_PREFIX} legacy catalog file is in another format; ignored");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "{LOG_PREFIX} legacy catalog file is corrupt; ignored");
+            None
+        }
+    }
+}
+
+impl CatalogStore for HostCatalogStore {
+    fn load<'a>(
+        &'a self,
+        registry: &'a str,
+    ) -> BoxFuture<'a, Result<Option<StoredCatalog>, StoreError>> {
+        Box::pin(async move {
+            if !is_safe_segment(registry) {
+                return Err(StoreError::InvalidId(registry.to_owned()));
+            }
+            let documents = self.documents().await?;
+            let store = DocumentCatalogStore::new(Arc::clone(&documents));
+            if let Some(found) = store.load(registry).await? {
+                return Ok(Some(found));
+            }
+            self.import_legacy(registry, &documents, &store).await
+        })
+    }
+
+    fn save<'a>(
+        &'a self,
+        registry: &'a str,
+        catalog: &'a StoredCatalog,
+    ) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async move {
+            let documents = self.documents().await?;
+            DocumentCatalogStore::new(documents)
+                .save(registry, catalog)
+                .await
+        })
+    }
 }
 
 #[cfg(test)]

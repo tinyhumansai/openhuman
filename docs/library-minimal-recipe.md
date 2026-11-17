@@ -1,5 +1,10 @@
 # Library-minimal feature recipe
 
+> **Note.** The bench bins (`library-profile`, `rss-bench`) referenced below
+> moved to the openhuman-benchmarks repository (#6944). The `openhuman-cli`
+> `rss-bench` / `rss-bench-dhat` gates are gone; the core keeps its own
+> `rss-bench` hook for that repository.
+
 A **supported, measured** compile-time feature recipe for embedding the OpenHuman
 Rust core as a library in "opencompany" — headless, no RPC server, no Tauri
 shell, targeting 100-1000 live agents in a 2 GB RAM / 2 vCPU box.
@@ -32,12 +37,11 @@ registers the hosted controllers when it builds the runtime. This connects the
 API key to managed inference, integrations, channel relay and cloud voice when
 their feature and runtime gates are enabled.
 
-- To build the profiling harness against the same recipe, add the dev-only
-  `rss-bench` feature and the two bench bins:
+- To build the profiling harness against the same recipe, use the `profile/`
+  crate in [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks), which vendors this repository:
 
   ```bash
-  cargo build --release \
-    -p openhuman-cli \
+  cargo build --release --manifest-path profile/Cargo.toml \
     --no-default-features --features "rss-bench,skills,flows" \
     --bin library-profile --bin rss-bench
   ```
@@ -51,27 +55,7 @@ and agents can only narrow them, so include `mcp` / `skills` in both the
 Cargo features **and** the runtime's `DomainSet` (the builder's default does)
 if any agent will declare servers or skills.
 
-```rust,no_run
-use openhuman_tinyhumans::{
-    embed::{Access, AgentSpec, Workspace},
-    RuntimeBuilder,
-};
-
-# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-let runtime = RuntimeBuilder::new()
-    .workspace(Workspace::dir("/var/lib/opencompany/openhuman"))
-    .api_key(std::env::var("TINYHUMANS_API_KEY")?)
-    .build()
-    .await?;
-let worker = runtime.agent(
-    AgentSpec::new("worker-1")
-        .access(Access::full())
-        .action_dir("/srv/jobs/1"),
-)?;
-println!("{}", worker.run("Start the job.").await?.reply);
-# Ok(())
-# }
-```
+See the runnable [two_agents example](../crates/openhuman-embed/examples/two_agents.rs), region `two_agents`. It uses the public facade and asserts its behavior against an offline stub.
 
 ### Choosing the backend layer
 
@@ -81,7 +65,7 @@ transport before startup, as shown in its [compiled quick-start
 example](../crates/openhuman-tinyhumans/src/lib.rs).
 
 Use `openhuman_embed::Runtime::builder()` for a standalone host with its own
-inference provider and local tools. Agent turns, local memory operations and
+inference provider and local tools. Agent turns, memory operations (on a CortexDB engine or an installed host engine) and
 enabled skills and flows remain available through their configured providers.
 An API key on that builder stores a credential; the host must also supply a
 backend transport to reach TinyHumans. Backend requests otherwise return
@@ -109,7 +93,7 @@ The Decision column records the domains needed by the headless library host.
 | -------------------- | :-----: | :-----: | :------: | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | `skills`             |   ON    |   ON    | **KEEP** | python/js `SKILL.md` execution is a stated opencompany use case                                     | none (surface/prompt/startup only)                   |
 | `flows`              |   ON    |   ON    | **KEEP** | saved-workflow (`flows_create`+`flows_run`) runs are a stated use case                              | — (adds `tinyflows`, `jaq-*`, `rhai`; see cost note) |
-| `voice`              |   OFF   |   ON    | **DROP** | STT/TTS/dictation/podcast — a headless host does no audio I/O                                       | `hound`, `lettre`                                    |
+| `voice`              |   OFF   |   ON    | **DROP** | STT/TTS/dictation — a headless host does no audio I/O                                       | Loaded TinyVoice module                                    |
 | `web3`               |   OFF   |   ON    | **DROP** | crypto wallet / swap / x402 machine payments — not an opencompany path                              | `bitcoin`, `curve25519-dalek`                        |
 | `media`              |   ON    |   ON    | **DROP** | `media_generate_*` image/video tools — surface-only                                                 | none (backend-proxied)                               |
 | `meet`               |   OFF   |   ON    | **DROP** | Google-Meet join/live-STT/TTS bot — no headless use                                                 | none                                                 |
@@ -118,7 +102,7 @@ The Decision column records the domains needed by the headless library host.
 | `tui`                |   OFF   |    —    | **DROP** | `openhuman tui`/`chat` terminal UI — no terminal in a library host                                  | `ratatui`, `crossterm`, `unicode-width`              |
 
 The historical recipe also left optional `browser-native`/`fantoccini`,
-`whatsapp-web`, `e2e-test-support`, `rss-bench` and `rss-bench-dhat` off.
+`e2e-test-support`, `rss-bench` and `rss-bench-dhat` off.
 Check the selected host crate's current feature list before adding optional
 domains. `rss-bench` and `rss-bench-dhat` remain development profiling features.
 
@@ -132,7 +116,7 @@ controllers, so these figures serve as a dated reference.
 
 All numbers were gathered on Apple-Silicon macOS, `--release` profile
 (`optimized + debuginfo`). "default" = the prior 2026-07-21 session baselines in
-[`docs/library-benchmarking.md`](library-benchmarking.md); "pure slim" =
+[`library-benchmarking.md`](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/profile/docs/library-benchmarking.md); "pure slim" =
 `--no-default-features --features rss-bench` (drops everything). Both slim numbers
 matched the prior document's 68.4 MiB baseline in that measurement session.
 
@@ -168,7 +152,7 @@ matches the `rss-bench` figure — the bench feature adds negligible code.
 | `memory-ingest` (100 msgs)              |        24.7 MiB |            8.8 MiB |              25.8 MiB |           9.3 MiB | **-1.1 MiB** |
 | `long-agent` (10 turns)                 |        46.4 MiB |            2.9 MiB | — (25-turn: 65.8 MiB) |                 — |         n/a³ |
 
-² default column from `docs/library-benchmarking.md` (2026-07-21). Those medians
+² default column from openhuman-benchmarks' `profile/docs/library-benchmarking.md` (2026-07-21). Those medians
 may not have used `OPENHUMAN_PROFILE_FORCE_UTC=1`, so treat the Δ as approximate
 (±~1 MiB). The direction and magnitude match the prior session's "slim saves
 ~3.2 MiB settled RSS" finding.
@@ -190,9 +174,8 @@ _closed and cleanly_ — controllers become unknown-method, tools are simply abs
 from the tool list (not degraded to runtime errors), CLI subcommands report a
 build-fact error:
 
-- **voice/audio:** voice + audio controllers unregistered (unknown-method over
-  RPC, absent from `/schema`); `audio_generate_podcast` tools absent; `openhuman
-voice` returns "voice disabled".
+- **voice:** voice controllers unregistered (unknown-method over RPC, absent
+  from `/schema`); `openhuman voice` returns "voice disabled".
 - **web3:** wallet / web3 / x402 controllers unregistered; swap/bridge/dapp agent
   tools absent; the x402 402-retry path returns unpaid; tinyplace on-chain
   payments degrade to graceful "wallet disabled" errors (tinyplace comms +
@@ -210,7 +193,7 @@ voice` returns "voice disabled".
 - **tui:** `openhuman tui` / `chat` returns "tui feature disabled at compile time".
 
 Everything the opencompany use cases need remains: the agent harness + turn
-runner, subagent delegation (`spawn_parallel_agents`), the Memory v2 host
+runner, subagent delegation, the Memory v2 host
 (engine binding, sources, conversations, context + secret/PII scrubbing), threads, config,
 security policy, provider routing/inference, `skills` (SKILL.md discovery/install
 
@@ -295,7 +278,7 @@ prioritization.
 
 ## See also
 
-- [`docs/library-benchmarking.md`](library-benchmarking.md) — the benchmark
+- [`library-benchmarking.md`](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/profile/docs/library-benchmarking.md) (openhuman-benchmarks) — the benchmark
   environment, scenario definitions, and default/slim baselines.
 - The original profiling session write-up covering deep memory/CPU attribution
   (why RSS is mostly not live heap) was removed from the tree; see git history

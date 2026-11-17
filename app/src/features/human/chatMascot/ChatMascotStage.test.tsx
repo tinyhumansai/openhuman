@@ -1,7 +1,11 @@
-import { fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { selectChatMascotExpanded, selectSpeakReplies } from '../../../store/mascotSlice';
+import {
+  selectChatMascotExpanded,
+  selectChatMascotLiveVoicePhase,
+  selectSpeakReplies,
+} from '../../../store/mascotSlice';
 import { renderWithProviders } from '../../../test/test-utils';
 import {
   type ChatMascotContextValue,
@@ -10,107 +14,77 @@ import {
 } from './ChatMascotContext';
 import ChatMascotStage from './ChatMascotStage';
 
-// The real MicComposer wants `navigator.mediaDevices` and the STT client; this
-// stub exposes just the seams the stage owns — the submit path, the disabled
-// flag, and the recording report.
-vi.mock('../MicComposer', () => ({
-  default: ({
-    disabled,
-    onSubmit,
-    onError,
-    onRecordingChange,
-  }: {
-    disabled: boolean;
-    onSubmit: (text: string) => void;
-    onError?: (message: string) => void;
-    onRecordingChange?: (recording: boolean) => void;
-  }) => (
-    <div>
-      <button data-testid="mic-submit" disabled={disabled} onClick={() => onSubmit('hello there')}>
-        submit
-      </button>
-      <button data-testid="mic-error" onClick={() => onError?.('mic exploded')}>
-        error
-      </button>
-      <button data-testid="mic-record-on" onClick={() => onRecordingChange?.(true)}>
-        record
-      </button>
-    </div>
-  ),
+// The real control opens a socket and the mic; this stub exposes the seams the
+// stage owns — the thread it binds to, the auto-start request and the phase
+// report the overlay reads.
+const liveProps = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
+vi.mock('../LiveVoiceControls', () => ({
+  default: (props: {
+    threadId: string | null;
+    consumeAutoStart: () => boolean;
+    onPhaseChange: (phase: string) => void;
+  }) => {
+    liveProps.current = props;
+    return (
+      <div data-testid="live-voice-stub" data-thread={props.threadId ?? ''}>
+        <button data-testid="phase-speaking" onClick={() => props.onPhaseChange('speaking')}>
+          speak
+        </button>
+      </div>
+    );
+  },
 }));
 
-/** Publishes a send binding the way `Conversations` does. */
-const BindSend = ({
-  submit,
-  onError,
-  disabled = false,
-  onReady,
-}: {
-  submit: (text: string) => void;
-  onError: (message: string) => void;
-  disabled?: boolean;
-  onReady?: (ctx: ChatMascotContextValue) => void;
-}) => {
-  const ctx = useChatMascot();
-  ctx.sendStore.set({ submit, onError, disabled });
-  onReady?.(ctx);
+const RequestVoice = ({ onReady }: { onReady: (ctx: ChatMascotContextValue) => void }) => {
+  onReady(useChatMascot());
   return null;
 };
 
-const renderStage = (opts: { disabled?: boolean; bind?: boolean } = {}) => {
-  const submit = vi.fn();
-  const onError = vi.fn();
+const renderStage = (opts: { threadId?: string | null; requestVoice?: boolean } = {}) => {
+  let ctx: ChatMascotContextValue | null = null;
   const utils = renderWithProviders(
     <ChatMascotProvider>
-      {opts.bind === false ? null : (
-        <BindSend submit={submit} onError={onError} disabled={opts.disabled ?? false} />
-      )}
+      <RequestVoice onReady={c => (ctx = c)} />
       <ChatMascotStage />
     </ChatMascotProvider>,
-    { preloadedState: { mascot: { chatMascotExpanded: true, speakReplies: true } } }
+    {
+      preloadedState: {
+        mascot: { chatMascotExpanded: true, speakReplies: true },
+        thread: { selectedThreadId: opts.threadId ?? null },
+      },
+    }
   );
-  return { ...utils, submit, onError };
+  return { ...utils, ctx: () => ctx! };
 };
 
 describe('ChatMascotStage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('routes a transcript through the chat send path', () => {
-    const { submit } = renderStage();
-
-    fireEvent.click(screen.getByTestId('mic-submit'));
-
-    expect(submit).toHaveBeenCalledWith('hello there');
+  it('hosts the live voice agent bound to the open thread', () => {
+    renderStage({ threadId: 'thread-42' });
+    expect(screen.getByTestId('live-voice-stub')).toHaveAttribute('data-thread', 'thread-42');
   });
 
-  it('surfaces mic failures through the chat error path', () => {
-    const { onError } = renderStage();
-
-    fireEvent.click(screen.getByTestId('mic-error'));
-
-    expect(onError).toHaveBeenCalledWith('mic exploded');
+  it('hands the dock click request to the live control exactly once', () => {
+    const { ctx } = renderStage();
+    const consume = liveProps.current!.consumeAutoStart as () => boolean;
+    expect(consume()).toBe(false);
+    act(() => ctx().expandWithVoice());
+    expect(consume()).toBe(true);
+    expect(consume()).toBe(false);
   });
 
-  it('disables the mic while the chat says sending is blocked', () => {
-    renderStage({ disabled: true });
-
-    expect(screen.getByTestId('mic-submit')).toBeDisabled();
+  it('collapsing drops a pending voice request', () => {
+    const { ctx } = renderStage();
+    act(() => ctx().expandWithVoice());
+    fireEvent.click(screen.getByTestId('chat-mascot-collapse'));
+    expect((liveProps.current!.consumeAutoStart as () => boolean)()).toBe(false);
   });
 
-  it('disables the mic when no chat is bound at all', () => {
-    // Without this, a transcript spoken before the chat mounts hits
-    // handleSendMessage's early return and is silently dropped.
-    renderStage({ bind: false });
-
-    expect(screen.getByTestId('mic-submit')).toBeDisabled();
-  });
-
-  it('reports a hot mic so the mascot can hold its listening pose', () => {
+  it('publishes the live phase for the overlay', () => {
     const { store } = renderStage();
-
-    fireEvent.click(screen.getByTestId('mic-record-on'));
-
-    expect(store.getState().mascot.chatMascotListening).toBe(true);
+    fireEvent.click(screen.getByTestId('phase-speaking'));
+    expect(selectChatMascotLiveVoicePhase(store.getState())).toBe('speaking');
   });
 
   it('toggles the speak-replies preference', () => {

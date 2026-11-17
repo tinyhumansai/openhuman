@@ -122,20 +122,57 @@ async fn check_available_reports_no_update_for_an_older_tag() {
     );
 }
 
-#[tokio::test]
-async fn check_available_errors_when_a_newer_release_has_no_platform_asset() {
-    let server = releases_mock(
-        200,
-        r#"{"tag_name":"v99.0.0","body":"notes","published_at":"2026-09-29T00:00:00Z","assets":[]}"#,
-    )
-    .await;
+/// Sentry TAURI-RUST-122R/122S/13B8/13B9: releases publish core archives for
+/// Linux only — macOS and Windows update through the Tauri updater (DMG/MSI) —
+/// so on those platforms every scheduled check found "no core asset" and
+/// reported an error. A newer release without a core asset for this triple is
+/// an available update with nothing to download, not a failure.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn check_available_reports_an_update_without_a_download_when_no_platform_asset_is_published() {
+    // The release a macOS/Windows host sees: desktop installers plus a core
+    // archive for a triple that is not this one.
+    let other_triple = if platform_triple() == "x86_64-unknown-linux-gnu" {
+        "aarch64-unknown-linux-gnu"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    };
+    let body = format!(
+        r#"{{
+            "tag_name": "v99.0.0",
+            "body": "notes",
+            "published_at": "2026-09-29T00:00:00Z",
+            "assets": [
+                {{"name": "OpenHuman_99.0.0_aarch64.dmg", "browser_download_url": "https://example.invalid/dmg", "size": 1}},
+                {{"name": "OpenHuman_99.0.0_x64_en-US.msi", "browser_download_url": "https://example.invalid/msi", "size": 1}},
+                {{"name": "openhuman-core-99.0.0-{other_triple}.tar.gz", "browser_download_url": "https://example.invalid/linux", "size": 1}}
+            ]
+        }}"#
+    );
 
-    let err = check_available_with_base_url(&server.uri())
-        .await
-        .expect_err("a newer release without a platform asset must be surfaced");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let mut result = None;
+    let events = sentry::test::with_captured_events(|| {
+        result = Some(runtime.block_on(async {
+            let server = releases_mock(200, &body).await;
+            check_available_with_base_url(&server.uri()).await
+        }));
+    });
 
-    assert!(err.contains("update 99.0.0 is available"));
-    assert!(err.contains(platform_triple()));
+    let info = result
+        .expect("check ran")
+        .expect("a missing platform asset must not fail the check");
+    assert!(info.update_available, "99.0.0 is still an available update");
+    assert_eq!(info.latest_version, "99.0.0");
+    assert!(info.download_url.is_none(), "no asset, no download url");
+    assert!(info.asset_name.is_none());
+    assert!(
+        events.is_empty(),
+        "a missing platform asset is expected, not a Sentry event: {events:?}"
+    );
 }
 
 #[tokio::test]
@@ -458,4 +495,29 @@ fn raw_core_binary_stages_separately_from_running_executable() {
 
     assert_eq!(staged, dir.path().join(staged_binary_staging_name()));
     assert_ne!(staged, dir.path().join(staged_binary_name()));
+}
+
+/// Linux releases publish a core archive, so a newer release without one for
+/// this triple is a broken release and must stay an update-check failure.
+#[cfg(target_os = "linux")]
+#[test]
+fn check_available_fails_on_linux_when_the_core_asset_is_missing() {
+    let body = r#"{
+        "tag_name": "v99.0.0",
+        "body": "notes",
+        "published_at": "2026-09-29T00:00:00Z",
+        "assets": [
+            {"name": "OpenHuman_99.0.0_aarch64.dmg", "browser_download_url": "https://example.invalid/dmg", "size": 1}
+        ]
+    }"#;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let result = runtime.block_on(async {
+        let server = releases_mock(200, body).await;
+        check_available_with_base_url(&server.uri()).await
+    });
+    let error = result.expect_err("a missing Linux core asset must fail the check");
+    assert!(error.contains("no core asset was found"), "{error}");
 }

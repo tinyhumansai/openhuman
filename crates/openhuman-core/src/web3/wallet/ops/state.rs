@@ -56,13 +56,13 @@ fn wallet_user_id(config: &Config) -> String {
 pub(super) fn keychain_load_mnemonic(config: &Config) -> Option<String> {
     let policy = crate::security::keyring_consent::policy::check_secret_access();
     if policy != crate::security::keyring_consent::PolicyDecision::Proceed
-        || !crate::security::keyring::is_available()
+        || !crate::security::secret_storage::is_available()
     {
         log::debug!("{LOG_PREFIX} keychain unavailable or consent pending, skipping mnemonic load policy={policy:?}");
         return None;
     }
     let user_id = wallet_user_id(config);
-    match crate::security::keyring::get(&user_id, KEYCHAIN_MNEMONIC_KEY) {
+    match crate::security::secret_storage::get(&user_id, KEYCHAIN_MNEMONIC_KEY) {
         Ok(Some(val)) => {
             log::debug!("{LOG_PREFIX} keychain mnemonic loaded user_id={user_id}");
             Some(val)
@@ -84,13 +84,14 @@ pub(super) fn keychain_load_mnemonic(config: &Config) -> Option<String> {
 fn keychain_save_mnemonic(config: &Config, encrypted_mnemonic: &str) -> bool {
     let policy = crate::security::keyring_consent::policy::check_secret_access();
     if policy != crate::security::keyring_consent::PolicyDecision::Proceed
-        || !crate::security::keyring::is_available()
+        || !crate::security::secret_storage::is_available()
     {
         log::debug!("{LOG_PREFIX} keychain unavailable or consent pending, skipping mnemonic save policy={policy:?}");
         return false;
     }
     let user_id = wallet_user_id(config);
-    match crate::security::keyring::set(&user_id, KEYCHAIN_MNEMONIC_KEY, encrypted_mnemonic) {
+    match crate::security::secret_storage::set(&user_id, KEYCHAIN_MNEMONIC_KEY, encrypted_mnemonic)
+    {
         Ok(()) => {
             log::debug!("{LOG_PREFIX} keychain mnemonic saved user_id={user_id}");
             true
@@ -106,13 +107,13 @@ fn keychain_save_mnemonic(config: &Config, encrypted_mnemonic: &str) -> bool {
 pub(super) fn keychain_has_mnemonic(config: &Config) -> bool {
     let policy = crate::security::keyring_consent::policy::check_secret_access();
     if policy != crate::security::keyring_consent::PolicyDecision::Proceed
-        || !crate::security::keyring::is_available()
+        || !crate::security::secret_storage::is_available()
     {
         return false;
     }
     let user_id = wallet_user_id(config);
     matches!(
-        crate::security::keyring::get(&user_id, KEYCHAIN_MNEMONIC_KEY),
+        crate::security::secret_storage::get(&user_id, KEYCHAIN_MNEMONIC_KEY),
         Ok(Some(_))
     )
 }
@@ -168,6 +169,13 @@ fn quarantine_corrupted_wallet_state(path: &Path, reason: &str) {
     }
 }
 
+// Deliberately local, not on the storage port (for now): this file is paired
+// with the OS keychain entry for the encrypted mnemonic and falls back to
+// holding that secret itself when no keychain exists. Splitting the metadata
+// onto a shared backend while the key material stays on one machine would
+// leave a wallet that exists in one place and not the other. It moves with
+// the secrets work (`SecretStore`), not as a plain document. Allowlisted in
+// `scripts/ci/check-storage-bypass.mjs`.
 pub(super) fn load_stored_wallet_state_unlocked(
     config: &Config,
 ) -> Result<Option<StoredWalletState>, String> {
@@ -388,14 +396,19 @@ pub(super) fn to_status(config: &Config, state: Option<StoredWalletState>) -> su
                 .map(|v| !v.trim().is_empty())
                 .unwrap_or(false);
             let secret_stored = secret_in_json || keychain_has_mnemonic(config);
+            let (accounts, additional_accounts): (Vec<_>, Vec<_>) = state
+                .accounts
+                .into_iter()
+                .partition(super::WalletAccount::is_primary);
             super::WalletStatus {
                 configured: true,
-                onboarding_completed: state.consent_granted && !state.accounts.is_empty(),
+                onboarding_completed: state.consent_granted && !accounts.is_empty(),
                 consent_granted: state.consent_granted,
                 secret_stored,
                 source: Some(state.source),
                 mnemonic_word_count: Some(state.mnemonic_word_count),
-                accounts: state.accounts,
+                accounts,
+                additional_accounts,
                 updated_at_ms: Some(state.updated_at_ms),
             }
         }
@@ -407,6 +420,7 @@ pub(super) fn to_status(config: &Config, state: Option<StoredWalletState>) -> su
             source: None,
             mnemonic_word_count: None,
             accounts: Vec::new(),
+            additional_accounts: Vec::new(),
             updated_at_ms: None,
         },
     }

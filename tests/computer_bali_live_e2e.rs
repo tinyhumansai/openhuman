@@ -165,6 +165,7 @@ async fn books_a_bali_flight_up_to_the_payment_page() {
         } else {
             Some(serde_json::from_str(&plan_text).expect("saved flow"))
         },
+        site: None,
     };
     let minutes = std::env::var("COMPUTER_E2E_MINUTES")
         .ok()

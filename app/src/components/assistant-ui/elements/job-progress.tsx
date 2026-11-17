@@ -56,16 +56,16 @@ export function JobProgress({
   return (
     <div
       data-slot="job-progress"
-      className={cn(paper, 'flex w-full max-w-sm flex-col gap-3 rounded-2xl p-4', className)}
+      className={cn(paper, 'flex w-full flex-col gap-3 rounded-2xl p-4', className)}
       {...props}>
       <div className="flex items-center gap-2.5">
         {finished ? (
           <CheckIcon className="size-3.5 shrink-0 text-emerald-500" />
         ) : (
-          <Loader2Icon className="text-foreground/35 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+          <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
         )}
         <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{title}</span>
-        <span className={cn(mono, 'text-foreground/35 shrink-0 tabular-nums')}>
+        <span className={cn(mono, 'text-muted-foreground shrink-0 tabular-nums')}>
           {finished ? 'done' : eta}
         </span>
         {!finished && (
@@ -85,10 +85,10 @@ export function JobProgress({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={announced(overall)}
-        className="bg-foreground/[0.06] h-1 w-full overflow-hidden rounded-full">
+        className="bg-foreground/[0.06] inset-ring-border h-1 w-full overflow-hidden rounded-full inset-ring forced-colors:border">
         <span
           className={cn(
-            'block h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none',
+            'block h-full rounded-full transition-[width] duration-500 ease-out forced-color-adjust-none motion-reduce:transition-none',
             finished ? 'bg-emerald-500' : 'bg-blue-500 dark:bg-blue-400'
           )}
           style={{ width: `${overall}%` }}
@@ -102,10 +102,10 @@ export function JobProgress({
             className={cn(
               mono,
               i < stage
-                ? 'text-foreground/35'
+                ? 'text-muted-foreground'
                 : i === stage
                   ? 'text-foreground/90'
-                  : 'text-foreground/20'
+                  : 'text-muted-foreground'
             )}>
             {item.name}
           </span>

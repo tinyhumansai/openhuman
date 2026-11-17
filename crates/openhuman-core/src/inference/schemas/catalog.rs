@@ -2,6 +2,8 @@
 //! function, plus the field-shape helpers they are built from.
 
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::inference::schema_fields::optional_u64;
+use crate::util::params::{json_output, optional_string, required_string};
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
@@ -9,7 +11,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "inference",
             function: "resolve_model",
             description: "Resolve a model hint or tier name to the concrete model the provider router would use.",
-            inputs: vec![required_string("hint", "Model hint (e.g. hint:reasoning) or a concrete model id.")],
+            inputs: vec![required_string(
+                "hint",
+                "Model hint (e.g. hint:reasoning) or a concrete model id.",
+            )],
             outputs: vec![
                 json_output("model", "Resolved concrete model id."),
                 json_output(
@@ -30,7 +35,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "get_client_config",
             description: "Read the client-facing inference/provider config used by the AI settings UI.",
             inputs: vec![],
-            outputs: vec![json_output("config", "Client-facing inference config payload.")],
+            outputs: vec![json_output(
+                "config",
+                "Client-facing inference config payload.",
+            )],
         },
         "update_model_settings" => ControllerSchema {
             namespace: "inference",
@@ -39,20 +47,53 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![
                 optional_string("api_url", "Optional OpenHuman product backend URL."),
                 optional_string("inference_url", "Optional custom inference base URL."),
-                optional_string("api_key", "Optional API key for a custom inference endpoint."),
+                optional_string(
+                    "api_key",
+                    "Optional API key for a custom inference endpoint.",
+                ),
                 optional_string("default_model", "Optional default model override."),
-                optional_f64("default_temperature", "Optional default temperature override."),
-                optional_json("model_routes", "Optional full replacement for legacy model routes."),
-                optional_json("cloud_providers", "Optional full replacement for configured cloud providers."),
-                optional_json("model_registry", "Optional full replacement for the per-model registry (carries each model's `vision` flag)."),
+                optional_f64(
+                    "default_temperature",
+                    "Optional default temperature override.",
+                ),
+                optional_json(
+                    "model_routes",
+                    "Optional full replacement for legacy model routes.",
+                ),
+                optional_json(
+                    "cloud_providers",
+                    "Optional full replacement for configured cloud providers.",
+                ),
+                optional_json(
+                    "model_registry",
+                    "Optional full replacement for the per-model registry (carries each model's `vision` flag).",
+                ),
                 optional_string("primary_cloud", "Optional primary cloud provider id."),
                 optional_string("chat_provider", "Optional chat workload provider string."),
-                optional_string("reasoning_provider", "Optional reasoning workload provider string."),
-                optional_string("agentic_provider", "Optional agentic workload provider string."),
-                optional_string("coding_provider", "Optional coding workload provider string."),
-                optional_string("vision_provider", "Optional vision / multimodal workload provider string."),
-                optional_string("memory_provider", "Optional memory workload provider string."),
-                optional_string("embeddings_provider", "Optional embeddings workload provider string."),
+                optional_string(
+                    "reasoning_provider",
+                    "Optional reasoning workload provider string.",
+                ),
+                optional_string(
+                    "agentic_provider",
+                    "Optional agentic workload provider string.",
+                ),
+                optional_string(
+                    "coding_provider",
+                    "Optional coding workload provider string.",
+                ),
+                optional_string(
+                    "vision_provider",
+                    "Optional vision / multimodal workload provider string.",
+                ),
+                optional_string(
+                    "memory_provider",
+                    "Optional memory workload provider string.",
+                ),
+                optional_string(
+                    "embeddings_provider",
+                    "Optional embeddings workload provider string.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -61,9 +102,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "update_local_settings",
             description: "Persist local inference provider selection, endpoint URL, and local-runtime routing flags.",
             inputs: vec![
-                optional_bool("runtime_enabled", "Enable or disable local inference runtime routing."),
-                optional_bool("opt_in_confirmed", "Persist the local inference opt-in flag."),
-                optional_string("provider", "Optional local provider slug, e.g. ollama or lm_studio."),
+                optional_bool(
+                    "runtime_enabled",
+                    "Enable or disable local inference runtime routing.",
+                ),
+                optional_bool(
+                    "opt_in_confirmed",
+                    "Persist the local inference opt-in flag.",
+                ),
+                optional_string(
+                    "provider",
+                    "Optional local provider slug, e.g. ollama or lm_studio.",
+                ),
                 optional_json(
                     "base_url",
                     "Optional local provider base URL string, or null to clear.",
@@ -74,7 +124,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_string("model_id", "Optional generic model id override."),
                 optional_string("chat_model_id", "Optional chat model id override."),
-                optional_bool("usage_embeddings", "Whether embeddings workload may use the local provider."),
+                optional_bool(
+                    "usage_embeddings",
+                    "Whether embeddings workload may use the local provider.",
+                ),
+                optional_bool(
+                    "native_tool_calling",
+                    "Whether the local provider gets native tools instead of the text tool protocol.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -82,7 +139,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "inference",
             function: "list_models",
             description: "Fetch the available model list from a configured inference provider's /models API.",
-            inputs: vec![required_string("provider_id", "Opaque id of the cloud provider entry to query.")],
+            inputs: vec![required_string(
+                "provider_id",
+                "Opaque id of the cloud provider entry to query.",
+            )],
             outputs: vec![json_output("models", "Provider model list payload.")],
         },
         "provider_auth_errors" => ControllerSchema {
@@ -109,44 +169,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                  mirror it for the active models. Models below the floor are rejected \
                  via `issues`.",
             )],
-        },
-        "openai_oauth_start" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_start",
-            description: "Begin ChatGPT/Codex OAuth (PKCE) for the openai cloud provider.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "OAuth start payload with authUrl.")],
-        },
-        "openai_oauth_complete" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_complete",
-            description: "Complete ChatGPT/Codex OAuth using the browser callback URL.",
-            inputs: vec![required_string(
-                "callback_url",
-                "Redirect URL after sign-in (http://127.0.0.1:1455/auth/callback?...).",
-            )],
-            outputs: vec![json_output("result", "OAuth completion payload.")],
-        },
-        "openai_oauth_import_codex_cli" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_import_codex_cli",
-            description: "Import the existing Codex CLI ChatGPT login from ~/.codex/auth.json.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "OAuth import payload.")],
-        },
-        "openai_oauth_status" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_status",
-            description: "Whether ChatGPT OAuth credentials are stored for openai.",
-            inputs: vec![],
-            outputs: vec![json_output("status", "OAuth connection status.")],
-        },
-        "openai_oauth_disconnect" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_disconnect",
-            description: "Remove stored ChatGPT OAuth credentials.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "Disconnect result.")],
         },
         "summarize" => ControllerSchema {
             namespace: "inference",
@@ -190,9 +212,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "test_provider_model",
             description: "Run a one-off Hello-world style test against an explicit provider:model binding without saving routing changes.",
             inputs: vec![
-                required_string("workload", "Workload id context (chat, reasoning, coding, etc.)."),
-                required_string("provider", "Explicit provider string like 'openai:gpt-4o' or 'ollama:llama3.1:8b'."),
-                optional_string("prompt", "Optional prompt text to send; defaults to 'Hello world'."),
+                required_string(
+                    "workload",
+                    "Workload id context (chat, reasoning, coding, etc.).",
+                ),
+                required_string(
+                    "provider",
+                    "Explicit provider string like 'openai:gpt-4o' or 'ollama:llama3.1:8b'.",
+                ),
+                optional_string(
+                    "prompt",
+                    "Optional prompt text to send; defaults to 'Hello world'.",
+                ),
             ],
             outputs: vec![json_output("reply", "Assistant reply text.")],
         },
@@ -200,7 +231,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "inference",
             function: "analyze_sentiment",
             description: "Classify the emotion and valence of a user message with the inference provider.",
-            inputs: vec![required_string("message", "User message content to classify.")],
+            inputs: vec![required_string(
+                "message",
+                "User message content to classify.",
+            )],
             outputs: vec![json_output("sentiment", "Sentiment analysis payload.")],
         },
         "claude_code_status" => ControllerSchema {
@@ -226,7 +260,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "claude_code_settings" => ControllerSchema {
             namespace: "inference",
             function: "claude_code_settings",
-            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Self-contained per-install state kept in its own claude_code_settings.json beside config.toml in the OpenHuman config directory — not inside the central config file, and not under the internal workspace dir (config.workspace_dir).",
+            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Kept in the workspace's host storage (its own KV namespace), not inside the central config file.",
             inputs: vec![],
             outputs: vec![json_output(
                 "settings",
@@ -250,15 +284,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
 fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
@@ -277,28 +302,10 @@ fn required_bool(name: &'static str, comment: &'static str) -> FieldSchema {
     }
 }
 
-fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-        comment,
-        required: false,
-    }
-}
-
 fn optional_f64(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
-        comment,
-        required: false,
-    }
-}
-
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
         comment,
         required: false,
     }
@@ -310,14 +317,5 @@ fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
         comment,
         required: false,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }

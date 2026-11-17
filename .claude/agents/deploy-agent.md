@@ -114,7 +114,7 @@ hand instead: *"Verify the command you are documenting exists in the current rep
 A one-off correction like this one does not stop it happening again. What reduces the
 inconsistencies is a markdown structure chosen for this project rather than inherited from a
 template: source-of-truth files first, per-subsystem notes, deeper architecture left in
-`gitbooks/developing/` rather than duplicated, and one place where the paths an agent doc cites
+`docs/gitbooks/en/developing/` rather than duplicated, and one place where the paths an agent doc cites
 are resolved against the tree. With thirteen agent definitions under `.claude/agents/` and
 outside-fork PRs merging by the dozen in a single day, that structure is the durable fix, not
 another pass of manual proofreading.

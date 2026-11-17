@@ -6,7 +6,7 @@
  */
 import { type Page, test } from '@playwright/test';
 
-import { bootAuthenticatedPage, callCoreRpc, waitForAppReady } from '../helpers/core-rpc';
+import { bootRuntimeReadyGuestPage, callCoreRpc, waitForAppReady } from '../helpers/core-rpc';
 
 /**
  * A local ("Continue Locally") session token: three segments whose last is
@@ -31,13 +31,15 @@ function localSessionToken(): string {
 const OUT = 'test-results/onboarding-screens';
 
 async function bootIntoOnboarding(page: Page, userId: string): Promise<void> {
-  await bootAuthenticatedPage(page, userId, '/home');
+  await bootRuntimeReadyGuestPage(page);
+  await callCoreRpc('openhuman.auth_store_session', {
+    token: localSessionToken(),
+    userId,
+    user: { _id: 'local', id: 'local', name: 'Local User', email: 'local@openhuman.local' },
+  });
   await callCoreRpc('openhuman.config_set_onboarding_completed', { value: false });
-  const token = localSessionToken();
-  await page.evaluate(t => {
-    window.localStorage.setItem('openhuman_session_token', t);
-  }, token);
   await page.goto('/#/onboarding/custom/inference');
+  await page.reload();
   await waitForAppReady(page);
 }
 

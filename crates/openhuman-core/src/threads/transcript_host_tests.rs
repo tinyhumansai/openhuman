@@ -6,16 +6,35 @@
 //! session codec and writer, and transcripts written before calls rode their
 //! issuing row.
 
+use std::sync::Arc;
+
+use crate::storage::sessions::splice_fixture_tests::{memory_locator, memory_session_provider};
 use tempfile::TempDir;
+use tinyagents_session::port::SessionStoreProvider;
 use tinyagents_session::transcript::view::{
-    project_records, project_thread, DisplayItem, ToolCallStatus,
+    project_records, project_thread_in, DisplayItem, ToolCallStatus,
 };
 use tinyagents_session::transcript::TranscriptMessage;
-use tinyagents_session::transcript::{self, read_transcript_display};
+use tinyagents_session::transcript::{self, TranscriptLocator};
 
-/// Write a raw JSONL transcript (meta header + `body` lines) for `thread_id`.
+/// A thread's display records, read back through the store port.
+fn display_of(
+    locator: &Arc<dyn TranscriptLocator>,
+    thread_id: &str,
+) -> transcript::DisplaySessionTranscript {
+    locator
+        .root_for_thread(thread_id)
+        .expect("the thread has a root transcript")
+        .read_display()
+        .expect("read the display records")
+        .expect("display records")
+}
+
+/// Write a raw classic JSONL transcript (meta header + `body` lines) for
+/// `thread_id`, the file layout older releases left behind.
 fn write_raw(workspace: &std::path::Path, stem: &str, thread_id: &str, body: &[&str]) {
-    let path = transcript::resolve_keyed_transcript_path(workspace, stem).expect("resolve");
+    let path = workspace.join("session_raw").join(format!("{stem}.jsonl"));
+    std::fs::create_dir_all(path.parent().unwrap()).expect("session_raw");
     let mut buf = format!(
         r#"{{"_meta":{{"version":1,"agent":"orchestrator","dispatcher":"xml","created":"2026-09-24T00:00:00Z","updated":"2026-09-24T00:00:10Z","turn_count":1,"input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"charged_amount_usd":0.0,"thread_id":"{thread_id}"}}}}"#
     );
@@ -45,8 +64,6 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
     use tinyinference_llm::message::Message;
     use tinytools_agent::dialect::NativeToolCall;
     use tinytools_agent::dialect::{ToolResultEntry, TranscriptEntry};
-
-    let dir = TempDir::new().unwrap();
 
     // What the session driver persists for a text dialect: the conversation
     // rendered through the dialect's replay form.
@@ -124,7 +141,7 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
         ] {
             sidecar
                 .tool_outcomes
-                .push(crate::agent::tinyagents::ToolCallOutcome {
+                .push(tinyagents_harness::turn_outcome::ToolCallOutcome {
                     call_id: id.into(),
                     name: name.into(),
                     arguments,
@@ -161,6 +178,7 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
     let meta = transcript::TranscriptMeta {
         session_id: None,
         parent_session_id: None,
+        prefix_reset: false,
         agent_name: "orchestrator".into(),
         agent_id: Some("orchestrator".into()),
         agent_type: Some("root".into()),
@@ -178,14 +196,27 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
         thread_id: Some("thr_xml".into()),
         task_id: None,
     };
-    let path = transcript::resolve_keyed_transcript_path(dir.path(), "xml_orchestrator").unwrap();
-    transcript::append_transcript_turn(&path, &[], &rows, &meta, usage.as_ref(), Some("req-xml"))
+    let locator = memory_locator();
+    locator
+        .open_stem("xml_orchestrator", meta.clone())
+        .unwrap()
+        .append_turn(transcript::TranscriptTurn {
+            prev: &[],
+            next: &rows,
+            meta: &meta,
+            turn_usage: usage.as_ref(),
+            request_id: Some("req-xml"),
+            tools: None,
+        })
         .unwrap();
 
     // The durable rows: the calls ride the issuing row, not the final answer.
-    let persisted = transcript::read_transcript(&path).unwrap();
+    let persisted = locator
+        .open_stem("xml_orchestrator", meta.clone())
+        .unwrap()
+        .messages()
+        .unwrap();
     let assistants: Vec<_> = persisted
-        .messages
         .iter()
         .filter(|m| m.role.as_str() == "assistant")
         .collect();
@@ -212,7 +243,7 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
     );
 
     // The projection: calls settled with their results, no raw results bubble.
-    let display = read_transcript_display(&path).unwrap();
+    let display = display_of(&locator, "thr_xml");
     let items = project_records(&display.records);
     let calls: Vec<_> = items
         .iter()
@@ -266,6 +297,7 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
     );
 }
 
+#[cfg(feature = "legacy-import")]
 /// Transcripts already written while the codec filed a turn's calls on its
 /// final row (calls recorded *after* their own results) still project each call
 /// once, settled, with its real name.
@@ -285,7 +317,33 @@ fn calls_recorded_after_their_results_project_as_settled() {
         ],
     );
 
-    let items = project_thread(dir.path(), thread)
+    let provider = memory_session_provider();
+    let locator = provider
+        .for_agent(crate::storage::sessions::DEFAULT_AGENT)
+        .transcripts;
+    crate::storage::import::sessions::import_transcript_groups(provider.as_ref(), dir.path())
+        .unwrap();
+    let listed = locator
+        .thread_transcripts(thread, None)
+        .expect("imported roots");
+    assert_eq!(listed.roots.len(), 1);
+    for root in &listed.roots {
+        let display = root.transcript.read_display().unwrap().unwrap();
+        for record in &display.records {
+            if let tinyagents_session::transcript::DisplayRecord::Message(message) = record {
+                if message.message.role == "assistant"
+                    && message.message.content == "Here is what I found."
+                {
+                    assert!(
+                        message.message.tool_calls.is_empty(),
+                        "legacy text-dialect calls belong to turn usage, not the typed native-call field"
+                    );
+                    assert_eq!(message.turn_usage.as_ref().unwrap().tool_calls.len(), 2);
+                }
+            }
+        }
+    }
+    let items = project_thread_in(locator.as_ref(), thread, None, None)
         .expect("transcript")
         .items;
     let calls: Vec<_> = items
@@ -326,11 +384,11 @@ fn tool_failure_metadata_round_trips_write_to_display_line() {
     // Full write path: a failed tool TranscriptMessage stamped with failure metadata
     // must serialise the additive `failure` line field and read back as a failed
     // display message — proving the harness → transcript → projection seam.
-    let dir = TempDir::new().unwrap();
     let now = "2026-07-21T09:00:00Z".to_string();
     let meta = transcript::TranscriptMeta {
         session_id: None,
         parent_session_id: None,
+        prefix_reset: false,
         agent_name: "orchestrator".into(),
         agent_id: Some("orchestrator".into()),
         agent_type: Some("root".into()),
@@ -357,10 +415,14 @@ fn tool_failure_metadata_round_trips_write_to_display_line() {
     });
 
     let messages = vec![TranscriptMessage::user("do it"), tool_msg];
-    let path = transcript::resolve_keyed_transcript_path(dir.path(), "700_orchestrator").unwrap();
-    transcript::write_transcript(&path, &messages, &meta, None).unwrap();
+    let locator = memory_locator();
+    locator
+        .open_stem("700_orchestrator", meta.clone())
+        .unwrap()
+        .replace(&messages)
+        .unwrap();
 
-    let display = read_transcript_display(&path).unwrap();
+    let display = display_of(&locator, "thr_rt");
     let failed = display
         .records
         .iter()

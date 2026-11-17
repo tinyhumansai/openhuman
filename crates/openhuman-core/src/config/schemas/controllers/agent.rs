@@ -1,21 +1,28 @@
 //! Handlers for agent behaviour settings: autonomy, privacy, browser, sandbox, and memory sync.
 
+use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 
 use super::super::helpers::{
-    deserialize_params, to_json, AgentSettingsUpdate, AutonomySettingsUpdate,
-    BrowserSettingsUpdate, ComputerSettingsUpdate, PrivacyModeUpdate, SandboxSettingsUpdate,
-    SetBrowserAllowAllParams,
+    deserialize_params, AgentSettingsUpdate, AutonomySettingsUpdate, BrowserSettingsUpdate,
+    ComputerSettingsUpdate, PrivacyModeUpdate, SandboxSettingsUpdate, SetBrowserAllowAllParams,
 };
 
-pub(crate) fn handle_get_autonomy_settings(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { to_json(config_rpc::get_autonomy_settings().await?) })
+pub(crate) fn handle_get_autonomy_settings(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_autonomy_settings(&ctx).await?) })
 }
 
-pub(crate) fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFuture {
+pub(crate) fn handle_update_autonomy_settings(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<AutonomySettingsUpdate>(params)?;
         let patch = config_rpc::AutonomySettingsPatch {
@@ -30,26 +37,35 @@ pub(crate) fn handle_update_autonomy_settings(params: Map<String, Value>) -> Con
             auto_approve: update.auto_approve,
             auto_approve_all: update.auto_approve_all,
         };
-        to_json(config_rpc::load_and_apply_autonomy_settings(patch).await?)
+        to_json(config_rpc::load_and_apply_autonomy_settings(&ctx, patch).await?)
     })
 }
 
-pub(super) fn handle_get_privacy_mode(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { to_json(config_rpc::get_privacy_mode().await?) })
+pub(super) fn handle_get_privacy_mode(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_privacy_mode(&ctx).await?) })
 }
 
-pub(super) fn handle_set_privacy_mode(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_set_privacy_mode(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<PrivacyModeUpdate>(params)?;
         let patch = config_rpc::PrivacySettingsPatch { mode: update.mode };
-        to_json(config_rpc::load_and_apply_privacy_settings(patch).await?)
+        to_json(config_rpc::load_and_apply_privacy_settings(&ctx, patch).await?)
     })
 }
 
-pub(super) fn handle_get_agent_settings(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
+pub(super) fn handle_get_agent_settings(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
         log::debug!("[config][rpc] get_agent_settings enter");
-        match config_rpc::get_agent_settings().await {
+        match config_rpc::get_agent_settings(&ctx).await {
             Ok(outcome) => {
                 log::debug!("[config][rpc] get_agent_settings ok");
                 to_json(outcome)
@@ -62,7 +78,10 @@ pub(super) fn handle_get_agent_settings(_params: Map<String, Value>) -> Controll
     })
 }
 
-pub(super) fn handle_update_agent_settings(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_update_agent_settings(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[config][rpc] update_agent_settings enter");
         let update = match deserialize_params::<AgentSettingsUpdate>(params) {
@@ -77,7 +96,7 @@ pub(super) fn handle_update_agent_settings(params: Map<String, Value>) -> Contro
             chat_agent_id: update.chat_agent_id,
             tool_dispatcher: update.tool_dispatcher,
         };
-        match config_rpc::load_and_apply_agent_settings(patch).await {
+        match config_rpc::load_and_apply_agent_settings(&ctx, patch).await {
             Ok(outcome) => {
                 log::debug!("[config][rpc] update_agent_settings ok");
                 to_json(outcome)
@@ -90,7 +109,10 @@ pub(super) fn handle_update_agent_settings(params: Map<String, Value>) -> Contro
     })
 }
 
-pub(super) fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_update_browser_settings(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<BrowserSettingsUpdate>(params)?;
         let patch = config_rpc::BrowserSettingsPatch {
@@ -105,12 +127,16 @@ pub(super) fn handle_update_browser_settings(params: Map<String, Value>) -> Cont
             download_dir: update.download_dir,
             max_task_steps: update.max_task_steps,
             task_timeout_secs: update.task_timeout_secs,
+            learn_from_tasks: update.learn_from_tasks,
         };
-        to_json(config_rpc::load_and_apply_browser_settings(patch).await?)
+        to_json(config_rpc::load_and_apply_browser_settings(&ctx, patch).await?)
     })
 }
 
-pub(super) fn handle_update_computer_settings(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_update_computer_settings(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<ComputerSettingsUpdate>(params)?;
         let patch = config_rpc::ComputerSettingsPatch {
@@ -119,23 +145,36 @@ pub(super) fn handle_update_computer_settings(params: Map<String, Value>) -> Con
             planner_model: update.planner_model,
             rescue_model: update.rescue_model,
             max_rescues: update.max_rescues,
+            captcha_solver: update.captcha_solver,
+            captcha_provider: update.captcha_provider,
+            captcha_model: update.captcha_model,
+            max_captcha_attempts: update.max_captcha_attempts,
         };
-        to_json(config_rpc::load_and_apply_computer_settings(patch).await?)
+        to_json(config_rpc::load_and_apply_computer_settings(&ctx, patch).await?)
     })
 }
 
-pub(super) fn handle_set_browser_allow_all(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_set_browser_allow_all(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<SetBrowserAllowAllParams>(params)?;
         to_json(config_rpc::set_browser_allow_all(payload.enabled)?)
     })
 }
 
-pub(super) fn handle_get_sandbox_settings(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { to_json(config_rpc::get_sandbox_settings().await?) })
+pub(super) fn handle_get_sandbox_settings(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_sandbox_settings(&ctx).await?) })
 }
 
-pub(super) fn handle_update_sandbox_settings(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_update_sandbox_settings(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<SandboxSettingsUpdate>(params)?;
         let patch = config_rpc::SandboxSettingsPatch {
@@ -146,6 +185,6 @@ pub(super) fn handle_update_sandbox_settings(params: Map<String, Value>) -> Cont
             docker_cpu_limit: update.docker_cpu_limit,
             env_passthrough: update.env_passthrough,
         };
-        to_json(config_rpc::load_and_apply_sandbox_settings(patch).await?)
+        to_json(config_rpc::load_and_apply_sandbox_settings(&ctx, patch).await?)
     })
 }

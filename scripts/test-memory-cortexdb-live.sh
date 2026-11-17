@@ -63,4 +63,4 @@ echo "CortexDB $(curl --silent "$url/v1/admin/health") at $url"
 
 cd "$repo"
 OPENHUMAN_LIVE_CORTEXDB_URL="$url" \
-  cargo test -p openhuman-cli --test memory_cortexdb_live -- --nocapture
+  cargo test -p openhuman-cli --test memory_cortexdb_live -- --ignored --nocapture

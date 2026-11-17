@@ -23,7 +23,6 @@ import localeReducer from '../store/localeSlice';
 import mascotReducer from '../store/mascotSlice';
 import notificationReducer from '../store/notificationSlice';
 import personaReducer from '../store/personaSlice';
-import { pttReducer } from '../store/pttSlice';
 import socketReducer from '../store/socketSlice';
 import themeReducer from '../store/themeSlice';
 import threadReducer from '../store/threadSlice';
@@ -50,7 +49,6 @@ const testRootReducer = combineReducers({
   mascot: mascotReducer,
   notifications: notificationReducer,
   persona: personaReducer,
-  ptt: pttReducer,
   socket: socketReducer,
   theme: themeReducer,
   thread: threadReducer,

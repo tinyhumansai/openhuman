@@ -25,6 +25,7 @@ import { renderWithProviders } from '../../../../test/test-utils';
 
 const hoisted = vi.hoisted(() => ({
   testCoreRpcConnection: vi.fn(),
+  probeCoreRealtime: vi.fn(async () => 'ok'),
   clearCoreRpcUrlCache: vi.fn(),
   clearCoreRpcTokenCache: vi.fn(),
   restartApp: vi.fn(),
@@ -34,6 +35,7 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../../../../services/coreRpcClient', () => ({
   testCoreRpcConnection: hoisted.testCoreRpcConnection,
+  probeCoreRealtime: hoisted.probeCoreRealtime,
   clearCoreRpcUrlCache: hoisted.clearCoreRpcUrlCache,
   clearCoreRpcTokenCache: hoisted.clearCoreRpcTokenCache,
 }));

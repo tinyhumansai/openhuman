@@ -11,14 +11,13 @@
  */
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
+import type { TodoItem as TodoItemWire } from '../types/threadWire.generated';
+
 /** Core wire status for one todo item (`DomainEvent::ThreadTodosChanged`). */
-export type CoreTodoStatus = 'pending' | 'in_progress' | 'completed';
+export type CoreTodoStatus = TodoItemWire['status'];
 
 /** One todo item as the core sends it — wire shape, not the element's shape. */
-export interface ThreadTodoItemView {
-  content: string;
-  status: CoreTodoStatus;
-}
+export type ThreadTodoItemView = TodoItemWire;
 
 export interface ThreadTodosState {
   byThread: Record<string, ThreadTodoItemView[]>;

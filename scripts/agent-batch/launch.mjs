@@ -43,7 +43,7 @@ Pre-PR validation (run all, report any blocker exactly in the PR body):
   - pnpm typecheck
   - pnpm lint
   - focused vitest for changed TS/React files
-  - cargo fmt --manifest-path Cargo.toml --all --check (if Rust changed)
+  - cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check (if Rust changed)
   - focused \`pnpm debug rust <filter>\` for changed Rust
   - pnpm test:coverage and pnpm test:rust — coverage on changed lines must be ≥ 80%
 

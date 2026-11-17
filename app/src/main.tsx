@@ -9,8 +9,6 @@ import './index.css';
 import { installAutoHideScrollbars } from './lib/autoHideScrollbars';
 import { getCoreStateSnapshot } from './lib/coreState/store';
 import MascotWindowApp from './mascot/MascotWindowApp';
-import NotchApp from './notch/NotchApp';
-import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
 import { initGA, initSentry, startUiInteractionTracking, trackEvent } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
@@ -32,7 +30,7 @@ setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 // window label, so the Rust shell appends `?window=mascot` to the URL it
 // loads. Detect it via the URL param so we can skip `getCurrentWindow()`
 // — which would either throw or hit the IPC-bootstrap gap that
-// `tauriRuntimeAvailable() (= the hardened `isTauri()`) now guards
+// `tauriRuntimeAvailable()` (the hardened `isTauri()` check) now guards
 // against by reading `window.__TAURI_INTERNALS__.invoke`.
 const urlWindowParam = (() => {
   try {
@@ -42,16 +40,12 @@ const urlWindowParam = (() => {
   }
 })();
 const isMascotWindow = urlWindowParam === 'mascot';
-const isNotchWindow = urlWindowParam === 'notch';
 const currentWindowLabel = isMascotWindow
   ? 'mascot'
-  : isNotchWindow
-    ? 'notch'
-    : tauriRuntimeAvailable()
-      ? getCurrentWindow().label
-      : 'main';
-const isOverlayWindow = currentWindowLabel === 'overlay';
-const isStandaloneWindow = isOverlayWindow || isMascotWindow || isNotchWindow;
+  : tauriRuntimeAvailable()
+    ? getCurrentWindow().label
+    : 'main';
+const isStandaloneWindow = isMascotWindow;
 
 const ensureDefaultHashRoute = () => {
   const hash = window.location.hash;
@@ -94,20 +88,12 @@ if (!isStandaloneWindow) {
 function bootRender() {
   // Reveal scrollbars only while a pane is actually scrolling. Installed here
   // rather than in a component so it covers every window entry (main, mascot,
-  // notch, overlay) with one document-level capture listener, and so panes
+  // with one document-level capture listener, and so panes
   // mounted later need no wiring. Lives for the document's lifetime.
   installAutoHideScrollbars();
 
   const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
-  const tree = isMascotWindow ? (
-    <MascotWindowApp />
-  ) : isNotchWindow ? (
-    <NotchApp />
-  ) : isOverlayWindow ? (
-    <OverlayApp />
-  ) : (
-    <App />
-  );
+  const tree = isMascotWindow ? <MascotWindowApp /> : <App />;
   root.render(<React.StrictMode>{tree}</React.StrictMode>);
 }
 
@@ -117,7 +103,7 @@ function bootRender() {
 // `setActiveUserId(...)` wrote in a prior session — see
 // `resolveActiveUserBootstrap` for the full rationale (#4545, #900).
 const activeUserBootstrap = resolveActiveUserBootstrap({
-  isStandaloneNativeWindow: isMascotWindow || isNotchWindow,
+  isStandaloneNativeWindow: isMascotWindow,
   coreMode: getStoredCoreMode(),
   getActiveUserIdFromCore,
 });

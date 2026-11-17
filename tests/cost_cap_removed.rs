@@ -24,7 +24,8 @@
 use std::sync::Arc;
 
 use openhuman_core::agent::tinyagents::host::OpenHumanBudgetGate;
-use openhuman_core::config::{Config, DEFAULT_MODEL};
+use openhuman_core::config::Config;
+use openhuman_core::platform::cost::route::CostRoute;
 use openhuman_core::platform::cost::{self, TokenUsage};
 use tinyagents_harness::host::budget_gate::{BudgetGate, CallEstimate};
 
@@ -49,7 +50,13 @@ async fn a_spend_state_that_used_to_refuse_now_grants_and_is_still_recorded() {
     // Managed route — only managed spend was ever counted against the cap
     // (#5016), so a BYOK model here would have been ignored even before the
     // removal and would prove nothing.
-    let mut usage = TokenUsage::new(DEFAULT_MODEL, 10_000, 5_000, 1.0, 2.0);
+    let managed_test_model = "openrouter/test/managed-model";
+    assert_eq!(
+        cost::route::route_for_model(managed_test_model),
+        CostRoute::Managed,
+        "the fixture must exercise managed spend"
+    );
+    let mut usage = TokenUsage::new(managed_test_model, 10_000, 5_000, 1.0, 2.0);
     usage.cost_usd = RUNAWAY_SPEND_USD;
     tracker.record_usage(usage).expect("recording the spend");
 
@@ -58,7 +65,7 @@ async fn a_spend_state_that_used_to_refuse_now_grants_and_is_still_recorded() {
     //    "[tinyagents][budget] refusing model call" message. Before the
     //    removal this returned `Err(LimitExceeded)` for exactly this state.
     let gate = OpenHumanBudgetGate::new(Arc::new(config));
-    let estimate = CallEstimate::new(DEFAULT_MODEL, 1_000, 1_000).with_agent("lead");
+    let estimate = CallEstimate::new(managed_test_model, 1_000, 1_000).with_agent("lead");
     match gate.acquire(&estimate).await {
         Ok(permit) => drop(permit),
         Err(err) => panic!(

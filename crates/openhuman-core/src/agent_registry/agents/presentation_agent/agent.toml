@@ -1,0 +1,22 @@
+id = "presentation_agent"
+display_name = "Presentation Agent"
+when_to_use = "Presentation specialist: builds decks from supplied or retrieved evidence, and owns their grounding, citations and image verification. Use for make-slides, build-a-deck, or pitch-deck requests."
+temperature = 0.2
+max_iterations = 10
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = false
+# `omit_memory_context = false` opens the session with the compiled memory
+# context for grounding decks in prior context.
+
+[model]
+hint = "agentic"
+
+[tools]
+named = [
+    "generate_presentation",
+    "web_search_tool",
+    "web_fetch",
+    "http_request",
+]

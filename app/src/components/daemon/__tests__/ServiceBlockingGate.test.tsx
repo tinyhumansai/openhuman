@@ -66,8 +66,17 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    expect(screen.getByText('OpenHuman core is unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'OpenHuman core is unavailable' })).toHaveAttribute(
+      'aria-modal',
+      'true'
+    );
     expect(screen.getByRole('button', { name: 'Download Latest Version' })).toBeInTheDocument();
+    // Existing global blockers can reach z-10000, so both portal layers
+    // must outrank the children when core recovery takes precedence.
+    expect(screen.getByRole('dialog', { name: 'OpenHuman core is unavailable' })).toHaveClass(
+      'z-10002'
+    );
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass('z-10001');
   });
 
   it('opens latest release page from recovery prompt', async () => {

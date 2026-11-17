@@ -22,6 +22,7 @@ import {
 import {
   clearCoreRpcTokenCache,
   clearCoreRpcUrlCache,
+  probeCoreRealtime,
   testCoreRpcConnection,
 } from '../../services/coreRpcClient';
 import { type CoreMode, resetCoreMode, setCoreMode } from '../../store/coreModeSlice';
@@ -107,6 +108,7 @@ type TestStatus =
   | { kind: 'idle' }
   | { kind: 'testing' }
   | { kind: 'ok' }
+  | { kind: 'socketDisabled' }
   | { kind: 'auth' }
   | { kind: 'unreachable'; reason: string };
 
@@ -198,6 +200,14 @@ function ModePicker({ onConfirm }: PickerProps) {
         await response.json();
       } catch {
         // Non-JSON body is unusual but doesn't disprove reachability.
+      }
+      const realtime = await probeCoreRealtime(validated.url, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (realtime === 'disabled') {
+        log('[boot-check] picker — RPC ok but realtime (Socket.IO) is disabled on the core');
+        setTestStatus({ kind: 'socketDisabled' });
+        return;
       }
       log('[boot-check] picker — test succeeded');
       setTestStatus({ kind: 'ok' });
@@ -355,6 +365,11 @@ function ModePicker({ onConfirm }: PickerProps) {
               {testStatus.kind === 'ok' && (
                 <span className="text-xs text-emerald-600" data-testid="test-status-ok">
                   {t('bootCheck.connectedOk')}
+                </span>
+              )}
+              {testStatus.kind === 'socketDisabled' && (
+                <span className="text-xs text-red-600" data-testid="test-status-socket-disabled">
+                  {t('bootCheck.socketDisabled')}
                 </span>
               )}
               {testStatus.kind === 'auth' && (

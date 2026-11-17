@@ -28,7 +28,7 @@ export interface DialogContentProps extends ComponentPropsWithoutRef<
   /**
    * Portal target. Defaults to `document.body`.
    *
-   * The mascot, notch and overlay windows are transparent NSPanels rendering
+   * The mascot and overlay windows are transparent panels rendering
    * their own React root; a scrim portalled into their `document.body` paints
    * an opaque sheet over a window that is supposed to be see-through. Those
    * roots pass their own container instead.

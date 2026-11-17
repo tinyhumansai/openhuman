@@ -1,7 +1,8 @@
+use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -121,19 +122,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_version(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_version(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(crate::platform::update::rpc::update_version().await) })
 }
 
-fn handle_check(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_check(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(crate::platform::update::rpc::update_check().await) })
 }
 
-fn handle_run(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async { to_json(crate::platform::update::rpc::update_run().await) })
+fn handle_run(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(crate::platform::update::rpc::update_run(&ctx).await) })
 }
 
-fn handle_apply(params: Map<String, Value>) -> ControllerFuture {
+fn handle_apply(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let download_url = params
             .get("download_url")
@@ -151,13 +152,10 @@ fn handle_apply(params: Map<String, Value>) -> ControllerFuture {
             .map(|s| s.to_string());
 
         to_json(
-            crate::platform::update::rpc::update_apply(download_url, asset_name, staging_dir).await,
+            crate::platform::update::rpc::update_apply(&ctx, download_url, asset_name, staging_dir)
+                .await,
         )
     })
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

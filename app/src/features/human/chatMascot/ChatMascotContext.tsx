@@ -13,6 +13,7 @@ import {
 
 import { useAppDispatch } from '../../../store/hooks';
 import { setChatMascotExpanded } from '../../../store/mascotSlice';
+import { IDLE_REALTIME_VOICE_AUDIO, type RealtimeVoiceAudio } from '../voice/amplitudeLipsync';
 import { type ChatMascotSendBinding, ChatMascotSendStore } from './sendBinding';
 
 const mascotLog = debug('human:chat-mascot');
@@ -48,6 +49,23 @@ export interface ChatMascotContextValue {
   sendStore: ChatMascotSendStore;
   expand: () => void;
   collapse: () => void;
+  /**
+   * Expand the stage AND ask it to start a live voice session as soon as it
+   * mounts — what clicking the docked mascot does.
+   */
+  expandWithVoice: () => void;
+  /**
+   * Read-and-clear the pending "start talking" request. The stage's live voice
+   * control calls this once on mount, so a stage restored expanded on launch
+   * (no click) never opens the microphone on its own.
+   */
+  consumeVoiceStart: () => boolean;
+  /**
+   * The live session's output-loudness accessor, written by the stage's voice
+   * control and sampled per frame by the overlay for amplitude lip-sync. A ref
+   * because a 60fps signal must not travel through React state (#5357).
+   */
+  liveAudioRef: RefObject<RealtimeVoiceAudio>;
 }
 
 const ChatMascotContext = createContext<ChatMascotContextValue | null>(null);
@@ -84,6 +102,8 @@ export const ChatMascotProvider = ({ children }: { children: ReactNode }) => {
   const sendStoreRef = useRef<ChatMascotSendStore | null>(null);
   sendStoreRef.current ??= new ChatMascotSendStore();
   const sendStore = sendStoreRef.current;
+  const voiceStartRef = useRef(false);
+  const liveAudioRef = useRef<RealtimeVoiceAudio>({ ...IDLE_REALTIME_VOICE_AUDIO });
 
   const value = useMemo<ChatMascotContextValue>(
     () => ({
@@ -97,8 +117,20 @@ export const ChatMascotProvider = ({ children }: { children: ReactNode }) => {
       },
       collapse: () => {
         mascotLog('[chat-mascot] collapse requested');
+        voiceStartRef.current = false;
         dispatch(setChatMascotExpanded(false));
       },
+      expandWithVoice: () => {
+        mascotLog('[chat-mascot] expand + live voice requested');
+        voiceStartRef.current = true;
+        dispatch(setChatMascotExpanded(true));
+      },
+      consumeVoiceStart: () => {
+        const pending = voiceStartRef.current;
+        voiceStartRef.current = false;
+        return pending;
+      },
+      liveAudioRef,
     }),
     [dispatch, sendStore, setDockNode]
   );

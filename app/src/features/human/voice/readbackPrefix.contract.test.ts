@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { READBACK_PREFIX } from './useRealtimeVoiceSession';
+import { READBACK_PREFIX } from './live/readbackPrefix';
 
 const HARNESS_RELATIVE = 'crates/openhuman-core/src/voice/realtime_harness/prompt.rs';
 

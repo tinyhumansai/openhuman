@@ -10,16 +10,14 @@ use serde_json::json;
 use crate::config::Config;
 use tinytools::{Tool, ToolResult};
 
-use super::super::ops_discover::{
-    discover_workflows, is_workspace_trusted, read_workflow_resource,
-};
+use super::super::ops_discover::read_workflow_resource_for;
 use super::super::registry::get_workflow;
 use super::super::run_log::{read_run_log_slice, scan_runs};
 use super::helpers::{read_required_str, read_workflow_id};
 
 /// List installed skills.
 pub struct WorkflowListTool {
-    workspace_dir: PathBuf,
+    config: Arc<Config>,
     /// User-scope root to scan, when it must not be the real `$HOME`.
     ///
     /// `None` — production — resolves `dirs::home_dir()` at call time, exactly
@@ -30,7 +28,7 @@ pub struct WorkflowListTool {
 impl WorkflowListTool {
     pub fn new(config: Arc<Config>) -> Self {
         Self {
-            workspace_dir: config.workspace_dir.clone(),
+            config,
             home_dir: None,
         }
     }
@@ -77,12 +75,12 @@ impl Tool for WorkflowListTool {
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][workflows] list invoked");
-        let home = self
-            .home_dir
-            .clone()
-            .or_else(crate::skills::ops_discover::discovery_home_dir);
-        let trusted = is_workspace_trusted(&self.workspace_dir);
-        let workflows = discover_workflows(home.as_deref(), Some(&self.workspace_dir), trusted);
+        let ctx = crate::core::runtime::DispatchCtx::ambient();
+        let workflows = crate::skills::ops_discover::load_workflow_metadata_for_with_home(
+            &ctx,
+            &self.config,
+            self.home_dir.clone(),
+        );
         Ok(ToolResult::success(serde_json::to_string(&json!({
             "count": workflows.len(),
             "workflows": workflows,
@@ -147,14 +145,12 @@ impl Tool for WorkflowDescribeTool {
 
 /// Read a bundled resource file from a skill.
 pub struct WorkflowReadResourceTool {
-    workspace_dir: PathBuf,
+    config: Arc<Config>,
 }
 
 impl WorkflowReadResourceTool {
     pub fn new(config: Arc<Config>) -> Self {
-        Self {
-            workspace_dir: config.workspace_dir.clone(),
-        }
+        Self { config }
     }
 }
 
@@ -186,8 +182,9 @@ impl Tool for WorkflowReadResourceTool {
         log::debug!("[tool][workflows] read_resource invoked");
         let skill_id = read_workflow_id(&args)?;
         let relative_path = read_required_str(&args, "relative_path")?;
+        let ctx = crate::core::runtime::DispatchCtx::ambient();
         let content =
-            read_workflow_resource(&self.workspace_dir, &skill_id, Path::new(&relative_path))
+            read_workflow_resource_for(&ctx, &self.config, &skill_id, Path::new(&relative_path))
                 .map_err(|e| anyhow::anyhow!("read_workflow_resource: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&json!({
             "workflow_id": skill_id,
@@ -320,7 +317,7 @@ impl Tool for WorkflowReadRunLogTool {
             .find(|run| run.run_id == run_id)
             .ok_or_else(|| anyhow::anyhow!("read_workflow_run_log: run `{run_id}` not found"))?;
         let path = PathBuf::from(run.log_path);
-        let slice = read_run_log_slice(&path, offset, max_bytes)
+        let slice = read_run_log_slice(&self.workspace_dir, &path, offset, max_bytes)
             .map_err(|e| anyhow::anyhow!("read_workflow_run_log: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&slice)?))
     }

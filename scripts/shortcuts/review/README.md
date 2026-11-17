@@ -1,15 +1,15 @@
 # scripts/shortcuts/review
 
-Helpers for working through PRs on this repo. Runnable directly — no zshrc
+Helpers for working through PRs on this repo (part of [`scripts/shortcuts/`](../README.md); the sibling is [`work/`](../work/README.md)). Runnable directly, no zshrc
 integration needed.
 
 | Script       | What it does                                                                      |
 | ------------ | --------------------------------------------------------------------------------- |
-| `sync.sh`    | Fetch PR head, check out as `pr/<num>`, merge `main`, wire push/upstream.         |
-| `review.sh`  | `sync` + hand off to the `pr-reviewer` agent to review, comment, and approve.     |
-| `fix.sh`     | `sync` + `pr-reviewer` (apply fixes) + `pr-manager-lite` (commit & push).         |
-| `coverage.sh`| `sync` + gather coverage CI context + agent to fix coverage, push, babysit checks.|
-| `merge.sh`   | LLM-summarized squash body + filtered Co-authored-by trailers + `gh pr merge`.    |
+| [`sync.sh`](./sync.sh)    | Fetch PR head, check out as `pr/<num>`, merge `main`, wire push/upstream.         |
+| [`review.sh`](./review.sh)  | `sync` + hand off to the `pr-reviewer` agent to review, comment, and approve.     |
+| [`fix.sh`](./fix.sh)     | `sync` + `pr-reviewer` (apply fixes) + `pr-manager-lite` (commit & push).         |
+| [`coverage.sh`](./coverage.sh)| `sync` + gather coverage CI context + agent to fix coverage, push, babysit checks.|
+| [`merge.sh`](./merge.sh)   | LLM-summarized squash body + filtered Co-authored-by trailers + `gh pr merge`.    |
 
 ## LLM flags
 
@@ -55,6 +55,12 @@ scripts/shortcuts/review/merge.sh 123
   `Co-authored-by:` entries (default filters copilot / codex / cursor / claude /
   anthropic / openai / chatgpt / `[bot]` / `noreply@github` /
   `users.noreply.github.com`; matched case-insensitively on name or email).
+- Shared helpers live in [`lib.sh`](./lib.sh) and the agent prompt templates in [`prompts/`](./prompts).
 - Requires `git`, `gh`, `jq`. `review` / `fix` / `coverage` also require the
   agent CLI (default `claude`); `merge` also requires the summary LLM CLI
   (default `gemini`) unless `--summary-llm none`.
+
+## See also
+
+- [`scripts/rabbit/`](../../rabbit/README.md), which retriggers CodeRabbit reviews on rate-limited PRs.
+- [`CONTRIBUTING.md`](../../../CONTRIBUTING.md) for the PR process these scripts automate.

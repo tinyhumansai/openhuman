@@ -14,8 +14,9 @@ use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 use super::super::client::{direct_list_connections, resolve_composio_route, ComposioRoute};
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::{ComposioConnectionsResponse, ComposioToolkitsResponse};
+use tinyconnectors_bus::names::methods;
 
 // ── composio_connect (inline approval card, #3993) ──────────────────
 
@@ -25,7 +26,7 @@ use super::super::types::{ComposioConnectionsResponse, ComposioToolkitsResponse}
 /// The agent frequently guesses `google_drive` where Composio uses
 /// `googledrive` (#3993); without this the OAuth handoff fails with an opaque
 /// error.
-pub(super) fn canonicalize_toolkit_slug(slug: &str) -> String {
+pub(crate) fn canonicalize_toolkit_slug(slug: &str) -> String {
     let key = slug.trim().to_ascii_lowercase();
     match key.as_str() {
         "feishu" | "lark" => "larksuite".to_string(),
@@ -60,6 +61,49 @@ pub(super) fn composio_connect_timeout() -> Option<std::time::Duration> {
             .ok()
             .as_deref(),
     )
+}
+
+/// Slack on top of the approval park bound for the connection check that
+/// follows an approval.
+const COMPOSIO_CONNECT_TIMEOUT_SLACK: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The tool's own deadline for a given park bound (see
+/// `ComposioConnectTool::timeout_policy`).
+pub(super) fn composio_connect_tool_timeout(
+    park_bound: Option<std::time::Duration>,
+) -> tinytools::ToolTimeout {
+    match park_bound {
+        Some(bound) => tinytools::ToolTimeout::Millis(
+            bound
+                .checked_add(COMPOSIO_CONNECT_TIMEOUT_SLACK)
+                .and_then(|total| u64::try_from(total.as_millis()).ok())
+                .unwrap_or(u64::MAX),
+        ),
+        None => tinytools::ToolTimeout::Unbounded,
+    }
+}
+
+/// Smallest park the gate is given once pre-gate work has used up the bound,
+/// so the card is still raised (and abandoned cleanly) rather than skipped.
+const COMPOSIO_CONNECT_MIN_PARK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The park bound left for the approval gate after `pre_gate` was spent on
+/// config loading and the connection/catalog reads that precede it.
+///
+/// The tool's own deadline ([`composio_connect_tool_timeout`]) is one budget
+/// for the whole call: park bound plus slack for the post-approval liveness
+/// check. Handing the gate the full bound after slow pre-gate reads let the
+/// tool deadline fire while the gate still waited, which lost the gate's
+/// actionable "card not completed" result to a bare timeout.
+pub(super) fn remaining_park_bound(
+    park_bound: Option<std::time::Duration>,
+    pre_gate: std::time::Duration,
+) -> Option<std::time::Duration> {
+    park_bound.map(|bound| {
+        bound
+            .saturating_sub(pre_gate)
+            .max(COMPOSIO_CONNECT_MIN_PARK)
+    })
 }
 
 /// Pure core of [`composio_connect_timeout`], kept env-free so it is
@@ -98,7 +142,7 @@ pub(super) async fn connection_is_active(config: &Config, toolkit: &str) -> anyh
             .iter()
             .any(|c| c.is_active() && c.normalized_toolkit().eq_ignore_ascii_case(toolkit))
     };
-    match resolve_composio_route(config)? {
+    match resolve_composio_route(config).await? {
         ComposioRoute::Backend => {
             let resp = connectors::call_bare::<ComposioConnectionsResponse>(
                 config,
@@ -166,19 +210,44 @@ impl Tool for ComposioConnectTool {
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
     }
+    /// The call parks on the approval gate *inside* `execute` while the user
+    /// completes OAuth, bounded by [`composio_connect_timeout`]. The inherited
+    /// per-tool deadline (120s by default) would race that bound and cut the
+    /// park before its fast-path result renders, so the budget is the park
+    /// bound plus slack for the post-approval connection check — or
+    /// unbounded when the operator opted out of the bound (the gate's own TTL
+    /// still ends the park).
+    fn timeout_policy(&self, _args: &Value) -> tinytools::ToolTimeout {
+        composio_connect_tool_timeout(composio_connect_timeout())
+    }
     // NOTE: `external_effect` deliberately stays `false`. Gating happens
     // *inside* `execute` via a manual `ApprovalGate` intercept so we can
     // (a) skip the card when the toolkit is already connected and (b) carry
     // the toolkit slug into the card for the inline Connect button. The
     // engine's auto-gate is unconditional and would double-prompt.
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&self.config, outcome)
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        let outcome = Box::pin(self.execute_unredacted(args, &approval)).await;
+        redact_composio_outcome(&self.config, outcome).await
     }
 }
 
 impl ComposioConnectTool {
-    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
+    pub(crate) async fn execute_unredacted(
+        &self,
+        args: Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let raw_toolkit = args
             .get("toolkit")
             .and_then(|v| v.as_str())
@@ -191,16 +260,16 @@ impl ComposioConnectTool {
         // `google_drive` where Composio expects `googledrive` (#3993).
         let toolkit = canonicalize_toolkit_slug(raw_toolkit);
         tracing::debug!(raw = %raw_toolkit, toolkit = %toolkit, "[composio] tool connect.execute");
+        // The tool deadline covers this whole call, so the gate's park is
+        // charged for the reads that precede it (see `remaining_park_bound`).
+        let started = std::time::Instant::now();
 
         // The inline connect card only has a surface on an interactive chat
-        // turn (the web-chat path installs `APPROVAL_CHAT_CONTEXT`). On
+        // turn (the web-chat path sets a chat approval context). On
         // background / cron turns there is no UI to click Connect, so fail
         // closed with a clear message rather than parking forever — mirrors
         // the `install_tool` guard (#3993).
-        if crate::security::approval::APPROVAL_CHAT_CONTEXT
-            .try_with(|_| ())
-            .is_err()
-        {
+        if !approval.is_interactive() {
             return Ok(ToolResult::error(format!(
                 "[policy-denied] composio_connect needs an interactive chat turn. \
                  Ask the user to connect '{toolkit}' in Connections."
@@ -234,7 +303,7 @@ impl ComposioConnectTool {
         // (#3993). This grounds the answer: a backend-allowlisted toolkit gets
         // a card; a genuinely unsupported one gets a clear, listed refusal
         // instead of a card that would fail on Connect.
-        match resolve_composio_route(&live_config) {
+        match resolve_composio_route(&live_config).await {
             Ok(ComposioRoute::Backend) => {
                 if let Ok(resp) = connectors::call_bare::<ComposioToolkitsResponse>(
                     &live_config,
@@ -302,12 +371,21 @@ impl ComposioConnectTool {
         // the parked future and orphan the waiter/routing) per the codex review
         // on this PR. The reply is shaped so the agent RELAYS it and does NOT
         // immediately retry `composio_connect` (a retry would just park again).
+        let pre_gate = started.elapsed();
+        let park_bound = remaining_park_bound(composio_connect_timeout(), pre_gate);
+        tracing::debug!(
+            toolkit = %toolkit,
+            pre_gate_ms = pre_gate.as_millis() as u64,
+            park_bound_secs = park_bound.map(|bound| bound.as_secs()),
+            "[composio] connect.execute: parking on the connect card"
+        );
         let (outcome, _request_id) = match gate
             .intercept_audited_bounded(
+                approval,
                 "composio_connect",
                 &summary,
                 json!({ "toolkit": toolkit }),
-                composio_connect_timeout(),
+                park_bound,
             )
             .await
         {

@@ -98,7 +98,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "delete_connection" => ControllerSchema {
             namespace: "composio",
             function: "delete_connection",
-            description: "Delete a Composio connection and optionally forget the memory synced through it.",
+            description: "Delete a Composio connection.",
             inputs: vec![
                 FieldSchema {
                     name: "connection_id",
@@ -106,24 +106,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Identifier of the connection to delete.",
                     required: true,
                 },
-                FieldSchema {
-                    name: "clear_memory",
-                    ty: TypeSchema::Bool,
-                    comment: "When true, forget the memory items synced through this connection.",
-                    required: false,
-                },
             ],
             outputs: vec![
                 FieldSchema {
                     name: "deleted",
                     ty: TypeSchema::Bool,
                     comment: "True when the backend confirmed the deletion.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "memory_chunks_deleted",
-                    ty: TypeSchema::U64,
-                    comment: "Number of memory items forgotten for this connection.",
                     required: true,
                 },
             ],
@@ -279,36 +267,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
-        "sync" => ControllerSchema {
-            namespace: "composio",
-            function: "sync",
-            description:
-                "Start a background sync of a Composio connection into memory: the connector \
-                 module reads the account and each record is stored as a memory document. \
-                 Fails up front when memory is off.",
-            inputs: vec![
-                FieldSchema {
-                    name: "connection_id",
-                    ty: TypeSchema::String,
-                    comment: "Composio connection id (from list_connections / authorize).",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "reason",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment:
-                        "Optional reason: 'manual' (default), 'periodic', 'connection_created'.",
-                    required: false,
-                },
-            ],
-            outputs: vec![FieldSchema {
-                name: "outcome",
-                ty: TypeSchema::Json,
-                comment: "SyncOutcome: { toolkit, connectionId, reason, itemsIngested, \
-                          startedAtMs, finishedAtMs, summary, details }.",
-                required: true,
-            }],
-        },
         "list_trigger_history" => ControllerSchema {
             namespace: "composio",
             function: "list_trigger_history",
@@ -333,7 +291,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description:
                 "Read the per-toolkit user scope preference (read/write/admin) used to gate \
                  composio_execute. Defaults to {read:true, write:true, admin:false} when no \
-                 pref is stored.",
+                 pref is stored; errors (rather than answering the default) when the stored \
+                 pref cannot be read.",
             inputs: vec![FieldSchema {
                 name: "toolkit",
                 ty: TypeSchema::String,

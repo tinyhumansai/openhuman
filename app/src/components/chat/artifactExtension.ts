@@ -8,10 +8,8 @@ import type { ArtifactSnapshot } from '../../store/chatRuntimeSlice';
  * separately, but a malformed title shouldn't crash the card), otherwise
  * falls back to a per-kind default.
  *
- * Shared by {@link ArtifactCard} and {@link ChatFilesPanel}, which both
- * derive the download filename extension from `(kind, title)` and must
- * stay in lockstep — hence a single source of truth rather than two
- * hand-kept copies.
+ * Used by {@link ArtifactCard} to derive the download filename extension
+ * from `(kind, title)`.
  *
  * `document` → `docx`: the document artifact producer (`generate_document`,
  * GH #4847) emits a real Word `.docx`. The prior `pdf` default predated any

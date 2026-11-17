@@ -1,21 +1,19 @@
 //! TinyChannels backend implementation for OpenHuman controller operations.
 
-use async_trait::async_trait;
-use serde::Serialize;
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 
 use crate::config::{ChannelsConfig, Config};
 use crate::core::Outcome;
 
 use super::ops;
-use tinychannels::controllers::{
-    ChannelAuthMode, ChannelConnectionResult, ChannelDisconnectResult, ChannelReactionResult,
-    ChannelSendMessageResult, ChannelStatusEntry, ChannelTestResult, ChannelThreadListResult,
-    ChannelThreadResult, DiscordChannelEntry, DiscordChannelListResult, DiscordGuildEntry,
-    DiscordGuildListResult, DiscordLinkCheckResult, DiscordLinkStartResult,
-    DiscordPermissionCheckResult, TelegramLoginCheckResult, TelegramLoginStartResult,
+use tinychannels_bus::controllers::{
+    ChannelAuthMode, ChannelDisconnectResult, ChannelReactionResult, ChannelSendMessageResult,
+    ChannelStatusEntry, ChannelThreadListResult, ChannelThreadResult,
 };
-use tinychannels::{ChannelBackend, ChannelOutboundIntent, SendMessage};
+#[cfg(test)]
+use tinychannels_bus::SendMessage;
 
 /// OpenHuman-owned implementation of the TinyChannels backend contract.
 #[derive(Debug, Clone)]
@@ -32,23 +30,94 @@ impl OpenHumanChannelBackend {
         &self.config
     }
 
+    /// Deliver module-prepared content through the configured product transport.
+    pub(crate) async fn send_prepared(
+        &self,
+        prepared: tinychannels_bus::module_runtime::PreparedChannelIntent,
+    ) -> anyhow::Result<ChannelSendMessageResult> {
+        crate::modules::client(self.config.clone())
+            .call_confidential(
+                "tinychannels",
+                tinychannels_bus::methods::SEND_CHANNEL_INTENT,
+                (prepared.intent.channel_id.clone(), prepared.intent),
+            )
+            .await
+            .map_err(anyhow::Error::new)
+    }
+
     fn config_with_channels(&self, channels_config: &ChannelsConfig) -> Config {
         let mut config = self.config.clone();
         config.channels_config = channels_config.clone();
         config
     }
-}
 
-/// The managed-bot link flows need a TinyHumans account, so the core does not
-/// serve them: `openhuman-tinyhumans` registers `channels.telegram_login_*` /
-/// `channels.discord_link_*` itself (`hosted::channel_link`). The contract
-/// still requires these methods; nothing in the core dispatches them.
-fn hosted_link_unavailable<T>(method: &str) -> anyhow::Result<T> {
-    log::debug!("[channels][backend] {method} is served by openhuman-tinyhumans, not the core");
-    anyhow::bail!(
-        "{}channels.{method} is provided by the hosted TinyHumans layer",
-        crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
-    )
+    /// Dispatch the module's narrow host callback without exposing the linked
+    /// provider trait as an OpenHuman API.
+    pub(crate) async fn dispatch_callback(
+        &self,
+        request: tinychannels_bus::ChannelBackendRequest,
+    ) -> anyhow::Result<tinychannels_bus::ChannelBackendResult> {
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+
+        // A registered callback (`channels::callback_slot`) serves the
+        // progressive transport ahead of the "separate adapter" refusal below.
+        if matches!(request, Request::ProgressiveTransport(_)) {
+            if let Some(callback) = crate::channels::callback_slot::current() {
+                return callback(
+                    crate::channels::callback_slot::ChannelCallbackCtx {
+                        config: self.config.clone(),
+                        channel: None,
+                        session: tokio_util::sync::CancellationToken::new(),
+                    },
+                    request,
+                )
+                .await;
+            }
+        }
+
+        match request {
+            Request::RemoteControl(_) | Request::ProgressiveTransport(_) => {
+                anyhow::bail!("request is served by a separate callback adapter")
+            }
+            Request::Disconnect {
+                channel,
+                auth_mode,
+                clear_memory,
+            } => self
+                .disconnect_channel(
+                    &self.config.channels_config,
+                    &channel,
+                    auth_mode,
+                    clear_memory,
+                )
+                .await
+                .map(Result::Disconnected),
+            Request::Status { channel } => self
+                .channel_status(&self.config.channels_config, channel.as_deref())
+                .await
+                .map(Result::Status),
+            Request::SendReaction { channel, reaction } => self
+                .send_reaction(&self.config.channels_config, &channel, reaction)
+                .await
+                .map(Result::SendReaction),
+            Request::CreateThread { channel, title } => self
+                .create_thread(&self.config.channels_config, &channel, &title)
+                .await
+                .map(Result::Thread),
+            Request::UpdateThread {
+                channel,
+                thread_id,
+                action,
+            } => self
+                .update_thread(&self.config.channels_config, &channel, &thread_id, &action)
+                .await
+                .map(Result::Thread),
+            Request::ListThreads { channel, active } => self
+                .list_threads(&self.config.channels_config, &channel, active)
+                .await
+                .map(Result::Threads),
+        }
+    }
 }
 
 fn into_anyhow<T>(result: Result<Outcome<T>, String>) -> anyhow::Result<T> {
@@ -57,90 +126,7 @@ fn into_anyhow<T>(result: Result<Outcome<T>, String>) -> anyhow::Result<T> {
         .map_err(anyhow::Error::msg)
 }
 
-fn to_raw_value(value: impl Serialize) -> Option<Value> {
-    serde_json::to_value(value).ok()
-}
-
-fn parse_or_raw<T>(value: Value) -> T
-where
-    T: Default + serde::de::DeserializeOwned,
-    T: RawFallback,
-{
-    serde_json::from_value::<T>(value.clone())
-        .map(|parsed| parsed.with_raw_if_absent(value.clone()))
-        .unwrap_or_else(|_| T::with_raw(value))
-}
-
-trait RawFallback {
-    fn with_raw(value: Value) -> Self;
-    fn with_raw_if_absent(self, value: Value) -> Self;
-}
-
-impl RawFallback for ChannelSendMessageResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
-}
-
-impl RawFallback for ChannelReactionResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            success: true,
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
-}
-
-impl RawFallback for ChannelThreadResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
-}
-
-impl RawFallback for ChannelThreadListResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
-}
-
+#[cfg(test)]
 fn send_message_payload(message: SendMessage) -> Value {
     json!({
         "content": message.content,
@@ -180,20 +166,8 @@ fn disconnect_result(
     }
 }
 
-#[async_trait]
-impl ChannelBackend for OpenHumanChannelBackend {
-    async fn connect_channel(
-        &self,
-        channels_config: &ChannelsConfig,
-        channel: &str,
-        auth_mode: ChannelAuthMode,
-        credentials: Value,
-    ) -> anyhow::Result<ChannelConnectionResult> {
-        let config = self.config_with_channels(channels_config);
-        into_anyhow(ops::connect_channel(&config, channel, auth_mode, credentials).await)
-    }
-
-    async fn disconnect_channel(
+impl OpenHumanChannelBackend {
+    pub(crate) async fn disconnect_channel(
         &self,
         channels_config: &ChannelsConfig,
         channel: &str,
@@ -206,7 +180,7 @@ impl ChannelBackend for OpenHumanChannelBackend {
         Ok(disconnect_result(channel, auth_mode, value))
     }
 
-    async fn channel_status(
+    pub(crate) async fn channel_status(
         &self,
         channels_config: &ChannelsConfig,
         channel: Option<&str>,
@@ -215,214 +189,105 @@ impl ChannelBackend for OpenHumanChannelBackend {
         into_anyhow(ops::channel_status(&config, channel).await)
     }
 
-    async fn test_channel(
+    /// Runs `request` through the registered channel callback
+    /// (`channels::callback_slot`), which serves the managed-channel requests
+    /// (reactions, threads). With none registered the call answers the
+    /// `BACKEND_UNAVAILABLE:` sentinel.
+    async fn via_callback(
         &self,
         channels_config: &ChannelsConfig,
         channel: &str,
-        auth_mode: ChannelAuthMode,
-        credentials: Value,
-    ) -> anyhow::Result<ChannelTestResult> {
-        let config = self.config_with_channels(channels_config);
-        into_anyhow(ops::test_channel(&config, channel, auth_mode, credentials).await)
-    }
-
-    async fn send_message(
-        &self,
-        channels_config: &ChannelsConfig,
-        channel: &str,
-        message: SendMessage,
-    ) -> anyhow::Result<ChannelSendMessageResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(
-            ops::channel_send_message(&config, channel, send_message_payload(message)).await,
-        )?;
-        Ok(parse_or_raw(value))
-    }
-
-    async fn send_message_value(
-        &self,
-        channels_config: &ChannelsConfig,
-        channel: &str,
-        message: Value,
-    ) -> anyhow::Result<ChannelSendMessageResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::channel_send_message(&config, channel, message).await)?;
-        Ok(parse_or_raw(value))
-    }
-
-    async fn send_outbound_intent(
-        &self,
-        channels_config: &ChannelsConfig,
-        intent: ChannelOutboundIntent,
-    ) -> anyhow::Result<ChannelSendMessageResult> {
-        if tinychannels::relay::relay_runtime_fronts_channel(channels_config, &intent.channel_id) {
-            if let Some(result) = tinychannels::relay::send_outbound_intent(&intent).await? {
-                return Ok(result);
-            }
-        }
-
-        let channel = intent.channel_id.clone();
-        self.send_message_value(
-            channels_config,
-            &channel,
-            tinychannels::legacy_message_value_from_outbound_intent(&intent),
+        request: tinychannels_bus::ChannelBackendRequest,
+    ) -> anyhow::Result<tinychannels_bus::ChannelBackendResult> {
+        let Some(callback) = crate::channels::callback_slot::current() else {
+            tracing::debug!(
+                channel,
+                "[channels][backend] no channel callback registered"
+            );
+            anyhow::bail!(
+                "{} no channel transport registered",
+                crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+            );
+        };
+        callback(
+            crate::channels::callback_slot::ChannelCallbackCtx {
+                config: self.config_with_channels(channels_config),
+                channel: Some(channel.to_string()),
+                session: tokio_util::sync::CancellationToken::new(),
+            },
+            request,
         )
         .await
     }
 
-    async fn send_reaction(
+    pub(crate) async fn send_reaction(
         &self,
         channels_config: &ChannelsConfig,
         channel: &str,
         reaction: Value,
     ) -> anyhow::Result<ChannelReactionResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::channel_send_reaction(&config, channel, reaction).await)?;
-        Ok(parse_or_raw(value))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::SendReaction {
+            channel: channel.to_string(),
+            reaction,
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::SendReaction(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 
-    async fn create_thread(
+    pub(crate) async fn create_thread(
         &self,
         channels_config: &ChannelsConfig,
         channel: &str,
         title: &str,
     ) -> anyhow::Result<ChannelThreadResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::channel_create_thread(&config, channel, title).await)?;
-        Ok(parse_or_raw(value))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::CreateThread {
+            channel: channel.to_string(),
+            title: title.to_string(),
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::Thread(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 
-    async fn update_thread(
+    pub(crate) async fn update_thread(
         &self,
         channels_config: &ChannelsConfig,
         channel: &str,
         thread_id: &str,
         action: &str,
     ) -> anyhow::Result<ChannelThreadResult> {
-        let config = self.config_with_channels(channels_config);
-        let value =
-            into_anyhow(ops::channel_update_thread(&config, channel, thread_id, action).await)?;
-        Ok(parse_or_raw(value))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::UpdateThread {
+            channel: channel.to_string(),
+            thread_id: thread_id.to_string(),
+            action: action.to_string(),
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::Thread(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 
-    async fn list_threads(
+    pub(crate) async fn list_threads(
         &self,
         channels_config: &ChannelsConfig,
         channel: &str,
         active: Option<bool>,
     ) -> anyhow::Result<ChannelThreadListResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::channel_list_threads(&config, channel, active).await)?;
-        Ok(parse_or_raw(value))
-    }
-
-    async fn telegram_login_start(
-        &self,
-        _channels_config: &ChannelsConfig,
-    ) -> anyhow::Result<TelegramLoginStartResult> {
-        hosted_link_unavailable("telegram_login_start")
-    }
-
-    async fn telegram_login_check(
-        &self,
-        _channels_config: &ChannelsConfig,
-        _link_token: &str,
-    ) -> anyhow::Result<TelegramLoginCheckResult> {
-        hosted_link_unavailable("telegram_login_check")
-    }
-
-    async fn discord_link_start(
-        &self,
-        _channels_config: &ChannelsConfig,
-    ) -> anyhow::Result<DiscordLinkStartResult> {
-        hosted_link_unavailable("discord_link_start")
-    }
-
-    async fn discord_link_check(
-        &self,
-        _channels_config: &ChannelsConfig,
-        _link_token: &str,
-    ) -> anyhow::Result<DiscordLinkCheckResult> {
-        hosted_link_unavailable("discord_link_check")
-    }
-
-    async fn discord_list_guilds(
-        &self,
-        channels_config: &ChannelsConfig,
-    ) -> anyhow::Result<DiscordGuildListResult> {
-        let config = self.config_with_channels(channels_config);
-        let guilds = into_anyhow(ops::discord_list_guilds(&config).await)?;
-        let raw = to_raw_value(&guilds);
-        Ok(DiscordGuildListResult {
-            guilds: guilds
-                .into_iter()
-                .map(|guild| DiscordGuildEntry {
-                    id: guild.id.clone(),
-                    name: guild.name.clone(),
-                    raw: to_raw_value(&guild),
-                })
-                .collect(),
-            raw,
-        })
-    }
-
-    async fn discord_list_channels(
-        &self,
-        channels_config: &ChannelsConfig,
-        guild_id: &str,
-    ) -> anyhow::Result<DiscordChannelListResult> {
-        let config = self.config_with_channels(channels_config);
-        let channels = into_anyhow(ops::discord_list_channels(&config, guild_id).await)?;
-        let raw = to_raw_value(&channels);
-        Ok(DiscordChannelListResult {
-            channels: channels
-                .into_iter()
-                .map(|channel| DiscordChannelEntry {
-                    id: channel.id.clone(),
-                    name: channel.name.clone(),
-                    kind: Some("text".to_string()),
-                    raw: to_raw_value(&channel),
-                })
-                .collect(),
-            raw,
-        })
-    }
-
-    async fn discord_check_permissions(
-        &self,
-        channels_config: &ChannelsConfig,
-        guild_id: &str,
-        channel_id: &str,
-    ) -> anyhow::Result<DiscordPermissionCheckResult> {
-        let config = self.config_with_channels(channels_config);
-        let check =
-            into_anyhow(ops::discord_check_permissions(&config, guild_id, channel_id).await)?;
-        Ok(DiscordPermissionCheckResult {
-            can_send_messages: check.can_send_messages,
-            missing_permissions: check.missing_permissions.clone(),
-            raw: to_raw_value(&check),
-        })
-    }
-
-    async fn set_default_channel(
-        &self,
-        channels_config: &ChannelsConfig,
-        channel: &str,
-    ) -> anyhow::Result<()> {
-        let mut config = self.config_with_channels(channels_config);
-        into_anyhow(ops::set_default_channel(&mut config, channel).await).map(|_: Value| ())
-    }
-
-    async fn get_default_channel(
-        &self,
-        channels_config: &ChannelsConfig,
-    ) -> anyhow::Result<Option<String>> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::get_default_channel(&config))?;
-        Ok(value
-            .get("active_channel")
-            .and_then(Value::as_str)
-            .map(str::to_string))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::ListThreads {
+            channel: channel.to_string(),
+            active,
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::Threads(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 }
 

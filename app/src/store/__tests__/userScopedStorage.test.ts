@@ -91,6 +91,22 @@ describe('userScopedStorage', () => {
     }
   });
 
+  test('boot purges a legacy PTT blob and initializes the store without it', async () => {
+    localStorage.setItem(ACTIVE_USER_KEY, 'user-123');
+    localStorage.setItem('persist:ptt', JSON.stringify({ shortcut: 'F13' }));
+    localStorage.setItem('user-123:persist:ptt', JSON.stringify({ shortcut: 'F14' }));
+
+    const storage = await importModule();
+    storage.primeActiveUserId('user-123');
+
+    expect(localStorage.getItem('persist:ptt')).toBeNull();
+    expect(localStorage.getItem('user-123:persist:ptt')).toBeNull();
+    expect(await storage.userScopedStorage.getItem('persist:ptt')).toBeNull();
+
+    const { store } = await import('../index');
+    expect(store.getState()).not.toHaveProperty('ptt');
+  });
+
   test('userScopedStorage redacts auth/session tokens before persisting redux blobs (#1938)', async () => {
     const mod = await importModule();
     mod.primeActiveUserId('user-123');

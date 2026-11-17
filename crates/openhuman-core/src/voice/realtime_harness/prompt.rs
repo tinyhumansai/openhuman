@@ -3,8 +3,8 @@
 //! (content-free, answerable, read-back), and picking the spoken text out of
 //! a streamed progress event.
 
-use crate::agent::progress::AgentProgress;
 use serde_json::Value;
+use tinyagents_harness::progress::AgentProgress;
 
 /// Instruction prefix used for "speak-back": when a deferred result is ready, the
 /// renderer's live voice session sends it back as a user message wrapped with this

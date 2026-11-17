@@ -1,4 +1,4 @@
-//! Pins presentation delegation wiring.
+//! Pins presentation specialist routing.
 //!
 //! Two invariants:
 //!
@@ -14,10 +14,10 @@
 //! cannot satisfy the assertion accidentally.
 
 const ORCHESTRATOR_TOML: &str =
-    include_str!("../../crates/openhuman-core/src/agent/registry/agents/orchestrator/agent.toml");
+    include_str!("../../crates/openhuman-core/src/agent_registry/agents/orchestrator/agent.toml");
 
 const PRESENTATION_AGENT_TOML: &str = include_str!(
-    "../../crates/openhuman-core/src/agent/registry/agents/presentation_agent/agent.toml"
+    "../../crates/openhuman-core/src/agent_registry/agents/presentation_agent/agent.toml"
 );
 
 const TOOLPACK_REGISTRY: &str =
@@ -34,7 +34,7 @@ fn lists_named_tool(toml: &str, name: &str) -> bool {
 }
 
 #[test]
-fn orchestrator_delegates_presentation_generation() {
+fn orchestrator_allows_presentation_agent_for_shared_spawn() {
     assert!(
         lists_named_tool(ORCHESTRATOR_TOML, "presentation_agent"),
         "orchestrator must expose presentation_agent through subagents"
@@ -68,8 +68,8 @@ fn presentation_agent_lists_generate_presentation_and_grounding_tools() {
         "presentation_agent must not expose the legacy call_memory_agent tool"
     );
     assert!(
-        PRESENTATION_AGENT_TOML.contains("delegate_name = \"make_presentation\""),
-        "presentation_agent must expose the make_presentation delegate tool"
+        !PRESENTATION_AGENT_TOML.contains("delegate_name ="),
+        "specialist definitions must not declare legacy delegate aliases"
     );
 }
 

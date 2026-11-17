@@ -293,7 +293,7 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
         "skills_install_from_url" => ControllerSchema {
             namespace: "skills",
             function: "install_from_url",
-            description: "Install a remote skill by fetching its SKILL.md over HTTPS and writing it into the user-scope skills directory. URL must be https, resolve to a public host, and point at a single `.md` file (`github.com/.../blob/...` auto-rewrites to raw). Default 60s timeout, max 600s.",
+            description: "Install a remote skill by fetching its SKILL.md over HTTPS and writing it into the user-scope skills directory. URL must be https, resolve to a public host, and point at a single `.md` file (`github.com/.../blob/...` auto-rewrites to raw). Default 60s timeout, max 600s. The document is scanned (retried once when the scan blocks or the fetch fails); one that still blocks is not installed and the result has status `scan_blocked` with the findings.",
             inputs: vec![
                 FieldSchema {
                     name: "url",
@@ -307,33 +307,16 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
                     comment: "Optional wall-clock override in seconds. Default 60, capped at 600.",
                     required: false,
                 },
-            ],
-            outputs: vec![
                 FieldSchema {
-                    name: "url",
+                    name: "acknowledged_digest",
                     ty: TypeSchema::String,
-                    comment: "Echo of the installed URL.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "stdout",
-                    ty: TypeSchema::String,
-                    comment: "Human-readable diagnostic summary (bytes fetched, target path).",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "stderr",
-                    ty: TypeSchema::String,
-                    comment: "Non-fatal frontmatter parse warnings, joined by newlines.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "new_workflows",
-                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
-                    comment: "Slugs of workflows that appeared in the catalog as a result of the install.",
-                    required: true,
+                    comment: "The `digest` of a `scan_blocked` result, sent by the Skills UI only after the user reviewed its findings and chose to install anyway. It installs that document only; a different document is scanned and refused afresh. Agent tools cannot set it.",
+                    required: false,
                 },
             ],
+            outputs: crate::skills::catalog::schemas::controller_schemas::install_outputs(
+                "new_workflows",
+            ),
         },
         "skills_read_run_log" => ControllerSchema {
             namespace: "skills",

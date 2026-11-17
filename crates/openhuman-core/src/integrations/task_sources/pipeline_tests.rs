@@ -61,7 +61,13 @@ async fn fetch_surfaces_error_for_every_toolkit() {
     let config = test_config(&tmp);
     let source = add_github_source(&config);
 
-    let outcome = run_source_once(&config, &source, FetchReason::Manual).await;
+    let outcome = run_source_once(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &source,
+        FetchReason::Manual,
+    )
+    .await;
     assert!(outcome.error.is_some(), "fetch must refuse, not panic");
     assert_eq!(outcome.fetched, 0);
     assert_eq!(outcome.routed, 0);
@@ -78,8 +84,20 @@ async fn refusal_is_stable_across_repeated_passes() {
     let config = test_config(&tmp);
     let source = add_github_source(&config);
 
-    let first = run_source_once(&config, &source, FetchReason::Manual).await;
-    let second = run_source_once(&config, &source, FetchReason::Manual).await;
+    let first = run_source_once(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &source,
+        FetchReason::Manual,
+    )
+    .await;
+    let second = run_source_once(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &source,
+        FetchReason::Manual,
+    )
+    .await;
     assert!(first.error.is_some());
     assert!(second.error.is_some());
     assert_eq!(second.routed, 0);
@@ -92,7 +110,13 @@ async fn refusal_records_a_fetch_history_entry() {
     let config = test_config(&tmp);
     let source = add_github_source(&config);
 
-    let _ = run_source_once(&config, &source, FetchReason::Manual).await;
+    let _ = run_source_once(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &source,
+        FetchReason::Manual,
+    )
+    .await;
 
     // `run_source_once` records the failed pass so the UI can show why a
     // source has never ingested anything, rather than looking silently idle.
@@ -165,7 +189,13 @@ async fn missing_provider_surfaces_error_in_outcome() {
     )
     .unwrap();
 
-    let outcome = run_source_once(&config, &source, FetchReason::Manual).await;
+    let outcome = run_source_once(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &source,
+        FetchReason::Manual,
+    )
+    .await;
     assert!(outcome.error.is_some());
     assert_eq!(outcome.routed, 0);
 }

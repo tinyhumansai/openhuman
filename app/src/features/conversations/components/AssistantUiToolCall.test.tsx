@@ -1,6 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AssistantUiToolCallCard, formatElapsed } from './AssistantUiToolCall';
 
@@ -99,6 +99,26 @@ describe('AssistantUiToolCallCard', () => {
     );
   });
 
+  it('does not turn an empty tool result into a fabricated failure diagnostic', () => {
+    render(
+      <AssistantUiToolCallCard
+        toolName="unrecognized_tool"
+        result=""
+        status="error"
+        failure={{
+          class: 'Unknown',
+          category: 'Failed',
+          recoverable: true,
+          causePlain: 'Underlying cause unavailable',
+          nextAction: 'Try again',
+        }}
+      />
+    );
+    const card = screen.getByTestId('assistant-ui-tool-failure');
+    expect(card).toHaveTextContent('Something went wrong with this action.');
+    expect(card).not.toHaveTextContent('Why: No output');
+  });
+
   it('shows no balance hint for other failures', () => {
     render(
       <AssistantUiToolCallCard
@@ -109,6 +129,33 @@ describe('AssistantUiToolCallCard', () => {
       />
     );
     expect(screen.queryByTestId('web-search-balance-hint')).toBeNull();
+  });
+
+  it('shows a live elapsed clock while a tool runs', () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(
+        <AssistantUiToolCallCard toolName="file_read" args={{ path: 'a.ts' }} status="running" />
+      );
+      expect(screen.queryByTestId('tool-call-elapsed-live')).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(screen.getByTestId('tool-call-elapsed-live')).toHaveTextContent('2.0s');
+      rerender(
+        <AssistantUiToolCallCard
+          toolName="file_read"
+          args={{ path: 'a.ts' }}
+          status="success"
+          result="x"
+          elapsedMs={2_300}
+        />
+      );
+      expect(screen.queryByTestId('tool-call-elapsed-live')).toBeNull();
+      expect(screen.getByTestId('tool-call-elapsed')).toHaveTextContent('2.3s');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('swaps the label tense as the call settles', () => {

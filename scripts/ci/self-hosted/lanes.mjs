@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Run the CI lane plan (lanes-plan.mjs): lanes in parallel, checks in order.
+// Run the CI lane plan (lanes-plan.mjs): private lanes sequentially, hosted
+// lanes with bounded concurrency, and each lane's checks in order.
 //
 // Usage:
 //   node scripts/ci/self-hosted/lanes.mjs --profile ex63|hosted
@@ -9,7 +10,7 @@
 //   node scripts/ci/self-hosted/lanes.mjs --wait-all [--out ci-out]
 //
 // Step-per-lane mode, so a workflow shows every lane as its own step while
-// the lanes still run in parallel:
+// the profile's scheduling remains in effect:
 //   1. `--detach` starts the runner in the background (under
 //      scripts/ci-cancel-aware.sh) and writes the active lanes as JSON to
 //      $GITHUB_OUTPUT `lanes`.
@@ -21,7 +22,7 @@
 // Area flags come from CI_AREA_* (see AREA_ENV). Outputs, under --out:
 //   logs/<lane>.log     full output of each lane
 //   lcov/*.info         coverage written by the coverage checks
-//   ci-timings.json     per-check outcome, timings, target-dir sizes, sccache
+//   ci-timings.json     per-check outcome, timings, target-dir sizes
 // and a per-check outcome table in $GITHUB_STEP_SUMMARY.
 //
 // Exit status is non-zero when any gating check failed or was blocked by a
@@ -125,20 +126,6 @@ export function orderProblems(plan) {
   return problems;
 }
 
-/** One line on sccache's Rust hit rate and where its cache lives, or null. */
-export function sccacheSummary(sccache) {
-  const stats = sccache?.stats;
-  if (!stats) return null;
-  const hits = stats.cache_hits?.counts?.Rust ?? 0;
-  const misses = stats.cache_misses?.counts?.Rust ?? 0;
-  const total = hits + misses;
-  const rate = total ? ` (${Math.round((100 * hits) / total)}%)` : "";
-  const where = /webdav/i.test(sccache.cache_location ?? "")
-    ? "shared store"
-    : "slot disk";
-  return `sccache (${where}): ${hits} Rust hits, ${misses} misses${rate}.`;
-}
-
 /** Render the per-check outcome table for $GITHUB_STEP_SUMMARY. */
 export function renderSummary(results) {
   const rows = [
@@ -169,8 +156,6 @@ export function renderSummary(results) {
       "",
       `VM memory: ${(mem.totalMiB / 1024).toFixed(1)} GiB, lowest available ${mem.minAvailableMiB == null ? "?" : `${(mem.minAvailableMiB / 1024).toFixed(1)} GiB`}; heavy-compile slots: ${results.heavySlots ?? "uncapped"}.`,
     );
-  const sc = sccacheSummary(results.sccache);
-  if (sc) rows.push("", sc);
   rows.push(
     "",
     "`skipped` = area untouched; `blocked` = a check it needs did not succeed. Neither is a pass for the check itself.",
@@ -205,16 +190,37 @@ function du(path) {
   return Number.isFinite(bytes) ? bytes : null;
 }
 
-function sccacheStats() {
-  const r = spawnSync("sccache", ["--show-stats", "--stats-format", "json"], {
-    encoding: "utf8",
-  });
-  if (r.status !== 0) return null;
-  try {
-    return JSON.parse(r.stdout);
-  } catch {
-    return null;
-  }
+/**
+ * Where the scratch disk's space goes, for the ex63 profile only: `df -h` of
+ * the scratch mount, then `du -sh` of every top-level entry under `target/` and
+ * of the scratch dir's own top level (the checkout). A lane
+ * that fills the disk (EX63 run 39292268284 ran it to 16 MB free) then shows
+ * which directory grew, lane by lane. Returns null off ex63 or without a
+ * scratch dir. `run` is injectable for tests.
+ */
+export function diskUsageReport({
+  profile,
+  scratch = process.env.CI_SCRATCH_DIR,
+  root = ROOT,
+  run = (cmd) =>
+    spawnSync("sh", ["-c", cmd], { encoding: "utf8", cwd: root }).stdout ?? "",
+} = {}) {
+  if (profile !== "ex63" || !scratch) return null;
+  const q = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+  const df = run(`df -h ${q(scratch)} 2>&1`).trim();
+  // `du` exits non-zero on an unreadable entry but still prints the rest.
+  const target = run(`du -sh target/* 2>/dev/null | sort -h -r; true`).trim();
+  const top = run(
+    `du -xsh ${q(scratch)}/* 2>/dev/null | sort -h -r | head -15; true`,
+  ).trim();
+  return [
+    `[ci][lanes][disk] df -h ${scratch}`,
+    df,
+    "[ci][lanes][disk] du -sh target/*",
+    target || "(no target dir)",
+    `[ci][lanes][disk] du -sh ${scratch}/* (top 15)`,
+    top || "(nothing readable)",
+  ].join("\n");
 }
 
 /**
@@ -319,7 +325,17 @@ export class Runner {
   constructor(plan, { out, maxParallel, maxHeavy = Infinity }) {
     this.plan = plan;
     this.out = out;
-    this.maxParallel = maxParallel > 0 ? maxParallel : plan.lanes.length;
+    // ex63 runs lanes one at a time. Overlapping the frontend lanes with the
+    // cargo chain was measured in run 39434038570 on 4 vCPU / 24 GB: vitest
+    // took 2.6x as long and cache restores 5.6x, rust-cov peaked at 19.4 GB,
+    // and nothing finished sooner, since compiles and tests already use every
+    // core.
+    this.maxParallel =
+      plan.profile === "ex63"
+        ? 1
+        : maxParallel > 0
+          ? maxParallel
+          : plan.lanes.length;
     this.heavy = new PrioritySemaphore(maxHeavy);
     this.maxHeavy = maxHeavy;
     // check id -> { pgid, peakRssMiB } while running; sampled every 5 s.
@@ -379,7 +395,9 @@ export class Runner {
   runCommand(lane, check, logStream, record) {
     const env = { ...process.env, ...(lane.env ?? {}), ...(check.env ?? {}) };
     if (lane.targetDir) {
-      env.CARGO_TARGET_DIR = lane.targetDir;
+      env.CARGO_BUILD_TARGET_DIR =
+        check.env?.CARGO_BUILD_TARGET_DIR ?? lane.targetDir;
+      delete env.CARGO_TARGET_DIR;
       mkdirSync(lane.targetDir, { recursive: true });
     }
     const argv = ["bash", "-o", "pipefail", "-c", check.run];
@@ -507,6 +525,10 @@ export class Runner {
         `lane ${lane.name}: ${check.name} ${record.status} in ${record.durationS}s${record.reportOnly ? " (report-only)" : ""}`,
       );
       this.finish(id, record.status);
+    }
+    const disk = diskUsageReport({ profile: this.plan.profile });
+    if (disk) {
+      logStream.write(`\n[ci][lanes] lane ${lane.name} end\n${disk}\n`);
     }
     await new Promise((res) => logStream.end(res));
     // Dump the whole lane log once, folded, so parallel lanes never interleave.
@@ -775,8 +797,6 @@ async function main() {
     log(`detached runner pid=${child.pid} lanes=${lanesJson}`);
     return 0;
   }
-  if (args.profile === "ex63")
-    spawnSync("sccache", ["--start-server"], { stdio: "ignore" });
 
   const envHeavy = Number.parseInt(process.env.OH_LANES_MAX_HEAVY ?? "", 10);
   const maxHeavy =
@@ -803,7 +823,7 @@ async function main() {
     runner: process.env.RUNNER_NAME ?? null,
     areas,
     lanes,
-    sccache: args.profile === "ex63" ? sccacheStats() : null,
+
     heavySlots: Number.isFinite(maxHeavy) ? maxHeavy : null,
     memory: runner.memory,
     cacheBytes: du(process.env.CI_CACHE_DIR),

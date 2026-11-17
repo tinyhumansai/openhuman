@@ -20,7 +20,9 @@ import { describe, expect, it, vi } from 'vitest';
 import chatRuntimeReducer from '../../../store/chatRuntimeSlice';
 import mascotReducer from '../../../store/mascotSlice';
 import runModeReducer from '../../../store/runModeSlice';
+import threadGoalReducer from '../../../store/threadGoalSlice';
 import threadReducer from '../../../store/threadSlice';
+import threadTodosReducer from '../../../store/threadTodosSlice';
 import { AssistantUiChat } from './AssistantUiChat';
 
 const THREAD_ID = 't-slots';
@@ -29,6 +31,8 @@ function buildStore() {
   return configureStore({
     reducer: combineReducers({
       thread: threadReducer,
+      threadGoal: threadGoalReducer,
+      threadTodos: threadTodosReducer,
       chatRuntime: chatRuntimeReducer,
       mascot: mascotReducer,
       // The composer's `/plan` / `/build` commands read it (`useRunMode`).

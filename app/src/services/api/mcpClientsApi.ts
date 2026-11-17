@@ -4,7 +4,8 @@
  * `{ result: T }` envelope returned by the core RPC framework.
  *
  * There is no install call: a server is declared in the user's `mcp.json`
- * (`configGet` / `configSet`); the registry calls are browse-only.
+ * (`configGet` / `configSet`), including when the Registry tab adds a hosted
+ * server in one step; the registry calls only read the directories.
  *
  * Centralises method-name strings so components never spell them out directly.
  */

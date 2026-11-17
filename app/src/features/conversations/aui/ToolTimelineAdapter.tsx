@@ -1,5 +1,5 @@
 import createDebug from 'debug';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { ToolTimeline } from '../../../components/assistant-ui/elements/tool-timeline';
 import {
@@ -88,7 +88,6 @@ const BODY_SURFACE = 'bg-surface-muted';
 const TIMELINE_VIEWPORT_CLASS = 'max-h-64 overflow-y-auto overscroll-contain';
 
 /** Distance from the bottom (px) still treated as "pinned to the live edge". */
-const STICK_TO_BOTTOM_SLACK_PX = 24;
 
 /**
  * One expandable timeline row's disclosure. The row follows `autoExpand`
@@ -203,39 +202,6 @@ export function ToolTimelineAdapter({
 
   // ── In-flight viewport: fixed height + auto-follow ──────────────────────
   const windowed = turnActive === true && !expandAllRows;
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const followTailRef = useRef(true);
-
-  useEffect(() => {
-    if (windowed) followTailRef.current = true;
-  }, [windowed]);
-
-  const handleViewportScroll = () => {
-    const el = viewportRef.current;
-    if (!el) return;
-    followTailRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_TO_BOTTOM_SLACK_PX;
-  };
-
-  const observerRef = useRef<ResizeObserver | null>(null);
-  const windowedRef = useRef(windowed);
-  windowedRef.current = windowed;
-  const attachViewport = useCallback((node: HTMLDivElement | null) => {
-    observerRef.current?.disconnect();
-    observerRef.current = null;
-    viewportRef.current = node;
-    if (!node || typeof ResizeObserver === 'undefined') return;
-    const inner = node.firstElementChild;
-    if (!inner) return;
-    const observer = new ResizeObserver(() => {
-      if (!windowedRef.current || !followTailRef.current) return;
-      node.scrollTop = node.scrollHeight;
-    });
-    observer.observe(inner);
-    observerRef.current = observer;
-  }, []);
-  useEffect(() => () => observerRef.current?.disconnect(), []);
-
   // Render whenever there is EITHER a tool row or transcript prose.
   if (entries.length === 0 && !(transcript && transcript.length > 0)) return null;
 
@@ -260,8 +226,6 @@ export function ToolTimelineAdapter({
   const body = (
     <>
       <div
-        ref={attachViewport}
-        onScroll={windowed ? handleViewportScroll : undefined}
         data-testid="tool-timeline-viewport"
         data-windowed={windowed ? 'true' : 'false'}
         className={windowed ? TIMELINE_VIEWPORT_CLASS : undefined}>

@@ -19,8 +19,10 @@ import {
   memoryConversationsBackfillStart,
   memoryConversationsBackfillStatus,
   memoryErrorMessage,
+  memoryStatusError,
 } from '../../services/api/memoryApi';
 import { Alert, AlertDescription, Button, Card, ConfirmDialog, Progress } from '../ui';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import { fill } from './memoryFormat';
 
 const log = debug('openhuman:memory:backfill');
@@ -154,14 +156,12 @@ export default function MemoryConversationsBackfill() {
         )}
         {state?.phase === 'error' && (
           <Alert variant="destructive" data-testid="memory-backfill-failed">
-            <AlertDescription>{state.error || t('memoryPage.backfill.failed')}</AlertDescription>
+            <AlertDescription>
+              {state.error ? memoryStatusError(state.error, t) : t('memoryPage.backfill.failed')}
+            </AlertDescription>
           </Alert>
         )}
-        {error !== null && (
-          <Alert variant="destructive" data-testid="memory-backfill-error">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+        {error !== null && <MemoryErrorAlert message={error} data-testid="memory-backfill-error" />}
       </div>
 
       {consentOpen && view && (

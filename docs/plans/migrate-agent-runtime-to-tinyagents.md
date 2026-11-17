@@ -1,5 +1,8 @@
 # Migrate the OpenHuman agent runtime to TinyAgents
 
+> **Status, verified 2026-10-07:** live. Tasks 4, 10 and 11 are outstanding.
+> See [`README.md`](README.md) for the whole set and how to re-check it.
+
 > Implementation must proceed bottom-up and test-first. Each task removes the
 > old path in the same change that switches its consumers. Do not add shims,
 > aliases, forwarding modules, or dual live paths.
@@ -275,7 +278,7 @@ OpenHuman dependencies.
 - `vendor/tinyagents/crates/tinyagents-registry/src/definition/` and tests.
 - `crates/openhuman-core/src/agent/harness/{definition*,builtin_definitions*,
   agent_graph.rs}`.
-- OpenHuman `agent/registry/` and host `definition_registry.rs`.
+- OpenHuman `agent_registry/` and host `definition_registry.rs`.
 
 **RED**
 

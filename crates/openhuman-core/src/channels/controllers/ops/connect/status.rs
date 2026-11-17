@@ -5,11 +5,11 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::credentials;
+use crate::credentials;
 
-use super::super::super::definitions::{all_channel_definitions, find_channel_definition};
-use super::super::types::ChannelStatusEntry;
 use super::shared::{channel_config_connected, credential_provider, merge_listener_health};
+use tinychannels_bus::controllers::ChannelStatusEntry;
+use tinychannels_bus::controllers::{all_channel_definitions, find_channel_definition};
 
 /// Get connection status for one or all channels.
 pub async fn channel_status(
@@ -46,7 +46,7 @@ pub async fn channel_status(
         for spec in &def.auth_modes {
             let provider_key = credential_provider(def.id, spec.mode);
             let has_creds = stored_providers.iter().any(|p| p == &provider_key);
-            let has_config = channel_config_connected(&config.channels_config, def.id, spec.mode);
+            let has_config = channel_config_connected(config, def.id, spec.mode).await?;
             let presence_connected = has_creds || has_config;
             let (connected, error) = merge_listener_health(
                 presence_connected,
@@ -90,10 +90,13 @@ pub async fn set_default_channel(
     }
 
     config.channels_config.active_channel = Some(canonical.clone());
-    config
-        .save()
-        .await
-        .map_err(|e| format!("failed to persist default channel: {e}"))?;
+    config.save().await.map_err(|error| {
+        crate::config::ops::config_save_error_with_context(
+            error,
+            "failed to persist default channel",
+            true,
+        )
+    })?;
 
     // Apply live so proactive routing follows the new default immediately.
     crate::channels::proactive::set_runtime_active_channel(Some(canonical.clone()));
@@ -159,9 +162,6 @@ pub async fn connected_channel_slugs(config: &Config) -> Result<Vec<String>, Str
     }
     if cc.signal.is_some() {
         slugs.insert("signal".to_string());
-    }
-    if cc.matrix.is_some() {
-        slugs.insert("matrix".to_string());
     }
     if cc.imessage.is_some() {
         slugs.insert("imessage".to_string());

@@ -367,12 +367,7 @@ describe('useHumanMascot state machine', () => {
     const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
     act(() => {
       capturedListeners?.onDone?.(
-        fakeEvent({
-          full_response: 'sure thing',
-          rounds_used: 1,
-          total_input_tokens: 1,
-          total_output_tokens: 1,
-        })
+        fakeEvent({ full_response: 'sure thing', total_input_tokens: 1, total_output_tokens: 1 })
       );
     });
     expect(result.current.face).toBe('happy');
@@ -388,7 +383,6 @@ describe('useHumanMascot state machine', () => {
       capturedListeners?.onDone?.(
         fakeEvent({
           full_response: 'Sorry, that failed because the provider is unavailable.',
-          rounds_used: 1,
           total_input_tokens: 1,
           total_output_tokens: 1,
         })
@@ -425,12 +419,7 @@ describe('useHumanMascot state machine', () => {
     const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
     act(() => {
       capturedListeners?.onDone?.(
-        fakeEvent({
-          full_response: 'hi',
-          rounds_used: 1,
-          total_input_tokens: 1,
-          total_output_tokens: 1,
-        })
+        fakeEvent({ full_response: 'hi', total_input_tokens: 1, total_output_tokens: 1 })
       );
     });
     expect(result.current.face).toBe('happy');
@@ -466,7 +455,6 @@ describe('useHumanMascot state machine', () => {
       capturedListeners?.onDone?.(
         fakeEvent({
           full_response: 'Here is the result.',
-          rounds_used: 2,
           total_input_tokens: 1,
           total_output_tokens: 1,
         })
@@ -486,7 +474,6 @@ describe('useHumanMascot state machine', () => {
       capturedListeners?.onDone?.(
         fakeEvent({
           full_response: 'Here is the result.',
-          rounds_used: 1,
           total_input_tokens: 1,
           total_output_tokens: 1,
         })
@@ -511,7 +498,6 @@ describe('useHumanMascot state machine', () => {
       capturedListeners?.onDone?.(
         fakeEvent({
           full_response: 'Research complete.',
-          rounds_used: 1,
           total_input_tokens: 1,
           total_output_tokens: 1,
         })
@@ -555,7 +541,6 @@ describe('useHumanMascot state machine', () => {
       capturedListeners?.onDone?.(
         fakeEvent({
           full_response: 'Sorry, the researcher failed.',
-          rounds_used: 2,
           total_input_tokens: 1,
           total_output_tokens: 1,
         })
@@ -573,12 +558,7 @@ describe('useHumanMascot state machine', () => {
         fakeEvent({ tool_name: 'run', skill_id: 's', output: 'ok', success: true, round: 1 })
       );
       capturedListeners?.onDone?.(
-        fakeEvent({
-          full_response: 'Done.',
-          rounds_used: 2,
-          total_input_tokens: 1,
-          total_output_tokens: 1,
-        })
+        fakeEvent({ full_response: 'Done.', total_input_tokens: 1, total_output_tokens: 1 })
       );
     });
     expect(result.current.face).toBe('celebrating');
@@ -589,12 +569,7 @@ describe('useHumanMascot state machine', () => {
     act(() => {
       capturedListeners?.onInferenceStart?.(fakeEvent({}));
       capturedListeners?.onDone?.(
-        fakeEvent({
-          full_response: 'Here you go.',
-          rounds_used: 1,
-          total_input_tokens: 1,
-          total_output_tokens: 1,
-        })
+        fakeEvent({ full_response: 'Here you go.', total_input_tokens: 1, total_output_tokens: 1 })
       );
     });
     expect(result.current.face).toBe('happy');
@@ -621,12 +596,7 @@ describe('useHumanMascot state machine', () => {
     // Trigger a happy ack that starts the hold timer.
     act(() => {
       capturedListeners?.onDone?.(
-        fakeEvent({
-          full_response: 'Here you go.',
-          rounds_used: 1,
-          total_input_tokens: 1,
-          total_output_tokens: 1,
-        })
+        fakeEvent({ full_response: 'Here you go.', total_input_tokens: 1, total_output_tokens: 1 })
       );
     });
     expect(result.current.face).toBe('happy');
@@ -664,7 +634,6 @@ describe('useHumanMascot TTS playback', () => {
       thread_id: 't',
       request_id: 'r',
       full_response: text,
-      rounds_used: 1,
       total_input_tokens: 1,
       total_output_tokens: 1,
     };
@@ -1071,7 +1040,6 @@ describe('useHumanMascot streaming TTS (#5358)', () => {
       thread_id: 't',
       request_id: 'r',
       full_response: text,
-      rounds_used: 1,
       total_input_tokens: 1,
       total_output_tokens: 1,
     };

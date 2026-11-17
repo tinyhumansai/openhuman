@@ -52,7 +52,7 @@ pub async fn preview_workspace_text(path: String) -> Result<WorkspaceTextPreview
 }
 
 async fn active_workspace_root() -> Result<PathBuf, String> {
-    let config = openhuman_core::config::Config::load_or_init()
+    let config = openhuman_rpc::embed::config::load_or_init()
         .await
         .map_err(|err| workspace_path_error(format!("failed to load OpenHuman config: {err}")))?;
     fs::create_dir_all(&config.workspace_dir).map_err(|err| {

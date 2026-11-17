@@ -6,6 +6,7 @@ import type { ThreadMessage } from '../../types/thread';
 import {
   buildRuntimeMessages,
   STREAMING_TAIL_ID,
+  streamingMessageId,
   streamingTailMessage,
   toThreadMessageLike,
 } from '../assistantUiMessages';
@@ -32,6 +33,24 @@ function tool(over: Partial<ToolTimelineEntry> = {}): ToolTimelineEntry {
 }
 
 describe('toThreadMessageLike', () => {
+  it.each([
+    '',
+    '[IMAGE:data:image/png;base64,old]',
+    `[ATTACHMENT:${encodeURIComponent(
+      JSON.stringify({
+        path: 'uploads/code.py',
+        name: 'code.py',
+        mime: 'text/plain',
+        size_bytes: 1,
+      })
+    )}]`,
+  ])('preserves user code and Markdown whitespace with attachment %s', attachment => {
+    const text = '```python\nif ready:\n    print("two  spaces")\n```\nfirst line  \nsecond line';
+    const content = attachment ? `${text} ${attachment}` : text;
+
+    expect(toThreadMessageLike(msg({ content })).content[0]).toEqual({ type: 'text', text });
+  });
+
   it('renders durable uploads as file chips without raw reference JSON or inline bytes', () => {
     const references = [
       { path: 'uploads/t/id/scan.png', name: 'scan.png', mime: 'image/png', size_bytes: 3 },
@@ -140,7 +159,7 @@ describe('streamingTailMessage', () => {
   it('is a running assistant message when tokens have landed', () => {
     const tail = streamingTailMessage({ requestId: 'r', content: 'partial', thinking: '' });
     expect(tail).toMatchObject({
-      id: STREAMING_TAIL_ID,
+      id: streamingMessageId('r'),
       role: 'assistant',
       status: { type: 'running' },
       content: [{ type: 'text', text: 'partial' }],
@@ -179,7 +198,7 @@ describe('streamingTailMessage', () => {
     // status line carried the whole burden of showing the turn was alive.
     const tail = streamingTailMessage({ requestId: 'r', content: '', thinking: 'still working' });
     expect(tail).toMatchObject({
-      id: STREAMING_TAIL_ID,
+      id: streamingMessageId('r'),
       status: { type: 'running' },
       content: [{ type: 'reasoning', text: 'still working' }],
     });
@@ -231,7 +250,7 @@ describe('buildRuntimeMessages', () => {
       content: 'tok',
       thinking: '',
     }).map(m => m.id);
-    expect(ids).toEqual(['a', STREAMING_TAIL_ID]);
+    expect(ids).toEqual(['a', streamingMessageId('r')]);
   });
 
   it('does not keep a synthetic thinking/tool tail running after lifecycle completion', () => {
@@ -956,4 +975,70 @@ describe('feedback round-trip (Defect A)', () => {
     );
     expect(converted.metadata?.submittedFeedback).toBeUndefined();
   });
+});
+
+describe('next-turn history stability', () => {
+  it('keeps a merged assistant reply unchanged when a new user turn streams', () => {
+    const history = [
+      msg({ id: 'user-1' }),
+      msg({
+        id: 'segment-1',
+        sender: 'agent',
+        content: 'First step',
+        extraMetadata: { requestId: 'r1' },
+      }),
+      msg({
+        id: 'segment-2',
+        sender: 'agent',
+        content: 'Final answer',
+        extraMetadata: { requestId: 'r1' },
+      }),
+    ];
+    const before = buildRuntimeMessages(history, null, { isRunning: false });
+    const after = buildRuntimeMessages(
+      [...history, msg({ id: 'user-2', content: 'try now' })],
+      { requestId: 'r2', content: 'New response', thinking: '' },
+      { isRunning: true, liveRequestId: 'r2' }
+    );
+    expect(after.map(message => message.id)).toEqual([
+      before[0]!.id,
+      before[1]!.id,
+      'user-2',
+      streamingMessageId('r2'),
+    ]);
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+  });
+});
+
+it('simulates repeated next turns without changing settled part order or identities', () => {
+  const history: ThreadMessage[] = [];
+  let previous: ReturnType<typeof buildRuntimeMessages> = [];
+  for (let turn = 0; turn < 12; turn++) {
+    history.push(msg({ id: `user-${turn}`, content: turn ? 'try now' : 'first turn' }));
+    for (const text of ['Thinking', 'Working', 'Finished']) {
+      const running = buildRuntimeMessages(
+        history,
+        { requestId: `r${turn}`, content: text, thinking: '' },
+        { isRunning: true, liveRequestId: `r${turn}` }
+      );
+      previous.forEach((message, index) => expect(running[index]).toBe(message));
+      expect(running.at(-2)?.id).toBe(`user-${turn}`);
+      expect(running.at(-1)?.id).toBe(streamingMessageId(`r${turn}`));
+    }
+    history.push(
+      msg({
+        id: `agent-${turn}`,
+        sender: 'agent',
+        content: `Completed turn ${turn}`,
+        extraMetadata: { requestId: `r${turn}` },
+      })
+    );
+    const settled = buildRuntimeMessages(history, null, { isRunning: false });
+    previous.forEach((message, index) => expect(settled[index]).toBe(message));
+    expect(settled.map(message => message.role)).toEqual(
+      Array.from({ length: turn + 1 }, () => ['user', 'assistant']).flat()
+    );
+    previous = settled;
+  }
 });

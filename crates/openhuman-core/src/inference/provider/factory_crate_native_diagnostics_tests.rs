@@ -1,47 +1,55 @@
 use super::*;
 
-use crate::inference::provider::factory::cloud_slug::{
-    openrouter_default_provider_options, OPENROUTER_PROVIDER_SORT,
-};
+use tinyinference_llm::providers::registry::openrouter_default_provider_options;
 
-#[test]
-fn crate_native_chat_model_factory_preserves_invalid_route_diagnostics() {
-    let _guard = crate::inference::inference_test_guard();
-    let config = Config::default();
+#[tokio::test]
+async fn crate_native_chat_model_factory_preserves_invalid_route_diagnostics() {
+    let _guard = crate::inference::inference_test_guard_async().await;
+    super::with_library_test_context_async(|| async {
+        let config = Config::default();
 
-    let unconfigured =
-        create_chat_model_from_string_with_model_id("reasoning", "groq:llama3", &config, 0.7)
-            .err()
-            .expect("unconfigured slug must fail")
-            .to_string();
-    assert!(
-        unconfigured.contains("no cloud provider configured for slug 'groq'"),
-        "unexpected diagnostic: {unconfigured}"
-    );
+        let unconfigured =
+            create_chat_model_from_string_with_model_id("reasoning", "groq:llama3", &config, 0.7)
+                .await
+                .err()
+                .expect("unconfigured slug must fail")
+                .to_string();
+        assert!(
+            unconfigured.contains("no cloud provider configured for slug 'groq'"),
+            "unexpected diagnostic: {unconfigured}"
+        );
 
-    let bare =
-        create_chat_model_from_string_with_model_id("reasoning", "unknown-provider", &config, 0.7)
-            .err()
-            .expect("bare unknown provider must fail")
-            .to_string();
-    assert!(
-        bare.contains("unrecognised provider string 'unknown-provider'"),
-        "unexpected diagnostic: {bare}"
-    );
+        let bare = create_chat_model_from_string_with_model_id(
+            "reasoning",
+            "unknown-provider",
+            &config,
+            0.7,
+        )
+        .await
+        .err()
+        .expect("bare unknown provider must fail")
+        .to_string();
+        assert!(
+            bare.contains("unrecognised provider string 'unknown-provider'"),
+            "unexpected diagnostic: {bare}"
+        );
 
-    let byok = create_chat_model_from_string_with_model_id(
-        "reasoning",
-        BYOK_INCOMPLETE_SENTINEL,
-        &config,
-        0.7,
-    )
-    .err()
-    .expect("incomplete BYOK must fail")
-    .to_string();
-    assert!(
-        byok.contains("BYOK_INCOMPLETE"),
-        "unexpected diagnostic: {byok}"
-    );
+        let byok = create_chat_model_from_string_with_model_id(
+            "reasoning",
+            BYOK_INCOMPLETE_SENTINEL,
+            &config,
+            0.7,
+        )
+        .await
+        .err()
+        .expect("incomplete BYOK must fail")
+        .to_string();
+        assert!(
+            byok.contains("BYOK_INCOMPLETE"),
+            "unexpected diagnostic: {byok}"
+        );
+    })
+    .await;
 }
 
 /// Real-path smoke (privacy epic S2, #4436): driving the actual inference
@@ -59,7 +67,10 @@ async fn from_string_external_provider_emits_egress_realpath() {
 
     let config = Config::default();
     // External provider → real chokepoint must emit BEFORE constructing.
-    let _ = create_test_chat_model_from_string("agentic", "openai:gpt-4o-mini", &config);
+    super::with_library_test_context_async(|| async {
+        let _ = create_test_chat_model_from_string("agentic", "openai:gpt-4o-mini", &config).await;
+    })
+    .await;
 
     // Bus is process-wide; drain past unrelated events until our descriptor lands.
     let found = tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -88,7 +99,10 @@ async fn from_string_external_provider_emits_egress_realpath() {
 #[tokio::test]
 async fn caller_owned_models_build_without_openhuman_session() {
     let _guard = crate::inference::inference_test_guard_async().await;
-    let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(true);
+    let _storage = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
         config_path: dir.path().join("config.toml"),
@@ -104,6 +118,7 @@ async fn caller_owned_models_build_without_openhuman_session() {
         "claude_agent_sdk:test-model",
     ] {
         create_chat_model_from_string("chat", provider, &config, 0.0)
+            .await
             .unwrap_or_else(|e| panic!("{provider} must build while signed out: {e}"));
     }
     // CLI discovery is machine-specific; verify its authentication gate without
@@ -112,6 +127,7 @@ async fn caller_owned_models_build_without_openhuman_session() {
         &config,
         "claude-code:test-model",
     )
+    .await
     .expect("Claude Code uses its own authentication while OpenHuman is signed out");
     // Exercise the real gate (cloud constructors skip auth under cfg(test)).
     for provider in [
@@ -123,6 +139,7 @@ async fn caller_owned_models_build_without_openhuman_session() {
         let error = crate::inference::provider::factory::access_gates::verify_provider_session(
             &config, provider,
         )
+        .await
         .unwrap_err();
         assert!(
             error.to_string().contains("SESSION_EXPIRED"),
@@ -133,7 +150,7 @@ async fn caller_owned_models_build_without_openhuman_session() {
 #[tokio::test]
 async fn local_aliases_build_without_a_session_and_preserve_model_ids() {
     let _guard = crate::inference::inference_test_guard_async().await;
-    let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(true);
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
     let config = Config::default();
     for (prefix, canonical) in [
         ("OLLAMA", "ollama"),
@@ -148,6 +165,7 @@ async fn local_aliases_build_without_a_session_and_preserve_model_ids() {
         let provider = format!(" {prefix}:Publisher/Model:Tag@0.4 ");
         let (chat, model) =
             create_chat_model_from_string_with_model_id("chat", &provider, &config, 0.0)
+                .await
                 .unwrap_or_else(|e| panic!("{provider}: {e}"));
         assert_eq!(model, "Publisher/Model:Tag");
         assert_eq!(
@@ -158,14 +176,15 @@ async fn local_aliases_build_without_a_session_and_preserve_model_ids() {
     // A bare provider names a runtime but not a model. Report that actual
     // configuration problem instead of incorrectly asking for a session.
     let error = create_chat_model_from_string("chat", "ollama", &config, 0.0)
+        .await
         .err()
         .expect("bare Ollama must require a model ID");
     assert!(error.to_string().contains("empty model"), "{error}");
     assert!(!error.to_string().contains("SESSION_EXPIRED"), "{error}");
 }
 
-#[test]
-fn direct_openrouter_endpoints_get_price_sorted_routing_and_nothing_else() {
+#[tokio::test]
+async fn direct_openrouter_endpoints_get_price_sorted_routing_and_nothing_else() {
     // Direct BYOK OpenRouter: cheapest-first sort so consecutive turns stay on
     // one endpoint and its prefix cache hits. Only the sort — never `order` or
     // `allow_fallbacks: false`, which would strand a request on an outage, and
@@ -173,7 +192,6 @@ fn direct_openrouter_endpoints_get_price_sorted_routing_and_nothing_else() {
     // reason in tinyhumansai/backend#1370).
     let options = openrouter_default_provider_options("https://openrouter.ai/api/v1")
         .expect("openrouter endpoint carries routing options");
-    assert_eq!(OPENROUTER_PROVIDER_SORT, "price");
     assert_eq!(
         options,
         serde_json::json!({ "provider": { "sort": "price" } }),
@@ -191,8 +209,8 @@ fn direct_openrouter_endpoints_get_price_sorted_routing_and_nothing_else() {
     assert!(openrouter_default_provider_options("https://OpenRouter.ai/api/v1").is_some());
 }
 
-#[test]
-fn non_openrouter_openai_compatible_endpoints_get_no_baked_provider_options() {
+#[tokio::test]
+async fn non_openrouter_openai_compatible_endpoints_get_no_baked_provider_options() {
     // `provider` is an OpenRouter-only body field; hosted OpenAI rejects
     // unknown top-level fields and local runners ignore them, so no other
     // OpenAI-compatible host may receive it.
@@ -209,4 +227,37 @@ fn non_openrouter_openai_compatible_endpoints_get_no_baked_provider_options() {
             "{endpoint} must not get OpenRouter routing options"
         );
     }
+}
+
+/// The model the turn actually runs must carry the same choice as session
+/// assembly (`TurnModelSource::supports_native_tool_calling`): a profile with
+/// `tool_calling = false` makes the harness strip `tools` off the wire and
+/// fall back to the text protocol, whatever the prompt says.
+#[tokio::test]
+async fn local_openai_model_calls_tools_natively_only_when_opted_in() {
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let _storage = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config {
+        config_path: dir.path().join("config.toml"),
+        workspace_dir: dir.path().join("workspace"),
+        ..Config::default()
+    };
+    let tool_calling = |config: &Config| {
+        let config = config.clone();
+        async move {
+            create_chat_model_from_string("chat", "local-openai:glm-5.3-flash", &config, 0.0)
+                .await
+                .expect("local-openai builds")
+                .profile()
+                .expect("local-openai exposes a profile")
+                .tool_calling
+        }
+    };
+    assert!(!tool_calling(&config).await, "off by default");
+    config.local_ai.native_tool_calling = true;
+    assert!(tool_calling(&config).await, "on when opted in");
 }

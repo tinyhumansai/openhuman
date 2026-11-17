@@ -243,10 +243,7 @@ describe('<ComposioConnectModal>', () => {
       { id: 'ca_1', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'work@corp.com' },
       { id: 'ca_2', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'personal@gmail.com' },
     ];
-    vi.mocked(composioApi.deleteConnection).mockResolvedValue({
-      deleted: true,
-      memory_chunks_deleted: 0,
-    });
+    vi.mocked(composioApi.deleteConnection).mockResolvedValue({ deleted: true });
 
     render(
       <ComposioConnectModal toolkit={mockToolkit} connections={connections} onClose={() => {}} />
@@ -258,7 +255,7 @@ describe('<ComposioConnectModal>', () => {
     fireEvent.click(disconnectBtn);
 
     await waitFor(() => {
-      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_2', { clearMemory: false });
+      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_2');
     });
   });
 
@@ -289,26 +286,23 @@ describe('<ComposioConnectModal>', () => {
     expect(gmailTexts.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('passes clearMemory only when the disconnect memory checkbox is selected', async () => {
+  it('disconnects with just the connection id and offers no clear-memory option', async () => {
     const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
-    vi.mocked(composioApi.deleteConnection).mockResolvedValue({
-      deleted: true,
-      memory_chunks_deleted: 1,
-    });
+    vi.mocked(composioApi.deleteConnection).mockResolvedValue({ deleted: true });
 
     render(
       <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
-    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    expect(screen.queryByLabelText(/also delete memory/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Disconnect$/i }));
 
     await waitFor(() => {
-      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_xyz', { clearMemory: true });
+      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_xyz');
     });
   });
 
-  it('resets the clear-memory checkbox after a failed disconnect is dismissed', async () => {
+  it('shows the failure and returns to the connected view when it is dismissed', async () => {
     const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
     vi.mocked(composioApi.deleteConnection).mockRejectedValueOnce(new Error('backend down'));
 
@@ -316,17 +310,13 @@ describe('<ComposioConnectModal>', () => {
       <ComposioConnectModal toolkit={mockToolkit} connections={[connection]} onClose={() => {}} />
     );
 
-    const checkbox = screen.getByLabelText(/also delete memory/i);
-    fireEvent.click(checkbox);
-    expect(checkbox).toBeChecked();
-
     fireEvent.click(screen.getByRole('button', { name: /^Disconnect$/i }));
 
     expect(await screen.findByText(/backend down/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/also delete memory/i)).not.toBeChecked();
+      expect(screen.getByRole('button', { name: /^Disconnect$/i })).toBeInTheDocument();
     });
   });
 

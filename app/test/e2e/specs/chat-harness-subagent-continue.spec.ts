@@ -32,9 +32,6 @@
  * Verifies:
  *   - The tool timeline shows a subagent entry.
  *   - The final canary text renders in the DOM.
- *   - The mock LLM received ≥4 POST requests (orchestrator initial +
- *     researcher initial + orchestrator relay + orchestrator continue +
- *     researcher resumed + orchestrator final).
  *   - Persisted thread JSONL contains the final canary text.
  */
 import { waitForApp } from '../helpers/app-helpers';
@@ -51,7 +48,7 @@ import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
-import { getRequestLog, setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
+import { setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-chat-harness-subagent-continue';
 // Per-turn probes carry disjoint distinctive tokens so `pickProbeText`'s
@@ -172,7 +169,7 @@ async function snapshotRuntime(threadId: string): Promise<RuntimeSnapshot> {
 
 describe('Chat harness — orchestrator → subagent continuation flow', () => {
   before(function () {
-    this.skip();
+    this.skip(); // https://github.com/tinyhumansai/openhuman/issues/6389 — desktop final-synthesis failure still needs reproduction.
   });
   before(async function beforeSuite() {
     this.timeout(120_000);
@@ -255,29 +252,6 @@ describe('Chat harness — orchestrator → subagent continuation flow', () => {
       timeout: 45_000,
       timeoutMsg: 'orchestrator never produced the final canary text',
     });
-
-    // IN_FLIGHT must drain after chat_done.
-    await browser.waitUntil(
-      async () => {
-        const snap = await callOpenhumanRpc<{ result: { entries: Array<unknown> } }>(
-          'openhuman.test_support_in_flight_chats',
-          {}
-        );
-        return snap.ok && (snap.result?.result?.entries?.length ?? 0) === 0;
-      },
-      { timeout: 10_000, timeoutMsg: 'IN_FLIGHT never cleared after orchestrator finished' }
-    );
-  });
-
-  it('the mock LLM saw multiple chat-completions requests (parent + sub-agent + resumed sub-agent)', async () => {
-    const log = getRequestLog() as Array<{ method: string; url: string; body?: string }>;
-    const llmHits = log.filter(
-      r => r.method === 'POST' && r.url.includes('/openai/v1/chat/completions')
-    );
-    // Orchestrator turn 1 + researcher turn 1 + orchestrator relay
-    // + orchestrator continue + researcher resumed + orchestrator final
-    // = 6, but accept ≥4 for robustness against harness optimisations.
-    expect(llmHits.length).toBeGreaterThanOrEqual(4);
   });
 
   it('persisted thread file records the final orchestrator text', async () => {

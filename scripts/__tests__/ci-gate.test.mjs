@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { SOURCES, decide, latestPrRun } from "../ci/ci-gate.mjs";
 
-const [EX63, HOSTED, LITE] = SOURCES;
+const [HOSTED, LITE] = SOURCES;
 
 function entry(source, id, status, conclusion, job) {
   return {
@@ -13,91 +13,87 @@ function entry(source, id, status, conclusion, job) {
   };
 }
 
-test("the EX63 lanes passing wins and cancels the hosted runs still going", () => {
+test("only GitHub-hosted flows decide the gate", () => {
+  assert.deepEqual(
+    SOURCES.map((source) => source.workflow),
+    ["ci-fast-hosted.yml", "ci-lite.yml"],
+  );
+});
+
+test("the hosted lanes passing wins and cancels the other runs still going", () => {
   const verdict = decide([
-    entry(EX63, 1, "completed", "success", {
+    entry(HOSTED, 1, "completed", "success", {
       status: "completed",
       conclusion: "success",
     }),
-    entry(HOSTED, 2, "completed", "success", {
-      status: "completed",
-      conclusion: "skipped",
-    }),
-    entry(LITE, 3, "in_progress", null, null),
+    entry(LITE, 2, "in_progress", null, null),
   ]);
   assert.equal(verdict.state, "success");
-  assert.equal(verdict.description, "CI Fast passed");
+  assert.equal(verdict.description, "CI Fast (hosted) passed");
   assert.equal(verdict.targetUrl, "https://jobs/1");
-  assert.deepEqual(verdict.cancel, [{ id: 3, name: "CI Lite" }]);
+  assert.deepEqual(verdict.cancel, [{ id: 2, name: "CI Lite" }]);
 });
 
-test("CI Lite passing first also passes the gate, and never cancels the EX63", () => {
+test("CI Lite passing wins and cancels an unfinished hosted run", () => {
   const verdict = decide([
-    entry(EX63, 1, "in_progress", null, {
-      status: "in_progress",
-      conclusion: null,
-    }),
-    entry(LITE, 3, "completed", "success", {
+    entry(HOSTED, 1, "in_progress", null, null),
+    entry(LITE, 2, "completed", "success", {
       status: "completed",
       conclusion: "success",
     }),
   ]);
   assert.equal(verdict.state, "success");
   assert.equal(verdict.description, "CI Lite passed");
-  assert.deepEqual(verdict.cancel, []);
+  assert.equal(verdict.targetUrl, "https://jobs/2");
+  assert.deepEqual(verdict.cancel, [{ id: 1, name: "CI Fast (hosted)" }]);
 });
 
-test("a skipped decisive job is not a pass: an outsider's CI Fast run is pending on the rest", () => {
+test("a skipped decisive job is not a pass: the gate stays pending on the rest", () => {
   const verdict = decide([
-    entry(EX63, 1, "completed", "success", {
+    entry(HOSTED, 1, "completed", "success", {
       status: "completed",
       conclusion: "skipped",
     }),
-    entry(HOSTED, 2, "in_progress", null, {
-      status: "queued",
-      conclusion: null,
-    }),
-    entry(LITE, 3, "queued", null, null),
+    entry(LITE, 2, "queued", null, null),
   ]);
   assert.equal(verdict.state, "pending");
-  assert.equal(verdict.description, "Waiting on CI Fast (hosted), CI Lite");
+  assert.equal(verdict.description, "Waiting on CI Lite");
 });
 
-test("an EX63 failure waits for CI Lite instead of failing the gate early", () => {
+test("a hosted failure waits for CI Lite instead of failing the gate early", () => {
   const verdict = decide([
-    entry(EX63, 1, "completed", "failure", {
+    entry(HOSTED, 1, "completed", "failure", {
       status: "completed",
       conclusion: "failure",
     }),
-    entry(LITE, 3, "in_progress", null, null),
+    entry(LITE, 2, "in_progress", null, null),
   ]);
   assert.equal(verdict.state, "pending");
 });
 
 test("everything finished with no pass fails and points at the failed job", () => {
   const verdict = decide([
-    entry(EX63, 1, "completed", "failure", {
+    entry(HOSTED, 1, "completed", "failure", {
       status: "completed",
       conclusion: "failure",
     }),
-    entry(HOSTED, 2, "completed", "success", {
-      status: "completed",
-      conclusion: "skipped",
-    }),
-    entry(LITE, 3, "completed", "failure", {
+    entry(LITE, 2, "completed", "failure", {
       status: "completed",
       conclusion: "failure",
     }),
   ]);
   assert.equal(verdict.state, "failure");
-  assert.equal(verdict.description, "CI Fast: failure; CI Lite: failure");
+  assert.equal(
+    verdict.description,
+    "CI Fast (hosted): failure; CI Lite: failure",
+  );
   assert.equal(verdict.targetUrl, "https://jobs/1");
 });
 
 test("finished flows whose decisive jobs never ran fail rather than pass", () => {
   const verdict = decide([
-    entry(EX63, 1, "completed", "cancelled", null),
-    entry(LITE, 3, "completed", "cancelled", {
+    entry(HOSTED, 1, "completed", "cancelled", null),
+    entry(LITE, 2, "completed", "cancelled", {
       status: "completed",
       conclusion: "skipped",
     }),

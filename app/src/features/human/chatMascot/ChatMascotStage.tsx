@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback } from 'react';
 
 import { SettingsSwitch } from '../../../components/settings/controls';
 import Button from '../../../components/ui/Button';
@@ -6,13 +6,10 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
   selectSpeakReplies,
-  selectVoiceMode,
-  setChatMascotListening,
+  setChatMascotLiveVoicePhase,
   setSpeakReplies,
 } from '../../../store/mascotSlice';
-import { VOICE_MODE_FLAG_ENABLED } from '../../../utils/config';
-import MicComposer from '../MicComposer';
-import RealtimeVoiceControls from '../RealtimeVoiceControls';
+import LiveVoiceControls, { type LiveVoicePhase } from '../LiveVoiceControls';
 import { useChatMascot } from './ChatMascotContext';
 
 /**
@@ -21,8 +18,9 @@ import { useChatMascot } from './ChatMascotContext';
  *
  * The mascot itself is **not** rendered here — `ChatMascotOverlay` paints the
  * one shared instance over the `stageRef` placeholder. What lives here is the
- * voice interaction that only makes sense while expanded: the mic, the input
- * device selector, the speak-replies switch, and the collapse control.
+ * voice interaction that only makes sense while expanded: the live voice-agent
+ * session (`LiveVoiceControls`), the speak-replies switch, and the collapse
+ * control.
  *
  * The chat's text composer stays live in the left column throughout, so the
  * user can type or talk without leaving this state.
@@ -30,36 +28,18 @@ import { useChatMascot } from './ChatMascotContext';
 const ChatMascotStage = () => {
   const { t } = useT();
   const dispatch = useAppDispatch();
-  const { stageRef, collapse, sendStore } = useChatMascot();
+  const { stageRef, collapse, consumeVoiceStart, liveAudioRef } = useChatMascot();
   const speakReplies = useAppSelector(selectSpeakReplies);
-  // Realtime voice agents (#5399) landed on the Human page while this surface
-  // was replacing it, so the gate moves here rather than being dropped: the
-  // stage IS the voice surface now. Same two conditions as before — build flag
-  // on AND the persisted mode set to realtime — so it still ships dark.
-  const voiceMode = useAppSelector(selectVoiceMode);
-  const realtimeEnabled = VOICE_MODE_FLAG_ENABLED && voiceMode === 'realtime';
+  // The live voice agent talks into the conversation that is open in the chat
+  // column. Read once at session start; switching threads mid-call keeps the
+  // call bound to the thread it started in.
+  const selectedThreadId = useAppSelector(state => state.thread.selectedThreadId);
 
-  // Subscribing to the store (rather than reading a context field) keeps the
-  // chat tree out of this component's update path — see ChatMascotContext.
-  const binding = useSyncExternalStore(sendStore.subscribe, sendStore.get, sendStore.get);
-
-  const handleSubmit = useCallback(
-    async (text: string) => {
-      await binding?.submit(text);
-    },
-    [binding]
-  );
-
-  const handleError = useCallback(
-    (message: string) => {
-      binding?.onError(message);
-    },
-    [binding]
-  );
-
-  const handleRecordingChange = useCallback(
-    (recording: boolean) => {
-      dispatch(setChatMascotListening(recording));
+  // The overlay reads the phase from Redux for its listening pose, lip-sync gate
+  // and to silence speak-replies TTS while the live agent owns the audio.
+  const handlePhaseChange = useCallback(
+    (phase: LiveVoicePhase) => {
+      dispatch(setChatMascotLiveVoicePhase(phase));
     },
     [dispatch]
   );
@@ -110,20 +90,15 @@ const ChatMascotStage = () => {
         data-analytics-id="chat-mascot-toggle"
       />
 
-      {realtimeEnabled ? (
-        <RealtimeVoiceControls />
-      ) : (
-        <MicComposer
-          // Mirrors the mic-cloud call site in Conversations: without the
-          // binding's own `disabled` (which folds in `!selectedThreadId`) a mic
-          // submit before a thread exists is silently dropped.
-          disabled={binding == null || binding.disabled}
-          onSubmit={handleSubmit}
-          onError={handleError}
-          onRecordingChange={handleRecordingChange}
-          showDeviceSelector
-        />
-      )}
+      {/* The stage's voice mode is the live voice agent. Clicking the docked
+          mascot asks for a session (`consumeVoiceStart`); collapsing unmounts
+          this control, which ends the call. */}
+      <LiveVoiceControls
+        threadId={selectedThreadId}
+        consumeAutoStart={consumeVoiceStart}
+        audioRef={liveAudioRef}
+        onPhaseChange={handlePhaseChange}
+      />
 
       <label
         htmlFor="chat-mascot-speak-replies"

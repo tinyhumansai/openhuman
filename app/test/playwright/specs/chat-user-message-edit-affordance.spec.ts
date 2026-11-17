@@ -144,12 +144,10 @@ test.describe('User-message action bar — capability-gated affordances (#5897)'
     // behaviour is a separate feature this PR does not touch, and testing it
     // here would need clipboard permissions and would not make the control any
     // stronger.
-    await expect(page.getByRole('button', { name: 'Copy response' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Copy message' })).toBeVisible();
   });
 
-  test.skip('no branch picker is offered while the runtime cannot switch branches', async ({
-    page,
-  }) => {
+  test('no branch picker is offered while the runtime cannot switch branches', async ({ page }) => {
     const input = await openChat(page);
     await sendOneTurn(page, input, 'branch check');
 

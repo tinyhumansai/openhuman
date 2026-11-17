@@ -13,12 +13,12 @@ Local assistive surfaces for third-party provider apps. This domain owns a norma
 
 | File | Role |
 | --- | --- |
-| `crates/openhuman-core/src/desktop/provider_surfaces/mod.rs` | Export-only: declares submodules; re-exports `all_provider_surfaces_controller_schemas` / `all_provider_surfaces_registered_controllers`. |
-| `crates/openhuman-core/src/desktop/provider_surfaces/types.rs` | Serde domain types: `ProviderEvent`, `RespondQueueItem`, `RespondQueueListResponse`. Snake_case contract shared by request and response. |
-| `crates/openhuman-core/src/desktop/provider_surfaces/ops.rs` | Business logic / entry points: `ingest_event`, `list_queue`. Wrap results in `ApiEnvelope` + `Outcome`. Tests in sibling `ops_tests.rs`. |
-| `crates/openhuman-core/src/desktop/provider_surfaces/store.rs` | In-memory persistence: process-global `RESPOND_QUEUE` (`OnceLock<Mutex<Vec<…>>>`), `upsert_queue_item`, `list_queue_items`, `clear_queue` (test-only). |
-| `crates/openhuman-core/src/desktop/provider_surfaces/schemas.rs` | Controller registry: `ControllerSchema`s + `handle_*` fns delegating to `ops.rs`. Tests in sibling `schemas_tests.rs`. |
-| `crates/openhuman-core/src/desktop/provider_surfaces/rpc.rs` | Docstring-only placeholder; no code. The handler delegation lives in `schemas.rs`, not here. |
+| [`crates/openhuman-core/src/desktop/provider_surfaces/mod.rs`](./mod.rs) | Export-only: declares submodules; re-exports `all_provider_surfaces_controller_schemas` / `all_provider_surfaces_registered_controllers`. |
+| [`crates/openhuman-core/src/desktop/provider_surfaces/types.rs`](./types.rs) | Serde domain types: `ProviderEvent`, `RespondQueueItem`, `RespondQueueListResponse`. Snake_case contract shared by request and response. |
+| [`crates/openhuman-core/src/desktop/provider_surfaces/ops.rs`](./ops.rs) | Business logic / entry points: `ingest_event`, `list_queue`. Wrap results in `ApiEnvelope` + `Outcome`. Tests in sibling [`ops_tests.rs`](./ops_tests.rs). |
+| [`crates/openhuman-core/src/desktop/provider_surfaces/store.rs`](./store.rs) | In-memory persistence: process-global `RESPOND_QUEUE` (`OnceLock<Mutex<Vec<…>>>`), `upsert_queue_item`, `list_queue_items`, `clear_queue` (test-only). |
+| [`crates/openhuman-core/src/desktop/provider_surfaces/schemas.rs`](./schemas.rs) | Controller registry: `ControllerSchema`s + `handle_*` fns delegating to `ops.rs`. Tests in sibling [`schemas_tests.rs`](./schemas_tests.rs). |
+| [`crates/openhuman-core/src/desktop/provider_surfaces/rpc.rs`](./rpc.rs) | Docstring-only placeholder; no code. The handler delegation lives in `schemas.rs`, not here. |
 
 ## Public surface
 
@@ -31,7 +31,7 @@ Local assistive surfaces for third-party provider apps. This domain owns a norma
 
 ## RPC / controllers
 
-Namespace `provider_surfaces` (two controllers, registered via `crates/openhuman-core/src/core/all.rs`):
+Namespace `provider_surfaces` (two controllers, registered via [`crates/openhuman-core/src/core/all.rs`](../../core/all.rs)):
 
 | Method | Inputs | Output |
 | --- | --- | --- |
@@ -71,3 +71,9 @@ In-memory only. State lives in a process-global `RESPOND_QUEUE` (`static OnceLoc
 - **Queue id is deterministic** (`provider:account_id:event_kind:entity_id`), so re-ingesting the same entity upserts (removes + re-prepends) rather than duplicating.
 - **Process-global mutable state** means tests must serialize around `RESPOND_QUEUE`; `ops_tests.rs` uses a `TEST_MUTEX` + `store::clear_queue()` to avoid interleaving under cargo's parallel runner. Mutex poisoning is recovered via `into_inner()`.
 - **Snake_case contract is intentional and shared** between request (`ProviderEvent`) and response (`RespondQueueItem`) so callers see one consistent shape.
+
+## Further reading
+
+- [Parent module README](../README.md)
+- [Tauri shell](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [Connections](../../../../../docs/gitbooks/en/features/connections.md)

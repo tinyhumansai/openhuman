@@ -27,6 +27,7 @@ fn sample_thread() -> ConversationThread {
         parent_thread_id: None,
         labels: vec!["general".to_string()],
         personality_id: None,
+        working_dir: None,
     }
 }
 
@@ -47,6 +48,7 @@ async fn create_thread_with_title(_workspace: &tempfile::TempDir, thread_id: &st
         .expect("load config")
         .workspace_dir;
     conversations_store::ensure_thread(
+        &crate::core::runtime::DispatchCtx::ambient(),
         dir,
         CreateConversationThread {
             id: thread_id.to_string(),
@@ -55,6 +57,7 @@ async fn create_thread_with_title(_workspace: &tempfile::TempDir, thread_id: &st
             parent_thread_id: None,
             labels: None,
             personality_id: None,
+            working_dir: None,
         },
     )
     .expect("ensure thread");

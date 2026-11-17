@@ -100,6 +100,8 @@ test('Connections aliases, fallback, and /channels resolve to the correct pane',
     ['/connections?tab=tools', 'mcp'],
     ['/connections?tab=explorer', 'skills'],
     ['/connections?tab=llm', 'llm'],
+    ['/connections?tab=voice-agent', 'voice-agents'],
+    ['/connections?tab=live-voice', 'voice-agents'],
   ]) {
     await page.evaluate(target => {
       window.location.hash = target;

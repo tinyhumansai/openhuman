@@ -31,6 +31,17 @@ function safeGetActiveUserIdSync(): string | null {
 
 let activeUserId: string | null = safeGetActiveUserIdSync();
 
+function purgeRetiredPttPersistKey(userId: string | null): void {
+  try {
+    localStorage.removeItem('persist:ptt');
+    if (userId) localStorage.removeItem(`${userId}:persist:ptt`);
+  } catch {
+    // best-effort cleanup for a preference that no longer has a consumer
+  }
+}
+
+purgeRetiredPttPersistKey(activeUserId);
+
 // Recover from a prior buggy build that moved `persist:coreMode` into the
 // user-scoped namespace via `migrateLegacyPersistKeys`. The unscoped key is
 // authoritative; if it's missing but a scoped copy exists, copy it back so
@@ -89,6 +100,7 @@ export function primeActiveUserId(id: string | null): void {
   primed = true;
   if (id) {
     activeUserId = id;
+    purgeRetiredPttPersistKey(id);
     try {
       localStorage.setItem(ACTIVE_USER_KEY, id);
     } catch {
@@ -97,6 +109,7 @@ export function primeActiveUserId(id: string | null): void {
   } else {
     // Don't wipe — keep whatever a prior session wrote.
     activeUserId = safeGetActiveUserIdSync();
+    purgeRetiredPttPersistKey(activeUserId);
   }
   activeUserIdResolve();
 }
@@ -120,6 +133,7 @@ export function getActiveUserId(): string | null {
 export function setActiveUserId(id: string | null): void {
   const previous = activeUserId;
   activeUserId = id;
+  purgeRetiredPttPersistKey(id);
   try {
     if (id) {
       localStorage.setItem(ACTIVE_USER_KEY, id);

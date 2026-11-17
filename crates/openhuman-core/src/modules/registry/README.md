@@ -18,28 +18,30 @@ surface with a download step attached.
 Each `records_*.rs` file defines one or more `pub(crate) const ModuleRecord`
 values for a family of related modules:
 
-- `records_computer.rs`: `TINYCOMPUTER` (desktop and browser control).
-- `records_docs_wallet.rs`: `TINYDOCS`, `TINYWALLET`.
-- `records_extra.rs`: `TINYBOX`, `TINYCHANNELS`, `TINYHOSTS`.
-- `records_mcp_connectors.rs`: `TINYCONNECTORS`, `TINYMCP`.
+- [`records_computer.rs`](./records_computer.rs): `TINYCOMPUTER` (desktop and browser control).
+- [`records_docs_wallet.rs`](./records_docs_wallet.rs): `TINYDOCS`, `TINYWALLET`.
+- [`records_eventqueues.rs`](./records_eventqueues.rs): `TINYEVENTQUEUES` (durable inbound event queues; `inbound-queues` gate).
+- [`records_extra.rs`](./records_extra.rs): `TINYBOX`, `TINYCHANNELS`, `TINYHOSTS`.
+- [`records_flows.rs`](./records_flows.rs): `TINYFLOWS` (scheduler runtime, cron store and schedule maths; authoring).
+- [`records_mcp_connectors.rs`](./records_mcp_connectors.rs): `TINYCONNECTORS`, `TINYMCP`.
 - `records_juice.rs`: `TINYJUICE`.
-- `records_runtime.rs`: `TINYRUNTIME`, `TINYRUNTIME_NODEJS`, `TINYRUNTIME_PYTHON`.
-- `records_search.rs`: `TINYSEARCH`.
-- `records_voice.rs`: `TINYVOICE`.
+- [`records_search.rs`](./records_search.rs): `TINYSEARCH`.
+- [`records_voice.rs`](./records_voice.rs): `TINYVOICE`.
 
-`../registry.rs` (one level up from this folder) wires all of them into the
+[`../registry.rs`](../registry.rs) (one level up from this folder) wires all of them into the
 `ALL` slice and answers `find(id)` by a linear scan.
 
 ## Key types
 
-Both live in `../types.rs`, not in this folder:
+Both live in [`../types.rs`](../types.rs), not in this folder:
 
 - `ModuleRecord`: `id`, `description`, `bus_name`, `object_path`, `version`,
   `release_url`, a `&'static [PlatformAsset]` list of per-host artifacts, and
   a `LoadPolicy` (`Lazy`, loaded on first use, or `Eager`, loaded at boot).
 - `PlatformAsset`: one published artifact per host, `host_key` (for example
   `ubuntu-24.04-x86_64`), the exact release `archive` name, and its lowercase
-  hex SHA-256 `sha256` digest.
+  hex SHA-256 `sha256` digest. `library_sha256` is optional and pins the
+  extracted module library when the publisher includes that digest.
 
 Every record in this folder pins one version and one digest per supported
 host, taken verbatim from that release's own `checksum.toml`. tinybus fetches
@@ -49,20 +51,34 @@ digest in this folder is this host's half of that agreement: pinning it in
 source is what makes the check auditable by reading this file against the
 release page. A digest recomputed from a local build would agree with itself
 no matter what a release actually served, which is why the module doc comment
-on `../registry.rs` says not to do that.
+on [`../registry.rs`](../registry.rs) says not to do that.
+
+The existing published pins contain archive digests only, so their
+`library_sha256` values are `None`. Archive verification still applies, but
+these legacy pins cannot authorize strict attested calls. Set the field only
+when the publisher supplies a real extracted-library digest in its signed
+checksum manifest; never copy the archive digest into it or infer one from a
+local build.
 
 ## How it fits
 
 `ModuleRecord::id` is the stable identifier config, RPC, and
 `ensure_loaded`/`ensure_language` use to name a module. `registry::find`
 is the lookup every load path goes through before the ABI, manifest, and
-dependency admission checks in `../host.rs` run.
+dependency admission checks in [`../host.rs`](../host.rs) run.
 
 ## Where next
 
 - [`modules/README.md`](../README.md) for the full load path this registry
   feeds into (resolution order, download, digest check, `dlopen`).
-- `../types.rs` for the `ModuleRecord` / `PlatformAsset` / `LoadPolicy`
+- [`../types.rs`](../types.rs) for the `ModuleRecord` / `PlatformAsset` / `LoadPolicy`
   definitions this folder's records are built from.
-- `../host.rs` for the broker that actually resolves, downloads, verifies,
+- [`../host.rs`](../host.rs) for the broker that actually resolves, downloads, verifies,
   and loads a record this registry returns.
+
+## Further reading
+
+- [Parent module (`modules`)](../README.md)
+- [Loadable modules](../../../../../docs/gitbooks/en/developing/loadable-modules.md)
+- [tinybus submodule](../../../../../vendor/tinybus/README.md)
+- [Architecture overview](../../../../../docs/gitbooks/en/developing/architecture.md)

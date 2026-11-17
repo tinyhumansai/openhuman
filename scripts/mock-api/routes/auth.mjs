@@ -63,6 +63,11 @@ export async function handleAuth(ctx) {
       json(res, 401, { success: false, error: "Unauthorized" });
       return true;
     }
+    // A refusal on a live session (plan, WAF, proxy): only a 401 expires it.
+    if (mockBehavior.session === "forbidden") {
+      json(res, 403, { success: false, error: "Forbidden", errorCode: "FORBIDDEN" });
+      return true;
+    }
     json(res, 200, { success: true, data: getMockUser() });
     return true;
   }
@@ -82,6 +87,18 @@ export async function handleAuth(ctx) {
   }
 
   if (method === "GET" && /^\/auth\/[^/]+\/login\/?(\?.*)?$/.test(url)) {
+    // Sign-in with a loopback `redirectUri` (the browser dev build passes
+    // `<vite>/__dev-auth`): answer like the real backend after a successful
+    // provider login — redirect back with a session JWT and `key=auth`,
+    // echoing `state` so the app's nonce check passes. The backend accepts
+    // only http loopback redirect targets; so does the mock.
+    const signInRedirect = loopbackSignInRedirect(url);
+    if (signInRedirect) {
+      setCors(res);
+      res.writeHead(302, { Location: signInRedirect });
+      res.end();
+      return true;
+    }
     const redirectUrl = `${origin}/mock-oauth`;
     if (url.includes("responseType=json")) {
       json(res, 200, { success: true, data: { oauthUrl: redirectUrl } });
@@ -148,4 +165,30 @@ export async function handleAuth(ctx) {
   // actually completes the OAuth flow via deep links.
 
   return false;
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * The provider-login callback for an http loopback `redirectUri`, or `null`
+ * when the request carries none (or a non-loopback one). Exported for tests.
+ */
+export function loopbackSignInRedirect(url) {
+  const query = new URL(url, "http://mock.invalid").searchParams;
+  const redirectUri = query.get("redirectUri");
+  if (!redirectUri) return null;
+  let target;
+  try {
+    target = new URL(redirectUri);
+  } catch {
+    return null;
+  }
+  if (target.protocol !== "http:" || !LOOPBACK_HOSTS.has(target.hostname)) {
+    return null;
+  }
+  target.searchParams.set("token", MOCK_JWT);
+  target.searchParams.set("key", "auth");
+  const state = query.get("state");
+  if (state) target.searchParams.set("state", state);
+  return target.toString();
 }

@@ -1,88 +1,5 @@
 use super::*;
-use tinytools_std::filesystem::{ApplyPatchTool, CsvExportTool};
-
-#[tokio::test]
-async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
-    let backend = integration_test_support::spawn_fake_integration_backend().await;
-    let tmp = TempDir::new().unwrap();
-    let cfg = integration_test_config(&tmp, &backend.base_url);
-    store_test_session_token(&cfg);
-    let tools = integration_tools_for_config(&tmp, &cfg);
-
-    let quote = find_tool(&tools, "stock_quote")
-        .execute(serde_json::json!({ "symbol": "AAPL" }))
-        .await
-        .expect("stock_quote execute");
-    assert!(quote.output().contains("AAPL"));
-    assert!(quote.output().contains("latest trading day 2026-05-16"));
-
-    let exchange = find_tool(&tools, "stock_exchange_rate")
-        .execute(serde_json::json!({
-            "from_currency": "BTC",
-            "to_currency": "USD"
-        }))
-        .await
-        .expect("stock_exchange_rate execute");
-    assert!(exchange.output().contains("BTC/USD = 42.5"));
-
-    let options = find_tool(&tools, "stock_options")
-        .execute(serde_json::json!({
-            "symbol": "AAPL",
-            "require_greeks": true
-        }))
-        .await
-        .expect("stock_options execute");
-    assert!(options.output().contains("AAPL options chain"));
-    assert!(options.output().contains("call 2026-06-19 @ 250"));
-
-    let crypto = find_tool(&tools, "stock_crypto_series")
-        .execute(serde_json::json!({
-            "symbol": "BTC",
-            "market": "USD",
-            "limit": 2
-        }))
-        .await
-        .expect("stock_crypto_series execute");
-    assert!(crypto.output().contains("BTC/USD"));
-    assert!(crypto.output().contains("2026-05-16"));
-
-    let commodity = find_tool(&tools, "stock_commodity")
-        .execute(serde_json::json!({
-            "commodity": "WTI",
-            "interval": "weekly",
-            "limit": 2
-        }))
-        .await
-        .expect("stock_commodity execute");
-    assert!(commodity.output().contains("WTI (weekly)"));
-    assert!(commodity.output().contains("2026-05-16  80.1000"));
-
-    let twilio = find_tool(&tools, "twilio_call")
-        .execute(serde_json::json!({
-            "to": "+14155551234",
-            "message": "Hello from tests"
-        }))
-        .await
-        .expect("twilio_call execute");
-    assert!(twilio.output().contains("Call SID: CA1234"));
-    assert!(twilio.output().contains("Status: queued"));
-
-    let requests = backend.requests();
-    let paths: Vec<&str> = requests.iter().map(|req| req.path.as_str()).collect();
-    assert_eq!(
-        paths,
-        vec![
-            "/agent-integrations/financial-apis/quote",
-            "/agent-integrations/financial-apis/exchange-rate",
-            "/agent-integrations/financial-apis/options",
-            "/agent-integrations/financial-apis/crypto-series",
-            "/agent-integrations/financial-apis/commodity",
-            "/agent-integrations/twilio/call",
-        ]
-    );
-    assert_eq!(requests[2].body["requireGreeks"], serde_json::json!(true));
-    assert_eq!(requests[5].body["to"], serde_json::json!("+14155551234"));
-}
+use crate::tools::filter_tools_by_user_preference;
 
 /// Every acting tool gates on `can_act()` and returns its own read-only refusal
 /// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
@@ -92,9 +9,20 @@ async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
 /// literal to the marker const — drift between them fails here rather than
 /// silently letting the agent grind on a doomed call. Args are the minimum
 /// needed to reach the `can_act()` check in each tool.
+///
+/// Needs the module: a build without it has security disabled, so `can_act()`
+/// is always true and no tool refuses (`crate::security::switch`).
+///
+/// `browser_open` is not listed: it no longer gates itself (f8a08f11f8 moved
+/// that to the host authorization stage), so a tool-level marker is not its
+/// contract.
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn readonly_acting_tools_carry_policy_blocked_marker() {
-    use crate::security::{AutonomyLevel, POLICY_BLOCKED_MARKER};
+    use crate::security::AutonomyLevel;
+    use crate::tools::http_request_tool;
+    use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
+    use tinytools::status::POLICY_BLOCKED_MARKER;
 
     let tmp = TempDir::new().unwrap();
     let sec = Arc::new(SecurityPolicy {
@@ -113,21 +41,14 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
             Box::new(CsvExportTool::new(sec.clone())),
             serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
         ),
-        // The `computer`-family tools are compiled out with the
-        // `desktop-automation` feature; gate these two cases per-element so the
-        // rest of the read-only policy assertions still run in the slim build.
-        #[cfg(feature = "modules")]
         (
-            Box::new(BrowserOpenTool::new(
+            Box::new(http_request_tool(
+                &crate::core::runtime::DispatchCtx::ambient(),
                 sec.clone(),
-                Arc::new(crate::modules::browser::BrowserClient::new(Arc::new(
-                    crate::config::Config::default(),
-                ))),
+                vec![],
+                0,
+                0,
             )),
-            serde_json::json!({ "url": "https://example.com" }),
-        ),
-        (
-            Box::new(http_request_tool(sec.clone(), vec![], 0, 0)),
             serde_json::json!({ "url": "https://example.com" }),
         ),
     ];
@@ -144,17 +65,17 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
     }
 }
 
-#[test]
-fn productivity_tools_are_registered() {
+#[tokio::test]
+async fn productivity_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     assert_contains_all(&names, PRODUCTIVITY_TOOLS);
 }
 
-#[test]
-fn productivity_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn productivity_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for off in PRODUCTIVITY_DEFAULT_OFF {
@@ -171,10 +92,10 @@ fn productivity_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn productivity_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn productivity_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(
         &mut tools,
         &[
@@ -193,22 +114,30 @@ fn productivity_default_off_tools_retained_when_opted_in() {
 }
 
 #[tokio::test]
-async fn artifact_list_through_registry_returns_envelope() {
+async fn artifacts_created_through_the_registry_are_listed() {
     let tmp = TempDir::new().unwrap();
-    let tools = expansion_tools_for(&tmp);
-    let out = find_tool(&tools, "artifact_list")
-        .execute(serde_json::json!({ "limit": 10 }))
+    let tools = expansion_tools_for(&tmp).await;
+    let created = find_tool(&tools, "create_artifact")
+        .execute(serde_json::json!({ "kind": "markdown", "title": "Notes", "body": "# hi" }))
         .await
-        .expect("artifact_list execute");
+        .expect("create_artifact execute");
+    assert!(!created.is_error, "{}", created.output_for_llm(false));
+
+    let out = find_tool(&tools, "list_artifacts")
+        .execute(serde_json::json!({}))
+        .await
+        .expect("list_artifacts execute");
     let body = out.output_for_llm(false);
-    assert!(body.contains("artifacts"), "envelope missing: {body}");
-    assert!(body.contains("total"), "envelope missing total: {body}");
+    assert!(
+        body.contains("\"title\":\"Notes\""),
+        "listing missing the artifact: {body}"
+    );
 }
 
-#[test]
-fn knowledge_tools_are_registered() {
+#[tokio::test]
+async fn knowledge_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
 
     let mut expected_tools: Vec<&str> = Vec::new();
 
@@ -254,10 +183,10 @@ fn knowledge_tools_are_registered() {
     }
 }
 
-#[test]
-fn knowledge_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn knowledge_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     let off_tools = knowledge_default_off();
@@ -276,10 +205,10 @@ fn knowledge_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn knowledge_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn knowledge_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["workflow_manage".to_string()]);
     let names = tool_names(&tools);
     let off_tools = knowledge_default_off();
@@ -291,17 +220,17 @@ fn knowledge_default_off_tools_retained_when_opted_in() {
     }
 }
 
-#[test]
-fn system_tools_are_registered() {
+#[tokio::test]
+async fn system_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     assert_contains_all(&names, SYSTEM_TOOLS);
 }
 
-#[test]
-fn system_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn system_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for off in SYSTEM_DEFAULT_OFF {
@@ -318,10 +247,10 @@ fn system_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn system_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn system_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["service_lifecycle".to_string()]);
     let names = tool_names(&tools);
     for on in SYSTEM_DEFAULT_OFF {
@@ -335,7 +264,7 @@ fn system_default_off_tools_retained_when_opted_in() {
 #[tokio::test]
 async fn health_system_info_through_registry() {
     let tmp = TempDir::new().unwrap();
-    let tools = expansion_tools_for(&tmp);
+    let tools = expansion_tools_for(&tmp).await;
     let out = find_tool(&tools, "health_system_info")
         .execute(serde_json::json!({}))
         .await
@@ -343,21 +272,21 @@ async fn health_system_info_through_registry() {
     assert!(out.output_for_llm(false).contains("os"));
 }
 
-#[test]
-fn account_tools_are_registered() {
+#[tokio::test]
+async fn account_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     assert_contains_all(&names, ACCOUNT_TOOLS);
 }
 
-#[test]
-fn account_tools_survive_a_narrow_user_preference_set() {
+#[tokio::test]
+async fn account_tools_survive_a_narrow_user_preference_set() {
     // None of these is a user-toggleable family, so a preference snapshot that
     // names only `file_read` must leave every one of them advertised. This is
     // the assertion that would catch one of them being quietly added to
     // `TOOL_FAMILIES` as default-OFF.
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for on in ACCOUNT_TOOLS {
@@ -368,10 +297,10 @@ fn account_tools_survive_a_narrow_user_preference_set() {
     }
 }
 
-#[test]
-fn desktop_tools_are_registered() {
+#[tokio::test]
+async fn desktop_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     if !cfg!(feature = "modules") {
         assert!(!names.iter().any(|name| name.starts_with("desktop_")));
         return;
@@ -386,10 +315,10 @@ fn desktop_tools_are_registered() {
     );
 }
 
-#[test]
-fn desktop_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn desktop_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for off in DESKTOP_DEFAULT_OFF {
@@ -406,10 +335,10 @@ fn desktop_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn desktop_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn desktop_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(
         &mut tools,
         &[
@@ -425,4 +354,21 @@ fn desktop_default_off_tools_retained_when_opted_in() {
             "opted-in tool `{on}` must be retained; got: {names:?}"
         );
     }
+}
+
+/// No provider can fetch tasks today (senamakel/openhuman#324), so the full
+/// registry must not offer the model a `task_source_*` tool: a source added
+/// through one would never ingest anything.
+#[tokio::test]
+async fn task_source_tools_are_not_offered_while_no_provider_can_fetch() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp).await);
+    let offered: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("task_source_"))
+        .collect();
+    assert!(
+        offered.is_empty(),
+        "task_source tools offered with no fetch-capable provider: {offered:?}"
+    );
 }

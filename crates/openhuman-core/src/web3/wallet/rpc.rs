@@ -78,11 +78,17 @@ async fn rpc_call_to_inner<T: DeserializeOwned>(
     );
     let client = client();
     let response = client.post(url).json(&payload).send().await.map_err(|e| {
-        RpcCallError::Transport(format!("wallet RPC transport failed for {method}: {e}"))
+        RpcCallError::Transport(format!(
+            "wallet RPC transport failed for {method}: {}",
+            e.without_url()
+        ))
     })?;
     let status = response.status();
     let raw_body = response.text().await.map_err(|e| {
-        RpcCallError::Transport(format!("wallet RPC read body failed for {method}: {e}"))
+        RpcCallError::Transport(format!(
+            "wallet RPC read body failed for {method}: {}",
+            e.without_url()
+        ))
     })?;
     log::debug!(
         "{LOG_PREFIX} jsonrpc method={method} status={status} body_len={}",
@@ -118,12 +124,12 @@ pub async fn rest_get_text(url: &str) -> Result<String, String> {
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("wallet REST GET transport failed: {e}"))?;
+        .map_err(|e| format!("wallet REST GET transport failed: {}", e.without_url()))?;
     let status = response.status();
     let body = response
         .text()
         .await
-        .map_err(|e| format!("wallet REST GET read body failed: {e}"))?;
+        .map_err(|e| format!("wallet REST GET read body failed: {}", e.without_url()))?;
     if !status.is_success() {
         return Err(format!(
             "wallet REST GET HTTP failure: status={status} body={body}"
@@ -145,12 +151,12 @@ pub async fn rest_post_text(url: &str, body: &str, content_type: &str) -> Result
         .body(body.to_string())
         .send()
         .await
-        .map_err(|e| format!("wallet REST POST transport failed: {e}"))?;
+        .map_err(|e| format!("wallet REST POST transport failed: {}", e.without_url()))?;
     let status = response.status();
     let text = response
         .text()
         .await
-        .map_err(|e| format!("wallet REST POST read body failed: {e}"))?;
+        .map_err(|e| format!("wallet REST POST read body failed: {}", e.without_url()))?;
     if !status.is_success() {
         return Err(format!(
             "wallet REST POST HTTP failure: status={status} body={text}"

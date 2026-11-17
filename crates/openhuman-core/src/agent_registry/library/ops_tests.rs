@@ -1,0 +1,103 @@
+use super::*;
+use tinyagents_definition::{DefinitionSource, PromptSource, SkillsWildcard};
+
+fn definition() -> AgentDefinition {
+    AgentDefinition {
+        id: "researcher".to_string(),
+        when_to_use: "Use for research.".to_string(),
+        display_name: Some("Researcher".to_string()),
+        system_prompt: PromptSource::Inline("hidden prompt".to_string()),
+        model: ModelSpec::Hint("reasoning".to_string()),
+        temperature: 0.2,
+        tools: ToolScope::Named(vec!["web_search".to_string(), "file_read".to_string()]),
+        disallowed_tools: vec!["file_read".to_string()],
+        skill_filter: None,
+        extra_tools: vec!["memory_search".to_string(), "web_search".to_string()],
+        deferred_tools: Vec::new(),
+        tool_rules: None,
+        max_iterations: 8,
+        iteration_policy: Default::default(),
+        max_result_chars: None,
+        max_turn_output_tokens: None,
+        timeout_secs: None,
+        sandbox_mode: SandboxMode::ReadOnly,
+        background: false,
+        subagents: vec![
+            SubagentEntry::AgentId("critic".to_string()),
+            SubagentEntry::Skills(SkillsWildcard {
+                skills: "*".to_string(),
+            }),
+        ],
+        delegate_name: None,
+        agent_tier: AgentTier::Worker,
+        source: DefinitionSource::Builtin,
+        extensions: crate::agent_registry::host_definition::AgentExt {
+            omit_identity: true,
+            omit_memory_context: true,
+            omit_safety_preamble: true,
+            tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
+            searches_connected_mcp: false,
+            ..Default::default()
+        },
+        role: None,
+    }
+}
+
+#[test]
+fn metadata_projection_omits_prompt_and_paths() {
+    let display = metadata_from_definition(&definition());
+
+    assert_eq!(display.id, "researcher");
+    assert_eq!(display.display_name, "Researcher");
+    assert_eq!(display.model.kind, "hint");
+    assert_eq!(display.model.value.as_deref(), Some("reasoning"));
+    match &display.tools {
+        ToolScope::Named(names) => {
+            assert_eq!(
+                names,
+                &vec!["web_search".to_string(), "file_read".to_string()]
+            );
+        }
+        ToolScope::Wildcard => panic!("expected named tool scope"),
+    }
+    assert_eq!(
+        display.direct_tool_names,
+        vec!["memory_search", "web_search"]
+    );
+    assert_eq!(display.direct_tool_count, 2);
+    assert!(!display.uses_wildcard_tools);
+    assert_eq!(display.subagent_ids, vec!["critic"]);
+    assert!(!display.includes_memory_context);
+    assert!(display.can_run_as_user_facing_worker);
+    assert!(!display.write_capable);
+
+    let json = serde_json::to_value(display).expect("serialize display");
+    assert!(json.get("system_prompt").is_none());
+    assert!(json.get("prompt").is_none());
+}
+
+#[test]
+fn glob_denylist_removes_matching_direct_tools() {
+    let mut def = definition();
+    def.sandbox_mode = SandboxMode::None;
+    def.tools = ToolScope::Named(vec![
+        "web_search".to_string(),
+        "file_read".to_string(),
+        "file_write".to_string(),
+    ]);
+    def.extra_tools = vec!["file_edit".to_string()];
+    def.disallowed_tools = vec!["file_*".to_string()];
+
+    let display = metadata_from_definition(&def);
+
+    assert_eq!(
+        display.direct_tool_names,
+        vec!["web_search"],
+        "a `file_*` denylist must hide every `file_` tool, as the runtime does"
+    );
+    assert_eq!(display.direct_tool_count, 1);
+    assert!(
+        !display.write_capable,
+        "only denied tools were write-capable, so the agent is not"
+    );
+}

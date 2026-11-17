@@ -7,10 +7,10 @@
 use super::super::Config;
 use super::dirs::{default_action_dir, resolve_action_dir, ConfigResolutionSource};
 use super::env::EnvLookup;
-use super::impl_load::{parse_config_boxed, read_config_with_recovery_or_default};
+use super::impl_load::migration_source;
 use super::migrate::{
-    migrate_cloud_provider_slugs, migrate_legacy_inference_url, migrate_legacy_memory_sources,
-    migrate_search_settings,
+    migrate_cloud_provider_slugs, migrate_components, migrate_legacy_inference_url,
+    migrate_legacy_memory_backend, migrate_legacy_memory_sources, migrate_search_settings,
 };
 use super::secrets::decrypt_config_secrets;
 use anyhow::Result;
@@ -70,6 +70,7 @@ impl Config {
         config_path: std::path::PathBuf,
         resolution_source: ConfigResolutionSource,
         env: &(dyn EnvLookup + Send + Sync),
+        decrypt_secrets: bool,
     ) -> Result<Self> {
         #[cfg(unix)]
         {
@@ -142,8 +143,8 @@ impl Config {
         // (e.g. non-UTF-8 bytes), the corrupted file is renamed to
         // `.corrupted.<timestamp>` and backup/defaults are attempted,
         // with rate-limited error logging (#5167).
-        let (contents, read_was_recovered) =
-            read_config_with_recovery_or_default(&config_path).await?;
+        let source = super::source::for_config(&config_path)?;
+        let read = source.read().await?;
 
         // When `read_config_with_recovery_or_default` returned an empty
         // string (both primary and backup were unreadable), skip the TOML
@@ -151,11 +152,14 @@ impl Config {
         // otherwise parse successfully with serde defaults (all fields at
         // their `Option::None` / `vec![]` / `false` values) instead of
         // the richer `Default` impl (issue #5167).
-        let (mut config, config_was_corrupted) = if read_was_recovered && contents.is_empty() {
-            (default_config_boxed(), true)
-        } else {
-            Box::pin(parse_config_boxed(&config_path, &contents)).await
-        };
+        let (config, config_was_corrupted) =
+            super::impl_load::parse_source_contents(&read, &config_path).await?;
+        let super::source::ConfigRead {
+            contents,
+            recovered: read_was_recovered,
+            ..
+        } = read;
+        let mut config = config;
 
         // If the read itself was recovered (non-UTF-8 file renamed, backup
         // used, or file renamed to .corrupted.ts), treat it as corruption so
@@ -169,6 +173,9 @@ impl Config {
         // later override can never mask that recovery happened.
         config.recovered_from_corruption = config_was_corrupted;
         migrate_legacy_inference_url(&mut config);
+        let migration_raw = migration_source(&config_path, &contents).await;
+        migrate_legacy_memory_backend(&mut config, &migration_raw);
+        migrate_components(&mut config, &migration_raw);
         migrate_cloud_provider_slugs(&mut config);
         migrate_search_settings(&mut config);
         migrate_legacy_memory_sources(&mut config);
@@ -185,7 +192,7 @@ impl Config {
                     "[config] Config file already renamed by read recovery; \
                      persisting recovered config"
                 );
-                if let Err(e) = config.save().await {
+                if let Err(e) = Box::pin(save_recovered(&config, source.as_ref())).await {
                     tracing::warn!(
                         path = %config.config_path.display(),
                         error = %e,
@@ -193,7 +200,14 @@ impl Config {
                     );
                 }
             } else {
-                let corrupted_path = config_path.with_extension("toml.corrupted");
+                // Keep an earlier corrupted copy: `rename` would replace it.
+                let mut corrupted_path = config_path.with_extension("toml.corrupted");
+                if tokio::fs::try_exists(&corrupted_path).await.unwrap_or(true) {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs());
+                    corrupted_path = config_path.with_extension(format!("toml.corrupted.{ts}"));
+                }
                 match fs::rename(&config_path, &corrupted_path).await {
                     Ok(()) => {
                         tracing::debug!(
@@ -201,7 +215,7 @@ impl Config {
                             dst = %corrupted_path.display(),
                             "[config] Renamed corrupted config; persisting recovered config"
                         );
-                        if let Err(e) = config.save().await {
+                        if let Err(e) = Box::pin(save_recovered(&config, source.as_ref())).await {
                             tracing::warn!(
                                 path = %config.config_path.display(),
                                 error = %e,
@@ -231,7 +245,11 @@ impl Config {
             "Config loaded"
         );
         Box::pin(crate::config::migrations::run_pending(&mut config)).await;
-        let migrated_legacy_secrets = decrypt_config_secrets(&mut config, &openhuman_dir)?;
+        let migrated_legacy_secrets = if decrypt_secrets {
+            decrypt_config_secrets(&mut config, &openhuman_dir).await?
+        } else {
+            false
+        };
         if migrated_legacy_secrets {
             // One-time forced migration: a legacy `enc:` (XOR) secret was
             // upgraded to `enc2:` on read. Persist immediately so the
@@ -286,5 +304,37 @@ impl Config {
         );
         Box::pin(crate::config::migrations::run_pending(&mut config)).await;
         Ok(*config)
+    }
+}
+
+/// Persist a config the loader recovered from corruption.
+///
+/// On a document source this can only be the file fallback (a scope with no
+/// document yet: a document body is parsed strictly and never "recovered"),
+/// and the corrupt `config.toml` has been renamed aside. The document save
+/// strips the bootstrap tables and never writes the file, so the file is
+/// rewritten too: otherwise a storage URL that lived only in its `[storage]`
+/// table would be gone on the next boot.
+pub(super) async fn save_recovered(
+    config: &Config,
+    source: &dyn super::source::ConfigSource,
+) -> Result<()> {
+    let document_result = config.save().await;
+    if source.label() != "document" {
+        return document_result;
+    }
+
+    // The corrupted primary file has already been moved aside. Restore its
+    // bootstrap tables even when this node loses the document CAS race; a
+    // later boot still needs the storage URL to reach the shared backend.
+    let file = super::source::FileConfigSource::new(&config.config_path);
+    let file_result = Box::pin(config.save_file_export(&file)).await;
+    match (document_result, file_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(document_error), Ok(())) => Err(document_error),
+        (Ok(()), Err(file_error)) => Err(file_error),
+        (Err(document_error), Err(file_error)) => Err(file_error.context(format!(
+            "document persistence also failed: {document_error:#}"
+        ))),
     }
 }

@@ -437,6 +437,30 @@ describe('mapDisplayItems', () => {
     expect(second.subagent?.status).toBe('failed');
   });
 
+  it('settles an incomplete sub-agent as a non-success partial state', () => {
+    const rows = mapDisplayItems(
+      newestFirst([
+        { kind: 'turnBoundary', requestId: 'req-i' },
+        { kind: 'toolCall', callId: 'ci', name: 'research', status: 'success', iteration: 1 },
+        {
+          kind: 'subagent',
+          id: 'sub-inc',
+          agentId: 'researcher',
+          taskId: 'sub-inc',
+          callId: 'ci',
+          status: 'incomplete',
+          requestId: 'req-i',
+          items: [],
+        },
+      ])
+    ).timelines['req-i'];
+
+    const sub = rows.find(row => row.id === 'subagent:sub-inc');
+    expect(sub?.status).not.toBe('success');
+    expect(sub?.status).toBe('cancelled');
+    expect(sub?.subagent?.status).toBe('incomplete');
+  });
+
   describe('sub-agent placement (live parity)', () => {
     /**
      * Live, `subagentSpawned` turns the `spawn_subagent` row into the

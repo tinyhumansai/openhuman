@@ -1,0 +1,512 @@
+[
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-app/src/artifact_commands.rs",
+    "line": 41,
+    "text": "tokio::fs::copy(source, dest)",
+    "occurrence": 1,
+    "classification": "external-export",
+    "reason": "Explicit user-selected artifact export copies bytes to an external destination; native stored artifact content and export admission are separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-app/src/core_process.rs",
+    "line": 269,
+    "text": "let mut options = std::fs::OpenOptions::new();",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Debug-only owner-restricted per-launch RPC token file used by the local E2E host; not signed-in user state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-app/src/gateway/store.rs",
+    "line": 155,
+    "text": "let mut options = std::fs::OpenOptions::new();",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Saved remote gateway endpoint and local SSH identity/bearer selection belong to the desktop host connection bootstrap; credentials must not become plain shared documents.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-app/src/gateway/store.rs",
+    "line": 165,
+    "text": "std::fs::rename(&temp_path, &path)?;",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Saved remote gateway endpoint and local SSH identity/bearer selection belong to the desktop host connection bootstrap; credentials must not become plain shared documents.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "sqlite-open",
+    "path": "crates/openhuman-app/src/imessage_scanner/chatdb.rs",
+    "line": 37,
+    "text": "Connection::open_with_flags(",
+    "occurrence": 1,
+    "classification": "read-only",
+    "reason": "Apple chat.db is explicitly opened SQLITE_OPEN_READ_ONLY; the external machine source is read, not an OpenHuman durable store.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-app/src/imessage_scanner/mod.rs",
+    "line": 272,
+    "text": "std::fs::write(path, rowid.to_string())",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "The last seen Apple chat.db ROWID cursor belongs to this machine source and cannot identify another host database.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-app/src/mcp_commands.rs",
+    "line": 238,
+    "text": "std::fs::write(&path, b\"{}\")",
+    "occurrence": 1,
+    "classification": "external-export",
+    "reason": "Explicitly creates an external installed MCP client configuration for the operating-system editor; not an OpenHuman authoritative store.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7430"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-app/src/window_state.rs",
+    "line": 144,
+    "text": "if let Err(err) = std::fs::write(&path, raw) {",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Window position and size reflect this machine display geometry, not cloud user state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-cli/src/bin/fleet.rs",
+    "line": 522,
+    "text": "let mut file = std::fs::OpenOptions::new()",
+    "occurrence": 1,
+    "classification": "external-export",
+    "reason": "Explicit owner-only output of minted edge tokens to the requested fleet operator destination; not an internal user state store.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/artifacts/migrate.rs",
+    "line": 183,
+    "text": "tokio::fs::copy(src, &partial)",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical artifact/attachment file publication or source-preserving import; native BlobStore availability does not authorize local historical source ownership.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/artifacts/migrate.rs",
+    "line": 206,
+    "text": "if let Err(e) = tokio::fs::rename(&partial, &target).await {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical artifact/attachment file publication or source-preserving import; native BlobStore availability does not authorize local historical source ownership.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/attachments/legacy.rs",
+    "line": 156,
+    "text": "let linked = tokio::fs::hard_link(&temp, &path).await;",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical artifact/attachment file publication or source-preserving import; native BlobStore availability does not authorize local historical source ownership.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/attachments/provider_cache.rs",
+    "line": 173,
+    "text": "tokio::fs::rename(&temp, cache).await",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical artifact/attachment file publication or source-preserving import; native BlobStore availability does not authorize local historical source ownership.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/attachments/provider_source.rs",
+    "line": 245,
+    "text": "let linked = tokio::fs::hard_link(&temp, &path).await;",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical artifact/attachment file publication or source-preserving import; native BlobStore availability does not authorize local historical source ownership.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/config/schema/load/atomic_commit.rs",
+    "line": 44,
+    "text": "let replace = fs::rename(temp_path, config_path).await;",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic configuration atomic publication/backup/recovery helper; native document loading must avoid entering this filesystem path.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/config/schema/load/atomic_commit.rs",
+    "line": 57,
+    "text": "fs::rename(temp_path, config_path).await",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic configuration atomic publication/backup/recovery helper; native document loading must avoid entering this filesystem path.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/config/schema/load/atomic_commit.rs",
+    "line": 163,
+    "text": "if fs::copy(config_path, backup_path).await.is_err() {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic configuration atomic publication/backup/recovery helper; native document loading must avoid entering this filesystem path.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/config/schema/load/branches.rs",
+    "line": 203,
+    "text": "match fs::rename(&config_path, &corrupted_path).await {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic configuration atomic publication/backup/recovery helper; native document loading must avoid entering this filesystem path.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/config/schema/load/impl_load.rs",
+    "line": 107,
+    "text": "if let Err(rename_err) = std::fs::rename(config_path, &corrupted_path) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic configuration atomic publication/backup/recovery helper; native document loading must avoid entering this filesystem path.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/config/schema/load_user_state.rs",
+    "line": 193,
+    "text": "if let Err(error) = std::fs::rename(&temp_path, &path) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic configuration atomic publication/backup/recovery helper; native document loading must avoid entering this filesystem path.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/desktop/app_state/ops/state_file.rs",
+    "line": 55,
+    "text": "if let Err(rename_error) = fs::rename(path, &quarantine_path) {",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Local bootstrap state quarantine publication; user preferences and accessibility/key bootstrap require separate authority.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/desktop/control/ops.rs",
+    "line": 157,
+    "text": "serde_json::to_writer(&mut temporary, &LocalState { enabled: value })",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Serialization of this machine desktop-control consent into its local temporary file; consent must not follow another host backend.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/media/generation/artifact_tool.rs",
+    "line": 473,
+    "text": "if tokio::fs::rename(src, dest).await.is_err() {",
+    "occurrence": 1,
+    "classification": "scratch",
+    "reason": "Generated tool-output relocation between temporary native-tool paths before publication; authoritative artifact capture remains a separate host boundary.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/media/generation/artifact_tool.rs",
+    "line": 474,
+    "text": "tokio::fs::copy(src, dest).await.map_err(|e| {",
+    "occurrence": 1,
+    "classification": "scratch",
+    "reason": "Generated tool-output relocation between temporary native-tool paths before publication; authoritative artifact capture remains a separate host boundary.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "writer-helper",
+    "path": "crates/openhuman-core/src/modules/browser_task_report.rs",
+    "line": 297,
+    "text": "async fn write_private(path: &Path, report: &TaskReport) -> std::io::Result<usize> {",
+    "occurrence": 1,
+    "classification": "unmigrated",
+    "reason": "Canonical browser site/report local publication helper; native scoped store selection requires its owning migration and trusted historical source admission.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/modules/storage_import_tinymcp.rs",
+    "line": 214,
+    "text": "std::fs::copy(path, &copy).with_context(|| format!(\"copy {}\", path.display()))?;",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Source-preserving legacy MCP SQLite import copies the database and WAL companion into scratch storage before opening the copy; durable imported records are written through the module storage contract.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7430"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/modules/storage_import_tinymcp.rs",
+    "line": 222,
+    "text": "std::fs::copy(&companion, PathBuf::from(target))",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Source-preserving legacy MCP SQLite import copies the database and WAL companion into scratch storage before opening the copy; durable imported records are written through the module storage contract.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7430"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/platform/cost/tracker.rs",
+    "line": 402,
+    "text": "if let Err(error) = fs::rename(&legacy_path, &storage_path) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical cost snapshot relocation/quarantine used by the classic/import path; native document accounting is a separate API.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/platform/cost/tracker.rs",
+    "line": 408,
+    "text": "fs::copy(&legacy_path, &storage_path).with_context(|| {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical cost snapshot relocation/quarantine used by the classic/import path; native document accounting is a separate API.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/platform/cost/tracker_documents.rs",
+    "line": 189,
+    "text": "match std::fs::rename(path, &target) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical cost snapshot relocation/quarantine used by the classic/import path; native document accounting is a separate API.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/platform/update/core.rs",
+    "line": 164,
+    "text": "std::fs::rename(tmp, dest).map_err(|e| {",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Downloaded executable update atomically replaces the local installed binary; deployment artifact is not tenant state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/profiles/lifecycle.rs",
+    "line": 190,
+    "text": "std::fs::rename(&layout.dir, &dest)",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Desktop profile directory archive/rollback lifecycle operation; backend purge and ownership/drain authority are separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/profiles/lifecycle.rs",
+    "line": 198,
+    "text": "if let Err(e) = std::fs::rename(&dest, &layout.dir) {",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Desktop profile directory archive/rollback lifecycle operation; backend purge and ownership/drain authority are separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/flows/http_credentials.rs",
+    "line": 426,
+    "text": "if let Err(e) = fs::rename(&tmp_path, &self.path) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical encrypted credential persistence/quarantine publication; native secret port and trusted source/key ownership are separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/credentials/profiles.rs",
+    "line": 281,
+    "text": "fs::rename(path, &candidate).with_context(|| {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Historical encrypted credential persistence/quarantine publication; native secret port and trusted source/key ownership are separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "writer-helper",
+    "path": "crates/openhuman-core/src/security/secret_storage/file_store.rs",
+    "line": 201,
+    "text": "pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SecretStorageError> {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Owner-only atomic encrypted-secret/bootstrap file helper; native SecretStore and machine master-key policy have separate admission.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/security/secret_storage/file_store.rs",
+    "line": 316,
+    "text": "std::fs::rename(source, destination)?;",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Owner-only atomic encrypted-secret/bootstrap file helper; native SecretStore and machine master-key policy have separate admission.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/security/secret_storage/file_store.rs",
+    "line": 406,
+    "text": "match std::fs::hard_link(path, &target) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Owner-only atomic encrypted-secret/bootstrap file helper; native SecretStore and machine master-key policy have separate admission.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/security/secret_storage/file_store.rs",
+    "line": 433,
+    "text": "return match std::fs::rename(path, &target) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Owner-only atomic encrypted-secret/bootstrap file helper; native SecretStore and machine master-key policy have separate admission.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-core/src/web3/wallet/ops/state.rs",
+    "line": 156,
+    "text": "if let Err(rename_error) = fs::rename(path, &quarantine_path) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic wallet state quarantine coupled to local keychain secrets; not eligible for plain-document relocation.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7430"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-embed/src/harness/skills.rs",
+    "line": 162,
+    "text": "std::fs::copy(entry.path(), &target).map_err(|source| HarnessError::Workspace {",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Library AgentSpec skill provisioning copies caller-supplied bundles into the agent directory because discovery rejects symlinks.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7429"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-embed/src/harness/workspace.rs",
+    "line": 174,
+    "text": "let temp = tempfile::Builder::new()",
+    "occurrence": 1,
+    "classification": "scratch",
+    "reason": "Library harness temporary workspace builder allocates a requested scratch directory; not durable user state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-embed/src/profiles.rs",
+    "line": 420,
+    "text": "let mut options = std::fs::OpenOptions::new();",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Fresh owner-only service token written before any served gateway; installation/connection bootstrap is deliberately local.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "crates/openhuman-embed/src/profiles.rs",
+    "line": 436,
+    "text": "std::fs::rename(&temp_path, path)",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Fresh owner-only service token written before any served gateway; installation/connection bootstrap is deliberately local.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7432"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-tinyhumans/src/integrations/file_storage/tools/download.rs",
+    "line": 89,
+    "text": "if let Err(e) = tokio::fs::write(&path, &body).await {",
+    "occurrence": 1,
+    "classification": "external-export",
+    "reason": "Downloads remote file bytes into the acting directory as a user-visible deliverable; local exported bytes do not replace the authoritative remote file record.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-tui/src/app/artifacts.rs",
+    "line": 79,
+    "text": "match std::fs::write(&path, state.export_markdown()) {",
+    "occurrence": 1,
+    "classification": "external-export",
+    "reason": "Explicit transcript Markdown export to the operator-selected path; the authoritative conversation journal is not replaced by this export.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7424"
+  },
+  {
+    "rule": "json-write",
+    "path": "vendor/tinyagents/crates/tinyagents-session/src/transcript/writer.rs",
+    "line": 441,
+    "text": "let mut file = fs::OpenOptions::new()",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic transcript generation/adoption/migration publication; scoped native session stores are a distinct implementation and historical source admission remains separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7426"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "vendor/tinyagents/crates/tinyagents-session/src/transcript/writer.rs",
+    "line": 464,
+    "text": "fs::rename(&tmp_path, path).with_context(|| {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic transcript generation/adoption/migration publication; scoped native session stores are a distinct implementation and historical source admission remains separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7426"
+  },
+  {
+    "rule": "file-mutation",
+    "path": "vendor/tinyagents/crates/tinyagents-session/src/transcript/writer.rs",
+    "line": 503,
+    "text": "let published = match fs::hard_link(&tmp_path, path) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic transcript generation/adoption/migration publication; scoped native session stores are a distinct implementation and historical source admission remains separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7426"
+  },
+  {
+    "rule": "json-write",
+    "path": "vendor/tinyagents/crates/tinyagents-session/src/transcript/writer.rs",
+    "line": 522,
+    "text": "let mut file = fs::OpenOptions::new()",
+    "occurrence": 2,
+    "classification": "classic",
+    "reason": "Classic transcript generation/adoption/migration publication; scoped native session stores are a distinct implementation and historical source admission remains separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7426"
+  },
+  {
+    "rule": "json-write",
+    "path": "vendor/tinyagents/crates/tinyagents-session/src/transcript/writer.rs",
+    "line": 586,
+    "text": "if let Err(err) = fs::write(&md_path, md.as_bytes()) {",
+    "occurrence": 1,
+    "classification": "classic",
+    "reason": "Classic transcript generation/adoption/migration publication; scoped native session stores are a distinct implementation and historical source admission remains separate.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7426"
+  }
+]

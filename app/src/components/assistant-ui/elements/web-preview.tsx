@@ -47,7 +47,7 @@ export function WebPreview({
   return (
     <div
       data-slot="web-preview"
-      className={cn(paper, 'flex w-full max-w-md flex-col overflow-hidden rounded-2xl', className)}
+      className={cn(paper, 'flex w-full flex-col overflow-hidden rounded-2xl', className)}
       {...props}>
       <div className="flex items-center gap-1.5 px-2.5 py-2">
         {onReload ? (
@@ -67,7 +67,7 @@ export function WebPreview({
             field,
             'flex min-w-0 flex-1 items-center gap-1.5 rounded-full px-2.5 py-1'
           )}>
-          <span className={cn(mono, 'text-foreground/45 min-w-0 truncate')}>{origin}</span>
+          <span className={cn(mono, 'text-muted-foreground min-w-0 truncate')}>{origin}</span>
         </span>
 
         <button
@@ -90,7 +90,7 @@ export function WebPreview({
         </div>
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <ShimmerLabel className="text-foreground/40 relative inline-block text-xs leading-none">
+            <ShimmerLabel className="text-muted-foreground relative inline-block text-xs leading-none">
               {loadingLabel}
             </ShimmerLabel>
           </div>

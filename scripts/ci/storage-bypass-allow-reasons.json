@@ -1,0 +1,107 @@
+[
+  {
+    "path": "crates/openhuman-core/src/config/schema/profile_layout.rs",
+    "rule": "json-write",
+    "site": "std::fs::write(dir.join(PROFILE_LAYOUT_MARKER), \"2\\n\")",
+    "reason": "bootstrap marker that says which on-disk layout a profile directory is; it must be readable before any storage backend can be opened (it decides where the backend lives)",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "path": "crates/openhuman-core/src/util/classic_transcript_fixture.rs",
+    "rule": "json-write",
+    "site": "std::fs::write(path, classic_jsonl(messages, meta)).expect(\"write the classic transcript\");",
+    "reason": "test-only fixture (compiled under cfg(test)) that writes a retired-layout `session_raw/*.jsonl` file for the importer and rewrite tests; no store reads it back",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "path": "crates/openhuman-core/src/security/approval/store_import.rs",
+    "rule": "sqlite-open",
+    "site": "let conn = Connection::open(&db_path).with_context(|| {",
+    "reason": "the storage importer's read-only reader of a legacy database, opened on a scratch copy of it (never the real file) to bring older installs' rows into the backend",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "path": "crates/openhuman-core/src/security/devices/store_import.rs",
+    "rule": "sqlite-open",
+    "site": "let conn = Connection::open(&db_path)",
+    "reason": "the storage importer's read-only reader of a legacy database, opened on a scratch copy of it (never the real file) to bring older installs' rows into the backend",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "path": "crates/openhuman-core/src/desktop/notifications/store_import.rs",
+    "rule": "sqlite-open",
+    "site": "let conn = Connection::open(&db_path).with_context(|| {",
+    "reason": "the storage importer's read-only reader of a legacy database, opened on a scratch copy of it (never the real file) to bring older installs' rows into the backend",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "path": "crates/openhuman-core/src/integrations/task_sources/store_import.rs",
+    "rule": "sqlite-open",
+    "site": "let mut conn = Connection::open(&db_path)",
+    "reason": "the storage importer's read-only reader of a legacy database, opened on a scratch copy of it (never the real file) to bring older installs' rows into the backend",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7433"
+  },
+  {
+    "path": "crates/openhuman-core/src/modules/storage_import_tinymcp.rs",
+    "rule": "sqlite-open",
+    "site": "Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_WRITE)",
+    "reason": "the storage importer's read-only reader of a legacy database, opened on a scratch copy of it (never the real file) to bring older installs' rows into the backend",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7430"
+  },
+  {
+    "path": "crates/openhuman-core/src/desktop/control/ops.rs",
+    "rule": "json-write",
+    "site": "let mut temporary = tempfile::NamedTempFile::new_in(parent)",
+    "reason": "this machine's own consent to drive its desktop: per-machine, and it must fail closed rather than follow a shared backend to another host",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "path": "crates/openhuman-core/src/desktop/app_state/ops/state_file.rs",
+    "rule": "json-write",
+    "site": "let mut temp_file = NamedTempFile::new_in(parent)",
+    "reason": "holds the local encryption key and keyring consent, which are needed before any storage backend is open (bootstrap state is never read from storage)",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7428"
+  },
+  {
+    "path": "crates/openhuman-core/src/web3/wallet/ops/state.rs",
+    "rule": "json-write",
+    "site": "let mut temp_file = NamedTempFile::new_in(parent)",
+    "reason": "paired with the OS keychain mnemonic (and holds it when there is no keychain): moves with the secrets work, not as a plain document",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7430"
+  },
+  {
+    "path": "crates/openhuman-core/src/agent/harness/tool_result_artifacts/mod.rs",
+    "rule": "json-write",
+    "site": "tokio::fs::write(&target, body).await?;",
+    "reason": "a derived view of a blob-stored tool-result artifact, written under the workspace's read-only artifacts root so file_read can open the key a pointer hands back; re-derived from the tenant's blob store on every read, which stays the source of truth",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "path": "crates/openhuman-core/src/modules/browser_task_report.rs",
+    "rule": "json-write",
+    "site": "let mut options = tokio::fs::OpenOptions::new();",
+    "reason": "opt-in debug trace (`[computer] trace`): the module's full task report, written as a file beside the module's own traces in the same trace directory so a person can open both; page text stays in a file only its owner can read and no store reads it back",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "path": "crates/openhuman-core/src/artifacts/files.rs",
+    "rule": "json-write",
+    "site": "match tokio::fs::OpenOptions::new()",
+    "reason": "Historical local artifact content reservation; a native BlobStore now exists, so this is migration debt, not a missing blob capability.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "path": "crates/openhuman-core/src/artifacts/tiny_store.rs",
+    "rule": "json-write",
+    "site": "tokio::fs::write(&dest, latest.body.as_bytes()).await?;",
+    "reason": "writes a text artifact's newest version into its file in the user-visible files folder; the deliverable is a user file on every backend, the versioned record itself goes through the artifact store",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "path": "crates/openhuman-core/src/media/generation/artifact_tool.rs",
+    "rule": "json-write",
+    "site": "let mut file = tokio::fs::OpenOptions::new()",
+    "reason": "User-visible artifact content is retained as a local deliverable; versioned records and native blob storage are separate capabilities and this file does not establish shared storage authority.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  }
+]

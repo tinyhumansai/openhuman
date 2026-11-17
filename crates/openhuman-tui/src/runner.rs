@@ -1,19 +1,19 @@
 //! CLI entry point for the tabbed terminal UI (`openhuman` / `tui` / `chat`).
 //!
 //! Parses flags, initializes **file-only** logging (the TUI owns the terminal —
-//! see `logging::init_for_tui`), boots the core in-process with no transport and
-//! no background services, resolves the target thread, and hands off to the
-//! event loop in [`super::app`].
+//! see `embed::process::init_for_tui`), boots the core in-process through
+//! [`openhuman_rpc::host::tui`] (no transport, no background services),
+//! resolves the target thread, and hands off to the event loop in
+//! [`super::app`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use openhuman_core::core::runtime::{
-    CoreBuilder, CoreRuntime, DomainSet, ServiceSet, AGENT_WORKER_STACK_BYTES, MAX_BLOCKING_THREADS,
-};
-use openhuman_core::core::types::HostKind;
+use openhuman_rpc::embed::chat_surface;
+use openhuman_rpc::embed::process;
+use openhuman_rpc::embed::CoreRuntime;
 
 /// Entry point for the `openhuman-tui` executable.
 ///
@@ -26,9 +26,8 @@ use openhuman_core::core::types::HostKind;
 ///   * a positional prompt — send immediately after startup.
 ///   * `-v` / `--verbose` — debug-level file logging.
 pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
-    openhuman_core::core::cli::load_dotenv_for_cli()?;
-    openhuman_core::platform::service::apply_startup_restart_delay_from_env();
-    openhuman_core::security::keyring::init_master_key();
+    process::load_dotenv_for_cli()?;
+    process::apply_startup_restart_delay_from_env();
 
     let mut thread_id: Option<String> = None;
     let mut force_new = false;
@@ -36,6 +35,9 @@ pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
     let mut resume_picker = false;
     let mut use_last = false;
     let mut no_alt_screen = false;
+    let mut no_mouse = false;
+    let mut demo = false;
+    let mut bench = false;
     let mut provider: Option<String> = None;
     let mut model: Option<String> = None;
     let mut prompt_parts = Vec::new();
@@ -43,6 +45,21 @@ pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--no-telemetry" => {
+                i += 1;
+            }
+            "--bench" => {
+                bench = true;
+                i += 1;
+            }
+            "--demo" => {
+                demo = true;
+                i += 1;
+            }
+            "--no-mouse" => {
+                no_mouse = true;
+                i += 1;
+            }
             "--thread" => {
                 thread_id = Some(
                     args.get(i + 1)
@@ -101,14 +118,20 @@ pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
         }
     }
 
-    openhuman_core::core::cli::set_transient_inference_overrides(
-        provider.as_deref(),
-        model.as_deref(),
-    );
+    if bench {
+        return super::benchmark::run();
+    }
+    if demo {
+        return super::demo::run(no_mouse);
+    }
+    process::set_transient_inference_overrides(provider.as_deref(), model.as_deref());
 
     // File-only logging — never stderr while the TUI owns the terminal.
     let data_dir = resolve_data_dir();
-    let log_dir = openhuman_core::core::logging::init_for_tui(&data_dir, verbose);
+    let log_dir = process::init_for_tui(&data_dir, verbose);
+    // After argument parsing so `--help` works while a configured master key
+    // is being fixed, and after logging so a rejection reaches the log file.
+    process::init_master_key()?;
     log::info!(
         "[tui] starting tabbed terminal UI (thread={:?} new={} logs={:?})",
         thread_id,
@@ -119,15 +142,12 @@ pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
     // A chat turn is a large async state machine that can delegate to
     // sub-agents; give the tokio workers the same roomy stack the server uses
     // so a nested turn cannot overflow the default 2 MiB stack.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(AGENT_WORKER_STACK_BYTES)
-        .max_blocking_threads(MAX_BLOCKING_THREADS)
-        .build()?;
+    let rt = process::tokio_runtime()?;
     let options = super::app::LaunchOptions {
         initial_prompt: (!prompt_parts.is_empty()).then(|| prompt_parts.join(" ")),
         resume_picker,
         no_alt_screen,
+        no_mouse,
     };
     rt.block_on(async_main(
         thread_id,
@@ -166,38 +186,34 @@ async fn async_main(
     prefer_existing: bool,
     options: super::app::LaunchOptions,
 ) -> anyhow::Result<()> {
-    // The core reaches the hosted backend (login, billing, integrations) only
-    // through the transport `openhuman-tinyhumans` installs; bind it to the
-    // runtime explicitly rather than relying on the process global.
-    let backend_transport =
-        openhuman_tinyhumans::install(openhuman_tinyhumans::InstallOptions::default())?;
-
-    // In-process core: full domains (channel.web_chat needs DomainGroup::Channels,
-    // so harness() is not enough), no RPC transport, no background services.
-    let runtime = Arc::new(
-        CoreBuilder::new(HostKind::detect_standalone())
-            .domains(DomainSet::full())
-            .services(ServiceSet::none())
-            .backend_transport(backend_transport)
-            .build()
-            .await?,
-    );
-    log::info!("[tui] core built (DomainSet::full, ServiceSet::none)");
+    // In-process core, connected to the TinyHumans backend (login, billing,
+    // integrations): full domains (channel.web_chat needs the channels family,
+    // so harness() is not enough), no RPC transport, no background services,
+    // and conversations in the classic on-disk layout, as the desktop keeps
+    // them, unless a storage URL (`OPENHUMAN_STORAGE_URL` / `[storage] url`)
+    // is set. `host` owns the core for the whole session: it must outlive the
+    // event loop below, so it is held until `app::run` returns.
+    let host = openhuman_rpc::host::tui().await?;
+    let runtime = Arc::clone(host.core_runtime());
+    log::debug!("[tui] runtime ready runtime_id={}", host.runtime_id());
 
     // ServiceSet::none intentionally skips channel startup. The TUI is itself
     // an interactive surface, so bridge approval, plan-review, artifact, and
     // agent progress events onto the same in-process web-channel stream.
-    openhuman_core::web_chat::register_approval_surface_subscriber();
-    openhuman_core::web_chat::register_artifact_surface_subscriber();
+    chat_surface::register_approval_surface_subscriber();
+    chat_surface::register_artifact_surface_subscriber();
 
     let client_id = format!("tui-{}", short_hex());
     let thread_id = resolve_thread(&runtime, thread_flag, force_new, prefer_existing).await?;
     log::info!("[tui] resolved thread={thread_id} client_id={client_id}");
 
     // Subscribe BEFORE the first turn so no streamed event is missed.
-    let web_rx = openhuman_core::web_chat::subscribe_web_channel_events();
+    let web_rx = chat_surface::subscribe_web_channel_events();
 
-    super::app::run(runtime, client_id, thread_id, web_rx, options).await
+    let result = super::app::run(runtime, client_id, thread_id, web_rx, options).await;
+    drop(host);
+    log::debug!("[tui] runtime released ok={}", result.is_ok());
+    result
 }
 
 /// Resolve the thread to open: the `--thread` id (unless `--new`), otherwise a
@@ -262,7 +278,7 @@ fn resolve_data_dir() -> PathBuf {
             return PathBuf::from(workspace);
         }
     }
-    openhuman_core::config::default_root_openhuman_dir()
+    openhuman_rpc::embed::config::default_root_openhuman_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("openhuman"))
 }
 
@@ -275,9 +291,13 @@ fn short_hex() -> String {
 fn print_help() {
     println!("Usage: openhuman-tui [OPTIONS] [PROMPT]");
     println!();
-    println!("Open the tabbed terminal UI for core logs, orchestrator chat, configuration,");
+    println!("Open the conversation-first terminal UI for agent chat, tools, configuration,");
     println!("and account settings. Runs the core in-process — no server, no ports.");
     println!();
+    println!("  --demo          Offline interactive UI preview (no model calls).");
+    println!("  --bench         Reproducible offline viewport/render benchmark (JSON).");
+    println!("  --no-telemetry  Skip the host crash-report client for isolated profiling.");
+    println!("  --no-mouse      Keep native terminal mouse selection.");
     println!("  --thread <id>   Attach to an existing conversation thread.");
     println!("  --new           Force a new thread (default when --thread is omitted).");
     println!("  --resume        Open the saved-thread picker (starts on the latest thread).");
@@ -287,8 +307,8 @@ fn print_help() {
     println!("  -m, --model <id>     Override the model for this TUI session.");
     println!("  -v, --verbose   Debug-level logging (written to the log file, never the UI).");
     println!();
-    println!("Keys: Ctrl+Tab or Alt+1-4 switch tabs · Enter send · Shift+Enter newline ·");
-    println!("      / opens commands · Ctrl+C / Ctrl+D quit.");
+    println!("Keys: Ctrl+P commands · Enter send/steer · Ctrl+Q queue · Shift+Enter newline ·");
+    println!("      Ctrl+J newline · Tab focus · / opens commands · Ctrl+D quit.");
 }
 
 #[cfg(test)]

@@ -16,15 +16,15 @@ use crate::config::Config;
 /// `app_key` in `config.toml` would silently pair a fresh key with a
 /// stale secret on next startup, and the channel would fail auth until
 /// the user reconnected or cleared credentials manually.
-pub(super) fn resolve_yuanbao_app_secret(
-    mut yb_cfg: crate::channels::providers::yuanbao::YuanbaoConfig,
+pub(super) async fn resolve_yuanbao_app_secret(
+    mut yb_cfg: tinychannels_bus::config::YuanbaoConfig,
     config: &Config,
-) -> crate::channels::providers::yuanbao::YuanbaoConfig {
+) -> tinychannels_bus::config::YuanbaoConfig {
     if !yb_cfg.app_secret.is_empty() {
         return yb_cfg;
     }
-    let auth = crate::security::credentials::AuthService::from_config(config);
-    match auth.get_profile("channel:yuanbao:api_key", None) {
+    let auth = crate::credentials::AuthService::from_config(config);
+    match auth.get_profile("channel:yuanbao:api_key", None).await {
         Ok(Some(profile)) => {
             let stored_app_key = profile.metadata.get("app_key").map(String::as_str);
             if stored_app_key != Some(yb_cfg.app_key.as_str()) {
@@ -49,88 +49,22 @@ pub(super) fn resolve_yuanbao_app_secret(
     yb_cfg
 }
 
-/// Best-effort fill of `email_cfg.password` from the encrypted credentials store
-/// when TOML doesn't already carry one.
-///
-/// The IMAP/SMTP `password` is intentionally not persisted in `config.toml` (see
-/// `persist_email_config` in `controllers/ops/connect.rs`); it lives only in the
-/// credentials store under `channel:email:api_key`. Existing TOML values still
-/// win so manually-installed deployments keep working. The stored secret is only
-/// copied when the stored profile's `username` matches, so editing `username` in
-/// `config.toml` can't silently pair a fresh account with a stale password.
-pub(super) fn resolve_email_password(
-    mut email_cfg: crate::channels::email_channel::EmailConfig,
-    config: &Config,
-) -> crate::channels::email_channel::EmailConfig {
-    if !email_cfg.password.is_empty() {
-        return email_cfg;
-    }
-    let auth = crate::security::credentials::AuthService::from_config(config);
-    match auth.get_profile("channel:email:api_key", None) {
-        Ok(Some(profile)) => {
-            let stored_username = profile.metadata.get("username").map(String::as_str);
-            if stored_username != Some(email_cfg.username.as_str()) {
-                tracing::warn!(
-                    "[channels] email stored credentials are for a different username (toml={:?}, store={:?}); reconnect the channel to refresh the password",
-                    email_cfg.username,
-                    stored_username,
-                );
-            } else if let Some(password) = profile.metadata.get("password") {
-                email_cfg.password = password.clone();
-            }
-        }
-        Ok(None) => {
-            tracing::warn!(
-                "[channels] email credentials missing — connect the channel again from the UI"
-            );
-        }
-        Err(e) => {
-            tracing::warn!("[channels] failed to load email credentials: {e}");
-        }
-    }
-    email_cfg
-}
-
-/// Supplies `tinychannels`' provider factory with this host's HTTP clients.
-///
-/// The factory is transport-agnostic on purpose: proxy configuration, TLS
-/// backend and timeouts are the embedding host's business. This is where
-/// OpenHuman's runtime proxy settings get applied, per channel, using the same
-/// `channel.<name>` identifiers the config UI shows.
-pub(crate) struct RuntimeProxyClients;
-
-impl tinychannels::HttpClientFactory for RuntimeProxyClients {
-    fn client_for(&self, channel: &str) -> reqwest::Client {
-        crate::config::build_runtime_proxy_client(channel)
-    }
-
-    /// Signal talks to a local `signal-cli` HTTP bridge that may simply not be
-    /// running. Without a connect timeout that presents as a hang at startup
-    /// rather than an error, so the default is overridden to keep the 10s bound
-    /// this host has always used.
-    fn signal_client(&self) -> reqwest::Client {
-        crate::config::apply_runtime_proxy_to_builder(
-            reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)),
-            "channel.signal",
-        )
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-    }
-}
+use crate::channels::credentials::resolve_email_password;
 
 /// Resolve channel secrets that live outside the config file.
 ///
-/// `tinychannels::build_channels` cannot do this: secrets may sit in the
-/// keyring, an environment variable or the config, and only this host knows
-/// which. It therefore expects an already-hydrated config, and this is where
-/// that happens — on a clone, so the persisted config is never mutated.
-pub(crate) fn hydrate_channel_credentials(config: &Config) -> tinychannels::ChannelsConfig {
+/// Secrets may sit in the keyring, an environment variable or the config, and
+/// only this host knows which. Hydration operates on a clone so the persisted
+/// config is never mutated before the module receives it confidentially.
+pub(crate) async fn hydrate_channel_credentials(
+    config: &Config,
+) -> tinychannels_bus::ChannelsConfig {
     let mut hydrated = config.channels_config.clone();
     if let Some(email_cfg) = hydrated.email.take() {
-        hydrated.email = Some(resolve_email_password(email_cfg, config));
+        hydrated.email = Some(resolve_email_password(email_cfg, config).await);
     }
     if let Some(yb_cfg) = hydrated.yuanbao.take() {
-        hydrated.yuanbao = Some(resolve_yuanbao_app_secret(yb_cfg, config));
+        hydrated.yuanbao = Some(resolve_yuanbao_app_secret(yb_cfg, config).await);
     }
     hydrated
 }

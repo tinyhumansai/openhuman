@@ -1,112 +1,107 @@
 use super::*;
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_required_inputs,
+};
 use serde_json::json;
 
 #[test]
-fn schema_names_are_stable() {
-    let s = voice_schemas("voice_status");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "status");
+fn legacy_voice_catalog_keeps_its_handlers_and_schema_fixtures() {
+    use super::handlers::*;
+    use crate::core::all::ControllerHandler;
 
-    let s = voice_schemas("voice_transcribe");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "transcribe");
+    let controllers: Vec<_> = all_voice_registered_controllers()
+        .into_iter()
+        .filter(|controller| !controller.schema.method_name().contains(".live_"))
+        .collect();
+    let expected: [(&str, ControllerHandler); 11] = [
+        ("voice.status", handle_voice_status),
+        ("voice.transcribe", handle_voice_transcribe),
+        ("voice.transcribe_bytes", handle_voice_transcribe_bytes),
+        ("voice.tts", handle_voice_tts),
+        ("voice.reply_synthesize", handle_voice_reply_synthesize),
+        ("voice.stt_dispatch", handle_voice_stt_dispatch),
+        ("voice.tts_dispatch", handle_voice_tts_dispatch),
+        ("voice.set_providers", handle_voice_set_providers),
+        (
+            "voice.update_provider_settings",
+            handle_voice_update_provider_settings,
+        ),
+        ("voice.list_models", handle_voice_list_models),
+        ("voice.test_provider", handle_voice_test_provider),
+    ];
+    assert_eq!(controllers.len(), expected.len());
+    for (controller, (method, handler)) in controllers.iter().zip(expected) {
+        assert_eq!(controller.schema.method_name(), method);
+        assert!(std::ptr::fn_addr_eq(controller.handler, handler));
+    }
 
-    let s = voice_schemas("voice_transcribe_bytes");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "transcribe_bytes");
-
-    let s = voice_schemas("voice_tts");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "tts");
-
-    let s = voice_schemas("overlay_stt_notify");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "overlay_stt_notify");
-
-    let s = voice_schemas("voice_stt_dispatch");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "stt_dispatch");
-
-    let s = voice_schemas("voice_tts_dispatch");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "tts_dispatch");
-
-    let s = voice_schemas("voice_set_providers");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "set_providers");
-}
-
-#[test]
-fn factory_dispatch_schemas_are_wired_into_registry() {
-    // Both dispatch endpoints + the persistence endpoint must be reachable
-    // through the registered_controllers list; without them the JSON-RPC
-    // router will reject the new method names with "unknown method".
-    let registry = all_voice_registered_controllers();
-    let functions: Vec<&'static str> = registry.iter().map(|c| c.schema.function).collect();
-    assert!(
-        functions.contains(&"stt_dispatch"),
-        "voice.stt_dispatch must be registered (got {functions:?})"
-    );
-    assert!(
-        functions.contains(&"tts_dispatch"),
-        "voice.tts_dispatch must be registered"
-    );
-    assert!(
-        functions.contains(&"set_providers"),
-        "voice.set_providers must be registered"
-    );
-}
-
-#[test]
-fn controller_lists_match_lengths() {
-    assert_eq!(
-        all_voice_controller_schemas().len(),
-        all_voice_registered_controllers().len()
-    );
-}
-
-#[test]
-fn status_schema_has_no_inputs() {
-    let s = voice_schemas("voice_status");
-    assert!(s.inputs.is_empty());
-}
-
-#[test]
-fn transcribe_schema_requires_audio_path() {
-    let s = voice_schemas("voice_transcribe");
-    assert!(s
-        .inputs
+    let contracts = crate::voice::parameter_contracts();
+    for contract in contracts
         .iter()
-        .any(|i| i.name == "audio_path" && i.required));
+        .filter(|contract| !contract.method.contains(".live_"))
+    {
+        let controller = controllers
+            .iter()
+            .find(|controller| controller.schema.method_name() == contract.method)
+            .expect("each core voice schema fixture has a legacy row");
+        crate::core::all::verify_parameter_schema(&controller.schema, contract)
+            .expect("legacy core voice schema retains its independent fixture");
+    }
 }
 
 #[test]
-fn transcribe_bytes_schema_requires_audio_bytes() {
-    let s = voice_schemas("voice_transcribe_bytes");
-    assert!(s
-        .inputs
-        .iter()
-        .any(|i| i.name == "audio_bytes" && i.required));
-}
-
-#[test]
-fn transcribe_bytes_schema_has_optional_extension() {
-    let s = voice_schemas("voice_transcribe_bytes");
-    let ext = s.inputs.iter().find(|i| i.name == "extension").unwrap();
-    assert!(!ext.required);
-}
-
-#[test]
-fn tts_schema_requires_text() {
-    let s = voice_schemas("voice_tts");
-    assert!(s.inputs.iter().any(|i| i.name == "text" && i.required));
-}
-
-#[test]
-fn tts_schema_has_optional_output_path() {
-    let s = voice_schemas("voice_tts");
-    let output_path = s.inputs.iter().find(|i| i.name == "output_path").unwrap();
-    assert!(!output_path.required);
+fn voice_schema_wire_contracts_are_preserved() {
+    let identities = [
+        ("voice_status", "status"),
+        ("voice_transcribe", "transcribe"),
+        ("voice_transcribe_bytes", "transcribe_bytes"),
+        ("voice_tts", "tts"),
+        ("voice_stt_dispatch", "stt_dispatch"),
+        ("voice_tts_dispatch", "tts_dispatch"),
+        ("voice_set_providers", "set_providers"),
+        ("voice_update_provider_settings", "update_provider_settings"),
+        ("voice_list_models", "list_models"),
+        ("voice_test_provider", "test_provider"),
+    ];
+    for (key, function) in identities {
+        expect_schema_identity(&voice_schemas(key), "voice", function);
+    }
+    let fields: &[(&str, &[(&str, bool)])] = &[
+        ("voice_transcribe", &[("audio_path", true)]),
+        (
+            "voice_transcribe_bytes",
+            &[("audio_bytes", true), ("extension", false)],
+        ),
+        ("voice_tts", &[("text", true), ("output_path", false)]),
+        (
+            "voice_update_provider_settings",
+            &[
+                ("voice_providers", false),
+                ("stt_provider", false),
+                ("tts_provider", false),
+            ],
+        ),
+        ("voice_list_models", &[("provider_id", true)]),
+        (
+            "voice_test_provider",
+            &[("workload", true), ("provider", true)],
+        ),
+    ];
+    for (key, expected) in fields {
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|(name, required)| (*name, Some(*required)))
+            .collect();
+        expect_schema_fields(&voice_schemas(key), &expected);
+    }
+    assert!(voice_schemas("voice_status").inputs.is_empty());
+    expect_schema_required_inputs(&voice_schemas("voice_update_provider_settings"), &[]);
+    assert_schema_controller_parity(
+        &all_voice_controller_schemas(),
+        &all_voice_registered_controllers(),
+        "status",
+    );
 }
 
 #[test]
@@ -130,147 +125,31 @@ fn deserialize_params_rejects_wrong_type() {
     assert!(err.contains("invalid params"));
 }
 
-#[test]
-fn to_json_returns_inner_value() {
-    let json =
-        to_json(Outcome::single_log(json!({"ok": true}), "done")).expect("serialize outcome");
-    assert_eq!(json["ok"], true);
-}
-
 #[tokio::test]
-async fn overlay_notify_recording_started_publishes_pressed_event() {
-    use crate::voice::dictation_listener::subscribe_dictation_events;
-    use tokio::time::{timeout, Duration};
-
-    let mut rx = subscribe_dictation_events();
-    let params = Map::from_iter([("state".to_string(), json!("recording_started"))]);
-
-    let result = handle_overlay_stt_notify(params)
-        .await
-        .expect("overlay notify should succeed");
-    assert_eq!(result["ok"], true);
-
-    // Other voice tests may publish nearby events on the same broadcast bus;
-    // consume until we observe the pressed event from this transition.
-    let evt = timeout(Duration::from_secs(1), async {
-        loop {
-            match rx.recv().await {
-                Ok(evt) if evt.event_type == "pressed" => return evt,
-                Ok(_) => continue,
-                Err(e) => panic!("expected dictation event: {e}"),
-            }
-        }
-    })
-    .await
-    .expect("timed out waiting for pressed dictation event");
-    assert_eq!(evt.event_type, "pressed");
-    assert_eq!(evt.hotkey, "chat_button");
-}
-
-#[tokio::test]
-async fn overlay_notify_transcription_done_publishes_text_and_release() {
-    use crate::voice::dictation_listener::{
-        subscribe_dictation_events, subscribe_transcription_results,
-    };
-
-    let mut dictation_rx = subscribe_dictation_events();
-    let mut transcription_rx = subscribe_transcription_results();
-    let params = Map::from_iter([
-        ("state".to_string(), json!("transcription_done")),
-        ("text".to_string(), json!("hello from overlay")),
-    ]);
-
-    let result = handle_overlay_stt_notify(params)
-        .await
-        .expect("overlay notify should succeed");
-    assert_eq!(result["ok"], true);
-
-    let text = transcription_rx
-        .try_recv()
-        .expect("expected transcription broadcast");
-    assert_eq!(text, "hello from overlay");
-
-    let mut saw_release = false;
-    while let Ok(evt) = dictation_rx.try_recv() {
-        if evt.event_type == "released" {
-            saw_release = true;
-            break;
-        }
-    }
-    assert!(saw_release, "expected a released dictation event");
-}
-
-#[tokio::test]
-async fn overlay_notify_transcription_done_requires_text() {
-    let params = Map::from_iter([("state".to_string(), json!("transcription_done"))]);
-
-    let err = handle_overlay_stt_notify(params)
-        .await
-        .expect_err("missing text should fail");
-    assert!(err.contains("text` is required"));
-}
-
-#[tokio::test]
-async fn server_status_and_stop_return_stopped_when_uninitialized() {
-    // The global voice server is a process-wide OnceLock. Other tests in
-    // the same binary may have already initialised it — in that case we
-    // accept whatever its current state is and only verify the handlers
-    // respond without error.
-    let status = handle_voice_server_status(Map::new())
-        .await
-        .expect("status handler");
-    let stopped = handle_voice_server_stop(Map::new())
-        .await
-        .expect("stop handler");
-
+async fn voice_server_start_reports_method_not_found() {
+    use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
+    let workspace = tempfile::tempdir().expect("private workspace");
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = workspace.path().to_path_buf();
+    config.action_dir = workspace.path().to_path_buf();
+    config.modules.enabled = false;
+    config.modules.allow_download = false;
+    let core = CoreContext::for_test_with_config(DomainSet::full(), config);
+    let result = crate::core::invoke::invoke_method(
+        DispatchCtx::new(core),
+        crate::core::types::AppState {
+            core_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+        "openhuman.voice_server_start",
+        Value::Object(Map::new()),
+    )
+    .await;
     assert!(
-        status.get("state").is_some(),
-        "status missing `state`: {status}"
+        result
+            .expect_err("retired method must be reported as unknown")
+            .starts_with(crate::core::dispatch::UNKNOWN_METHOD_PREFIX),
+        "retired RPC must be indistinguishable from an unknown method"
     );
-    assert!(
-        stopped.get("state").is_some(),
-        "stopped missing `state`: {stopped}"
-    );
-    assert!(status.get("transcription_count").is_some());
-}
-
-#[tokio::test]
-async fn overlay_notify_cancelled_publishes_released() {
-    use crate::voice::dictation_listener::subscribe_dictation_events;
-    let mut rx = subscribe_dictation_events();
-    let params = Map::from_iter([("state".to_string(), json!("cancelled"))]);
-    let result = handle_overlay_stt_notify(params).await.expect("ok");
-    assert_eq!(result["ok"], true);
-    let mut saw_release = false;
-    while let Ok(evt) = rx.try_recv() {
-        if evt.event_type == "released" {
-            saw_release = true;
-            break;
-        }
-    }
-    assert!(saw_release);
-}
-
-#[tokio::test]
-async fn overlay_notify_unknown_state_errors() {
-    let params = Map::from_iter([("state".to_string(), json!("mystery"))]);
-    let err = handle_overlay_stt_notify(params).await.unwrap_err();
-    // The deserialize layer rejects the unknown variant with a detailed
-    // enum message — just assert an error surfaced.
-    assert!(!err.is_empty());
-}
-
-#[tokio::test]
-async fn overlay_notify_missing_state_errors() {
-    let err = handle_overlay_stt_notify(Map::new()).await.unwrap_err();
-    assert!(!err.is_empty());
-}
-
-#[tokio::test]
-async fn server_start_handler_errors_when_local_ai_disabled() {
-    // Without a valid config the start handler must surface an error
-    // rather than silently succeed.
-    let _ = handle_voice_server_start(Map::new()).await;
 }
 
 #[test]
@@ -304,48 +183,9 @@ fn deserialize_voice_tts_accepts_optional_output_path() {
     assert_eq!(parsed.output_path.as_deref(), Some("/tmp/out.wav"));
 }
 
-#[test]
-fn server_start_schema_inputs_are_all_optional() {
-    let s = voice_schemas("voice_server_start");
-    for f in &s.inputs {
-        assert!(
-            !f.required,
-            "voice_server_start input `{}` should be optional",
-            f.name
-        );
-    }
-}
-
-#[test]
-fn every_registered_function_has_non_empty_description() {
-    for handler in all_voice_registered_controllers() {
-        assert!(
-            !handler.schema.description.is_empty(),
-            "fn {} missing description",
-            handler.schema.function
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // New voice provider registry RPC tests
 // ---------------------------------------------------------------------------
-
-#[test]
-fn new_provider_schemas_are_named_correctly() {
-    let s = voice_schemas("voice_update_provider_settings");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "update_provider_settings");
-
-    let s = voice_schemas("voice_list_models");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "list_models");
-
-    let s = voice_schemas("voice_test_provider");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "test_provider");
-}
-
 #[test]
 fn new_rpcs_are_in_registry() {
     let registry = all_voice_registered_controllers();
@@ -402,39 +242,6 @@ fn validate_tts_provider_accepts_slug_grammar() {
     assert!(validate_tts_provider("openai:alloy").is_ok());
     assert!(validate_tts_provider("elevenlabs:voice-id").is_ok());
     assert!(validate_tts_provider("custom").is_ok());
-}
-
-#[test]
-fn update_provider_settings_schema_has_correct_inputs() {
-    let s = voice_schemas("voice_update_provider_settings");
-    let names: Vec<&str> = s.inputs.iter().map(|i| i.name).collect();
-    assert!(names.contains(&"voice_providers"));
-    assert!(names.contains(&"stt_provider"));
-    assert!(names.contains(&"tts_provider"));
-    // All should be optional
-    for input in &s.inputs {
-        assert!(
-            !input.required,
-            "voice_update_provider_settings input `{}` should be optional",
-            input.name
-        );
-    }
-}
-
-#[test]
-fn list_models_schema_requires_provider_id() {
-    let s = voice_schemas("voice_list_models");
-    assert!(s
-        .inputs
-        .iter()
-        .any(|i| i.name == "provider_id" && i.required));
-}
-
-#[test]
-fn test_provider_schema_requires_workload_and_provider() {
-    let s = voice_schemas("voice_test_provider");
-    assert!(s.inputs.iter().any(|i| i.name == "workload" && i.required));
-    assert!(s.inputs.iter().any(|i| i.name == "provider" && i.required));
 }
 
 #[test]
@@ -534,21 +341,6 @@ fn test_provider_schema_exposes_the_dry_run_candidate_key() {
 }
 
 #[test]
-fn generate_silent_wav_produces_valid_wav_header() {
-    let wav = generate_silent_wav();
-    assert!(wav.len() >= 44, "WAV must have at least 44 bytes (header)");
-    assert_eq!(&wav[0..4], b"RIFF");
-    assert_eq!(&wav[8..12], b"WAVE");
-    assert_eq!(&wav[12..16], b"fmt ");
-    assert_eq!(&wav[36..40], b"data");
-    // 16kHz — the rate every routed STT engine takes without resampling.
-    let sample_rate = u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]);
-    assert_eq!(sample_rate, 16_000, "fixture must be 16kHz");
-    // total size = header(44) + 1600 samples * 2 bytes = 3244
-    assert_eq!(wav.len(), 3244);
-}
-
-#[test]
 fn stt_dispatch_params_all_optional_except_audio() {
     let params = Map::from_iter([("audio_base64".to_string(), json!("AAAA"))]);
     let parsed = deserialize_params::<SttDispatchParams>(params).unwrap();
@@ -638,5 +430,34 @@ async fn validate_provider_key_prefers_the_candidate_over_an_absent_stored_key()
     assert!(
         with.contains("request failed"),
         "the candidate must carry the validator through to the provider request, got {with:?}"
+    );
+}
+
+/// The exact 44-byte header `EncodeWavPcm16` returns for the "Test STT" clip
+/// (the bytes the former in-core `generate_silent_wav` produced): 16kHz mono
+/// 16-bit PCM, 1600 samples, so RIFF size 3236, byte rate 32000, block align
+/// 2, data 3200. The body that follows is 3200 zero bytes.
+const SILENT_STT_WAV_HEADER: [u8; 44] = [
+    b'R', b'I', b'F', b'F', 0xa4, 0x0c, 0x00, 0x00, b'W', b'A', b'V', b'E', b'f', b'm', b't', b' ',
+    0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00,
+    0x02, 0x00, 0x10, 0x00, b'd', b'a', b't', b'a', 0x80, 0x0c, 0x00, 0x00,
+];
+
+#[test]
+fn silent_stt_clip_request_matches_the_pinned_wav_header() {
+    let le_u32 =
+        |at: usize| u32::from_le_bytes(SILENT_STT_WAV_HEADER[at..at + 4].try_into().unwrap());
+    let le_u16 =
+        |at: usize| u16::from_le_bytes(SILENT_STT_WAV_HEADER[at..at + 2].try_into().unwrap());
+    // 16kHz — the rate every routed STT engine takes without resampling.
+    assert_eq!(SILENT_CLIP_SAMPLE_RATE, 16_000, "fixture must be 16kHz");
+    assert_eq!(SILENT_CLIP_SAMPLES, 1_600, "0.1s of audio");
+    assert_eq!(le_u16(22), 1, "mono");
+    assert_eq!(le_u32(24), SILENT_CLIP_SAMPLE_RATE);
+    assert_eq!(le_u32(40) as usize, SILENT_CLIP_SAMPLES * 2, "data bytes");
+    assert_eq!(
+        le_u32(4) as usize,
+        36 + SILENT_CLIP_SAMPLES * 2,
+        "RIFF size"
     );
 }

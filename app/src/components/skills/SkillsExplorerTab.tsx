@@ -21,7 +21,16 @@ import { LuLibrary, LuSparkles } from 'react-icons/lu';
 import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { type CatalogEntry, skillRegistryApi } from '../../services/api/skillRegistryApi';
+import {
+  type CatalogDetail,
+  type CatalogEntry,
+  type CatalogPage,
+  isInstallable,
+  type ParsedRegistryError,
+  parseRegistryError,
+  type ScanBlocked,
+  skillRegistryApi,
+} from '../../services/api/skillRegistryApi';
 import {
   type InstallWorkflowFromUrlResult,
   skillsApi,
@@ -36,6 +45,8 @@ import DataTable, { type DataTableColumn } from '../ui/DataTable';
 import { TableCell, TableRow } from '../ui/Table';
 import CreateSkillModal from './CreateSkillModal';
 import InstallSkillDialog from './InstallSkillDialog';
+import { RegistryErrorNotice, RegistryStatusNotice } from './RegistryStatusNotice';
+import ScanBlockedDialog from './ScanBlockedDialog';
 import UninstallSkillConfirmDialog from './UninstallSkillConfirmDialog';
 
 const log = debug('skills:explorer-tab');
@@ -96,7 +107,7 @@ function isCatalogEntryInstalled(entry: CatalogEntry, installedKeys: Set<string>
 /**
  * Source tone table: where a skill comes from (shipped with the app, or
  * fetched from a remote catalogue) maps to a `Badge` variant instead of a
- * bespoke tint. See `gitbooks/developing/theming.md`.
+ * bespoke tint. See `docs/gitbooks/en/developing/theming.md`.
  */
 const SOURCE_VARIANT: Record<string, BadgeVariant> = {
   'built-in': 'success',
@@ -294,11 +305,27 @@ interface CatalogTileProps {
 
 interface SkillDetailDialogProps {
   entry: CatalogEntry | null;
+  detail?: CatalogDetail | null;
   skill: WorkflowSummary | null;
   installed: boolean;
   onClose: () => void;
   onInstall?: () => void;
   installing?: boolean;
+}
+
+function SourceLink({ url, testId }: { url: string; testId: string }) {
+  const { t } = useT();
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid={testId}
+      onClick={event => event.stopPropagation()}
+      className="text-xs font-medium text-primary-600 hover:underline dark:text-primary-300">
+      {t('skills.registry.viewSource')}
+    </a>
+  );
 }
 
 function CatalogRow({ entry, installed, installing, onInstall, onClick }: CatalogTileProps) {
@@ -331,13 +358,18 @@ function CatalogRow({ entry, installed, installing, onInstall, onClick }: Catalo
       <TableCell className="w-px whitespace-nowrap text-right">
         {installed ? (
           <Badge variant="success">{t('skills.explorer.installed')}</Badge>
-        ) : !entry.download_url ? (
-          <Badge
-            variant="neutral"
-            title={t('skills.explorer.notInstallableHint')}
-            data-testid={`registry-not-installable-${entry.id}`}>
-            {t('skills.explorer.notInstallable')}
-          </Badge>
+        ) : !isInstallable(entry) ? (
+          <span className="inline-flex items-center gap-2">
+            <Badge
+              variant="neutral"
+              title={t('skills.explorer.notInstallableHint')}
+              data-testid={`registry-not-installable-${entry.id}`}>
+              {t('skills.explorer.notInstallable')}
+            </Badge>
+            {entry.source_url && (
+              <SourceLink url={entry.source_url} testId={`registry-source-link-${entry.id}`} />
+            )}
+          </span>
         ) : (
           <Button
             variant="secondary"
@@ -359,6 +391,7 @@ function CatalogRow({ entry, installed, installing, onInstall, onClick }: Catalo
 
 function SkillDetailDialog({
   entry,
+  detail,
   skill,
   installed,
   onClose,
@@ -373,8 +406,11 @@ function SkillDetailDialog({
   const author = entry?.author ?? '';
   const source = entry?.source ?? '';
   const category = entry?.category ?? '';
-  const downloadUrl = entry?.download_url ?? '';
-  const license = entry?.license ?? '';
+  const downloadUrl = detail?.download_url || entry?.download_url || '';
+  const license = detail?.license ?? entry?.license ?? '';
+  const overview = detail?.overview?.trim() ?? '';
+  const sourceUrl = detail?.source_url ?? entry?.source_url ?? '';
+  const installable = entry ? isInstallable(entry) : false;
 
   return (
     <ModalShell
@@ -401,13 +437,14 @@ function SkillDetailDialog({
       footer={
         !installed && onInstall ? (
           <div className="flex justify-end">
-            {downloadUrl ? (
+            {installable ? (
               <Button variant="secondary" size="sm" disabled={installing} onClick={onInstall}>
                 {installing ? t('skills.explorer.installing') : t('skills.explorer.install')}
               </Button>
             ) : (
-              <p className="text-xs text-content-muted">
-                {t('skills.explorer.notInstallableHint')}
+              <p className="flex flex-wrap items-center gap-2 text-xs text-content-muted">
+                <span>{t('skills.explorer.notInstallableHint')}</span>
+                {sourceUrl && <SourceLink url={sourceUrl} testId="skill-detail-source-link" />}
               </p>
             )}
           </div>
@@ -421,6 +458,17 @@ function SkillDetailDialog({
             </h3>
             <p className="text-sm text-content-secondary leading-relaxed whitespace-pre-wrap">
               {description}
+            </p>
+          </div>
+        )}
+
+        {overview && overview !== description && (
+          <div data-testid="skill-detail-overview">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-content-faint mb-1">
+              {t('skills.detail.overview')}
+            </h3>
+            <p className="text-sm text-content-secondary leading-relaxed whitespace-pre-wrap">
+              {overview}
             </p>
           </div>
         )}
@@ -496,12 +544,19 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
   const [skillsLoading, setSkillsLoading] = useState(true);
   const [skillsError, setSkillsError] = useState<string | null>(null);
 
-  // The whole fetched list; the table pages through it client-side.
-  const [catalogEntries, setCatalogEntries] = useState<CatalogEntry[]>([]);
+  const [catalogPage, setCatalogPage] = useState<CatalogPage | null>(null);
+  const [catalogPageNum, setCatalogPageNum] = useState(1);
+  const [catalogPageSize, setCatalogPageSize] = useState(PAGE_SIZE);
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<ParsedRegistryError | null>(null);
   const [catalogInitialized, setCatalogInitialized] = useState(false);
+  const catalogRequestRef = useRef(0);
   const [installingId, setInstallingId] = useState<string | null>(null);
+  const [scanBlocked, setScanBlocked] = useState<{
+    entry: CatalogEntry;
+    scan: ScanBlocked;
+  } | null>(null);
+  const [scanOverrideError, setScanOverrideError] = useState<string | null>(null);
   // Catalog entry ids we just installed this session. The "installed" badge is
   // otherwise derived purely from `isCatalogEntryInstalled`, a heuristic that
   // maps a refetched installed skill (whose post-install id/location can differ
@@ -522,6 +577,7 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
   const [createOpen, setCreateOpen] = useState<WorkflowSummary | null | undefined>(null);
   const [uninstallTarget, setUninstallTarget] = useState<WorkflowSummary | null>(null);
   const [detailEntry, setDetailEntry] = useState<CatalogEntry | null>(null);
+  const [entryDetail, setEntryDetail] = useState<CatalogDetail | null>(null);
   const [detailSkill, setDetailSkill] = useState<WorkflowSummary | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -556,41 +612,55 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
     }
   }, []);
 
-  // Compute the active source filter for RPC calls.
-  // Only apply when the user has deselected at least one source.
   const activeSourceFilter = useMemo(() => {
     if (activeSources.size === 0 || activeSources.size >= sources.length) return undefined;
-    // If exactly one source is active, pass it as the filter
-    if (activeSources.size === 1) return [...activeSources][0];
-    return undefined;
+    return [...activeSources].sort();
   }, [activeSources, sources.length]);
+  const activeSourceKey = activeSourceFilter?.join('\u0000') ?? '';
 
-  // Fetch catalog via RPC search (handles both browse and search).
-  // When query is empty and no source filter, uses browse; otherwise uses search.
   const fetchCatalog = useCallback(
-    async (query: string, sourceFilter: string | undefined, forceRefresh: boolean) => {
-      log('fetchCatalog: query=%s source=%s forceRefresh=%s', query, sourceFilter, forceRefresh);
+    async (
+      query: string,
+      sourceFilter: string[] | undefined,
+      page: number,
+      pageSize: number,
+      forceRefresh: boolean
+    ) => {
+      const request = ++catalogRequestRef.current;
+      log(
+        'fetchCatalog: query=%s sources=%d page=%d size=%d forceRefresh=%s',
+        query,
+        sourceFilter?.length ?? 0,
+        page,
+        pageSize,
+        forceRefresh
+      );
       setCatalogLoading(true);
       setCatalogError(null);
       try {
-        let entries: CatalogEntry[];
-        if (!query && !sourceFilter && !forceRefresh) {
-          entries = await skillRegistryApi.browse(false);
-        } else if (!query && !sourceFilter && forceRefresh) {
-          entries = await skillRegistryApi.browse(true);
-        } else {
-          entries = await skillRegistryApi.search(query || '', sourceFilter);
-        }
-        log('fetchCatalog: total=%d', entries.length);
-        // Keep the full list; the table pages through it without another RPC.
-        setCatalogEntries(entries);
+        const result = await skillRegistryApi.browsePage({
+          query,
+          sources: sourceFilter,
+          page,
+          pageSize,
+          forceRefresh,
+        });
+        if (request !== catalogRequestRef.current) return;
+        log(
+          'fetchCatalog: total=%d page=%d freshness=%s',
+          result.total,
+          result.page,
+          result.freshness
+        );
+        setCatalogPage(result);
         setCatalogInitialized(true);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log('fetchCatalog: error=%s', msg);
-        setCatalogError(msg);
+        if (request !== catalogRequestRef.current) return;
+        const parsed = parseRegistryError(err);
+        log('fetchCatalog: error kind=%s msg=%s', parsed.kind, parsed.message);
+        setCatalogError(parsed);
       } finally {
-        setCatalogLoading(false);
+        if (request === catalogRequestRef.current) setCatalogLoading(false);
       }
     },
     []
@@ -607,12 +677,41 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
       .catch(() => {});
   }, [fetchSkills]);
 
-  // Trigger catalog search when debounced query or source filter changes
+  useEffect(() => {
+    setCatalogPageNum(1);
+  }, [debouncedQuery, activeSourceKey]);
+
   useEffect(() => {
     if (view === 'registry') {
-      void fetchCatalog(debouncedQuery, activeSourceFilter, false);
+      void fetchCatalog(debouncedQuery, activeSourceFilter, catalogPageNum, catalogPageSize, false);
     }
-  }, [view, debouncedQuery, activeSourceFilter, fetchCatalog]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, debouncedQuery, activeSourceKey, catalogPageNum, catalogPageSize, fetchCatalog]);
+
+  const refreshCatalog = useCallback(
+    () =>
+      void fetchCatalog(debouncedQuery, activeSourceFilter, catalogPageNum, catalogPageSize, true),
+    [fetchCatalog, debouncedQuery, activeSourceFilter, catalogPageNum, catalogPageSize]
+  );
+
+  useEffect(() => {
+    if (!detailEntry) {
+      setEntryDetail(null);
+      return;
+    }
+    let cancelled = false;
+    skillRegistryApi
+      .detail(detailEntry.id)
+      .then(detail => {
+        if (!cancelled) setEntryDetail(detail);
+      })
+      .catch(err => {
+        log('detail: error=%s', parseRegistryError(err).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailEntry]);
 
   const installedKeys = useMemo(
     () => new Set(skills.flatMap(skill => workflowInstallKeys(skill))),
@@ -650,18 +749,7 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
     });
   }, [filteredSkills]);
 
-  // When multiple sources are active (but not all), do client-side filtering
-  // on the already-fetched results since the RPC only supports single source filter.
-  const filteredCatalog = useMemo(() => {
-    if (
-      activeSources.size === 0 ||
-      activeSources.size >= sources.length ||
-      activeSources.size === 1
-    ) {
-      return catalogEntries;
-    }
-    return catalogEntries.filter(e => activeSources.has(e.source));
-  }, [catalogEntries, activeSources, sources.length]);
+  const catalogEntries = catalogPage?.entries ?? [];
 
   const handleInstalled = useCallback(
     (result: InstallWorkflowFromUrlResult) => {
@@ -687,34 +775,55 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
     onToast?.({ type: 'success', title: t('skills.explorer.uninstallSuccess') });
   }, [fetchSkills, onToast, t]);
 
-  const handleRegistryInstall = useCallback(
-    async (entry: CatalogEntry) => {
-      log('handleRegistryInstall: id=%s source=%s', entry.id, entry.source);
+  const registryInstallErrorMessage = useCallback(
+    (entry: CatalogEntry, err: unknown): string => {
+      const parsed = parseRegistryError(err);
+      log('registryInstall: error kind=%s msg=%s', parsed.kind, parsed.message);
+      if (parsed.kind === 'no_direct_download') {
+        return entry.source_url
+          ? `${t('skills.registry.noDirectDownload')} ${entry.source_url}`
+          : t('skills.registry.noDirectDownload');
+      }
+      if (parsed.kind === 'upstream_ambiguous') return t('skills.registry.upstreamAmbiguous');
+      if (parsed.kind === 'rate_limited') {
+        return parsed.retryAfterSecs != null
+          ? t('skills.registry.rateLimited').replace('{seconds}', String(parsed.retryAfterSecs))
+          : t('skills.registry.rateLimitedShortly');
+      }
+      return parsed.message;
+    },
+    [t]
+  );
+
+  const runRegistryInstall = useCallback(
+    async (entry: CatalogEntry, acknowledgedDigest?: string): Promise<boolean> => {
+      log(
+        'runRegistryInstall: id=%s source=%s acknowledged=%s',
+        entry.id,
+        entry.source,
+        Boolean(acknowledgedDigest)
+      );
       setInstallingId(entry.id);
       try {
-        const result = await skillRegistryApi.install(entry.id);
-        // Authoritatively mark this entry installed so the card flips to
-        // "Installed" on success regardless of whether the refetched list maps
-        // back to it via the install-key heuristic (#4150).
+        const result = await skillRegistryApi.install(entry.id, { acknowledgedDigest });
+        if (result.status === 'scan_blocked') {
+          log('runRegistryInstall: scan_blocked findings=%d', result.scan.findings.length);
+          setScanOverrideError(null);
+          setScanBlocked({ entry, scan: result.scan });
+          return false;
+        }
         setInstalledEntryIds(prev => {
           const next = new Set(prev);
           next.add(entry.id);
           return next;
         });
-        // Await the refetch so `installedKeys` is fresh before the button
-        // re-renders — otherwise it briefly flips back to "Install" between
-        // clearing the installing state and the list updating. `fetchSkills`
-        // swallows its own errors, so this never throws into the catch below.
         await fetchSkills();
         onToast?.({
           type: 'success',
           title: t('skills.install.installComplete'),
           message: `Installed ${entry.name}${result.newSkills.length > 0 ? ` (${result.newSkills.join(', ')})` : ''}`,
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log('handleRegistryInstall: error=%s', msg);
-        onToast?.({ type: 'error', title: t('skills.install.errors.genericTitle'), message: msg });
+        return true;
       } finally {
         setInstallingId(null);
       }
@@ -722,31 +831,70 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
     [fetchSkills, onToast, t]
   );
 
+  const handleRegistryInstall = useCallback(
+    async (entry: CatalogEntry) => {
+      try {
+        await runRegistryInstall(entry);
+      } catch (err) {
+        onToast?.({
+          type: 'error',
+          title: t('skills.install.errors.genericTitle'),
+          message: registryInstallErrorMessage(entry, err),
+        });
+      }
+    },
+    [onToast, registryInstallErrorMessage, runRegistryInstall, t]
+  );
+
+  const handleScanBlock = useCallback(() => {
+    log('scanBlocked: user kept %s uninstalled', scanBlocked?.entry.id);
+    setScanBlocked(null);
+    setScanOverrideError(null);
+    onToast?.({
+      type: 'error',
+      title: t('skills.scan.declinedTitle'),
+      message: t('skills.scan.declinedHint'),
+    });
+  }, [onToast, scanBlocked, t]);
+
+  const handleScanInstallAnyway = useCallback(async () => {
+    if (!scanBlocked) return;
+    const { entry, scan } = scanBlocked;
+    try {
+      const installed = await runRegistryInstall(entry, scan.digest);
+      if (installed) setScanBlocked(null);
+    } catch (err) {
+      setScanOverrideError(registryInstallErrorMessage(entry, err));
+    }
+  }, [registryInstallErrorMessage, runRegistryInstall, scanBlocked]);
+
   const loading = view === 'installed' ? skillsLoading : catalogLoading;
-  const error = view === 'installed' ? skillsError : catalogError;
 
   const runSkill = (skill: WorkflowSummary) =>
     navigate(`/workflows/run?workflow=${encodeURIComponent(skill.id)}&lock=1`);
 
-  const errorNode =
-    !loading && error ? (
+  const installedErrorNode =
+    !skillsLoading && skillsError ? (
       <Alert variant="destructive" density="compact">
         <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-          <span>{error}</span>
-          <Button
-            variant="secondary"
-            tone="danger"
-            size="xs"
-            onClick={() =>
-              void (view === 'installed'
-                ? fetchSkills()
-                : fetchCatalog(debouncedQuery, activeSourceFilter, true))
-            }>
+          <span>{skillsError}</span>
+          <Button variant="secondary" tone="danger" size="xs" onClick={() => void fetchSkills()}>
             {t('common.retry')}
           </Button>
         </AlertDescription>
       </Alert>
     ) : undefined;
+
+  const registryErrorNode =
+    !catalogLoading && catalogError ? (
+      <RegistryErrorNotice error={catalogError} onRetry={refreshCatalog} />
+    ) : (
+      <RegistryStatusNotice
+        page={catalogPage}
+        firstLoad={catalogLoading && !catalogInitialized}
+        onRetry={refreshCatalog}
+      />
+    );
 
   const search = {
     value: searchQuery,
@@ -779,7 +927,7 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
       title={debouncedQuery ? t('skills.noResults') : t('skills.explorer.registryEmptyTitle')}
       description={debouncedQuery ? '' : t('skills.explorer.registryEmptyDescription')}
       actionLabel={debouncedQuery ? undefined : t('skills.explorer.refreshRegistry')}
-      onAction={debouncedQuery ? undefined : () => void fetchCatalog('', undefined, true)}
+      onAction={debouncedQuery ? undefined : refreshCatalog}
     />
   ) : null;
 
@@ -803,6 +951,17 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
         />
       )}
 
+      {scanBlocked && (
+        <ScanBlockedDialog
+          skillName={scanBlocked.entry.name}
+          scan={scanBlocked.scan}
+          installing={installingId === scanBlocked.entry.id}
+          error={scanOverrideError}
+          onBlock={handleScanBlock}
+          onInstallAnyway={() => void handleScanInstallAnyway()}
+        />
+      )}
+
       {uninstallTarget && (
         <UninstallSkillConfirmDialog
           skill={uninstallTarget}
@@ -814,6 +973,7 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
       {(detailEntry || detailSkill) && (
         <SkillDetailDialog
           entry={detailEntry}
+          detail={entryDetail}
           skill={detailSkill}
           installed={detailEntry ? entryInstalled(detailEntry) : true}
           onClose={() => {
@@ -916,7 +1076,7 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
           ]}
           pagination={{ pageSize: PAGE_SIZE }}
           loading={loading}
-          error={errorNode}
+          error={installedErrorNode}
           empty={installedEmpty}
           ariaLabel={t('skills.rows.installedTitle')}
         />
@@ -936,7 +1096,7 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => void fetchCatalog(debouncedQuery, activeSourceFilter, true)}
+            onClick={refreshCatalog}
             disabled={catalogLoading}
             aria-label={t('skills.explorer.refreshRegistry')}
             leadingIcon={
@@ -949,7 +1109,7 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
           </Button>
         }
         columns={catalogColumns}
-        rows={filteredCatalog}
+        rows={catalogEntries}
         rowKey={entry => `${entry.source}-${entry.id}`}
         renderRow={entry => (
           <CatalogRow
@@ -977,9 +1137,16 @@ export default function SkillsExplorerTab({ onToast, view }: SkillsExplorerTabPr
               ]
             : undefined
         }
-        pagination={{ pageSize: PAGE_SIZE, testId: 'registry-pagination' }}
-        loading={loading && filteredCatalog.length === 0}
-        error={errorNode}
+        pagination={{
+          page: catalogPageNum,
+          pageSize: catalogPageSize,
+          total: catalogPage?.total,
+          onPageChange: setCatalogPageNum,
+          onPageSizeChange: setCatalogPageSize,
+          testId: 'registry-pagination',
+        }}
+        loading={loading && catalogEntries.length === 0}
+        error={registryErrorNode}
         empty={registryEmpty ?? undefined}
         ariaLabel={t('skills.rows.registryTitle')}
       />

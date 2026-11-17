@@ -1,299 +1,264 @@
-//! This host's binding of the flow catalog to its workspace.
+//! Host client for the TinyFlows module's Catalog contract.
 //!
-//! The store itself is `tinyflows_sqlite::flows` — schema, SQL, migrations and
-//! concurrency all live there, take a directory, and know nothing about
-//! OpenHuman. What is left here is the one fact the crate cannot know: *which*
-//! directory this host keeps its catalog in.
-//!
-//! Every function below is that one substitution and nothing else. They are
-//! spelled out rather than replaced by a `pub use` so the existing
-//! `store::*(config, …)` call sites keep resolving unchanged, and so the seam
-//! stays visible: anything appearing in one of these bodies beyond
-//! `dir(config)` is host policy that has leaked into persistence.
+//! The module owns catalog schemas, migrations, revisions, and update rules.
+//! This file only translates the existing core-facing flow types to Catalog
+//! requests and back. Run lifecycle and checkpoint records are owned by the
+//! Runs adapter, not this definition client.
+
+use anyhow::{anyhow, Result};
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
+use tinyflows_bus::catalog::{
+    self, DeleteWorkflowResult, FlowUpdateError as BusUpdateError, GetRevisionRequest,
+    ListRevisionsRequest, ListWorkflowsResult, PutWorkflowRequest, PutWorkflowResponse,
+    PutWorkflowResult, SetEnabledRequest, Workflow as Flow, WorkflowRevision,
+};
+use tinyflows_bus::catalog::{FlowSuggestion, SuggestionStatus};
 
 use crate::config::Config;
-use anyhow::Result;
-use std::path::PathBuf;
-use tinyflows_catalog::{
-    Flow, FlowRevision, FlowRun, FlowRunStep, FlowSuggestion, SuggestionStatus,
-};
+use crate::modules::tinyflows as module;
 
-pub use tinyflows_sqlite::flows::{FlowUpdateError, MAX_FLOW_RUNS_PER_FLOW};
-
-/// Where this host keeps the flow catalog: `<workspace_dir>/flows`.
-///
-/// `flows.db`, `checkpoints.db` and the `drafts/` directory are all created
-/// under it by the crate on first use.
-pub fn dir(config: &Config) -> PathBuf {
-    config.workspace_dir.join("flows")
+pub(crate) fn call_catalog<T, A>(config: &Config, member: &'static str, args: A) -> Result<T>
+where
+    T: DeserializeOwned + Send + 'static,
+    A: Serialize + Send + Sync + 'static,
+{
+    let config = config.clone();
+    crate::storage::block_on_anyhow(async move {
+        let proxy = module::catalog_proxy(&config)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        proxy
+            .call(member, &args)
+            .await
+            .map_err(|error| anyhow!(error))
+    })
 }
 
-/// Binds [`tinyflows_sqlite::flows::upsert_flow`] to this host's catalog directory.
-#[inline]
-pub fn upsert_flow(config: &Config, flow: &Flow) -> Result<()> {
-    tinyflows_sqlite::flows::upsert_flow(&dir(config), flow)
+fn put_result(response: PutWorkflowResponse) -> Result<PutWorkflowResult> {
+    match response {
+        PutWorkflowResponse::Ok(result) => Ok(result),
+        PutWorkflowResponse::Error(error) => Err(anyhow!(match error {
+            BusUpdateError::NotFound { message }
+            | BusUpdateError::VersionConflict { message, .. }
+            | BusUpdateError::Store { message } => message,
+        })),
+    }
 }
 
-/// Binds [`tinyflows_sqlite::flows::insert_duplicate_flow`] to this host's catalog directory.
-#[inline]
+/// Duplicate a workflow through the module's Catalog contract.
 pub fn insert_duplicate_flow(config: &Config, source: &Flow, new_name: String) -> Result<Flow> {
-    tinyflows_sqlite::flows::insert_duplicate_flow(&dir(config), source, new_name)
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = PutWorkflowRequest::Duplicate {
+        storage,
+        id: source.id.clone(),
+        name: new_name,
+    };
+    let response: PutWorkflowResponse =
+        call_catalog(config, catalog::members::PUT_WORKFLOW, (request,))?;
+    put_result(response).map(|result| result.workflow)
 }
 
-/// Binds [`tinyflows_sqlite::flows::create_flow`] to this host's catalog directory.
-#[inline]
+/// Create a workflow through the module's Catalog contract.
 pub fn create_flow(
     config: &Config,
     name: String,
-    graph: tinyflows::model::WorkflowGraph,
+    graph: Value,
     require_approval: bool,
     enabled: bool,
-) -> Result<Flow> {
-    tinyflows_sqlite::flows::create_flow(&dir(config), name, graph, require_approval, enabled)
+) -> Result<PutWorkflowResult> {
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = PutWorkflowRequest::Create {
+        storage,
+        name,
+        graph,
+        require_approval,
+    };
+    let response: PutWorkflowResponse =
+        call_catalog(config, catalog::members::PUT_WORKFLOW, (request,))?;
+    let mut result = put_result(response)?;
+    // This is an explicit caller choice to start disabled. Catalog still
+    // authoritatively prevents automatic triggers from being born enabled.
+    if !enabled && result.workflow.enabled {
+        result.workflow = set_enabled(config, &result.workflow.id, false)?;
+    }
+    Ok(result)
 }
 
-/// Binds [`tinyflows_sqlite::flows::get_flow`] to this host's catalog directory.
-#[inline]
+/// Read one workflow by id.
 pub fn get_flow(config: &Config, id: &str) -> Result<Option<Flow>> {
-    tinyflows_sqlite::flows::get_flow(&dir(config), id)
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let workflow: Option<Flow> = call_catalog(
+        config,
+        catalog::members::GET_WORKFLOW,
+        (storage, id.to_owned()),
+    )?;
+    Ok(workflow)
 }
 
-/// Binds [`tinyflows_sqlite::flows::list_flows`] to this host's catalog directory.
-#[inline]
+/// List workflows and their full graphs through the module's catalog client.
 pub fn list_flows(config: &Config) -> Result<(Vec<Flow>, usize)> {
-    tinyflows_sqlite::flows::list_flows(&dir(config))
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let listed: ListWorkflowsResult =
+        call_catalog(config, catalog::members::LIST_WORKFLOWS, (storage.clone(),))?;
+    let mut flows = Vec::with_capacity(listed.workflows.len());
+    let mut skipped = listed.skipped_rows;
+    for summary in listed.workflows {
+        let workflow: Option<Flow> = call_catalog(
+            config,
+            catalog::members::GET_WORKFLOW,
+            (storage.clone(), summary.id),
+        )?;
+        match workflow {
+            Some(flow) => flows.push(flow),
+            None => skipped += 1,
+        }
+    }
+    Ok((flows, skipped))
 }
 
-/// Binds [`tinyflows_sqlite::flows::list_enabled_flows`] to this host's catalog directory.
-#[inline]
+/// List enabled workflows through the same module-owned catalog surface.
 pub fn list_enabled_flows(config: &Config) -> Result<(Vec<Flow>, usize)> {
-    tinyflows_sqlite::flows::list_enabled_flows(&dir(config))
+    let (flows, skipped) = list_flows(config)?;
+    Ok((
+        flows.into_iter().filter(|flow| flow.enabled).collect(),
+        skipped,
+    ))
 }
 
-/// Binds [`tinyflows_sqlite::flows::remove_flow`] to this host's catalog directory.
-#[inline]
+/// Remove a workflow through the module's Catalog contract.
 pub fn remove_flow(config: &Config, id: &str) -> Result<()> {
-    tinyflows_sqlite::flows::remove_flow(&dir(config), id)
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let _: DeleteWorkflowResult = call_catalog(
+        config,
+        catalog::members::DELETE_WORKFLOW,
+        (storage, id.to_owned()),
+    )?;
+    Ok(())
 }
 
-/// Binds [`tinyflows_sqlite::flows::set_enabled`] to this host's catalog directory.
-#[inline]
+/// Enable or disable a workflow through the module's Catalog contract.
 pub fn set_enabled(config: &Config, id: &str, enabled: bool) -> Result<Flow> {
-    tinyflows_sqlite::flows::set_enabled(&dir(config), id, enabled)
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = SetEnabledRequest {
+        storage,
+        id: id.to_owned(),
+        enabled,
+    };
+    let workflow: Flow = call_catalog(config, catalog::members::SET_ENABLED, (request,))?;
+    Ok(workflow)
 }
 
-/// Binds [`tinyflows_sqlite::flows::update_flow_graph`] to this host's catalog directory.
-#[inline]
+/// Update a workflow while preserving the module's optimistic concurrency.
+#[allow(clippy::too_many_arguments)]
 pub fn update_flow_graph(
     config: &Config,
     id: &str,
     name: String,
-    graph: tinyflows::model::WorkflowGraph,
+    graph: Value,
     require_approval: bool,
-    enabled_override: Option<bool>,
+    _enabled_override: Option<bool>,
     force_disarm_if_automatic: bool,
     expected_updated_at: Option<&str>,
-) -> std::result::Result<Flow, FlowUpdateError> {
-    tinyflows_sqlite::flows::update_flow_graph(
-        &dir(config),
-        id,
+) -> std::result::Result<PutWorkflowResult, BusUpdateError> {
+    let storage = super::catalog_storage::register_blocking(config).map_err(|error| {
+        BusUpdateError::Store {
+            message: error.to_string(),
+        }
+    })?;
+    let request = PutWorkflowRequest::Update {
+        storage,
+        id: id.to_owned(),
         name,
         graph,
         require_approval,
-        enabled_override,
-        force_disarm_if_automatic,
-        expected_updated_at,
-    )
+        expected_version: expected_updated_at.map(str::to_owned),
+        force_disarm_automatic: force_disarm_if_automatic,
+    };
+    let response: PutWorkflowResponse =
+        call_catalog(config, catalog::members::PUT_WORKFLOW, (request,)).map_err(|error| {
+            BusUpdateError::Store {
+                message: error.to_string(),
+            }
+        })?;
+    match response {
+        PutWorkflowResponse::Ok(result) => Ok(result),
+        PutWorkflowResponse::Error(error) => Err(error),
+    }
 }
 
-/// Binds [`tinyflows_sqlite::flows::list_revisions`] to this host's catalog directory.
-#[inline]
-pub fn list_revisions(config: &Config, flow_id: &str, limit: usize) -> Result<Vec<FlowRevision>> {
-    tinyflows_sqlite::flows::list_revisions(&dir(config), flow_id, limit)
+/// List a workflow's committed revisions.
+pub fn list_revisions(
+    config: &Config,
+    flow_id: &str,
+    limit: usize,
+) -> Result<Vec<WorkflowRevision>> {
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = ListRevisionsRequest {
+        storage,
+        flow_id: flow_id.to_owned(),
+        limit,
+    };
+    let revisions: Vec<WorkflowRevision> =
+        call_catalog(config, catalog::members::LIST_REVISIONS, (request,))?;
+    Ok(revisions)
 }
 
-/// Binds [`tinyflows_sqlite::flows::revision_by_id`] to this host's catalog directory.
-#[inline]
+/// Read one workflow revision by id.
 pub fn revision_by_id(
     config: &Config,
     flow_id: &str,
     revision_id: &str,
-) -> Result<Option<FlowRevision>> {
-    tinyflows_sqlite::flows::revision_by_id(&dir(config), flow_id, revision_id)
+) -> Result<Option<WorkflowRevision>> {
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = GetRevisionRequest {
+        storage,
+        flow_id: flow_id.to_owned(),
+        revision_id: revision_id.to_owned(),
+    };
+    let revision: Option<WorkflowRevision> =
+        call_catalog(config, catalog::members::GET_REVISION, (request,))?;
+    Ok(revision)
 }
 
-/// Binds [`tinyflows_sqlite::flows::record_run`] to this host's catalog directory.
-#[inline]
-pub fn record_run(config: &Config, id: &str, status: &str) -> Result<()> {
-    tinyflows_sqlite::flows::record_run(&dir(config), id, status)
-}
-
-/// Binds [`tinyflows_sqlite::flows::kv_get`] to this host's catalog directory.
-#[inline]
-pub fn kv_get(config: &Config, namespace: &str, key: &str) -> Result<Option<serde_json::Value>> {
-    tinyflows_sqlite::flows::kv_get(&dir(config), namespace, key)
-}
-
-/// Binds [`tinyflows_sqlite::flows::kv_set`] to this host's catalog directory.
-#[inline]
-pub fn kv_set(
-    config: &Config,
-    namespace: &str,
-    key: &str,
-    value: &serde_json::Value,
-) -> Result<()> {
-    tinyflows_sqlite::flows::kv_set(&dir(config), namespace, key, value)
-}
-
-/// Binds [`tinyflows_sqlite::flows::insert_flow_run`] to this host's catalog directory.
-#[inline]
-pub fn insert_flow_run(
-    config: &Config,
-    id: &str,
-    flow_id: &str,
-    thread_id: &str,
-    started_at: &str,
-) -> Result<()> {
-    tinyflows_sqlite::flows::insert_flow_run(&dir(config), id, flow_id, thread_id, started_at)
-}
-
-/// Binds [`tinyflows_sqlite::flows::prune_flow_runs`] to this host's catalog directory.
-#[inline]
-pub fn prune_flow_runs(config: &Config, flow_id: &str, keep: usize) -> Result<usize> {
-    tinyflows_sqlite::flows::prune_flow_runs(&dir(config), flow_id, keep)
-}
-
-/// Binds [`tinyflows_sqlite::flows::finish_flow_run`] to this host's catalog directory.
-#[inline]
-pub fn finish_flow_run(
-    config: &Config,
-    id: &str,
-    status: &str,
-    finished_at: &str,
-    steps: &[FlowRunStep],
-    pending_approvals: &[String],
-    error: Option<&str>,
-    graph_hash: Option<&str>,
-) -> Result<bool> {
-    tinyflows_sqlite::flows::finish_flow_run(
-        &dir(config),
-        id,
-        status,
-        finished_at,
-        steps,
-        pending_approvals,
-        error,
-        graph_hash,
-    )
-}
-
-/// Binds [`tinyflows_sqlite::flows::upsert_flow_run_step`] to this host's catalog directory.
-#[inline]
-pub fn upsert_flow_run_step(config: &Config, run_id: &str, step: &FlowRunStep) -> Result<()> {
-    tinyflows_sqlite::flows::upsert_flow_run_step(&dir(config), run_id, step)
-}
-
-/// Binds [`tinyflows_sqlite::flows::expire_parked_runs`] to this host's catalog directory.
-#[inline]
-pub fn expire_parked_runs(
-    config: &Config,
-    cutoff: &str,
-    now: &str,
-    error_msg: &str,
-) -> Result<Vec<(String, String)>> {
-    tinyflows_sqlite::flows::expire_parked_runs(&dir(config), cutoff, now, error_msg)
-}
-
-/// Binds [`tinyflows_sqlite::flows::list_running_run_ids`] to this host's catalog directory.
-#[inline]
-pub fn list_running_run_ids(
-    config: &Config,
-    started_before: &str,
-) -> Result<Vec<(String, String)>> {
-    tinyflows_sqlite::flows::list_running_run_ids(&dir(config), started_before)
-}
-
-/// Binds [`tinyflows_sqlite::flows::force_run_status_for_test`] to this host's catalog directory.
-///
-/// Test-only: the crate exposes it behind its `test-fixtures` feature, which
-/// this crate turns on as a dev-dependency and never in a shipped build.
-#[cfg(test)]
-#[inline]
-pub fn force_run_status_for_test(
-    config: &Config,
-    id: &str,
-    status: &str,
-    error: Option<&str>,
-) -> Result<()> {
-    tinyflows_sqlite::flows::force_run_status_for_test(&dir(config), id, status, error)
-}
-
-/// Binds [`tinyflows_sqlite::flows::force_corrupt_graph_json_for_test`] to this host's catalog directory.
-///
-/// Test-only: the crate exposes it behind its `test-fixtures` feature, which
-/// this crate turns on as a dev-dependency and never in a shipped build.
-#[cfg(test)]
-#[inline]
-pub fn force_corrupt_graph_json_for_test(
-    config: &Config,
-    flow_id: &str,
-    raw_graph_json: &str,
-) -> Result<()> {
-    tinyflows_sqlite::flows::force_corrupt_graph_json_for_test(
-        &dir(config),
-        flow_id,
-        raw_graph_json,
-    )
-}
-
-/// Binds [`tinyflows_sqlite::flows::mark_run_resuming`] to this host's catalog directory.
-#[inline]
-pub fn mark_run_resuming(config: &Config, id: &str) -> Result<bool> {
-    tinyflows_sqlite::flows::mark_run_resuming(&dir(config), id)
-}
-
-/// Binds [`tinyflows_sqlite::flows::mark_run_interrupted`] to this host's catalog directory.
-#[inline]
-pub fn mark_run_interrupted(config: &Config, id: &str, now: &str, reason: &str) -> Result<bool> {
-    tinyflows_sqlite::flows::mark_run_interrupted(&dir(config), id, now, reason)
-}
-
-/// Binds [`tinyflows_sqlite::flows::get_flow_run`] to this host's catalog directory.
-#[inline]
-pub fn get_flow_run(config: &Config, id: &str) -> Result<Option<FlowRun>> {
-    tinyflows_sqlite::flows::get_flow_run(&dir(config), id)
-}
-
-/// Binds [`tinyflows_sqlite::flows::list_flow_runs`] to this host's catalog directory.
-#[inline]
-pub fn list_flow_runs(config: &Config, flow_id: &str, limit: usize) -> Result<Vec<FlowRun>> {
-    tinyflows_sqlite::flows::list_flow_runs(&dir(config), flow_id, limit)
-}
-
-/// Binds [`tinyflows_sqlite::flows::list_all_flow_runs`] to this host's catalog directory.
-#[inline]
-pub fn list_all_flow_runs(config: &Config, limit: usize) -> Result<Vec<FlowRun>> {
-    tinyflows_sqlite::flows::list_all_flow_runs(&dir(config), limit)
-}
-
-/// Binds [`tinyflows_sqlite::flows::upsert_suggestions`] to this host's catalog directory.
-#[inline]
+/// Upsert module-owned discovery suggestions.
 pub fn upsert_suggestions(config: &Config, suggestions: &[FlowSuggestion]) -> Result<usize> {
-    tinyflows_sqlite::flows::upsert_suggestions(&dir(config), suggestions)
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = catalog::UpsertSuggestionsRequest {
+        storage,
+        suggestions: suggestions.to_vec(),
+    };
+    call_catalog(config, catalog::members::UPSERT_SUGGESTIONS, (request,))
 }
 
-/// Binds [`tinyflows_sqlite::flows::list_suggestions`] to this host's catalog directory.
-#[inline]
+/// List module-owned discovery suggestions.
 pub fn list_suggestions(
     config: &Config,
     status: Option<SuggestionStatus>,
     limit: usize,
 ) -> Result<Vec<FlowSuggestion>> {
-    tinyflows_sqlite::flows::list_suggestions(&dir(config), status, limit)
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = catalog::ListSuggestionsRequest {
+        storage,
+        status,
+        limit,
+    };
+    let suggestions: Vec<FlowSuggestion> =
+        call_catalog(config, catalog::members::LIST_SUGGESTIONS, (request,))?;
+    Ok(suggestions)
 }
 
-/// Binds [`tinyflows_sqlite::flows::set_suggestion_status`] to this host's catalog directory.
-#[inline]
+/// Set a suggestion's module-owned lifecycle status.
 pub fn set_suggestion_status(config: &Config, id: &str, status: SuggestionStatus) -> Result<bool> {
-    tinyflows_sqlite::flows::set_suggestion_status(&dir(config), id, status)
+    let storage = super::catalog_storage::register_blocking(config)?;
+    let request = catalog::SetSuggestionStatusRequest {
+        storage,
+        id: id.to_owned(),
+        status,
+    };
+    call_catalog(config, catalog::members::SET_SUGGESTION_STATUS, (request,))
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

@@ -37,12 +37,13 @@ const writeBaselineMode = process.argv.includes("--write-baseline");
 // which rewards the wrong action while looking rigorous.
 const IGNORE_ATTRIBUTE = /^\s*#\s*\[\s*ignore\b/;
 
-// `#[cfg_attr(<cond>, ignore)]` is an ignore this gate cannot count, and it
-// would fail SILENTLY in the direction that never reddens: the number goes
-// down, the test still does not run. No such form exists today, so the honest
-// move is to reject the first one rather than let the ratchet start leaking.
-// Delete this guard only by teaching the counter to handle the form.
-const UNCOUNTABLE_IGNORE = /#\s*\[\s*cfg_attr\s*\([^\]]*\bignore\b/;
+// `#[cfg_attr(<cond>, ignore = "...")]` is a conditional ignore (for example
+// `target_os = "linux"` for a test that only cannot run on one platform). It is
+// counted exactly like a plain `#[ignore]`: one attribute, one count, so scoping
+// an ignore to a platform never shrinks the number, and un-skipping it on every
+// platform is what earns ratchet credit. Anchored at line start for the same
+// reason as above.
+const CONDITIONAL_IGNORE_ATTRIBUTE = /^\s*#\s*\[\s*cfg_attr\s*\(.*\bignore\b/;
 
 async function rustFilesUnder(root) {
   const found = [];
@@ -72,7 +73,6 @@ async function rustFilesUnder(root) {
 // but they are their own reviewable surface, so folding them into the cli count
 // would hide movement in both.
 const buckets = new Map();
-const uncountable = [];
 
 const crateDirs = (await readdir(resolve(repoRoot, "crates"), { withFileTypes: true }))
   .filter((entry) => entry.isDirectory())
@@ -86,11 +86,8 @@ for (const [bucket, root] of [
   let count = 0;
   for (const path of await rustFilesUnder(root)) {
     const lines = (await readFile(path, "utf8")).split("\n");
-    for (const [index, line] of lines.entries()) {
-      if (IGNORE_ATTRIBUTE.test(line)) count += 1;
-      if (UNCOUNTABLE_IGNORE.test(line)) {
-        uncountable.push(`${relative(repoRoot, path)}:${index + 1}: ${line.trim()}`);
-      }
+    for (const line of lines) {
+      if (IGNORE_ATTRIBUTE.test(line) || CONDITIONAL_IGNORE_ATTRIBUTE.test(line)) count += 1;
     }
   }
   buckets.set(bucket, count);
@@ -114,12 +111,6 @@ try {
 }
 
 const failures = [];
-if (uncountable.length) {
-  failures.push(
-    `'#[cfg_attr(..., ignore)]' is not countable by this gate, so it would shrink the count without un-skipping the test:\n${uncountable.map((item) => `    ${item}`).join("\n")}\n  Use a plain '#[ignore = \"reason\"]', or teach scripts/ci/check-ignored-tests.mjs to count this form.`,
-  );
-}
-
 // A bucket absent from the baseline is 0, so a new crate that arrives carrying
 // ignored tests reddens instead of being grandfathered in.
 for (const [bucket, count] of Object.entries(actual)) {

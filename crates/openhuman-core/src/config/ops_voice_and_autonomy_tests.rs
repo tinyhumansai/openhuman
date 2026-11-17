@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 #[tokio::test]
 async fn get_config_snapshot_wraps_snapshot_in_rpc_outcome() {
@@ -12,191 +13,6 @@ async fn get_config_snapshot_wraps_snapshot_in_rpc_outcome() {
         .any(|l| l.contains("config loaded from")));
 }
 
-// ── Dictation / voice_server settings patches ─────────────────
-
-#[tokio::test]
-async fn load_and_apply_dictation_settings_rejects_invalid_activation_mode() {
-    let _g = ENV_LOCK.lock().await;
-    let tmp = tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    let patch = DictationSettingsPatch {
-        enabled: None,
-        hotkey: None,
-        activation_mode: Some("not-a-mode".into()),
-        llm_refinement: None,
-        streaming: None,
-        streaming_interval_ms: None,
-    };
-    let err = load_and_apply_dictation_settings(patch).await.unwrap_err();
-    assert!(err.contains("invalid activation_mode"));
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
-}
-
-#[tokio::test]
-async fn load_and_apply_voice_server_settings_rejects_invalid_activation_mode() {
-    let _g = ENV_LOCK.lock().await;
-    let tmp = tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    let patch = VoiceServerSettingsPatch {
-        auto_start: None,
-        hotkey: None,
-        activation_mode: Some("hold".into()),
-        skip_cleanup: None,
-        min_duration_secs: None,
-        silence_threshold: None,
-        custom_dictionary: None,
-        always_on_enabled: None,
-        wake_word: None,
-        stt_engine: None,
-    };
-    let err = load_and_apply_voice_server_settings(patch)
-        .await
-        .unwrap_err();
-    assert!(err.contains("invalid activation_mode"));
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
-}
-
-#[tokio::test]
-async fn load_and_apply_dictation_settings_accepts_valid_modes() {
-    let _g = ENV_LOCK.lock().await;
-    let tmp = tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    for mode in ["toggle", "push"] {
-        let patch = DictationSettingsPatch {
-            enabled: Some(true),
-            hotkey: Some("cmd+d".into()),
-            activation_mode: Some(mode.into()),
-            llm_refinement: Some(false),
-            streaming: Some(false),
-            streaming_interval_ms: Some(500),
-        };
-        assert!(
-            load_and_apply_dictation_settings(patch).await.is_ok(),
-            "mode `{mode}` should be accepted"
-        );
-    }
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
-}
-
-#[tokio::test]
-async fn load_and_apply_voice_server_settings_accepts_valid_modes_and_clamps() {
-    let _g = ENV_LOCK.lock().await;
-    let tmp = tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    // Negative min_duration_secs and silence_threshold should be clamped to 0.
-    let patch = VoiceServerSettingsPatch {
-        auto_start: Some(true),
-        hotkey: Some("fn".into()),
-        activation_mode: Some("tap".into()),
-        skip_cleanup: Some(false),
-        min_duration_secs: Some(-5.0),
-        silence_threshold: Some(-1.0),
-        custom_dictionary: Some(vec!["term".into()]),
-        always_on_enabled: Some(true),
-        wake_word: Some("Hey Tiny".to_string()),
-        stt_engine: Some("elevenlabs".into()),
-    };
-    let outcome = load_and_apply_voice_server_settings(patch)
-        .await
-        .expect("ok");
-    assert!(
-        outcome.value["config"]["voice_server"]["min_duration_secs"]
-            .as_f64()
-            .unwrap_or(-1.0)
-            >= 0.0
-    );
-    assert_eq!(
-        outcome.value["config"]["voice_server"]["stt_engine"]
-            .as_str()
-            .unwrap_or_default(),
-        "elevenlabs",
-        "the engine picker must persist through the config update RPC"
-    );
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
-}
-
-/// An engine name the core does not know must fail loudly. Defaulting to the
-/// backend proxy would silently transcribe (and bill) somewhere the caller did
-/// not ask for.
-#[tokio::test]
-async fn load_and_apply_voice_server_settings_rejects_unknown_stt_engine() {
-    let _g = ENV_LOCK.lock().await;
-    let tmp = tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    let patch = VoiceServerSettingsPatch {
-        auto_start: None,
-        hotkey: None,
-        activation_mode: None,
-        skip_cleanup: None,
-        min_duration_secs: None,
-        silence_threshold: None,
-        custom_dictionary: None,
-        always_on_enabled: None,
-        wake_word: None,
-        // The removed local engine is the case that matters: an old client
-        // could still send it.
-        stt_engine: Some("whisper".into()),
-    };
-    let err = load_and_apply_voice_server_settings(patch)
-        .await
-        .unwrap_err();
-    assert!(err.contains("invalid stt_engine"), "got: {err}");
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
-}
-
-// ── get_* via env override ─────────────────────────────────────
-
-#[tokio::test]
-async fn get_dictation_settings_reads_from_loaded_config() {
-    let _g = ENV_LOCK.lock().await;
-    let tmp = tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    let outcome = get_dictation_settings().await.expect("ok");
-    assert!(outcome.value.get("enabled").is_some());
-    assert!(outcome.value.get("hotkey").is_some());
-    assert!(outcome.value.get("streaming_interval_ms").is_some());
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
-}
-
-#[tokio::test]
-async fn get_voice_server_settings_reads_from_loaded_config() {
-    let _g = ENV_LOCK.lock().await;
-    let tmp = tempdir().unwrap();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    let outcome = get_voice_server_settings().await.expect("ok");
-    assert!(outcome.value.get("auto_start").is_some());
-    assert!(outcome.value.get("custom_dictionary").is_some());
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
-}
-
 #[tokio::test]
 async fn get_onboarding_completed_reads_from_loaded_config() {
     let _g = ENV_LOCK.lock().await;
@@ -204,7 +20,9 @@ async fn get_onboarding_completed_reads_from_loaded_config() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let outcome = get_onboarding_completed().await.expect("ok");
+    let outcome = get_onboarding_completed(&DispatchCtx::process_default())
+        .await
+        .expect("ok");
     // Default value — either true or false is fine; we just verify the call path.
     let _ = outcome.value;
     unsafe {
@@ -219,7 +37,9 @@ async fn load_and_resolve_api_url_returns_api_url_in_response() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let outcome = load_and_resolve_api_url().await.expect("ok");
+    let outcome = load_and_resolve_api_url(&DispatchCtx::process_default())
+        .await
+        .expect("ok");
     assert!(outcome.value.get("api_url").is_some());
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -227,11 +47,18 @@ async fn load_and_resolve_api_url_returns_api_url_in_response() {
 }
 
 #[test]
-fn resolve_api_url_comes_from_the_backend_transport() {
-    // The override guard itself lives with the transport
-    // (`openhuman-tinyhumans`); the core only forwards the configured value.
+fn resolve_api_url_is_the_control_plane_the_host_resolved() {
+    // The override guard itself lives with the host's enricher
+    // (`openhuman-tinyhumans`); the core only forwards the resolved value, and
+    // reports none when no host resolved a control plane.
     let mut config = Config::default();
     config.api_url = Some("http://127.0.0.1:4010".to_string());
+    assert_eq!(
+        resolve_backend_api_url(&config),
+        None,
+        "a configured api_url alone is not a resolved control plane"
+    );
+    config.resolved_endpoints.control_plane_url = Some("http://127.0.0.1:4010".to_string());
     assert_eq!(
         resolve_backend_api_url(&config).as_deref(),
         Some("http://127.0.0.1:4010")
@@ -245,15 +72,20 @@ async fn workspace_onboarding_flag_resolve_rejects_invalid_and_defaults() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let err = workspace_onboarding_flag_resolve(Some("a/b".into()), "done")
-        .await
-        .unwrap_err();
+    let err = workspace_onboarding_flag_resolve(
+        &DispatchCtx::process_default(),
+        Some("a/b".into()),
+        "done",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("Invalid onboarding flag"));
 
     // Happy path: default name on a fresh workspace → file doesn't exist.
-    let outcome = workspace_onboarding_flag_resolve(None, "onboarding.done")
-        .await
-        .expect("ok");
+    let outcome =
+        workspace_onboarding_flag_resolve(&DispatchCtx::process_default(), None, "onboarding.done")
+            .await
+            .expect("ok");
     let _ = outcome.value;
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -268,9 +100,14 @@ async fn workspace_onboarding_flag_set_rejects_invalid_names() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
     for bad in ["", "   ", "a/b", "a\\b", ".."] {
-        let err = workspace_onboarding_flag_set(Some(bad.into()), "default", true)
-            .await
-            .unwrap_err();
+        let err = workspace_onboarding_flag_set(
+            &DispatchCtx::process_default(),
+            Some(bad.into()),
+            "default",
+            true,
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("Invalid onboarding flag"), "name {bad}: {err}");
     }
     unsafe {
@@ -286,14 +123,24 @@ async fn workspace_onboarding_flag_set_round_trip() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
     // Create flag
-    let created = workspace_onboarding_flag_set(Some("onboarding.done".into()), "default", true)
-        .await
-        .expect("create");
+    let created = workspace_onboarding_flag_set(
+        &DispatchCtx::process_default(),
+        Some("onboarding.done".into()),
+        "default",
+        true,
+    )
+    .await
+    .expect("create");
     assert!(created.value);
     // Remove flag
-    let removed = workspace_onboarding_flag_set(Some("onboarding.done".into()), "default", false)
-        .await
-        .expect("remove");
+    let removed = workspace_onboarding_flag_set(
+        &DispatchCtx::process_default(),
+        Some("onboarding.done".into()),
+        "default",
+        false,
+    )
+    .await
+    .expect("remove");
     assert!(!removed.value);
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -419,6 +266,97 @@ async fn apply_autonomy_settings_rejects_zero() {
     );
 }
 
+/// #8575: a bad level or a zero action budget is refused before any field of
+/// the patch is applied, so a caller that keeps the `Config` can't save half
+/// of a rejected patch.
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_level_or_budget_before_changing_anything() {
+    let _g = ENV_LOCK.lock().await;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let prior = toml::to_string(&cfg.autonomy).unwrap();
+    for (patch, expected) in [
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                allowed_commands: Some(vec!["git".into()]),
+                max_actions_per_hour: Some(0),
+                ..Default::default()
+            },
+            "max_actions_per_hour must be at least 1",
+        ),
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                allowed_commands: Some(vec!["git".into()]),
+                level: Some("sometimes".into()),
+                ..Default::default()
+            },
+            "invalid autonomy level",
+        ),
+    ] {
+        let err = apply_autonomy_settings(&mut cfg, patch).await.unwrap_err();
+        assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+        assert_eq!(
+            toml::to_string(&cfg.autonomy).unwrap(),
+            prior,
+            "a rejected patch leaves the settings as they were"
+        );
+        assert!(!cfg.config_path.exists(), "a rejected patch is not saved");
+    }
+}
+
+/// TS-E2E-015: an enabled policy TinySecurity cannot represent is refused at
+/// save time, the file is not written and the settings stay as they were.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_a_policy_tinysecurity_cannot_represent() {
+    let _g = ENV_LOCK.lock().await;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let prior = cfg.autonomy.clone();
+    for (patch, expected) in [
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                forbidden_paths: Some(vec!["relative/forbidden".into()]),
+                ..Default::default()
+            },
+            "forbidden paths must be absolute",
+        ),
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                allowed_commands: Some(vec!["git status".into()]),
+                ..Default::default()
+            },
+            "argument-free command names",
+        ),
+    ] {
+        let err = apply_autonomy_settings(&mut cfg, patch).await.unwrap_err();
+        assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+        assert_eq!(
+            toml::to_string(&cfg.autonomy).unwrap(),
+            toml::to_string(&prior).unwrap(),
+            "a rejected patch leaves the settings as they were"
+        );
+        assert!(!cfg.config_path.exists(), "a rejected patch is not saved");
+    }
+
+    apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            enabled: Some(true),
+            forbidden_paths: Some(vec![tmp.path().join("private").display().to_string()]),
+            allowed_commands: Some(vec!["git".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("a representable enabled policy is saved");
+    assert!(cfg.autonomy.enabled);
+}
+
 #[tokio::test]
 async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
     let _g = ENV_LOCK.lock().await;
@@ -452,7 +390,7 @@ async fn load_and_apply_autonomy_settings_roundtrip() {
         max_actions_per_hour: Some(500),
         ..Default::default()
     };
-    let outcome = load_and_apply_autonomy_settings(patch)
+    let outcome = load_and_apply_autonomy_settings(&DispatchCtx::process_default(), patch)
         .await
         .expect("apply");
     assert!(outcome.value.get("config").is_some());
@@ -559,11 +497,11 @@ async fn add_auto_approve_tool_appends_then_dedupes() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
 
-    add_auto_approve_tool("git_operations")
+    add_auto_approve_tool(&DispatchCtx::process_default(), "git_operations")
         .await
         .expect("first add");
     // Idempotent: a second add of the same tool must not create a duplicate.
-    add_auto_approve_tool("git_operations")
+    add_auto_approve_tool(&DispatchCtx::process_default(), "git_operations")
         .await
         .expect("second add (idempotent)");
 
@@ -619,4 +557,34 @@ async fn apply_agent_settings_updates_timeout_and_persists_snapshot() {
         .any(|l| l.contains("agent settings saved to")));
     // With no env override, the live runtime now reflects the saved value.
     assert_eq!(crate::tools::timeout::tool_execution_timeout_secs(), 300);
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_a_relative_or_empty_trusted_root() {
+    let _g = ENV_LOCK.lock().await;
+    for root in ["", "  ", ".", "rel/dir"] {
+        let tmp = tempdir().unwrap();
+        let mut cfg = tmp_config(&tmp);
+        let enabled_before = cfg.autonomy.enabled;
+        let err = apply_autonomy_settings(
+            &mut cfg,
+            AutonomySettingsPatch {
+                // A rejected patch must not half-apply its other fields.
+                enabled: Some(!enabled_before),
+                trusted_roots: Some(vec![crate::security::TrustedRoot {
+                    path: root.into(),
+                    access: crate::security::TrustedAccess::ReadWrite,
+                }]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("a non-absolute trusted root must be refused");
+        assert!(
+            err.contains("absolute"),
+            "expected validation error, got: {err}"
+        );
+        assert!(cfg.autonomy.trusted_roots.is_empty());
+        assert_eq!(cfg.autonomy.enabled, enabled_before, "patch half-applied");
+    }
 }

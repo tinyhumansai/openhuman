@@ -1,5 +1,5 @@
 use super::*;
-use crate::security::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
+use tinytools::status::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
 
 fn result(error: Option<&str>, content: &str) -> ToolResult {
     match error {
@@ -84,75 +84,6 @@ fn connection_failures_stay_retryable_for_external_effect_tools() {
     }
 }
 
-// ── class → OutcomeClass mapping (exhaustive) ─────────────────────────────
-
-#[test]
-fn every_failure_class_maps_as_documented() {
-    use OutcomeClass::*;
-    use ToolFailureClass::*;
-    // `retry_safe = true` isolates the class mapping from the
-    // external-effect policy, which has its own tests below.
-    for (class, want) in [
-        (Timeout, RetryableFailure),
-        (ServiceUnavailable, RetryableFailure),
-        (ModelConnection, RetryableFailure),
-        (MissingPermission, PermanentFailure),
-        (MissingApp, PermanentFailure),
-        (BadCredentials, PermanentFailure),
-        (ToolFailureClass::BlockedByPolicy, PermanentFailure),
-        (Denied, PermanentFailure),
-        (ApprovalExpired, PermanentFailure),
-        (Unknown, PermanentFailure),
-    ] {
-        assert_eq!(
-            OpenHumanToolOutcomeClassifier::class_of(class, true),
-            want,
-            "mapping {class:?}"
-        );
-    }
-}
-
-#[test]
-fn no_failure_class_ever_maps_to_success() {
-    // `class_of` is only reached when `error` is set, so a mapping that
-    // produced `Success` would erase a real failure from the transcript.
-    for class in [
-        ToolFailureClass::Timeout,
-        ToolFailureClass::ServiceUnavailable,
-        ToolFailureClass::ModelConnection,
-        ToolFailureClass::MissingPermission,
-        ToolFailureClass::MissingApp,
-        ToolFailureClass::BadCredentials,
-        ToolFailureClass::BlockedByPolicy,
-        ToolFailureClass::Denied,
-        ToolFailureClass::ApprovalExpired,
-        ToolFailureClass::NotFound,
-        ToolFailureClass::Unsupported,
-        ToolFailureClass::Unknown,
-    ] {
-        assert!(
-            OpenHumanToolOutcomeClassifier::class_of(class, true).is_failure(),
-            "{class:?} must stay a failure"
-        );
-    }
-}
-
-#[test]
-fn recoverable_flag_is_deliberately_not_the_retry_signal() {
-    // `Unknown` is `FailureCategory::Recoverable` in the domain, yet must be
-    // permanent here — this divergence is the whole point of the adapter and
-    // regressing to `if failure.recoverable` would resurrect it.
-    let unknown = crate::tools::status::describe(ToolFailureClass::Unknown);
-    assert!(
-        unknown.recoverable,
-        "domain still calls Unknown recoverable"
-    );
-    assert_eq!(
-        OpenHumanToolOutcomeClassifier::class_of(ToolFailureClass::Unknown, true),
-        OutcomeClass::PermanentFailure
-    );
-}
-
 // ── end-to-end over real error text ───────────────────────────────────────
 
 #[test]
@@ -227,7 +158,7 @@ fn an_expired_approval_is_permanent_despite_saying_timed_out() {
     assert_eq!(outcome_of(&text), OutcomeClass::PermanentFailure);
 }
 
-// ── failure-text assembly ─────────────────────────────────────────────────
+// ── owner classification and host policy ──────────────────────────────────
 
 #[test]
 fn markers_are_honoured_when_they_land_in_content_not_error() {
@@ -238,33 +169,6 @@ fn markers_are_honoured_when_they_land_in_content_not_error() {
     assert_eq!(
         classifier.classify("shell", &result(Some("tool failed"), &denied)),
         OutcomeClass::PermanentFailure
-    );
-}
-
-#[test]
-fn failure_text_preserves_single_and_combined_sources() {
-    let only_error = result(Some("boom"), "");
-    assert_eq!(
-        OpenHumanToolOutcomeClassifier::failure_text(&only_error),
-        "boom"
-    );
-
-    let duplicated = result(Some("boom"), "boom");
-    assert_eq!(
-        OpenHumanToolOutcomeClassifier::failure_text(&duplicated),
-        "boom"
-    );
-
-    let only_content = result(Some(""), "boom");
-    assert_eq!(
-        OpenHumanToolOutcomeClassifier::failure_text(&only_content),
-        "boom"
-    );
-
-    let both = result(Some("boom"), "context");
-    assert_eq!(
-        OpenHumanToolOutcomeClassifier::failure_text(&both),
-        "context"
     );
 }
 

@@ -1,8 +1,7 @@
 use super::*;
 
-use crate::cron::JobType;
-use crate::cron::Schedule;
-use crate::cron::SessionTarget;
+use tinyflows_bus::schedule::types::JobType;
+use tinyflows_bus::schedule::types::Schedule;
 // TAURI-RUST-514 — a BYO provider insufficient-credits 402 ("requires more
 // credits") leaks from a cron-fired agent job through `last_agent_error`.
 // `is_insufficient_credits_failure` must consult the message classifier so the
@@ -329,11 +328,12 @@ async fn run_agent_job_returns_error_without_provider_key() {
 
 #[tokio::test]
 async fn cron_agent_job_uses_agent_definition_tool_scope() {
+    crate::agent::session_host::test_support::install_model_fixture();
     // The embedding seam fails loudly when unwired. Installed here rather
     // than relied upon from another test: `install_for_tests` is
     // `Once`-guarded, so a test that omits it passes only while some
     // earlier test in the same binary happened to run first.
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("init built-in agent definitions");
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
@@ -342,8 +342,14 @@ async fn cron_agent_job_uses_agent_definition_tool_scope() {
     job.name = Some("morning_briefing".into());
     job.agent_id = Some("morning_briefing".into());
 
-    let built = build_agent_for_cron_job(&config, &job).expect("build cron agent");
-    let visible = built.agent.visible_tool_names_for_test();
+    let built =
+        build_agent_for_cron_job(&crate::core::runtime::DispatchCtx::ambient(), &config, &job)
+            .await
+            .unwrap_or_else(|error| {
+                eprintln!("failed to build cron agent: {error:#}");
+                panic!("build cron agent")
+            });
+    let visible = built.agent.visible_tool_specs_arc();
 
     assert!(
         !visible.is_empty(),
@@ -351,21 +357,48 @@ async fn cron_agent_job_uses_agent_definition_tool_scope() {
     );
 }
 
-#[tokio::test]
-async fn persist_job_result_records_run_and_reschedules_shell_job() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let job = cron::add_job(&config, "*/5 * * * *", "echo ok").unwrap();
-    let started = Utc::now();
-    let finished = started + ChronoDuration::milliseconds(10);
+/// Runs `job_id` once through the schedule runtime (claim, execute, deliver,
+/// record, complete) the way a poll would find it: due now, never retried.
+async fn run_through_scheduler(config: &Config, job_id: &str) {
+    crate::cron::store::tests::force_next_run_for_test(
+        config,
+        job_id,
+        Utc::now() - ChronoDuration::seconds(1),
+    )
+    .unwrap();
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    ));
+    let mut dispatcher = JobDispatcher::new(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        &security,
+    );
+    dispatcher.tick(config).await.unwrap();
+    dispatcher.drain().await;
+}
 
-    let success = persist_job_result(&config, &job, true, "ok", started, finished).await;
-    assert!(success);
+async fn no_retry_config(tmp: &TempDir) -> Config {
+    let mut config = test_config(tmp).await;
+    config.reliability.scheduler_retries = 0;
+    config
+}
+
+#[tokio::test]
+async fn a_scheduled_shell_run_records_history_and_reschedules() {
+    let tmp = TempDir::new().unwrap();
+    let config = no_retry_config(&tmp).await;
+    let job = cron::add_job(&config, "*/5 * * * *", "echo ok").unwrap();
+
+    run_through_scheduler(&config, &job.id).await;
 
     let runs = cron::list_runs(&config, &job.id, 10).unwrap();
     assert_eq!(runs.len(), 1);
     let updated = cron::get_job(&config, &job.id).unwrap();
     assert_eq!(updated.last_status.as_deref(), Some("ok"));
+    assert!(updated.next_run > Utc::now(), "the recurrence moved on");
 }
 
 #[tokio::test]
@@ -378,7 +411,7 @@ async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
         start: active_hm.clone(),
         end: active_hm.clone(),
     };
-    let mut job = cron::add_shell_job(
+    let job = cron::add_shell_job(
         &config,
         Some("active-hours-e2e".into()),
         Schedule::Cron {
@@ -389,14 +422,26 @@ async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
         "echo active-hours-fired",
     )
     .unwrap();
-    job.next_run = Utc::now() - ChronoDuration::seconds(1);
+    crate::cron::store::tests::force_next_run_for_test(
+        &config,
+        &job.id,
+        Utc::now() - ChronoDuration::seconds(1),
+    )
+    .unwrap();
+    let job = cron::get_job(&config, &job.id).unwrap();
 
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
         &config.workspace_dir,
     ));
-    process_due_jobs(&config, &security, vec![job.clone()]).await;
+    let mut dispatcher = JobDispatcher::new(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &security,
+    );
+    dispatcher.tick(&config).await.unwrap();
+    dispatcher.drain().await;
 
     let stored = cron::get_job(&config, &job.id).unwrap();
     assert_eq!(stored.last_status.as_deref(), Some("ok"));
@@ -425,83 +470,71 @@ async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
     assert_eq!(runs[0].status, "ok");
 }
 
-#[tokio::test]
-async fn persist_job_result_success_deletes_one_shot() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let at = Utc::now() + ChronoDuration::minutes(10);
-    let job = cron::add_agent_job(
-        &config,
+fn one_shot(config: &Config, command: &str, delete_after_run: bool) -> CronJob {
+    let job = cron::add_shell_job(
+        config,
         Some("one-shot".into()),
-        crate::cron::Schedule::At { at },
-        "Hello",
-        SessionTarget::Isolated,
-        None,
-        None,
-        true,
+        Schedule::At {
+            at: Utc::now() + ChronoDuration::minutes(10),
+        },
+        command,
     )
     .unwrap();
-    let started = Utc::now();
-    let finished = started + ChronoDuration::milliseconds(10);
-
-    let success = persist_job_result(&config, &job, true, "ok", started, finished).await;
-    assert!(success);
-    let lookup = cron::get_job(&config, &job.id);
-    assert!(lookup.is_err());
+    if delete_after_run {
+        cron::update_job(
+            config,
+            &job.id,
+            tinyflows_bus::schedule::types::CronJobPatch {
+                delete_after_run: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    } else {
+        job
+    }
 }
 
 #[tokio::test]
-async fn persist_job_result_failure_disables_one_shot() {
+async fn a_successful_auto_delete_one_shot_is_removed() {
     let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let at = Utc::now() + ChronoDuration::minutes(10);
-    let job = cron::add_agent_job(
-        &config,
-        Some("one-shot".into()),
-        crate::cron::Schedule::At { at },
-        "Hello",
-        SessionTarget::Isolated,
-        None,
-        None,
-        true,
-    )
-    .unwrap();
-    let started = Utc::now();
-    let finished = started + ChronoDuration::milliseconds(10);
+    let config = no_retry_config(&tmp).await;
+    let job = one_shot(&config, "echo ok", true);
 
-    let success = persist_job_result(&config, &job, false, "boom", started, finished).await;
-    assert!(!success);
+    run_through_scheduler(&config, &job.id).await;
+
+    assert!(cron::get_job(&config, &job.id).is_err());
+}
+
+#[tokio::test]
+async fn a_failed_one_shot_is_kept_disabled_with_its_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = no_retry_config(&tmp).await;
+    let job = one_shot(&config, "echo boom; exit 1", true);
+
+    run_through_scheduler(&config, &job.id).await;
+
     let updated = cron::get_job(&config, &job.id).unwrap();
     assert!(!updated.enabled);
     assert_eq!(updated.last_status.as_deref(), Some("error"));
 }
 
 #[tokio::test]
-async fn persist_job_result_disables_at_job_without_delete_flag() {
+async fn an_at_job_without_the_delete_flag_runs_once_and_is_never_due_again() {
     // Regression: an `At` job created without delete_after_run (the RPC default,
     // and every shell `At` job) must not be rescheduled after it runs. Its `at`
-    // is a fixed instant, so reschedule_after_run would write next_run = at
-    // (now in the past) and due_jobs would re-select it on every poll, re-firing
-    // the job forever.
+    // is a fixed instant, so rescheduling would write next_run = at (now in the
+    // past) and due_jobs would re-select it on every poll, re-firing the job
+    // forever.
     let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let at = Utc::now() + ChronoDuration::minutes(10);
-    let job = cron::add_agent_job(
-        &config,
-        Some("at-no-delete".into()),
-        crate::cron::Schedule::At { at },
-        "Hello",
-        SessionTarget::Isolated,
-        None,
-        None,
-        false, // delete_after_run = false — the previously-buggy case
-    )
-    .unwrap();
-    let started = Utc::now();
-    let finished = started + ChronoDuration::milliseconds(10);
+    let config = no_retry_config(&tmp).await;
+    let job = one_shot(&config, "echo ok", false);
+    let at = match job.schedule {
+        Schedule::At { at } => at,
+        _ => unreachable!(),
+    };
 
-    let success = persist_job_result(&config, &job, true, "ok", started, finished).await;
-    assert!(success);
+    run_through_scheduler(&config, &job.id).await;
 
     // The row is kept (not auto-deleted) but disabled, and its run is recorded.
     let updated = cron::get_job(&config, &job.id).unwrap();
@@ -509,7 +542,14 @@ async fn persist_job_result_disables_at_job_without_delete_flag() {
     assert_eq!(updated.last_status.as_deref(), Some("ok"));
 
     // It is never due again — even at a time past its `at` instant.
-    let due = cron::due_jobs(&config, at + ChronoDuration::minutes(1)).unwrap();
+    let due = crate::cron::client::store::<Vec<CronJob>>(
+        &config,
+        tinyflows_bus::schedule::StoreOperation::Due {
+            now: at + ChronoDuration::minutes(1),
+        },
+    )
+    .await
+    .unwrap();
     assert!(
         !due.iter().any(|j| j.id == job.id),
         "disabled At job must not be re-selected by due_jobs"
@@ -523,123 +563,13 @@ async fn deliver_if_configured_skips_non_announce_mode() {
     let job = test_job("echo ok");
 
     // Default delivery mode is not "announce", so nothing is published.
-    assert!(deliver_if_configured(&config, &job, "x", true)
-        .await
-        .is_ok());
-}
-
-#[tokio::test]
-async fn deliver_if_configured_publishes_event_for_announce_mode() {
-    use crate::core::events::DomainEvent;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use tinybus::EventHandler;
-
-    // Create an isolated bus for this test.
-    let bus = crate::core::bus_testing::isolated_bus().await;
-
-    let received = Arc::new(AtomicUsize::new(0));
-    let received_clone = Arc::clone(&received);
-
-    struct Counter(Arc<AtomicUsize>);
-
-    #[async_trait::async_trait]
-    impl EventHandler<DomainEvent> for Counter {
-        fn name(&self) -> &str {
-            "test::counter"
-        }
-        fn domains(&self) -> Option<&[&str]> {
-            Some(&["cron"])
-        }
-        async fn handle(&self, event: &DomainEvent) {
-            if matches!(event, DomainEvent::CronDeliveryRequested { .. }) {
-                self.0.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-    }
-
-    let _handle = bus.subscribe(Arc::new(Counter(received_clone)));
-
-    // Publish directly on the test bus (bypasses the global singleton).
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let mut job = test_job("echo ok");
-    job.delivery = DeliveryConfig {
-        mode: "announce".into(),
-        channel: Some("telegram".into()),
-        to: Some("chat-123".into()),
-        best_effort: true,
-    };
-
-    // Manually publish the same event deliver_if_configured would produce.
-    bus.publish(DomainEvent::CronDeliveryRequested {
-        job_id: job.id.clone(),
-        channel: "telegram".into(),
-        target: "chat-123".into(),
-        output: "hello".into(),
-    });
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(received.load(Ordering::SeqCst), 1);
-
-    // Also verify the function itself succeeds.
-    assert!(deliver_if_configured(&config, &job, "hello", true)
-        .await
-        .is_ok());
-}
-
-#[test]
-fn is_one_shot_auto_delete_true_for_at_schedule_with_flag() {
-    let mut job = test_job("echo hi");
-    job.delete_after_run = true;
-    job.schedule = Schedule::At { at: Utc::now() };
-    assert!(is_one_shot_auto_delete(&job));
-}
-
-#[test]
-fn is_one_shot_auto_delete_false_for_cron_schedule() {
-    let mut job = test_job("echo hi");
-    job.delete_after_run = true;
-    job.schedule = Schedule::Cron {
-        expr: "0 * * * *".into(),
-        tz: None,
-        active_hours: None,
-    };
-    assert!(!is_one_shot_auto_delete(&job));
-}
-
-#[test]
-fn is_one_shot_auto_delete_false_when_flag_not_set() {
-    let mut job = test_job("echo hi");
-    job.delete_after_run = false;
-    job.schedule = Schedule::At { at: Utc::now() };
-    assert!(!is_one_shot_auto_delete(&job));
-}
-
-#[test]
-fn is_env_assignment_true() {
-    assert!(is_env_assignment("FOO=bar"));
-    assert!(is_env_assignment("_VAR=1"));
-}
-
-#[test]
-fn is_env_assignment_false() {
-    assert!(!is_env_assignment("echo"));
-    assert!(!is_env_assignment("=bad"));
-    assert!(!is_env_assignment("123=nope"));
-    assert!(!is_env_assignment(""));
-}
-
-#[test]
-fn strip_wrapping_quotes_removes_quotes() {
-    assert_eq!(strip_wrapping_quotes("\"hello\""), "hello");
-    assert_eq!(strip_wrapping_quotes("'world'"), "world");
-    assert_eq!(strip_wrapping_quotes("noquotes"), "noquotes");
-    assert_eq!(strip_wrapping_quotes(""), "");
-}
-
-#[test]
-fn forbidden_path_argument_allows_safe_commands() {
-    let policy = SecurityPolicy::default();
-    assert!(forbidden_path_argument(&policy, "echo hello").is_none());
-    assert!(forbidden_path_argument(&policy, "date").is_none());
+    assert!(deliver_if_configured(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job,
+        "x",
+        true
+    )
+    .await
+    .is_ok());
 }

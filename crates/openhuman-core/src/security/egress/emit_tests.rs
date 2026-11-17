@@ -1,13 +1,13 @@
 //! Tests for [`emit_external_transfer`](super::emit_external_transfer) — proves
 //! external transfers publish an [`ExternalTransferPending`] event, local
-//! transfers do not, and ambient chat context is attached (privacy epic S2,
+//! transfers do not, and the turn's chat routing is attached (privacy epic S2,
 //! #4436).
 
 use super::super::{DataKind, EgressDescriptor, EgressReason, IdentificationRisk};
 use super::*;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::security::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+use crate::security::approval::ApprovalChatContext;
 
 /// Drain `rx` until an `ExternalTransferPending` whose descriptor `service`
 /// matches `marker` arrives, returning it. Tolerates unrelated events and
@@ -36,7 +36,7 @@ async fn external_transfer_publishes_pending_event() {
     let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
 
     let marker = "svc-external-emit-test";
-    emit_external_transfer(EgressDescriptor::inference("openai", marker, true));
+    emit_external_transfer(None, EgressDescriptor::inference("openai", marker, true));
 
     let (descriptor, thread_id, client_id) = find_pending(&mut rx, marker).await;
     assert_eq!(descriptor.provider_slug, "openai");
@@ -58,8 +58,11 @@ async fn local_transfer_does_not_publish() {
     // A local (non-external) transfer must NOT emit; a following external one
     // must. If we reach the sentinel without having seen the local marker, the
     // local transfer was correctly suppressed.
-    emit_external_transfer(EgressDescriptor::inference("ollama", local_marker, false));
-    emit_external_transfer(EgressDescriptor::network_fetch(sentinel_marker));
+    emit_external_transfer(
+        None,
+        EgressDescriptor::inference("ollama", local_marker, false),
+    );
+    emit_external_transfer(None, EgressDescriptor::network_fetch(sentinel_marker));
 
     loop {
         match rx.recv().await {
@@ -79,23 +82,17 @@ async fn local_transfer_does_not_publish() {
 }
 
 #[tokio::test]
-async fn attaches_ambient_chat_context() {
+async fn attaches_the_chat_it_is_given() {
     crate::core::bus::init().await.expect("bus init");
     let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
 
     let marker = "svc-chat-context-emit-test";
-    APPROVAL_CHAT_CONTEXT
-        .scope(
-            ApprovalChatContext {
-                thread_id: "thread-xyz".to_string(),
-                client_id: "client-abc".to_string(),
-                request_id: None,
-            },
-            async {
-                emit_external_transfer(EgressDescriptor::composio(marker));
-            },
-        )
-        .await;
+    let chat = ApprovalChatContext {
+        thread_id: "thread-xyz".to_string(),
+        client_id: "client-abc".to_string(),
+        request_id: None,
+    };
+    emit_external_transfer(Some(&chat), EgressDescriptor::composio(marker));
 
     let (descriptor, thread_id, client_id) = find_pending(&mut rx, marker).await;
     assert_eq!(descriptor.reason, EgressReason::ToolCall);
@@ -103,26 +100,28 @@ async fn attaches_ambient_chat_context() {
     assert_eq!(client_id.as_deref(), Some("client-abc"));
 }
 
-/// Inside a [`dedup_turn_scope`], repeated disclosures of the *same* destination
+/// Inside a [`EgressLedger::per_turn`], repeated disclosures of the *same* destination
 /// (provider/service/reason) collapse to a single event, while a distinct
 /// destination still publishes — the managed-turn fan-out fix (codex P2, #4812).
 #[tokio::test]
-async fn dedup_turn_scope_collapses_repeat_destination() {
+async fn per_turn_ledger_collapses_repeat_destination() {
     crate::core::bus::init().await.expect("bus init");
     let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
 
     let dup = "svc-dedup-dup-test";
     let distinct = "svc-dedup-distinct-test";
     let sentinel = "svc-dedup-sentinel-test";
-    dedup_turn_scope(|| {
-        emit_external_transfer(EgressDescriptor::inference("openhuman", dup, true));
-        // Same destination again — must be suppressed within the turn.
-        emit_external_transfer(EgressDescriptor::inference("openhuman", dup, true));
-        // A distinct destination (different service) still discloses.
-        emit_external_transfer(EgressDescriptor::inference("openhuman", distinct, true));
-        // Sentinel closes the drain window.
-        emit_external_transfer(EgressDescriptor::network_fetch(sentinel));
-    });
+    let ledger = EgressLedger::per_turn();
+    emit_external_transfer_in(&ledger, EgressDescriptor::inference("openhuman", dup, true));
+    // Same destination again — must be suppressed within the turn.
+    emit_external_transfer_in(&ledger, EgressDescriptor::inference("openhuman", dup, true));
+    // A distinct destination (different service) still discloses.
+    emit_external_transfer_in(
+        &ledger,
+        EgressDescriptor::inference("openhuman", distinct, true),
+    );
+    // Sentinel closes the drain window.
+    emit_external_transfer_in(&ledger, EgressDescriptor::network_fetch(sentinel));
 
     let mut dup_count = 0;
     let mut distinct_seen = false;
@@ -153,7 +152,7 @@ async fn dedup_turn_scope_collapses_repeat_destination() {
     );
 }
 
-/// Outside any [`dedup_turn_scope`] (CLI / cron / a single egress site) there is
+/// Outside any [`EgressLedger::per_turn`] (CLI / cron / a single egress site) there is
 /// no ledger, so every `emit_external_transfer` publishes — dedup never leaks
 /// across unrelated calls.
 #[tokio::test]
@@ -163,9 +162,9 @@ async fn dedup_absent_outside_scope_publishes_each_time() {
 
     let marker = "svc-nodedup-test";
     let sentinel = "svc-nodedup-sentinel-test";
-    emit_external_transfer(EgressDescriptor::inference("openhuman", marker, true));
-    emit_external_transfer(EgressDescriptor::inference("openhuman", marker, true));
-    emit_external_transfer(EgressDescriptor::network_fetch(sentinel));
+    emit_external_transfer(None, EgressDescriptor::inference("openhuman", marker, true));
+    emit_external_transfer(None, EgressDescriptor::inference("openhuman", marker, true));
+    emit_external_transfer(None, EgressDescriptor::network_fetch(sentinel));
 
     let mut count = 0;
     loop {
@@ -207,4 +206,54 @@ async fn carries_risk_fields_when_present() {
     let (descriptor, _, _) = find_pending(&mut rx, marker).await;
     assert_eq!(descriptor.risk_level, IdentificationRisk::High);
     assert_eq!(descriptor.risk_categories, vec!["email"]);
+}
+
+fn chat(thread: &str) -> ApprovalChatContext {
+    ApprovalChatContext {
+        thread_id: thread.to_string(),
+        client_id: format!("client-{thread}"),
+        request_id: Some(format!("req-{thread}")),
+    }
+}
+
+/// A ledger carries the turn's chat to every disclosure raised through it, so
+/// a disclosure made deep in the provider factory chain still reaches the chat
+/// that triggered it, and two turns' ledgers never mix.
+#[tokio::test]
+async fn a_routed_ledger_attaches_its_chat_to_every_disclosure() {
+    crate::core::bus::init().await.expect("bus init");
+    let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
+
+    let ledger_a = EgressLedger::per_turn().routed_to(Some(chat("thread-a")));
+    let ledger_b = EgressLedger::per_turn().routed_to(Some(chat("thread-b")));
+    emit_external_transfer_in(
+        &ledger_a,
+        EgressDescriptor::inference("openhuman", "svc-routed-ledger-a", true),
+    );
+    // An await point between the two turns' disclosures.
+    tokio::task::yield_now().await;
+    emit_external_transfer_in(
+        &ledger_b,
+        EgressDescriptor::inference("openhuman", "svc-routed-ledger-b", true),
+    );
+
+    let (_, thread_a, client_a) = find_pending(&mut rx, "svc-routed-ledger-a").await;
+    assert_eq!(thread_a.as_deref(), Some("thread-a"));
+    assert_eq!(client_a.as_deref(), Some("client-thread-a"));
+    let (_, thread_b, client_b) = find_pending(&mut rx, "svc-routed-ledger-b").await;
+    assert_eq!(thread_b.as_deref(), Some("thread-b"));
+    assert_eq!(client_b.as_deref(), Some("client-thread-b"));
+}
+
+#[tokio::test]
+async fn a_disclosure_outside_a_chat_turn_is_unrouted() {
+    crate::core::bus::init().await.expect("bus init");
+    let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
+
+    emit_external_transfer_in(
+        &EgressLedger::per_turn(),
+        EgressDescriptor::inference("openhuman", "svc-unrouted-ledger", true),
+    );
+    let (_, thread_id, client_id) = find_pending(&mut rx, "svc-unrouted-ledger").await;
+    assert_eq!((thread_id, client_id), (None, None));
 }

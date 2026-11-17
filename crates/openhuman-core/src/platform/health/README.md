@@ -24,18 +24,18 @@ In-process health registry for the OpenHuman core. Tracks per-component liveness
 
 ## Public surface
 
-From `core.rs` (re-exported via `pub use core::*`):
+From [`core.rs`](./core.rs) (re-exported via `pub use core::*`):
 - Types: `ComponentHealth`, `HealthSnapshot`, `HealthVerdict`.
 - Functions: `mark_component_ok(component)`, `mark_component_error(component, error)`, `bump_component_restart(component)`, `snapshot() -> HealthSnapshot`, `snapshot_json() -> serde_json::Value`, `verdict(&HealthSnapshot) -> HealthVerdict`, `is_critical_component(name) -> bool`.
 
 The HTTP `GET /health` handler (`openhuman_rpc::server::http::health::health_handler`) uses `verdict()` for its status code (200 unless a critical component is unhealthy) and adds `healthy` / `degraded` / `critical_unhealthy` / `degraded_components` fields alongside the `components` map in the body. The `components` map shape is unchanged: the new fields are additive.
 
-From `ops.rs` (re-exported via `pub use ops::*`, also aliased `pub use ops as rpc`):
+From [`ops.rs`](./ops.rs) (re-exported via `pub use ops::*`, also aliased `pub use ops as rpc`):
 - `health_snapshot() -> Outcome<serde_json::Value>`, `system_info() -> Outcome<SystemInfo>`, and the `SystemInfo` struct.
 
-From `bus.rs`: `HealthSubscriber`, `register_health_subscriber()`.
+From [`bus.rs`](./bus.rs): `HealthSubscriber`, `register_health_subscriber()`.
 
-From `schemas.rs` (re-exported under aliased names): `all_health_controller_schemas`, `all_health_registered_controllers`.
+From [`schemas.rs`](./schemas.rs) (re-exported under aliased names): `all_health_controller_schemas`, `all_health_registered_controllers`.
 
 ## RPC / controllers
 
@@ -87,4 +87,11 @@ None on disk. State lives in a process-global `OnceLock<HealthRegistry>` (lazy-i
 - `mark_component_ok` clears `last_error`; `mark_component_error` leaves `last_ok` intact (so the last-known-good time survives a failure).
 - `restart_count` uses `saturating_add` (won't overflow).
 - The `system_info` schema declares `pid` as `TypeSchema::U64`, matching `SystemInfo.pid: u32`, which serializes as a JSON number. It declared `TypeSchema::String` until #6074; the wire value has always been a number, so that fix moved only the declaration: and with it the generated frontend types and the model-facing tool `output_schema`.
-- `bus.rs` short-circuits double registration via a `OnceLock` and warns (does not panic) if the bus isn't initialized.
+- [`bus.rs`](./bus.rs) short-circuits double registration via a `OnceLock` and warns (does not panic) if the bus isn't initialized.
+
+## Further reading
+
+- [Parent module (`platform`)](../README.md)
+- [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)
+- [Tauri shell architecture](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [Architecture overview](../../../../../docs/gitbooks/en/developing/architecture.md)

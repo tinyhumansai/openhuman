@@ -28,6 +28,7 @@ fn test_request() -> AgentTurnRequest {
         extra_tools: Vec::new(),
         on_progress: None,
         origin: AgentTurnOrigin::Cli,
+        approval: Default::default(),
     }
 }
 

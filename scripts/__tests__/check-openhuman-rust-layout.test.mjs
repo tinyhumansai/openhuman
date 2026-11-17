@@ -14,7 +14,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const repoRoot = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 const scriptRel = path.join("scripts", "ci", "check-openhuman-rust-layout.mjs");
 const scriptSource = fs.readFileSync(path.join(repoRoot, scriptRel), "utf8");
 const SRC = "crates/openhuman-core/src";
@@ -31,13 +35,24 @@ const lines = (n) => "//\n".repeat(n);
  */
 function run(files, pins = []) {
   const entries = pins.map(([file, limit]) => [`${SRC}/${file}`, limit]);
-  assert.match(scriptSource, PINS_RE, "fixture: the gate's pin list was not found");
+  assert.match(
+    scriptSource,
+    PINS_RE,
+    "fixture: the gate's pin list was not found",
+  );
   const source = scriptSource.replace(
     PINS_RE,
     `const LEGACY_LIMIT_ENTRIES = ${JSON.stringify(entries)};`,
   );
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "openhuman-rust-layout-"));
-  for (const dir of [SRC, "crates/openhuman-cli", "tests", "examples", "scripts/ci"])
+  for (const dir of [
+    SRC,
+    "crates/openhuman-cli",
+    "tests",
+    "examples",
+    "scripts/ci",
+    "scripts/lib",
+  ])
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   fs.writeFileSync(path.join(root, "crates/openhuman-core/Cargo.toml"), "");
   fs.writeFileSync(path.join(root, "crates/openhuman-cli/Cargo.toml"), "");
@@ -47,13 +62,22 @@ function run(files, pins = []) {
     fs.writeFileSync(abs, lines(n));
   }
   fs.writeFileSync(path.join(root, scriptRel), source);
-  const result = spawnSync(process.execPath, [scriptRel], { cwd: root, encoding: "utf8" });
+  fs.copyFileSync(
+    path.join(repoRoot, "scripts", "lib", "root-rust-targets.mjs"),
+    path.join(root, "scripts", "lib", "root-rust-targets.mjs"),
+  );
+  const result = spawnSync(process.execPath, [scriptRel], {
+    cwd: root,
+    encoding: "utf8",
+  });
   fs.rmSync(root, { recursive: true, force: true });
   return { status: result.status, out: `${result.stdout}${result.stderr}` };
 }
 
 test("passes at exactly the limit and at exactly a pin", () => {
-  const { status, out } = run({ "a.rs": 750, "big.rs": 900 }, [["big.rs", 900]]);
+  const { status, out } = run({ "a.rs": 750, "big.rs": 900 }, [
+    ["big.rs", 900],
+  ]);
   assert.equal(status, 0, out);
 });
 
@@ -90,13 +114,19 @@ test("enforces the limit under core/, which used to be pruned by name", () => {
 test("a pinned file that shrank must lower its pin", () => {
   const { status, out } = run({ "big.rs": 850 }, [["big.rs", 900]]);
   assert.equal(status, 1);
-  assert.match(out, /big\.rs: 850 lines, below its legacy pin 900; lower the pin to 850/);
+  assert.match(
+    out,
+    /big\.rs: 850 lines, below its legacy pin 900; lower the pin to 850/,
+  );
 });
 
 test("a pinned file that fits the limit must drop its pin", () => {
   const { status, out } = run({ "big.rs": 700 }, [["big.rs", 900]]);
   assert.equal(status, 1);
-  assert.match(out, /big\.rs: 700 lines now fits the 750-line limit; remove its legacy exception/);
+  assert.match(
+    out,
+    /big\.rs: 700 lines now fits the 750-line limit; remove its legacy exception/,
+  );
 });
 
 test("a file pinned twice fails, because a Map keeps only the last pin", () => {
@@ -109,9 +139,9 @@ test("a file pinned twice fails, because a Map keeps only the last pin", () => {
 });
 
 test("the real pin list has no duplicate entry", () => {
-  const files = [...scriptSource.match(PINS_RE)[0].matchAll(/"(crates\/[^"]+\.rs)"/g)].map(
-    (m) => m[1],
-  );
+  const files = [
+    ...scriptSource.match(PINS_RE)[0].matchAll(/"(crates\/[^"]+\.rs)"/g),
+  ].map((m) => m[1]);
   assert.ok(files.length > 0, "fixture: no pins parsed");
   assert.equal(new Set(files).size, files.length);
 });

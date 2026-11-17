@@ -15,8 +15,9 @@ import {
   memoryItemsGet,
   type MemoryMeta,
 } from '../../services/api/memoryApi';
-import { Alert, AlertDescription, Badge, Button, ModalShell } from '../ui';
+import { Badge, Button, ModalShell } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
+import MemoryErrorAlert from './MemoryErrorAlert';
 import { facetLabel } from './memoryFacetLabels';
 import { formatTimestamp, KIND_VARIANT, kindLabel } from './memoryFormat';
 
@@ -137,11 +138,7 @@ export default function MemoryItemDialog({ id, onClose, onForgotten }: MemoryIte
         </div>
       }>
       <div className="space-y-4">
-        {error !== null && (
-          <Alert variant="destructive" data-testid="memory-item-error">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+        {error !== null && <MemoryErrorAlert message={error} data-testid="memory-item-error" />}
         {missing ? (
           <p className="text-sm text-content-muted" data-testid="memory-item-missing">
             {t('memoryPage.explorer.itemMissing')}

@@ -1,4 +1,4 @@
-use crate::security::keyring::SecretStore;
+use crate::security::secret_storage::SecretStore;
 use crate::util::retry_with_backoff;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -9,20 +9,28 @@ use std::fs::{self, OpenOptions};
 #[allow(unused_imports)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-#[cfg(test)]
-use std::sync::Arc;
 
 mod keychain;
 mod lock;
 mod migration;
 mod persistence;
+mod readonly;
 mod store_core;
+pub use readonly::ReadOnlyAuthProfileError;
+
+pub(crate) async fn load_profile_read_only(
+    config: &crate::config::Config,
+    provider: &str,
+    profile_override: Option<&str>,
+) -> Result<Option<AuthProfile>, ReadOnlyAuthProfileError> {
+    readonly::load_profile(config, provider, profile_override).await
+}
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -38,7 +46,11 @@ struct KeychainSecrets {
     #[serde(default)]
     pub id_token: Option<String>,
 }
-const PROFILES_FILENAME: &str = "auth-profiles.json";
+pub(crate) const PROFILES_FILENAME: &str = "auth-profiles.json";
+/// The auth-profiles file a store over `state_dir` keeps.
+pub(crate) fn profiles_file(state_dir: &Path) -> PathBuf {
+    state_dir.join(PROFILES_FILENAME)
+}
 const LOCK_FILENAME: &str = "auth-profiles.lock";
 const LOCK_WAIT_MS: u64 = 50;
 /// A lock file that has existed for longer than this is treated as leaked
@@ -204,6 +216,11 @@ impl Default for AuthProfilesData {
 /// Full key format (as handled by the keyring module): `"{user_id}:auth:{profile_id}"`.
 const KEYCHAIN_AUTH_PREFIX: &str = "auth:";
 
+/// The logical key used for an auth profile's secret payload.
+pub(crate) fn auth_profile_secret_key(profile_id: &str) -> String {
+    format!("{KEYCHAIN_AUTH_PREFIX}{profile_id}")
+}
+
 /// Derive a stable keychain user-id from a state directory path.
 ///
 /// For a typical path like `/home/alice/.openhuman/users/uid-123` this
@@ -270,7 +287,7 @@ pub struct AuthProfilesStore {
 /// ciphertext, leaving `.secret_key` as the only remaining control.
 ///
 /// Same shape as the fix #2360 landed for the secret key in
-/// `keyring/encrypted_store.rs`: create with the mode already set rather than
+/// `secret_storage/encrypted_store.rs`: create with the mode already set rather than
 /// widening then narrowing, so the file is never briefly world-readable.
 ///
 /// `.mode()` only applies when the file is *created*, so a leftover tmp from an
@@ -356,9 +373,8 @@ fn is_pid_alive(pid: u32) -> bool {
 /// [`AuthProfileLockGuard`] for the lifetime of the on-disk lock.
 ///
 /// Entries are created on first use and never removed — the set of distinct
-/// auth-profile lock paths in a process is tiny (effectively one), so leaking
-/// a `Mutex<()>` per path is negligible and buys us a `'static` lifetime
-/// without `unsafe` or a self-referential guard. Serializing same-process
+/// auth-profile lock paths in a process is tiny (effectively one), so retaining
+/// one small lock state per path is negligible. Serializing same-process
 /// acquirers here is what lets [`AuthProfilesStore::reclaim_self_owned_lock`]
 /// treat an on-disk lock carrying our own pid as a leak (no live same-process
 /// guard can exist while a caller holds this lock).
@@ -366,14 +382,16 @@ fn is_pid_alive(pid: u32) -> bool {
 /// The registry key is **canonicalized** (real parent directory + lock
 /// filename), so two `AuthProfilesStore`s pointing at the same lock through
 /// aliased spellings (`state` vs `state/.`, relative vs absolute, a symlinked
-/// parent, Windows case variants) share one mutex. Without this, aliased paths
-/// would take *different* mutexes and a second same-process acquirer could see
+/// parent, Windows case variants) share one permit. Without this, aliased paths
+/// would take *different* permits and a second same-process acquirer could see
 /// the first live guard's pid, mistake it for a leak, and reclaim it — entering
-/// the critical section concurrently. `acquire_lock` always calls this *after*
+/// the critical section concurrently. The owned permit is Send so async secret
+/// cipher calls can run while the profile operation retains exclusive access.
+/// `acquire_lock` always calls this *after*
 /// `create_dir_all(parent)`, so the parent exists and `canonicalize` succeeds;
 /// if it ever fails we fall back to the raw path (no worse than before).
-fn in_process_lock_for(path: &Path) -> &'static Mutex<()> {
-    static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> = OnceLock::new();
+fn in_process_lock_for(path: &Path) -> Arc<InProcessAuthLock> {
+    static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Arc<InProcessAuthLock>>>> = OnceLock::new();
     let key = path
         .parent()
         .and_then(|parent| {
@@ -385,17 +403,62 @@ fn in_process_lock_for(path: &Path) -> &'static Mutex<()> {
     let mut map = registry
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // Deref the `&mut &'static Mutex<()>` to copy the `'static` reference out,
-    // so the returned handle is not tied to the dropped `map` guard.
     map.entry(key)
-        .or_insert_with(|| &*Box::leak(Box::new(Mutex::new(()))))
+        .or_insert_with(|| Arc::new(InProcessAuthLock::default()))
+        .clone()
+}
+
+#[derive(Default)]
+struct InProcessAuthLock {
+    held: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl InProcessAuthLock {
+    fn acquire(self: &Arc<Self>, timeout: Duration) -> Result<InProcessAuthLockGuard> {
+        let started = std::time::Instant::now();
+        let mut held = self
+            .held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while *held {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                anyhow::bail!("Timed out waiting for auth profile lock");
+            }
+            let (next, result) = self
+                .changed
+                .wait_timeout(held, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            held = next;
+            if result.timed_out() && *held {
+                anyhow::bail!("Timed out waiting for auth profile lock");
+            }
+        }
+        *held = true;
+        Ok(InProcessAuthLockGuard(Arc::clone(self)))
+    }
+}
+
+struct InProcessAuthLockGuard(Arc<InProcessAuthLock>);
+
+impl Drop for InProcessAuthLockGuard {
+    fn drop(&mut self) {
+        let mut held = self
+            .0
+            .held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *held = false;
+        self.0.changed.notify_one();
+    }
 }
 
 struct AuthProfileLockGuard {
     lock_path: PathBuf,
     /// Held to serialize same-process acquirers for `lock_path`; released when
     /// this guard drops. Never read — see [`in_process_lock_for`].
-    _in_process: MutexGuard<'static, ()>,
+    _in_process: InProcessAuthLockGuard,
 }
 
 impl Drop for AuthProfileLockGuard {
@@ -433,6 +496,12 @@ impl Drop for AuthProfileLockGuard {
             }
         }
     }
+}
+
+/// Whether `bytes` parse as the persisted profiles document (what a read from
+/// the storage backend requires).
+pub(crate) fn is_persisted_document(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<PersistedAuthProfiles>(bytes).is_ok()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

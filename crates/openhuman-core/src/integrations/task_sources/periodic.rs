@@ -8,13 +8,12 @@
 //! process-global map, and errors are logged and swallowed so the loop
 //! never unwinds.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::time::interval;
-
-use crate::config::rpc as config_rpc;
 
 use super::pipeline;
 use super::types::{FetchReason, TaskSource};
@@ -43,10 +42,20 @@ fn last_poll_map() -> &'static LastPollMap {
     LAST_POLL_AT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// The poll-tracking key for `source_id` in the current storage scope: the
+/// same source id in two tenants' scopes (agents, or SaaS profiles) is two
+/// different sources.
+fn poll_key(source_id: &str) -> String {
+    crate::core::runtime::tenant_key(
+        &crate::core::runtime::tenant::current_tenant_or_isolated("task_sources"),
+        source_id,
+    )
+}
+
 /// Record a successful (or attempted) poll for a source id.
 fn record_poll(source_id: &str) {
     if let Ok(mut map) = last_poll_map().lock() {
-        map.insert(source_id.to_string(), Instant::now());
+        map.insert(poll_key(source_id), Instant::now());
     }
 }
 
@@ -57,7 +66,7 @@ fn is_due(source: &TaskSource) -> bool {
         Ok(map) => map,
         Err(poisoned) => poisoned.into_inner(),
     };
-    match map.get(&source.id) {
+    match map.get(&poll_key(&source.id)) {
         Some(when) => when.elapsed() >= Duration::from_secs(interval_secs),
         None => true, // never polled this run — fire immediately
     }
@@ -70,7 +79,9 @@ pub fn start_periodic_poll() {
         tracing::debug!("[task_sources:periodic] scheduler already running, skipping start");
         return;
     }
-    tokio::spawn(async move {
+    // The loop acts for the host: every tick visits `host_default()` and then
+    // each live agent scope itself, so the spawned task needs no ambient scope.
+    DispatchCtx::host_default().spawn(async move {
         tracing::info!(
             tick_seconds = TICK_SECONDS,
             "[task_sources:periodic] scheduler starting"
@@ -87,16 +98,27 @@ async fn run_loop() {
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        if let Err(e) = run_one_tick().await {
-            tracing::warn!(error = %e, "[task_sources:periodic] tick failed (continuing)");
+        // `local`, then every agent that keeps its sources in its own storage
+        // scope (`crate::storage::agents`).
+        for (agent, result) in crate::storage::agents::for_each_live_scope(
+            &DispatchCtx::host_default(),
+            "task_sources",
+            |ctx| async move { run_one_tick(&ctx).await },
+        )
+        .await
+        {
+            if let Err(e) = result {
+                tracing::warn!(error = %e, agent = agent.as_deref().unwrap_or("local"), "[task_sources:periodic] tick failed (continuing)");
+            }
         }
     }
 }
 
 /// Run a single scheduler tick. `pub(crate)` so tests can drive ticks
 /// without the real `interval`.
-pub(crate) async fn run_one_tick() -> Result<(), String> {
-    let config = config_rpc::load_config_with_timeout()
+pub(crate) async fn run_one_tick(ctx: &DispatchCtx) -> Result<(), String> {
+    let config = ctx
+        .load_config()
         .await
         .map_err(|e| format!("load_config: {e}"))?;
 
@@ -129,7 +151,7 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
         // gate: a user who presses Fetch is owed the explanation. Only the
         // timer is silenced, which is why the check lives here rather than
         // inside `run_source_once` (which both paths share).
-        if !source.provider.can_fetch() {
+        if !super::types::provider_can_fetch(source.provider) {
             tracing::debug!(
                 source_id = %source.id,
                 provider = %source.provider.as_str(),
@@ -144,7 +166,7 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
         // Record the attempt up front so a slow/failing fetch doesn't
         // re-fire every tick.
         record_poll(&source.id);
-        let outcome = pipeline::run_source_once(&config, &source, FetchReason::Periodic).await;
+        let outcome = pipeline::run_source_once(ctx, &config, &source, FetchReason::Periodic).await;
         fired += 1;
         tracing::debug!(
             source_id = %source.id,

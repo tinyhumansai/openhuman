@@ -41,10 +41,14 @@ const CORE_READY_POLL_MS: u64 = 100;
 // aborts under contention.
 const CORE_READY_ATTEMPTS: usize = 600;
 const CORE_READY_TIMEOUT_MS: u64 = CORE_READY_POLL_MS * CORE_READY_ATTEMPTS as u64;
+/// How long `abort_task` waits for an aborted server task to drop its
+/// runtime. An abort lands at the task's next poll, so this is normally
+/// instant; the bound only matters if the task is stuck in blocking code.
+const ABORT_DRAIN_SECS: u64 = 2;
 
 /// Generate a 256-bit cryptographically-random bearer token as a hex string.
 ///
-/// Uses the same encoding as `openhuman_core::core::auth::generate_token`
+/// Uses the same encoding as the core's `core::auth::generate_token`
 /// (`hex::encode`) so the token format never silently diverges between the
 /// Tauri-side generator and the core-side validator.
 pub fn generate_rpc_token() -> String {
@@ -76,8 +80,8 @@ pub struct CoreProcessHandle {
     last_port_fallback: Arc<RwLock<Option<PortFallbackNotice>>>,
     /// Bearer token the embedded server validates on every inbound request.
     ///
-    /// Handed to the embedded server **in-memory** (via the `rpc_token`
-    /// argument of [`openhuman_rpc::server::run_server_embedded_with_ready`])
+    /// Handed to the embedded server **in-memory** (via
+    /// [`openhuman_rpc::host::DesktopOptions::rpc_token`])
     /// rather than through `OPENHUMAN_CORE_TOKEN` on the process environment.
     /// Avoiding the env crossing keeps the bearer off `/proc/<pid>/environ`
     /// (Linux) and out of `sysctl KERN_PROCARGS2` / `ps eww -p <pid>` (macOS)
@@ -91,8 +95,8 @@ impl CoreProcessHandle {
     pub fn new(port: u16) -> Self {
         // CURRENT_RPC_TOKEN is intentionally NOT set here. It is published by
         // ensure_running() only after the embedded server has been spawned
-        // with this token handed over via the in-memory `rpc_token` arg of
-        // `run_server_embedded_with_ready`. Setting it here would advertise
+        // with this token handed over in memory (`DesktopOptions::rpc_token`
+        // of `openhuman_rpc::host::desktop`). Setting it here would advertise
         // a token that an existing process listening on the port (the
         // harness-attach fast-path) has never seen, causing 401s on every
         // authenticated call.
@@ -224,7 +228,7 @@ impl CoreProcessHandle {
             let mut retry_after_takeover = false;
             let shutdown_token = self.fresh_shutdown_token().await;
             let (ready_tx, mut ready_rx) =
-                tokio::sync::oneshot::channel::<openhuman_rpc::server::EmbeddedReadySignal>();
+                tokio::sync::oneshot::channel::<openhuman_rpc::host::EmbeddedReadySignal>();
             let mut received_ready = false;
 
             {
@@ -232,8 +236,7 @@ impl CoreProcessHandle {
                 if guard.is_none() {
                     let port = self.preferred_port;
                     // RPC bearer is handed to the embedded server in-memory
-                    // via the `rpc_token` argument of
-                    // run_server_embedded_with_ready (see below) — never
+                    // via `DesktopOptions::rpc_token` (see below) — never
                     // through OPENHUMAN_CORE_TOKEN on the process env.
                     // Sidecar-era env-var transport was a leftover from the
                     // PR #1061 cleanup; with the core in-process there is no
@@ -290,21 +293,31 @@ impl CoreProcessHandle {
                     log::info!(
                         "[core] spawning embedded in-process core server on preferred port {port}"
                     );
+                    // The shared desktop host boot: the `desktop` embed preset,
+                    // connected to the TinyHumans backend (transport, hosted
+                    // proxies, Jev ranker), the on-disk session store, every
+                    // background service, then the listener — taking over a
+                    // stale listener of our own on the preferred port, else
+                    // falling back — and `ready_tx` once bound.
+                    //
+                    // One embed runtime per process: the runtime this task
+                    // builds is dropped when the task ends, which is what
+                    // frees the slot for the next spawn. Every path that
+                    // replaces this task (`shutdown`, `abort_task`) therefore
+                    // waits for the old future to be dropped first.
+                    let options = openhuman_rpc::host::DesktopOptions {
+                        host: None,
+                        port: Some(port),
+                        socketio: true,
+                        // In-memory bearer handoff: the embedded server seeds
+                        // its auth subsystem from this value, so the token
+                        // never crosses OPENHUMAN_CORE_TOKEN on the process
+                        // env.
+                        rpc_token: Some(token_for_core),
+                    };
+                    log::debug!("[core] host::desktop options={options:?}");
                     let task = tokio::spawn(async move {
-                        openhuman_rpc::server::run_server_embedded_with_ready(
-                            None,
-                            Some(port),
-                            true,
-                            shutdown_token,
-                            ready_tx,
-                            // In-memory bearer handoff: the embedded server
-                            // seeds its auth subsystem from this value via
-                            // `auth::init_rpc_token_with_value`, so the token
-                            // never crosses OPENHUMAN_CORE_TOKEN on the
-                            // process env.
-                            Some(token_for_core),
-                        )
-                        .await
+                        openhuman_rpc::host::desktop(options, shutdown_token, ready_tx).await
                     });
                     *guard = Some(task);
                     // Publish only after the embedded server has been spawned
@@ -369,8 +382,13 @@ impl CoreProcessHandle {
                                     .to_string())
                             }
                             Ok(Err(err)) => {
-                                if let Some(openhuman_core::platform::connectivity::rpc::PickListenPortError::WouldTakeOver { preferred, .. }) = err
-                                    .downcast_ref::<openhuman_core::platform::connectivity::rpc::PickListenPortError>()
+                                if let Some(
+                                    openhuman_rpc::server::listen_port::PickListenPortError::WouldTakeOver {
+                                        preferred,
+                                        ..
+                                    },
+                                ) =
+                                    err.downcast_ref::<openhuman_rpc::server::listen_port::PickListenPortError>()
                                 {
                                     if startup_attempt == 0 {
                                         log::warn!(
@@ -451,7 +469,7 @@ impl CoreProcessHandle {
              aborting embedded startup task before retry"
         );
         self.cancel_shutdown_token(" after startup timeout").await;
-        self.abort_task(" after startup timeout").await;
+        self.abort_task(" after startup timeout", true).await;
         format!(
             "core process did not become ready within {CORE_READY_TIMEOUT_MS}ms \
              (port={port}, ready_signal={received_ready}, port_open={port_open}, \
@@ -461,7 +479,7 @@ impl CoreProcessHandle {
 
     pub(crate) fn apply_embedded_ready_signal(
         &self,
-        ready: openhuman_rpc::server::EmbeddedReadySignal,
+        ready: openhuman_rpc::host::EmbeddedReadySignal,
     ) {
         *self.active_port.write() = ready.port;
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", self.rpc_url());
@@ -617,11 +635,32 @@ impl CoreProcessHandle {
     /// Lock the task slot, take its handle if any, and abort it. Shared by
     /// `shutdown` (cleanup-on-drop semantics) and `send_terminate_signal`
     /// (cooperative early teardown from `RunEvent::ExitRequested`).
-    async fn abort_task(&self, log_context: &str) {
-        let mut task_guard = self.task.lock().await;
-        if let Some(task) = task_guard.take() {
-            log::info!("[core] aborting embedded core server task{log_context}");
-            task.abort();
+    ///
+    /// With `wait_release`, waits (bounded) for the aborted task to actually
+    /// finish: aborting only marks it, and its future — which owns the embed
+    /// runtime — is dropped at the task's next poll. The process holds one
+    /// embed runtime at a time, so a respawn that raced that drop would fail
+    /// to build its own. App shutdown passes `false`: nothing respawns, and
+    /// the UI thread should not wait.
+    async fn abort_task(&self, log_context: &str, wait_release: bool) {
+        let task = {
+            let mut task_guard = self.task.lock().await;
+            task_guard.take()
+        };
+        let Some(task) = task else {
+            return;
+        };
+        log::info!("[core] aborting embedded core server task{log_context}");
+        task.abort();
+        if !wait_release {
+            return;
+        }
+        match timeout(Duration::from_secs(ABORT_DRAIN_SECS), task).await {
+            Ok(_) => log::debug!("[core] aborted embedded core server task released{log_context}"),
+            Err(_) => log::warn!(
+                "[core] aborted embedded core server task did not release within \
+                 {ABORT_DRAIN_SECS}s{log_context}; a respawn may find the runtime slot taken"
+            ),
         }
     }
 
@@ -694,7 +733,7 @@ impl CoreProcessHandle {
     pub async fn send_terminate_signal(&self) {
         self.cancel_shutdown_token(" on app shutdown").await;
         self.drain_task_briefly().await;
-        self.abort_task(" on app shutdown").await;
+        self.abort_task(" on app shutdown", false).await;
     }
 
     /// Wait a bounded moment for the server task to finish on its own after

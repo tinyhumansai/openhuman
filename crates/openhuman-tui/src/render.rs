@@ -1,508 +1,404 @@
-//! Ratatui rendering for the tabbed terminal UI — pure view over
-//! [`TranscriptState`] + [`UiState`]. No state mutation happens here.
-//!
-//! Layout (top → bottom):
-//!   * transcript viewport (fills remaining height, wraps + scrolls)
-//!   * single-line input box (bordered)
-//!   * status bar (thread id, turn state, key hints)
-
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap};
-use ratatui::Frame;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
+//! Conversation-first rendering; each frame owns its cell-based input targets.
+use super::actions::{Action, Hit};
+use super::activity::Status;
+use super::cockpit::OverlayKind;
 use super::state::{EntryKind, TranscriptState};
+use super::theme::{safe_text, Palette};
 use super::ui_state::{AppTab, SettingsAction, UiState};
+mod overlay;
+mod views;
+use overlay::overlay;
+use ratatui::layout::{Position, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
+use views::{config, logs, settings};
 
-/// Ocean accent from the design tokens (`#4A83DD`), kept terminal-native.
-const OCEAN: Color = Color::Rgb(0x4A, 0x83, 0xDD);
-
-const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// Draw one frame.
-pub fn draw(frame: &mut Frame, state: &TranscriptState, ui: &UiState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .split(frame.area());
-
-    draw_tabs(frame, chunks[0], ui);
-    match ui.active_tab {
-        AppTab::Logs => draw_logs(frame, chunks[1], ui),
-        AppTab::Chat => draw_chat(frame, chunks[1], state, ui),
-        AppTab::Config => draw_config(frame, chunks[1], ui),
-        AppTab::Settings => draw_settings(frame, chunks[1], ui),
-    }
-    draw_footer(frame, chunks[2], state, ui);
-    if let Some(overlay) = &ui.overlay {
-        draw_overlay(frame, overlay);
-    }
-}
-
-fn draw_tabs(frame: &mut Frame, area: Rect, ui: &UiState) {
-    let selected = AppTab::ALL
-        .iter()
-        .position(|tab| *tab == ui.active_tab)
-        .unwrap_or(0);
-    let titles = AppTab::ALL
-        .iter()
-        .enumerate()
-        .map(|(idx, tab)| Line::from(format!(" {} {} ", idx + 1, tab.title())))
-        .collect::<Vec<_>>();
-    let tabs = Tabs::new(titles)
-        .select(selected)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" OpenHuman CLI "),
-        )
-        .style(Style::default().fg(Color::DarkGray))
-        .highlight_style(Style::default().fg(OCEAN).add_modifier(Modifier::BOLD));
-    frame.render_widget(tabs, area);
-}
-
-fn draw_chat(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &UiState) {
-    let width = area.width.saturating_sub(4).max(1) as usize;
-    let (rows, _, _) = ui.composer.display(width);
-    let suggestions = ui.composer.command_matches().len().min(6);
-    let composer_height = (rows.len().min(8) + suggestions + 2).max(3) as u16;
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(composer_height)])
-        .split(area);
-    draw_transcript(frame, chunks[0], state, ui);
-    draw_input(frame, chunks[1], ui);
-}
-
-fn draw_logs(frame: &mut Frame, area: Rect, ui: &UiState) {
-    let lines = openhuman_core::core::logging::tui_log_lines();
-    let text = if lines.is_empty() {
-        Text::from("Core logs will appear here as OpenHuman starts.")
-    } else {
-        Text::from(lines.join("\n"))
-    };
-    let inner_height = area.height.saturating_sub(2).max(1);
-    let inner_width = area.width.saturating_sub(2).max(1);
-    let total_rows = text
-        .lines
-        .iter()
-        .map(|line| u32::from(wrapped_line_count(line, inner_width)))
-        .sum::<u32>();
-    let max_scroll = total_rows
-        .saturating_sub(u32::from(inner_height))
-        .min(u32::from(u16::MAX)) as u16;
-    let top = max_scroll.saturating_sub(ui.log_scroll_from_bottom.min(max_scroll));
-    let paragraph = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(" Core logs "))
-        .style(Style::default().fg(Color::Gray))
-        .wrap(Wrap { trim: false })
-        .scroll((top, 0));
-    frame.render_widget(paragraph, area);
-}
-
-fn draw_config(frame: &mut Frame, area: Rect, ui: &UiState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(4)])
-        .split(area);
-    let items = ui
-        .config_items
-        .iter()
-        .map(|item| {
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{:<18}", item.label),
-                    Style::default().fg(Color::Gray),
-                ),
-                Span::styled(
-                    if item.value.is_empty() {
-                        "(not set)"
-                    } else {
-                        &item.value
-                    },
-                    Style::default().fg(Color::White),
-                ),
-            ]))
-        })
-        .collect::<Vec<_>>();
-    let mut list_state = ListState::default().with_selected(Some(ui.config_selected));
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Safe configuration "),
-        )
-        .highlight_symbol("› ")
-        .highlight_style(Style::default().fg(OCEAN).add_modifier(Modifier::BOLD));
-    frame.render_stateful_widget(list, chunks[0], &mut list_state);
-
-    let selected = &ui.config_items[ui.config_selected.min(ui.config_items.len() - 1)];
-    let detail = if let Some(input) = &ui.config_edit {
-        let visible = tail_to_width(input, chunks[1].width.saturating_sub(5) as usize);
-        format!("Editing {}\n> {}▏", selected.label, visible)
-    } else {
-        format!("{}\n{}", selected.hint, ui.config_status)
-    };
+pub fn draw(frame: &mut Frame, state: &TranscriptState, ui: &mut UiState) {
+    let area = frame.area();
+    let p = ui.theme.palette();
+    ui.hits.clear();
     frame.render_widget(
-        Paragraph::new(detail)
-            .block(Block::default().borders(Borders::ALL).title(" Edit "))
-            .wrap(Wrap { trim: false }),
-        chunks[1],
+        Block::default().style(Style::default().fg(p.text).bg(p.background)),
+        area,
     );
-}
-
-fn draw_settings(frame: &mut Frame, area: Rect, ui: &UiState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),
-            Constraint::Length(5),
-            Constraint::Min(3),
-        ])
-        .split(area);
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(
-                &ui.auth_summary,
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(ui.account_detail.clone()),
-        ])
-        .block(Block::default().borders(Borders::ALL).title(" Account "))
-        .wrap(Wrap { trim: false }),
-        chunks[0],
-    );
-
-    let actions = SettingsAction::ALL
-        .iter()
-        .map(|action| ListItem::new(action.label()))
-        .collect::<Vec<_>>();
-    let mut action_state = ListState::default().with_selected(Some(ui.settings_selected));
-    frame.render_stateful_widget(
-        List::new(actions)
-            .block(Block::default().borders(Borders::ALL).title(" Actions "))
-            .highlight_symbol("› ")
-            .highlight_style(Style::default().fg(OCEAN).add_modifier(Modifier::BOLD)),
-        chunks[1],
-        &mut action_state,
-    );
-
-    let detail = if let Some(token) = &ui.login_token {
-        let visible = "•".repeat(
-            token
-                .chars()
-                .count()
-                .min(chunks[2].width.saturating_sub(5) as usize),
+    if area.width < 24 || area.height < 8 {
+        ui.transcript_area = Rect::default();
+        ui.composer_area = Rect::default();
+        text(
+            frame,
+            area,
+            "Resize terminal · Ctrl+D exits",
+            Style::default().fg(p.text),
         );
+        return;
+    }
+    text(
+        frame,
+        Rect::new(area.x + 1, area.y, 12, 1),
+        "OpenHuman",
+        Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+    );
+    button(
+        frame,
+        Rect::new(area.x + 13, area.y, 6, 1),
+        "Chat",
+        Action::View(AppTab::Chat),
+        ui,
+        p,
+    );
+    let mut x = area.right().saturating_sub(39).max(area.x + 20);
+    for (label, cmd) in [
+        ("Sessions", "sessions"),
+        ("Agents", "agents"),
+        ("Tools", "tools"),
+        ("Settings", "settings"),
+    ] {
+        let width = label.len() as u16 + 2;
+        if x + width <= area.right() {
+            button(
+                frame,
+                Rect::new(x, area.y, width, 1),
+                label,
+                Action::Command(cmd),
+                ui,
+                p,
+            );
+        }
+        x += width;
+    }
+    text(
+        frame,
+        Rect::new(area.x + 1, area.y + 1, area.width - 2, 1),
+        "─".repeat(area.width.saturating_sub(2) as usize),
+        Style::default().fg(p.border),
+    );
+    let body = Rect::new(area.x, area.y + 2, area.width, area.height - 3);
+    match ui.active_tab {
+        AppTab::Chat => chat(frame, body, state, ui, p),
+        AppTab::Logs => logs(frame, body, ui, p),
+        AppTab::Config => config(frame, body, ui, p),
+        AppTab::Settings => settings(frame, body, ui, p),
+    }
+    let run = if ui.stopping {
+        "Stopping".to_string()
+    } else if state.is_streaming() {
+        format!("{} Working", ["·", "•", "●", "•"][ui.spinner_tick % 4])
+    } else {
+        if ui.active_tab == AppTab::Chat {
+            "Ready".into()
+        } else {
+            ui.active_tab.title().into()
+        }
+    };
+    text(
+        frame,
+        Rect::new(area.x, area.bottom() - 1, area.width, 1),
         format!(
-            "Paste a one-time login token, then press Enter.\n> {}▏",
-            visible
-        )
-    } else if ui.logout_confirm {
-        "Log out and stop account-bound services? Press y to confirm or Esc to cancel.".to_string()
-    } else {
-        ui.settings_status.clone()
-    };
-    frame.render_widget(
-        Paragraph::new(detail)
-            .block(Block::default().borders(Borders::ALL).title(" Status "))
-            .wrap(Wrap { trim: false }),
-        chunks[2],
+            " {run} · {}{}   Ctrl+P commands · Ctrl+J newline · Ctrl+D exit",
+            ui.auth_summary,
+            if ui.demo { " · DEMO" } else { "" }
+        ),
+        Style::default().fg(p.muted),
     );
-}
-
-fn draw_transcript(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &UiState) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" OpenHuman chat ")
-        .border_style(Style::default().fg(OCEAN));
-    let inner = block.inner(area);
-
-    let text = transcript_text(state);
-    // Inner width available for wrapping (borders eat 2 cols).
-    let wrap_width = inner.width.max(1);
-    let total_lines: u16 = text
-        .lines
-        .iter()
-        .map(|line| wrapped_line_count(line, wrap_width))
-        .sum::<u16>();
-    let viewport = inner.height.max(1);
-    let max_scroll = total_lines.saturating_sub(viewport);
-    let scroll_from_bottom = ui.scroll_from_bottom.min(max_scroll);
-    let top = max_scroll.saturating_sub(scroll_from_bottom);
-
-    let paragraph = Paragraph::new(text)
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((top, 0));
-    frame.render_widget(paragraph, area);
-}
-
-fn draw_input(frame: &mut Frame, area: Rect, ui: &UiState) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Message ")
-        .border_style(Style::default().fg(Color::DarkGray));
-    let inner_width = block.inner(area).width.max(1) as usize;
-    let matches = ui.composer.command_matches();
-    let (mut rows, cursor_row, cursor_col) = ui.composer.display(inner_width.saturating_sub(1));
-    if let Some(row) = rows.get_mut(cursor_row) {
-        let byte = byte_at_display_column(row, cursor_col);
-        row.insert(byte, '▏');
+    if ui.overlay.is_some() {
+        overlay(frame, area, ui, p);
     }
-    let mut lines = matches
-        .iter()
-        .take(6)
-        .map(|(name, description)| {
-            Line::from(vec![
-                Span::styled(
-                    format!("/{name:<13}"),
-                    Style::default().fg(OCEAN).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(*description, Style::default().fg(Color::DarkGray)),
-            ])
-        })
-        .collect::<Vec<_>>();
-    lines.extend(
-        rows.into_iter()
-            .take(8)
-            .map(|row| Line::from(Span::styled(row, Style::default().fg(Color::White)))),
-    );
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
+    ui.focus = ui.focus.min(ui.hits.len());
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &UiState) {
-    let context = match ui.active_tab {
-        AppTab::Logs => "PgUp/PgDn scroll",
-        AppTab::Chat => "Enter send/steer · Shift+Enter newline · Tab queue · / commands",
-        AppTab::Config => {
-            if ui.config_edit.is_some() {
-                "Enter save · Esc cancel"
-            } else {
-                "↑↓ navigate · Enter edit"
-            }
-        }
-        AppTab::Settings => {
-            if ui.is_editing() {
-                "Enter confirm · Esc cancel"
-            } else {
-                "↑↓ navigate · Enter select"
-            }
-        }
-    };
-    let turn = if !ui.pending_approvals.is_empty() {
-        format!("{} approval(s)", ui.pending_approvals.len())
-    } else if ui.pending_plan_review.is_some() {
-        "plan review".to_string()
-    } else if ui.active_tab == AppTab::Chat && state.is_streaming() {
-        let frame_ch = SPINNER_FRAMES[ui.spinner_tick % SPINNER_FRAMES.len()];
-        format!("{frame_ch} streaming")
-    } else {
-        ui.active_tab.title().to_string()
-    };
-
-    let left = Span::styled(
-        format!(" {turn} "),
-        Style::default().fg(Color::Black).bg(OCEAN),
-    );
-    let navigation = if ui.is_editing() {
-        "Finish or Esc before switching tabs"
-    } else {
-        "Ctrl+Tab switch · Alt+1-4 tabs"
-    };
-    let session = format!(
-        "{} · {}",
-        ui.model_override.as_deref().unwrap_or("default model"),
-        short_id(&ui.thread_id)
-    );
-    let hints = Span::styled(
-        format!("  {session} · {navigation} · {context} · Ctrl+C quit"),
-        Style::default().fg(Color::DarkGray),
-    );
-    let paragraph = Paragraph::new(Line::from(vec![left, hints]));
-    frame.render_widget(paragraph, area);
+fn text(frame: &mut Frame, area: Rect, value: impl Into<String>, style: Style) {
+    frame.render_widget(Paragraph::new(safe_text(&value.into())).style(style), area);
 }
-
-fn short_id(id: &str) -> &str {
-    match id.char_indices().nth(12) {
-        Some((byte, _)) => &id[..byte],
-        None => id,
+fn button(
+    frame: &mut Frame,
+    area: Rect,
+    label: &str,
+    action: Action,
+    ui: &mut UiState,
+    p: Palette,
+) {
+    if area.width == 0
+        || area.height == 0
+        || area.right() > frame.area().right()
+        || area.bottom() > frame.area().bottom()
+    {
+        return;
     }
-}
-
-fn draw_overlay(frame: &mut Frame, overlay: &super::cockpit::Overlay) {
-    let area = centered_rect(84, 78, frame.area());
-    frame.render_widget(Clear, area);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(2)])
-        .split(area);
-    let visible = overlay.visible_rows();
-    let items = visible
-        .iter()
-        .map(|row| {
-            let mut lines = vec![Line::from(Span::styled(
-                &row.label,
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ))];
-            if !row.detail.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    &row.detail,
-                    Style::default().fg(Color::Gray),
-                )));
-            } else if !row.payload.is_null() {
-                lines.push(Line::from(Span::styled(
-                    row.payload.to_string(),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            ListItem::new(lines)
-        })
-        .collect::<Vec<_>>();
-    let mut state =
-        ListState::default().with_selected((!visible.is_empty()).then_some(overlay.selected));
-    frame.render_stateful_widget(
-        List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(" {} ", overlay.title))
-                    .border_style(Style::default().fg(OCEAN)),
-            )
-            .highlight_symbol("› ")
-            .highlight_style(Style::default().fg(OCEAN)),
-        chunks[0],
-        &mut state,
-    );
-    let prompt = if let Some(input) = &overlay.input {
-        format!("> {input}▏  {}", overlay.status)
-    } else if overlay.filter.is_empty() {
-        overlay.status.clone()
+    let focused = ui.focus > 0 && ui.focus - 1 == ui.hits.len();
+    let style = if focused {
+        Style::default()
+            .fg(p.background)
+            .bg(p.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
-        format!("Filter: {}▏  {}", overlay.filter, overlay.status)
+        Style::default().fg(p.muted)
     };
-    frame.render_widget(
-        Paragraph::new(prompt)
-            .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)),
-        chunks[1],
+    text(frame, area, label, style);
+    ui.hits.push(Hit { area, action });
+}
+
+fn chat(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &mut UiState, p: Palette) {
+    let (rows, _, _) = ui
+        .composer
+        .display(area.width.saturating_sub(3).max(1) as usize);
+    let count = ui.composer.command_matches().len().min(4);
+    let height = ((rows.len().min(5) + 3 + count) as u16)
+        .min(area.height.saturating_sub(1))
+        .max(4);
+    let transcript_height = area.height.saturating_sub(height + 1);
+    ui.transcript_area = Rect::new(area.x + 1, area.y, area.width - 2, transcript_height);
+    let (visible, max_scroll) = ui.viewport.rows(
+        state,
+        ui.transcript_area.width.saturating_sub(2),
+        transcript_height,
+        ui.scroll_from_bottom,
     );
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
-}
-
-/// Build the styled transcript body from the reducer state.
-fn transcript_text(state: &TranscriptState) -> Text<'static> {
-    let mut lines: Vec<Line> = Vec::new();
-    for entry in state.entries() {
-        let (prefix, style) = match entry.kind {
-            EntryKind::User => (
-                "You  ",
-                Style::default().fg(OCEAN).add_modifier(Modifier::BOLD),
-            ),
-            EntryKind::Assistant => ("AI   ", Style::default().fg(Color::White)),
-            EntryKind::Thinking => (
-                "···  ",
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC),
-            ),
-            EntryKind::Tool => ("tool ", Style::default().fg(Color::Yellow)),
-            EntryKind::Error => (
-                "err  ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            EntryKind::System => ("     ", Style::default().fg(Color::DarkGray)),
+    ui.scroll_from_bottom = ui.viewport.resolved_offset().min(max_scroll);
+    if visible.is_empty() && transcript_height >= 5 {
+        text(
+            frame,
+            Rect::new(area.x + 3, area.y + 2, area.width.saturating_sub(6), 1),
+            "What would you like to work on?",
+            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+        );
+        text(
+            frame,
+            Rect::new(area.x + 3, area.y + 4, area.width.saturating_sub(6), 1),
+            "Describe a task, or open Commands to get started.",
+            Style::default().fg(p.muted),
+        );
+    }
+    for (row, visible) in visible.iter().enumerate() {
+        let entry = &state.entries()[visible.entry];
+        let color = if let Some(a) = &entry.activity {
+            match a.status {
+                Status::Success => p.success,
+                Status::Error => p.error,
+                Status::Waiting => p.warning,
+                _ => p.muted,
+            }
+        } else {
+            match visible.kind {
+                EntryKind::User => p.accent,
+                EntryKind::Thinking | EntryKind::System => p.muted,
+                EntryKind::Error => p.error,
+                _ => p.text,
+            }
         };
-
-        let mut first = true;
-        for raw in entry.text.split('\n') {
-            let gutter = if first { prefix } else { "     " };
-            lines.push(Line::from(vec![
-                Span::styled(gutter.to_string(), style.add_modifier(Modifier::DIM)),
-                Span::styled(raw.to_string(), style),
-            ]));
-            first = false;
+        let mut style = Style::default().fg(color);
+        if visible.first && matches!(visible.kind, EntryKind::User | EntryKind::Assistant) {
+            style = style.add_modifier(Modifier::BOLD);
         }
-        // Blank spacer between entries for readability.
-        lines.push(Line::from(""));
+        let target = Rect::new(
+            ui.transcript_area.x,
+            ui.transcript_area.y + row as u16,
+            ui.transcript_area.width,
+            1,
+        );
+        if entry.activity.is_some() || visible.kind == EntryKind::Thinking {
+            let prefix = if entry.expanded { "▾ " } else { "▸ " };
+            text(
+                frame,
+                target,
+                if visible.first {
+                    format!("{prefix}{}", visible.text)
+                } else {
+                    format!("  {}", visible.text)
+                },
+                style,
+            );
+            ui.hits.push(Hit {
+                area: target,
+                action: Action::Entry(visible.entry),
+            });
+        } else {
+            text(frame, target, &visible.text, style);
+        }
     }
-    Text::from(lines)
+    let y = area.y + transcript_height;
+    if !ui.pending_approvals.is_empty() {
+        button(
+            frame,
+            Rect::new(area.x + 1, y, area.width.saturating_sub(20).min(36), 1),
+            "! Pending approval · Review",
+            Action::Command("approvals"),
+            ui,
+            p,
+        );
+    } else if ui.pending_plan_review.is_some() {
+        button(
+            frame,
+            Rect::new(area.x + 1, y, area.width.saturating_sub(20).min(36), 1),
+            "! Plan review · Open",
+            Action::Command("plan"),
+            ui,
+            p,
+        );
+    }
+    if ui.scroll_from_bottom > 0 && area.width >= 40 {
+        button(
+            frame,
+            Rect::new(area.right() - 18, y, 17, 1),
+            "Jump to latest ↓",
+            Action::Latest,
+            ui,
+            p,
+        );
+    }
+    composer(
+        frame,
+        Rect::new(
+            area.x,
+            area.bottom().saturating_sub(height),
+            area.width,
+            height,
+        ),
+        state,
+        ui,
+        p,
+    );
 }
 
-/// Approximate the number of visual rows a wrapped line occupies at `width`.
-/// ratatui wraps on word boundaries; this display-width estimate is close
-/// enough for scroll bookkeeping (off-by-one at most, harmless).
-fn wrapped_line_count(line: &Line, width: u16) -> u16 {
-    let w = width.max(1) as usize;
-    let content_width: usize = line
-        .spans
-        .iter()
-        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
-        .sum();
-    if content_width == 0 {
-        1
+fn composer(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &mut UiState, p: Palette) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if ui.focus == 0 { p.accent } else { p.border }));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let matches = ui.composer.command_matches();
+    let count = matches
+        .len()
+        .min(4)
+        .min(inner.height.saturating_sub(2) as usize);
+    let selected = ui.suggestion_selected.min(matches.len().saturating_sub(1));
+    let first = selected.saturating_sub(count.saturating_sub(1));
+    for (row, (name, desc)) in matches.iter().skip(first).take(count).enumerate() {
+        button(
+            frame,
+            Rect::new(inner.x, inner.y + row as u16, inner.width, 1),
+            &format!(
+                "{} /{name:<12} {desc}",
+                if row + first == selected { "›" } else { " " }
+            ),
+            Action::Complete(name),
+            ui,
+            p,
+        );
+    }
+    let editor_height = inner.height.saturating_sub(count as u16 + 1).max(1);
+    ui.composer_area = Rect::new(inner.x, inner.y + count as u16, inner.width, editor_height);
+    let width = inner.width.saturating_sub(1).max(1) as usize;
+    let (rows, cursor_row, cursor_col) = ui.composer.display(width);
+    let first = cursor_row.saturating_sub(editor_height as usize - 1);
+    ui.composer_first_row = first;
+    if ui.composer.is_empty() {
+        text(
+            frame,
+            ui.composer_area,
+            "Describe a task…",
+            Style::default().fg(p.muted),
+        );
     } else {
-        content_width.div_ceil(w).max(1) as u16
-    }
-}
-
-/// Return the trailing slice of `s` that fits within `width` display columns.
-fn tail_to_width(s: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    let mut out: Vec<char> = Vec::new();
-    let mut used = 0usize;
-    for ch in s.chars().rev() {
-        let cw = UnicodeWidthStr::width(ch.to_string().as_str()).max(1);
-        if used + cw > width {
-            break;
+        for (row, line) in rows
+            .iter()
+            .skip(first)
+            .take(editor_height as usize)
+            .enumerate()
+        {
+            text(
+                frame,
+                Rect::new(inner.x, ui.composer_area.y + row as u16, inner.width, 1),
+                line,
+                Style::default().fg(p.text),
+            );
         }
-        used += cw;
-        out.push(ch);
     }
-    out.into_iter().rev().collect()
-}
-
-fn byte_at_display_column(value: &str, target: usize) -> usize {
-    let mut column = 0usize;
-    for (byte, ch) in value.char_indices() {
-        if column >= target {
-            return byte;
-        }
-        column += ch.width().unwrap_or(0).max(1);
+    ui.hits.push(Hit {
+        area: ui.composer_area,
+        action: Action::Composer,
+    });
+    if ui.focus == 0 && ui.overlay.is_none() {
+        frame.set_cursor_position(Position::new(
+            inner.x + cursor_col.min(width) as u16,
+            ui.composer_area.y + (cursor_row - first) as u16,
+        ));
     }
-    value.len()
+    let y = inner.bottom().saturating_sub(1);
+    let agent = format!("{} ▾", ui.agent_name);
+    let reserved = if inner.width >= 64 {
+        30
+    } else if state.is_streaming() {
+        19
+    } else {
+        10
+    };
+    let selectors_width = inner.width.saturating_sub(reserved);
+    let aw = (UnicodeWidthStr::width(agent.as_str()) as u16)
+        .min(selectors_width / 2)
+        .max(1);
+    button(
+        frame,
+        Rect::new(inner.x, y, aw, 1),
+        &agent,
+        Action::Command("agents"),
+        ui,
+        p,
+    );
+    button(
+        frame,
+        Rect::new(
+            inner.x + aw + 1,
+            y,
+            selectors_width.saturating_sub(aw + 1).min(28),
+            1,
+        ),
+        &format!(
+            "{} ▾",
+            ui.model_override.as_deref().unwrap_or(&ui.effective_model)
+        ),
+        Action::Command("model"),
+        ui,
+        p,
+    );
+    if inner.width >= 64 {
+        button(
+            frame,
+            Rect::new(inner.right() - 29, y, 10, 1),
+            "Commands",
+            Action::Command("help"),
+            ui,
+            p,
+        );
+    }
+    if state.is_streaming() {
+        button(
+            frame,
+            Rect::new(inner.right() - 18, y, 8, 1),
+            "Queue",
+            Action::Queue,
+            ui,
+            p,
+        );
+        button(
+            frame,
+            Rect::new(inner.right() - 9, y, 8, 1),
+            "Stop",
+            Action::Stop,
+            ui,
+            p,
+        );
+    } else {
+        button(
+            frame,
+            Rect::new(inner.right() - 9, y, 8, 1),
+            "Send ↵",
+            Action::Send,
+            ui,
+            p,
+        );
+    }
 }
 
 #[cfg(test)]

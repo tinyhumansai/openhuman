@@ -43,6 +43,9 @@ pub struct CoreAuthState {
     /// RFC3339 expiry recorded from the JWT `exp`, when the core knows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// Issuing backend for a bound session; absent for legacy sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuing_backend: Option<String>,
 }
 
 impl CoreAuthState {
@@ -72,10 +75,25 @@ pub async fn push_credential<L: CoreLink + ?Sized>(
     user_id: Option<&str>,
     user: Option<&Value>,
 ) -> Result<CoreAuthState, String> {
+    push_bound_credential(link, credential, user_id, user, None).await
+}
+
+/// Hand over a credential with its issuing backend. Existing unbound callers
+/// remain compatible, and the core retains a prior association on refresh.
+pub async fn push_bound_credential<L: CoreLink + ?Sized>(
+    link: &L,
+    credential: &Credential,
+    user_id: Option<&str>,
+    user: Option<&Value>,
+    issuing_backend: Option<&str>,
+) -> Result<CoreAuthState, String> {
     let mut params = json!({
         "token": credential.secret,
         "kind": credential.kind.as_str(),
     });
+    if let Some(backend) = issuing_backend {
+        params["issuingBackend"] = Value::String(backend.to_string());
+    }
     if let Some(user_id) = user_id.map(str::trim).filter(|s| !s.is_empty()) {
         params["userId"] = Value::String(user_id.to_string());
     }

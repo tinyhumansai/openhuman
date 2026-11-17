@@ -14,27 +14,30 @@
  * Not the vendored `elements/task-card.aui.tsx`'s own `TaskCard` wrapper:
  * that one derives its `actions` purely from `part.approval`/`part.interrupt`,
  * which has no slot for the two OpenHuman-specific actions a delegation
- * needs — the awaiting-user reply box and the worktree open/diff/remove row
+ * needs — the awaiting-user reply box
  * — so this adapter is built directly from the raw `TaskCard`
  * (`elements/task-card.tsx`) + `utils/task.ts` pieces instead, with those
  * actions supplied explicitly.
  */
-import { type ToolCallMessagePartComponent, useAui } from '@assistant-ui/react';
+import {
+  TextMessagePartProvider,
+  type ToolCallMessagePartComponent,
+  useAui,
+} from '@assistant-ui/react';
 import { useCallback, useState } from 'react';
 
 import { TaskCard, type TaskCardState } from '../../../components/assistant-ui/elements/task-card';
 import { TaskTranscript } from '../../../components/assistant-ui/elements/task-card.aui';
 import { useDisclosure } from '../../../components/assistant-ui/lib/useDisclosure';
+import { MarkdownTextNoCitations } from '../../../components/assistant-ui/markdown-text';
 import { formatElapsed } from '../../../components/assistant-ui/utils/task';
 import { Button } from '../../../components/ui';
-import Badge from '../../../components/ui/Badge';
-import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { subagentMessages } from '../../../providers/assistantUiMessages';
 import { subagentApi } from '../../../services/api/subagentApi';
 import { type SubagentActivity, subagentCancelResolved } from '../../../store/chatRuntimeSlice';
 import { useAppDispatch } from '../../../store/hooks';
-import { basename } from '../../../utils/pathUtils';
+import { useSubagentElapsed } from './useSubagentElapsed';
 
 function asSubagentActivity(value: unknown): SubagentActivity | undefined {
   if (!value || typeof value !== 'object') return undefined;
@@ -196,27 +199,6 @@ function CancelTaskAction({ taskId }: { taskId: string }) {
   );
 }
 
-function WorktreeRow({ activity }: { activity: SubagentActivity }) {
-  const { t } = useT();
-  if (!activity.worktreePath) return null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="font-medium text-content-secondary">{t('worktree.label')}</span>
-        <span
-          className="truncate font-mono text-[12px] text-content-muted"
-          title={activity.worktreePath}>
-          {basename(activity.worktreePath)}
-        </span>
-        <Badge variant={activity.isDirty ? 'warning' : 'success'}>
-          {activity.isDirty ? t('worktree.dirty') : t('worktree.clean')}
-        </Badge>
-      </div>
-      <WorktreeActions path={activity.worktreePath} isDirty={activity.isDirty} compact />
-    </div>
-  );
-}
-
 /** Adapt an assistant-ui `task` part onto {@link TaskCard} for a sub-agent delegation. */
 export const SubagentTaskCard: ToolCallMessagePartComponent = ({
   args,
@@ -233,7 +215,20 @@ export const SubagentTaskCard: ToolCallMessagePartComponent = ({
     toolCalls: [],
   };
   const name = resolved.displayName ?? resolved.agentId ?? 'subagent';
-  const elapsed = resolved.elapsedMs !== undefined ? formatElapsed(resolved.elapsedMs) : undefined;
+  const running = state === 'working' || state === 'waiting';
+  // Ticks every second while the delegation works; the core's settled
+  // wall-clock replaces it once the run finishes ("Ran for 1m 4s").
+  const elapsedMs = useSubagentElapsed(
+    resolved.taskId !== 'pending-subagent' ? resolved.taskId : undefined,
+    running,
+    resolved.elapsedMs
+  );
+  const elapsed =
+    elapsedMs === undefined
+      ? undefined
+      : running
+        ? formatElapsed(elapsedMs)
+        : t('chat.subagents.ranFor').replace('{duration}', formatElapsed(elapsedMs));
   const awaiting = state === 'waiting' && resolved.status === 'awaiting_user';
   // The user's own open/closed choice, remembered by the part's tool-call id
   // so it survives assistant-ui's remounts (a virtualized history, a thread
@@ -245,22 +240,33 @@ export const SubagentTaskCard: ToolCallMessagePartComponent = ({
   const [open, setOpen] = useDisclosure(toolCallId ? `subagent:${toolCallId}` : undefined, false);
   const disclosureOpen = open || awaiting;
 
-  const cancellable =
-    (state === 'working' || state === 'waiting') && resolved.taskId !== 'pending-subagent';
+  const cancellable = running && resolved.taskId !== 'pending-subagent';
 
   const actions =
-    awaiting || resolved.worktreePath || cancellable ? (
+    awaiting || cancellable ? (
       <div className="flex flex-col gap-2.5">
         {awaiting ? <AwaitingUserActions activity={resolved} /> : null}
-        <WorktreeRow activity={resolved} />
         {cancellable ? <CancelTaskAction taskId={resolved.taskId} /> : null}
       </div>
     ) : undefined;
 
+  // A failure's output stays on the card. A finished report goes inside the
+  // disclosure instead, rendered as markdown with the chat's own renderer:
+  // the parent's reply presents the same result, so the card stays a header
+  // row until the user expands it. Its `[n]` markers are the child's, not
+  // the parent turn's sources, so citation linking is off.
   const resultNode =
-    resolved.output && (state === 'done' || state === 'failed') ? (
+    resolved.output && state === 'failed' ? (
       <p className="m-0 whitespace-pre-wrap">{resolved.output}</p>
     ) : undefined;
+  const report =
+    resolved.output && state === 'done' ? (
+      <div data-testid="subagent-report" className="text-sm">
+        <TextMessagePartProvider text={resolved.output} isRunning={false}>
+          <MarkdownTextNoCitations />
+        </TextMessagePartProvider>
+      </div>
+    ) : null;
 
   // `messages` (the part's own nested transcript, built by `subagentMessages`)
   // is preferred over recomputing it here — it is the SAME data, but reusing
@@ -273,7 +279,7 @@ export const SubagentTaskCard: ToolCallMessagePartComponent = ({
       data-testid="assistant-ui-subagent-call"
       data-status={resolved.status ?? state}
       label={`${t('conversations.tools.delegatedTo').replace('{agent}', name)}`}
-      meta={resolved.mode}
+      meta={[t(`conversations.taskCard.state.${state}`), resolved.mode].filter(Boolean).join(' · ')}
       state={state}
       elapsed={elapsed}
       open={disclosureOpen}
@@ -292,6 +298,7 @@ export const SubagentTaskCard: ToolCallMessagePartComponent = ({
           />
         </div>
       ) : undefined}
+      {report}
     </TaskCard>
   );
 };

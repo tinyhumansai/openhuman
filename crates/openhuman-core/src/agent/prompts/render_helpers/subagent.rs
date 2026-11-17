@@ -1,16 +1,16 @@
 //! Narrow, KV-cache-stable system-prompt renderer for typed sub-agents.
 //!
 //! Purpose-built alternative to
-//! [`SystemPromptBuilder::for_subagent`](crate::agent::prompts::builder::SystemPromptBuilder::for_subagent)
+//! [`SystemPromptBuilder::for_subagent`](crate::prompts::SystemPromptBuilder::for_subagent)
 //! for callers that only hold indices into the parent's tool vec.
 
-use super::super::builder::GLOBAL_STYLE_SUFFIX;
-use super::super::sections::GROUNDING_BODY;
-use super::super::types::*;
-use super::workspace_files::{inject_workspace_file, write_agents_md_blocks};
+use super::types::*;
+use crate::prompts::sections::GROUNDING_BODY;
+use crate::prompts::GLOBAL_STYLE_SUFFIX;
+use crate::prompts::{inject_workspace_file, write_agents_md_blocks};
 use std::fmt::Write;
 use std::path::Path;
-use tinytools_agent::dialect::{CodeDialect, NativeDialect, PFormatDialect, ToolDialect};
+use tinytools_agent::dialect::{self, ToolCallFormat};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-agent prompt renderer
@@ -19,7 +19,7 @@ use tinytools_agent::dialect::{CodeDialect, NativeDialect, PFormatDialect, ToolD
 /// Render a narrow, KV-cache-stable system prompt for a typed sub-agent.
 ///
 /// This is a purpose-built alternative to
-/// [`crate::agent::prompts::builder::SystemPromptBuilder::for_subagent`] for call sites
+/// [`crate::prompts::SystemPromptBuilder::for_subagent`] for call sites
 /// that only have indices into the parent's `&[Box<dyn Tool>]` vec (so they
 /// can't cheaply build a filtered owning slice for `ToolsSection`). The
 /// output mirrors what `for_subagent` would emit with the matching
@@ -161,7 +161,10 @@ pub fn render_subagent_system_prompt_with_format(
         parameters: tool.parameters_schema(),
     }));
     if !tool_specs.is_empty() {
-        out.push_str(&render_tool_dialect_prompt(tool_call_format, &tool_specs));
+        out.push_str(&dialect::render_prompt_instructions(
+            tool_call_format,
+            &tool_specs,
+        ));
     }
     out.push_str("\nUse the provided tools to accomplish the task. Reply with a concise, dense final answer when you have one — the parent agent will weave it back into the user-visible response.\n\n");
 
@@ -205,52 +208,4 @@ pub fn render_subagent_system_prompt_with_format(
     out.push_str(GLOBAL_STYLE_SUFFIX);
 
     out
-}
-
-/// Ask TinyTools to produce the exact catalogue and protocol that its
-/// corresponding dialect accepts. OpenHuman deliberately owns no syntax here.
-fn render_tool_dialect_prompt(format: ToolCallFormat, tools: &[tinytools::ToolSpec]) -> String {
-    match format {
-        // Native providers receive the catalogue in the request's structured
-        // `tools` field. Rendering it in the system prompt duplicates large
-        // integration toolkits and can exhaust the context window.
-        ToolCallFormat::Native => NativeDialect.prompt_instructions(&[]),
-        ToolCallFormat::Json => harness_json_tool_prompt(tools),
-        ToolCallFormat::PFormat => {
-            let registry = tinytools_agent::build_registry(
-                tools
-                    .iter()
-                    .map(|tool| (tool.name.as_str(), &tool.parameters)),
-            );
-            format!(
-                "{}\n{}",
-                tinytools_agent::dialect::render_pformat_catalogue(tools),
-                PFormatDialect::new(registry).prompt_instructions(tools)
-            )
-        }
-        ToolCallFormat::Python | ToolCallFormat::TypeScript => {
-            let style = format.code_style().expect("code format has a code style");
-            format!(
-                "{}\n{}",
-                tinytools_agent::render::render_code_catalogue(tools, style),
-                CodeDialect::instructions(style)
-            )
-        }
-    }
-}
-
-/// Use TinyAgents' complete text-mode prompt contract rather than teaching a
-/// local JSON convention that could drift from transcript replay and parsing.
-pub(crate) fn harness_json_tool_prompt(tools: &[tinytools::ToolSpec]) -> String {
-    let schemas: Vec<tinyinference_llm::tool::ToolSchema> = tools
-        .iter()
-        .map(|tool| {
-            tinyinference_llm::tool::ToolSchema::new(
-                tool.name.clone(),
-                tool.description.clone(),
-                tool.parameters.clone(),
-            )
-        })
-        .collect();
-    tinyagents_harness::tool::prompt_tool_instructions(&schemas)
 }

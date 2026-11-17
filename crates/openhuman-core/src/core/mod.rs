@@ -6,14 +6,14 @@
 
 use serde::Serialize;
 
-pub mod agent_cli;
 pub mod all;
 pub mod auth;
 pub mod bus;
 pub mod bus_testing;
 pub mod cli;
+mod cli_serve;
 pub mod dispatch;
-pub mod envelope;
+pub mod domain_group;
 pub mod event_bind_tokens;
 pub mod events;
 // Ungated compile-time marker for the `http-server` gate (#5048) — the desktop
@@ -32,11 +32,9 @@ pub mod runtime;
 #[cfg(feature = "crash-reporting")]
 pub mod sentry_transport;
 pub mod server_launcher;
-pub mod session_expiry;
 pub mod shutdown;
+pub mod slots;
 pub mod structured_error;
-pub mod subsystem;
-pub mod subsystems_cli;
 pub mod types;
 
 pub use outcome::{apply_log_envelope, unwrap_rpc, Outcome};

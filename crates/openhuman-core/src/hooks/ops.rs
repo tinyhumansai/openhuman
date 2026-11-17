@@ -7,13 +7,14 @@
 //! [`HookEngine::has_hooks`](super::engine::HookEngine::has_hooks) first and
 //! returns without building an envelope.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tinyagents_runtime::command_hooks::context::{
+use tinyagents_hooks::command::context::{
     build_input, set_host_context, HostContext, TurnIdentity,
 };
-use tinyagents_runtime::command_hooks::types::{
+use tinyagents_hooks::command::types::{
     CompactPayload, HookEvent, HookPayload, PromptPayload, SessionPayload, SubagentPayload,
     TextPayload,
 };
@@ -23,7 +24,7 @@ use tinyagents_runtime::command_hooks::types::{
 ///
 /// Safe to call again — a reload replaces the whole config and re-registers the
 /// bridge by name rather than appending a second copy.
-pub async fn init(config: &crate::config::schema::Config) {
+pub async fn init(ctx: &DispatchCtx, config: &crate::config::schema::Config) {
     let settings = &config.hooks;
     set_host_context(HostContext {
         workspace_roots: workspace_roots(config),
@@ -31,9 +32,9 @@ pub async fn init(config: &crate::config::schema::Config) {
     });
 
     if !settings.enabled {
-        super::bridge::ConfiguredHookBridge::uninstall();
+        crate::agent::hooks::replace_embedder_tool_hook("configured_hooks", None);
         super::host::engine()
-            .install(tinyagents_runtime::command_hooks::HookConfig::default())
+            .install(tinyagents_hooks::command::HookConfig::default())
             .await;
         log::info!("[hooks] disabled by configuration");
         return;
@@ -43,6 +44,7 @@ pub async fn init(config: &crate::config::schema::Config) {
         .set_default_timeout(Duration::from_secs(settings.default_timeout_secs))
         .await;
     let loaded = super::host::reload(
+        ctx,
         Some(config.action_dir.clone()),
         Some(config.workspace_dir.clone()),
     )
@@ -50,20 +52,17 @@ pub async fn init(config: &crate::config::schema::Config) {
     if loaded.is_empty() {
         // Nothing configured: keep the bridge out of the harness entirely so an
         // unconfigured host pays not even a task-local lookup per tool call.
-        super::bridge::ConfiguredHookBridge::uninstall();
+        crate::agent::hooks::replace_embedder_tool_hook("configured_hooks", None);
         return;
     }
-    super::bridge::ConfiguredHookBridge::install();
+    let hook: std::sync::Arc<
+        dyn tinyagents_hooks::tool::ToolHook<crate::agent::tinyagents::host::OpenHumanRunContext>,
+    > = super::host::engine().clone();
+    crate::agent::hooks::replace_embedder_tool_hook("configured_hooks", Some(hook));
 }
 
 fn workspace_roots(config: &crate::config::schema::Config) -> Vec<PathBuf> {
-    let mut roots = vec![config.action_dir.clone()];
-    if let Some(turn_root) = crate::agent::turn_workspace::current() {
-        if !roots.contains(&turn_root) {
-            roots.push(turn_root);
-        }
-    }
-    roots
+    vec![config.action_dir.clone()]
 }
 
 /// Fire `sessionStart`, returning context the caller should append to the
@@ -107,7 +106,7 @@ pub async fn session_ended(identity: TurnIdentity, reason: &str, duration_ms: Op
     }
     if let Some(session_id) = session_id {
         engine.forget_session(&session_id).await;
-        tinyagents_runtime::command_hooks::followup::forget(&session_id).await;
+        tinyagents_hooks::command::followup::forget(&session_id).await;
     }
 }
 

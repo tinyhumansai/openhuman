@@ -1,9 +1,12 @@
 use super::*;
+use crate::prompts::sections::*;
+use crate::prompts::*;
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::LazyLock;
 use tinytools::Tool;
+use tinytools_agent::dialect::ToolCallFormat;
 
 static NO_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
 
@@ -49,6 +52,7 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     }
 }
 
@@ -74,6 +78,7 @@ fn agents_md_ctx(global: Option<String>, local: Option<String>) -> PromptContext
         personality_roster: vec![],
         agents_md_global: global,
         agents_md_local: local,
+        flow_archetype_text: None,
     }
 }
 
@@ -81,57 +86,14 @@ fn agents_md_ctx(global: Option<String>, local: Option<String>) -> PromptContext
 mod agents_md_registration_tests;
 #[path = "mod_tests_builder_sections_tests.rs"]
 mod builder_sections_tests;
+#[path = "mod_tests_composition_tests.rs"]
+mod composition_tests;
 #[path = "mod_tests_grounding_spec_check_tests.rs"]
 mod grounding_spec_check_tests;
 #[path = "mod_tests_subagent_render_tests.rs"]
 mod subagent_render_tests;
 #[path = "mod_tests_tools_sections_tests.rs"]
 mod tools_sections_tests;
-
-#[test]
-fn tool_call_format_maps_to_the_dialect_and_harness_vocabulary() {
-    use tinyagents_harness::config::ToolDispatcher;
-    use tinytools_agent::dialect::CodeStyle;
-
-    for (dialect, host, harness, style) in [
-        (
-            tinytools_agent::dialect::ToolCallFormat::PFormat,
-            ToolCallFormat::PFormat,
-            ToolDispatcher::Pformat,
-            None,
-        ),
-        (
-            tinytools_agent::dialect::ToolCallFormat::Json,
-            ToolCallFormat::Json,
-            ToolDispatcher::Xml,
-            None,
-        ),
-        // Native maps to Auto on purpose: the harness keeps its profile-driven
-        // fallback for a model that turns out not to support native tools.
-        (
-            tinytools_agent::dialect::ToolCallFormat::Native,
-            ToolCallFormat::Native,
-            ToolDispatcher::Auto,
-            None,
-        ),
-        (
-            tinytools_agent::dialect::ToolCallFormat::Python,
-            ToolCallFormat::Python,
-            ToolDispatcher::Python,
-            Some(CodeStyle::Python),
-        ),
-        (
-            tinytools_agent::dialect::ToolCallFormat::TypeScript,
-            ToolCallFormat::TypeScript,
-            ToolDispatcher::Typescript,
-            Some(CodeStyle::TypeScript),
-        ),
-    ] {
-        assert_eq!(tool_call_format_from_dialect(dialect), host);
-        assert_eq!(host.harness_dispatcher(), harness);
-        assert_eq!(host.code_style(), style);
-    }
-}
 
 /// The prompt catalogue is the callable surface on a text dialect, so a
 /// deferred tool must leave it and the discovery bridge (`tool_search`) must

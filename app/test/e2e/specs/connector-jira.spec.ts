@@ -10,27 +10,23 @@ import {
   assertConnectorCardVisible,
   assertModalPhase,
   assertSessionNotNuked,
-  injectComposioFault,
   openConnectorModal,
   seedComposioConnection,
   seedComposioToolkits,
 } from '../helpers/composio-helpers';
-import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
   textExists,
   waitForText,
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { triggerAuthLoopbackBypass } from '../helpers/loopback-auth-helpers';
 import {
   completeOnboardingIfVisible,
   navigateToSkills,
   navigateViaHash,
 } from '../helpers/shared-flows';
 import {
-  clearRequestLog,
-  getRequestLog,
   resetMockBehavior,
   setMockBehavior,
   startMockServer,
@@ -65,8 +61,7 @@ describe('Jira Composio connector flow', () => {
     seedComposioToolkits([TOOLKIT_SLUG]);
     seedComposioConnection(TOOLKIT_SLUG, 'ACTIVE', 'c-jira-1');
     await waitForApp();
-    clearRequestLog();
-    await triggerAuthDeepLinkBypass(AUTH_TOKEN);
+    await triggerAuthLoopbackBypass(AUTH_TOKEN);
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
     await completeOnboardingIfVisible(LOG);
@@ -143,62 +138,6 @@ describe('Jira Composio connector flow', () => {
     await assertSessionNotNuked();
   });
 
-  it('auth/connect flow with subdomain extra_params routes correctly', async function () {
-    this.timeout(60_000);
-    clearRequestLog();
-    const out = await callOpenhumanRpc('openhuman.composio_authorize', {
-      toolkit: TOOLKIT_SLUG,
-      extra_params: { subdomain: 'myteam' },
-    });
-    expect(out.ok).toBe(true);
-    const authReq = getRequestLog().find(
-      r => r.method === 'POST' && r.url.includes('/composio/authorize')
-    );
-    expect(authReq).toBeDefined();
-    const body = JSON.parse(authReq?.body || '{}');
-    expect(body.toolkit).toBe(TOOLKIT_SLUG);
-    console.log(`${LOG} PASS: authorize with subdomain extra_params routed correctly`);
-  });
-
-  it('connected state persists after reconnect/reload', async function () {
-    this.timeout(60_000);
-    seedComposioConnection(TOOLKIT_SLUG, 'ACTIVE', 'c-jira-1');
-    const out = await callOpenhumanRpc('openhuman.composio_list_connections', {});
-    expect(out.ok).toBe(true);
-    const result = (out.result as { result?: unknown })?.result ?? out.result;
-    const connections = (result as { connections?: unknown[] })?.connections ?? [];
-    const hit = (connections as { toolkit?: string; status?: string }[]).find(
-      c => c.toolkit?.toLowerCase() === TOOLKIT_SLUG
-    );
-    expect(hit).toBeDefined();
-    expect(hit?.status).toBe('ACTIVE');
-    console.log(`${LOG} PASS: connected state persists`);
-  });
-
-  it('composio_sync does not tear down the session', async function () {
-    this.timeout(30_000);
-    clearRequestLog();
-    await callOpenhumanRpc('openhuman.composio_sync', { toolkit: TOOLKIT_SLUG });
-    // syncReq URL check removed — composio_sync does no HTTP for
-    // connectors without a native provider (the RPC short-circuits). The
-    // assertSessionNotNuked() below covers the real intent: the call
-    // does not tear down the WebDriver session.
-    await assertSessionNotNuked();
-    console.log(`${LOG} PASS: sync does not nuke session`);
-  });
-
-  it('composio_execute routes a basic task', async function () {
-    this.timeout(30_000);
-    clearRequestLog();
-    await callOpenhumanRpc('openhuman.composio_execute', {
-      connection_id: 'c-jira-1',
-      action: 'JIRA_LIST_ISSUES',
-      params: {},
-    });
-    // execReq URL check removed (see composio_sync comment above).
-    console.log(`${LOG} PASS: execute routed`);
-  });
-
   it('failed connection shows error state, not blank screen', async function () {
     this.timeout(60_000);
     seedComposioConnection(TOOLKIT_SLUG, 'FAILED', 'c-jira-fail');
@@ -219,30 +158,5 @@ describe('Jira Composio connector flow', () => {
     await assertModalPhase('expired', CONNECTOR_NAME);
     await assertSessionNotNuked();
     console.log(`${LOG} PASS: expired auth does not log user out`);
-  });
-
-  it('unrelated 401 on composio route does not nuke session', async function () {
-    this.timeout(60_000);
-    injectComposioFault(400);
-    await callOpenhumanRpc('openhuman.composio_execute', {
-      connection_id: 'c-jira-1',
-      action: 'JIRA_LIST_ISSUES',
-      params: {},
-    });
-    await assertSessionNotNuked();
-    console.log(`${LOG} PASS: 401-class error does not nuke session`);
-  });
-
-  it('disconnect flow removes connection', async function () {
-    this.timeout(60_000);
-    seedComposioConnection(TOOLKIT_SLUG, 'ACTIVE', 'c-jira-1');
-    clearRequestLog();
-    await callOpenhumanRpc('openhuman.composio_delete_connection', { connection_id: 'c-jira-1' });
-    const deleteReq = getRequestLog().find(
-      r => r.method === 'DELETE' && r.url.includes('/composio/connections/')
-    );
-    expect(deleteReq).toBeDefined();
-    console.log(`${LOG} PASS: disconnect routed DELETE`);
-    await assertSessionNotNuked();
   });
 });

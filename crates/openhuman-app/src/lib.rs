@@ -1,8 +1,11 @@
 //! Desktop host for OpenHuman: Tauri v2 + Wry, targeting Windows, macOS, and
 //! Linux.
 //!
-//! `openhuman_core` is linked in-process; its JSON-RPC server runs as a
-//! tokio task (`core_process`) instead of a spawned sidecar. The renderer
+//! The core is linked in-process; its JSON-RPC server runs as a tokio task
+//! (`core_process`, booted through `openhuman_rpc::host::desktop`) instead of
+//! a spawned sidecar. `openhuman-rpc` is this crate's only openhuman
+//! dependency: the embed facades and the TinyHumans session owner are reached
+//! as `openhuman_rpc::embed` and `openhuman_rpc::tinyhumans`. The renderer
 //! reaches it over `http://127.0.0.1:<port>/rpc`, using the per-launch
 //! bearer returned by the `core_rpc_token` command.
 //!
@@ -12,14 +15,14 @@
 //!
 //! The Cargo features `gateways`, `custom-protocol`, `e2e-test-support`, and
 //! `sandbox-bubblewrap` are shell-local and not part of the product feature
-//! list; the `openhuman_core` product gates are forwarded explicitly in
+//! list; the product gates are forwarded explicitly on `openhuman-rpc` in
 //! `Cargo.toml` and guarded by the `VOICE_COMPILED_IN` /
 //! `HTTP_SERVER_COMPILED_IN` compile-time asserts below.
 //!
 //! This crate is excluded from the root Cargo workspace — build it with
 //! `cargo check --manifest-path crates/openhuman-app/Cargo.toml`. See
 //! `README.md` in this crate and
-//! [`gitbooks/developing/architecture/tauri-shell.md`](../../../gitbooks/developing/architecture/tauri-shell.md)
+//! [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
 //! for the full IPC surface and lifecycle model.
 
 // Desktop targets: Windows, macOS, Linux. iOS + Android live in
@@ -30,40 +33,41 @@ compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobi
 // The shipped desktop app must always embed the real voice domain. Cargo
 // features are per-crate, so `#[cfg(feature = "voice")]` here would test THIS
 // crate's features, not the core's — a voice-less core is only observable via
-// the core's own always-compiled facade. Without this assert the failure is
-// silent and runtime-only: every `openhuman.voice_*` RPC answers "unknown
-// method" and the UI blames a stale sidecar (#4901). Keep `voice` in the
-// `openhuman_core` feature list in Cargo.toml to satisfy this.
+// the core's own always-compiled facade (re-exported by embed). Without this
+// assert the failure is silent and runtime-only: every `openhuman.voice_*` RPC
+// answers "unknown method" and the UI blames a stale sidecar (#4901). Keep
+// `voice` in the `openhuman-rpc` feature list in Cargo.toml to satisfy this.
 const _: () = assert!(
-    openhuman_core::voice::VOICE_COMPILED_IN,
-    "openhuman_core must be built with the `voice` feature: the desktop app ships voice, \
+    openhuman_rpc::embed::VOICE_COMPILED_IN,
+    "the core must be built with the `voice` feature: the desktop app ships voice, \
      and without it every openhuman.voice_* controller is unregistered (#4901). \
-     Add \"voice\" to the openhuman_core `features` list in crates/openhuman-app/Cargo.toml."
+     Add \"voice\" to the openhuman-rpc `features` list in crates/openhuman-app/Cargo.toml."
 );
 
 // The shell talks to the in-process core only over http://127.0.0.1:<port>/rpc,
 // so the core MUST embed the HTTP + Socket.IO transport (#5048). Same failure
 // class as #4901: with `http-server` dropped the core never binds a listener
 // and every RPC is unreachable — silent and runtime-only. The marker lives in
-// the core's always-compiled facade (`core::http_server_status`) precisely so
-// this assert can observe the core's feature state (a dependent's own
-// `#[cfg(feature = ...)]` would test THIS crate's features, not the core's).
+// the core's always-compiled facade (`core::http_server_status`, re-exported by
+// embed) precisely so this assert can observe the core's feature state (a
+// dependent's own `#[cfg(feature = ...)]` would test THIS crate's features, not
+// the core's).
 const _: () = assert!(
-    openhuman_core::core::http_server_status::HTTP_SERVER_COMPILED_IN,
-    "openhuman_core must be built with the `http-server` feature: the desktop app reaches \
+    openhuman_rpc::embed::HTTP_SERVER_COMPILED_IN,
+    "the core must be built with the `http-server` feature: the desktop app reaches \
      the core only over http://127.0.0.1:<port>/rpc, and without it the core binds no \
      listener so every RPC is unreachable (#5048). \
-     Add \"http-server\" to the openhuman_core `features` list in crates/openhuman-app/Cargo.toml."
+     Add \"http-server\" to the openhuman-rpc `features` list in crates/openhuman-app/Cargo.toml."
 );
 
 // The desktop shell runs the same in-process core as the CLI. Keep its module
 // loader and TinyComputer browser adapter compiled in; the verified release module
 // is resolved by that core at first use.
-const _: &str = openhuman_core::modules::browser::MODULE_ID;
+const _: &str = openhuman_rpc::embed::modules::browser::MODULE_ID;
 
 mod app_update;
-// Artifact export command (#2779) — cross-platform Downloads copy. The `rfd`
-// Save-As dialog that used to sit in front of it was removed with the crate.
+// Artifact export commands (#2779): the OS save dialog (`save_artifact_as`)
+// and the cross-platform Downloads copy.
 mod artifact_commands;
 mod claude_code;
 mod core_process;
@@ -72,11 +76,11 @@ mod core_rpc;
 mod deep_link_ipc;
 #[cfg(target_os = "windows")]
 mod deep_link_ipc_windows;
+mod remote_ws_relay;
 // Cross-platform module: the registry-reading function is windows-only, but
 // the parsing helpers compile (and test) everywhere so `cargo test` on the
 // developer host covers them.
 mod deep_link_registration_check;
-mod dictation_hotkeys;
 mod directory_picker;
 mod external_navigation;
 mod file_logging;
@@ -94,16 +98,13 @@ mod loopback_oauth;
 mod mascot_native_window;
 mod mcp_commands;
 mod native_notifications;
-#[cfg(target_os = "macos")]
-mod notch_window;
 mod process_kill;
 mod process_recovery;
-mod ptt_hotkeys;
-mod ptt_overlay;
 #[cfg(target_os = "windows")]
 mod reset_reboot_schedule;
 mod session;
 mod stderr_panic_hook;
+mod widget_scheme;
 mod window_state;
 mod workspace_paths;
 
@@ -116,26 +117,29 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWindow};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_notification::NotificationExt;
 
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
 #[cfg(target_os = "macos")]
-use objc2::runtime::{AnyClass, AnyObject};
-#[cfg(target_os = "macos")]
-use objc2::ClassType;
-#[cfg(target_os = "macos")]
-use objc2_app_kit::{
-    NSPanel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility,
-};
+use objc2_app_kit::{NSWindow, NSWindowTitleVisibility};
 
 // Use Tauri's upstream native WebView runtime on every desktop platform.
 pub(crate) type AppRuntime = tauri::Wry;
 
 static EARLY_TEARDOWN_RAN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Set once `RunEvent::ExitRequested` has been seen. Every exit the app starts
+/// itself (window close, tray / menu quit, `app_quit`, `app.exit`) goes through
+/// `ExitRequested` first and then leaves tao's message loop normally. A
+/// `RunEvent::Exit` that arrives without it was started by the OS: on Windows,
+/// tao turns `WM_ENDSESSION` (logoff / shutdown / restart-for-update) into
+/// `LoopDestroyed` while the message loop keeps running. See
+/// [`must_terminate_after_exit_event`].
+static EXIT_REQUESTED_SEEN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(target_os = "macos")]
@@ -217,16 +221,6 @@ async fn active_rpc_endpoint(desktop: &core_process::CoreProcessHandle) -> (Stri
 }
 
 #[tauri::command]
-fn overlay_parent_rpc_url() -> Option<String> {
-    let url = std::env::var("OPENHUMAN_CORE_RPC_URL").ok()?;
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(trimmed.to_string())
-}
-
-#[tauri::command]
 fn process_diagnostics_list_owned() -> Result<Vec<process_recovery::ProcessInfo>, String> {
     match process_recovery::enumerate_openhuman_processes() {
         Ok(processes) => {
@@ -239,112 +233,6 @@ fn process_diagnostics_list_owned() -> Result<Vec<process_recovery::ProcessInfo>
         Err(err) => {
             log::warn!("[startup-recovery] diagnostics process enumeration failed: {err}");
             Err(err)
-        }
-    }
-}
-
-#[allow(dead_code)] // Overlay disabled in tauri.conf.json; helper kept for future re-enable.
-fn pin_overlay_bottom_right(window: &WebviewWindow<AppRuntime>) {
-    let Ok(Some(monitor)) = window.current_monitor() else {
-        log::warn!("[overlay] could not resolve current monitor for positioning");
-        return;
-    };
-    let Ok(size) = window.outer_size() else {
-        log::warn!("[overlay] could not resolve overlay size for positioning");
-        return;
-    };
-
-    let margin = 20i32;
-    let x = monitor.position().x + monitor.size().width as i32 - size.width as i32 - margin;
-    let y = monitor.position().y + monitor.size().height as i32 - size.height as i32 - margin;
-
-    if let Err(err) = window.set_position(PhysicalPosition::new(x, y)) {
-        log::warn!("[overlay] failed to pin overlay bottom-right: {err}");
-    } else {
-        log::info!("[overlay] pinned overlay bottom-right at {},{}", x, y);
-    }
-}
-
-#[cfg(target_os = "macos")]
-#[allow(dead_code)] // Overlay disabled in tauri.conf.json; helper kept for future re-enable.
-fn configure_overlay_window_macos(window: &WebviewWindow<AppRuntime>) {
-    // Standard NSWindow cannot float above fullscreen apps on macOS because
-    // fullscreen apps run in a separate Space. Only NSPanel can do this.
-    //
-    // Tauri/tao hardcodes NSWindow as the window class, so we use
-    // object_setClass() to reclass the existing NSWindow into an NSPanel
-    // at runtime. This avoids creating a new window (which crashes because
-    // Tao's window delegate is tightly coupled to the original NSWindow).
-    //
-    // After reclassing, we set the NonactivatingPanel style mask and
-    // Transient collection behavior — matching the working Swift overlay
-    // helper (accessibility/helper.rs OverlayController) which is confirmed
-    // to float above fullscreen apps on macOS Sonoma.
-    //
-    // Previous attempts that FAILED:
-    // 1. CGShieldingWindowLevel + CanJoinAllSpaces + FullScreenAuxiliary → hidden
-    // 2. Window level i32::MAX-17 + Stationary → hidden
-    // 3. CGS private API CGSSetWindowTags sticky bit → hidden
-    // 4. object_setClass WITHOUT NonactivatingPanel style mask → hidden
-    // 5. Create new NSPanel + reparent webview → CRASH (Tao delegate panic)
-    //
-    // See: https://github.com/tauri-apps/tauri/issues/11488
-
-    match window.ns_window() {
-        Ok(ns_window_raw) => unsafe {
-            let ns_window = ns_window_raw as *mut AnyObject;
-
-            // ── Reclass NSWindow → NSPanel ──────────────────────────
-            let panel_class: *const AnyClass = NSPanel::class();
-            objc2::ffi::object_setClass(ns_window, panel_class);
-            log::info!("[overlay] reclassed NSWindow → NSPanel via object_setClass");
-
-            // Cast to NSPanel for method calls
-            let panel: &NSPanel = &*(ns_window as *const NSPanel);
-
-            // ── Style mask: add NonactivatingPanel ──────────────────
-            // This is the KEY piece the Swift helper uses. Without it,
-            // the panel doesn't behave as a proper non-activating panel
-            // and won't float above fullscreen Spaces.
-            let current_style = panel.styleMask();
-            panel.setStyleMask(current_style | NSWindowStyleMask::NonactivatingPanel);
-
-            // ── Collection behavior ─────────────────────────────────
-            // The Swift helper uses .canJoinAllSpaces + .transient
-            // (NOT .stationary or .fullScreenAuxiliary alone).
-            // Transient means the panel follows the active Space and
-            // appears above fullscreen apps.
-            panel.setCollectionBehavior(
-                NSWindowCollectionBehavior::CanJoinAllSpaces
-                    | NSWindowCollectionBehavior::Transient
-                    | NSWindowCollectionBehavior::FullScreenAuxiliary
-                    | NSWindowCollectionBehavior::IgnoresCycle,
-            );
-
-            // ── Window level: status bar tier ───────────────────────
-            // NSStatusWindowLevel = 25. The Swift helper uses .statusBar
-            // which is the same value.
-            panel.setLevel(25);
-
-            // ── Panel-specific properties ───────────────────────────
-            panel.setFloatingPanel(true);
-            panel.setHidesOnDeactivate(false);
-            panel.setBecomesKeyOnlyIfNeeded(true);
-            panel.setWorksWhenModal(true);
-
-            // Make sure it's ordered front
-            panel.orderFrontRegardless();
-
-            log::info!(
-                "[overlay] NSPanel configured — level=25, \
-                 NonactivatingPanel+canJoinAllSpaces+transient, \
-                 floatingPanel={}, hidesOnDeactivate={}",
-                panel.isFloatingPanel(),
-                panel.hidesOnDeactivate(),
-            );
-        },
-        Err(err) => {
-            log::warn!("[overlay] failed to access native NSWindow handle: {err}");
         }
     }
 }
@@ -507,9 +395,9 @@ async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
 /// `OPENHUMAN_WORKSPACE` overrides used in test harnesses. (#900)
 #[tauri::command]
 fn get_active_user_id() -> Result<Option<String>, String> {
-    let root = openhuman_core::config::default_root_openhuman_dir()
+    let root = openhuman_rpc::embed::config::default_root_openhuman_dir()
         .map_err(|err| format!("resolve active-user state directory: {err}"))?;
-    Ok(openhuman_core::config::read_active_user_id(&root))
+    Ok(openhuman_rpc::embed::config::read_active_user_id(&root))
 }
 
 /// Information about an available shell-app update returned to the frontend.
@@ -916,310 +804,6 @@ async fn install_app_update(
     app.restart();
 }
 
-/// Register (or re-register) the global dictation toggle hotkey.
-/// Emits `dictation://toggle` to all webviews when the shortcut is pressed.
-#[tauri::command]
-async fn register_dictation_hotkey(
-    app: AppHandle<AppRuntime>,
-    shortcut: String,
-) -> Result<(), String> {
-    log::info!("[dictation] register_dictation_hotkey: shortcut={shortcut}");
-
-    let old_shortcuts = {
-        let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
-        let guard = state.0.lock().unwrap();
-        guard.clone()
-    };
-
-    let expanded_shortcuts = dictation_hotkeys::expand_dictation_shortcuts(&shortcut);
-    if expanded_shortcuts.is_empty() {
-        return Err("Shortcut cannot be empty".to_string());
-    }
-    log::info!(
-        "[dictation] expanded shortcuts: {}",
-        expanded_shortcuts.join(", ")
-    );
-
-    // Reject overlap with the currently-registered PTT hotkey.
-    let ptt_current = {
-        let state = app.state::<ptt_hotkeys::PttHotkeyState>();
-        let guard = state.shortcut.lock().unwrap();
-        guard.clone()
-    };
-    if let Some(conflict) = ptt_hotkeys::first_conflict_with(&expanded_shortcuts, &ptt_current) {
-        return Err(format!(
-            "dictation shortcut '{conflict}' conflicts with the push-to-talk hotkey"
-        ));
-    }
-
-    let register_shortcut = |shortcut_variant: &str| -> Result<(), String> {
-        let app_clone = app.clone();
-        app.global_shortcut()
-            .on_shortcut(shortcut_variant, move |_app, _sc, event| {
-                if event.state == ShortcutState::Pressed {
-                    log::debug!("[dictation] hotkey pressed — emitting dictation://toggle");
-                    if let Err(e) = app_clone.emit("dictation://toggle", ()) {
-                        log::warn!("[dictation] emit failed: {e}");
-                    }
-                }
-            })
-            .map_err(|e| format!("Failed to register shortcut '{shortcut_variant}': {e}"))
-    };
-
-    let mut unregistered_old: Vec<String> = Vec::new();
-    for old in &old_shortcuts {
-        log::debug!("[dictation] unregistering previous shortcut: {old}");
-        if let Err(e) = app.global_shortcut().unregister(old.as_str()) {
-            for restored in &unregistered_old {
-                if let Err(restore_err) = register_shortcut(restored.as_str()) {
-                    log::warn!(
-                        "[dictation] rollback failed while restoring old shortcut '{restored}': {restore_err}"
-                    );
-                }
-            }
-            return Err(format!(
-                "Failed to unregister previous shortcut '{old}': {e}"
-            ));
-        }
-        unregistered_old.push(old.clone());
-    }
-
-    let mut newly_registered: Vec<String> = Vec::new();
-    for shortcut_variant in &expanded_shortcuts {
-        if let Err(err) = register_shortcut(shortcut_variant.as_str()) {
-            log::error!("[dictation] failed to register shortcut '{shortcut_variant}': {err}");
-            for registered in &newly_registered {
-                if let Err(unregister_err) = app.global_shortcut().unregister(registered.as_str()) {
-                    log::warn!(
-                        "[dictation] rollback failed while unregistering '{registered}': {unregister_err}"
-                    );
-                }
-            }
-            for old in &old_shortcuts {
-                if let Err(restore_err) = register_shortcut(old.as_str()) {
-                    log::warn!(
-                        "[dictation] rollback failed while restoring old shortcut '{old}': {restore_err}"
-                    );
-                }
-            }
-            return Err(err);
-        }
-        newly_registered.push(shortcut_variant.clone());
-    }
-
-    // Persist all newly registered shortcuts.
-    {
-        let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
-        let mut guard = state.0.lock().unwrap();
-        *guard = expanded_shortcuts.clone();
-    }
-
-    log::info!(
-        "[dictation] shortcuts registered: {}",
-        expanded_shortcuts.join(", ")
-    );
-    Ok(())
-}
-
-/// Unregister the global dictation hotkey (if any).
-#[tauri::command]
-async fn unregister_dictation_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
-    log::info!("[dictation] unregister_dictation_hotkey: called");
-    let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
-    let mut guard = state.0.lock().unwrap();
-    if guard.is_empty() {
-        log::debug!("[dictation] no shortcut registered — nothing to unregister");
-    } else {
-        let old_shortcuts = guard.clone();
-        guard.clear();
-        for old in old_shortcuts {
-            log::debug!("[dictation] unregistering shortcut: {old}");
-            app.global_shortcut()
-                .unregister(old.as_str())
-                .map_err(|e| {
-                    log::warn!("[dictation] failed to unregister '{old}': {e}");
-                    format!("Failed to unregister shortcut '{old}': {e}")
-                })?;
-            log::info!("[dictation] shortcut unregistered: {old}");
-        }
-    }
-    Ok(())
-}
-
-/// Register (or re-register) the global push-to-talk hotkey. Emits
-/// `ptt://start { session_id }` on press and `ptt://stop { session_id }`
-/// on release.
-#[tauri::command]
-async fn register_ptt_hotkey(app: AppHandle<AppRuntime>, shortcut: String) -> Result<(), String> {
-    log::info!("[ptt] register_ptt_hotkey: shortcut={shortcut}");
-
-    let expanded = ptt_hotkeys::expand_ptt_shortcuts(&shortcut).map_err(|e| e.to_string())?;
-
-    // Reject overlap with the currently-registered dictation hotkey.
-    let dictation_current = {
-        let state = app.state::<dictation_hotkeys::DictationHotkeyState>();
-        let guard = state.0.lock().unwrap();
-        guard.clone()
-    };
-    if let Some(conflict) = ptt_hotkeys::first_conflict_with(&expanded, &dictation_current) {
-        return Err(ptt_hotkeys::PttError::ConflictsWithDictation(conflict).to_string());
-    }
-
-    let old_shortcuts = {
-        let state = app.state::<ptt_hotkeys::PttHotkeyState>();
-        let guard = state.shortcut.lock().unwrap();
-        guard.clone()
-    };
-
-    // Lazy-instantiate the overlay window so it's ready before the first press.
-    if let Err(e) = ptt_overlay::ensure_window(&app) {
-        log::warn!("[ptt] overlay window create failed (continuing): {e}");
-    }
-
-    let register_shortcut = |variant: &str| -> Result<(), String> {
-        let app_pressed = app.clone();
-        let app_released = app.clone();
-        let variant_owned = variant.to_string();
-        app.global_shortcut()
-            .on_shortcut(variant, move |app_inner, _sc, event| {
-                let state = app_inner.state::<ptt_hotkeys::PttHotkeyState>();
-                match event.state {
-                    ShortcutState::Pressed => {
-                        // Drop OS key-repeat events; only the first Pressed of a hold opens a session.
-                        if state
-                            .is_held
-                            .compare_exchange(
-                                false,
-                                true,
-                                std::sync::atomic::Ordering::AcqRel,
-                                std::sync::atomic::Ordering::Acquire,
-                            )
-                            .is_err()
-                        {
-                            log::trace!(
-                                "[ptt] press dropped (already held) shortcut={variant_owned}"
-                            );
-                            return;
-                        }
-                        let session_id = state
-                            .session_counter
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                            + 1;
-                        log::debug!(
-                            "[ptt] pressed shortcut={variant_owned} session_id={session_id}"
-                        );
-                        if let Err(e) = app_pressed.emit(
-                            "ptt://start",
-                            serde_json::json!({
-                                "session_id": session_id,
-                            }),
-                        ) {
-                            log::warn!("[ptt] emit start failed: {e}");
-                        }
-                    }
-                    ShortcutState::Released => {
-                        if !state
-                            .is_held
-                            .swap(false, std::sync::atomic::Ordering::AcqRel)
-                        {
-                            // No corresponding Pressed in our state — stale event, drop.
-                            log::trace!(
-                                "[ptt] release dropped (not held) shortcut={variant_owned}"
-                            );
-                            return;
-                        }
-                        let session_id = state
-                            .session_counter
-                            .load(std::sync::atomic::Ordering::Relaxed);
-                        log::debug!(
-                            "[ptt] released shortcut={variant_owned} session_id={session_id}"
-                        );
-                        if let Err(e) = app_released.emit(
-                            "ptt://stop",
-                            serde_json::json!({
-                                "session_id": session_id,
-                            }),
-                        ) {
-                            log::warn!("[ptt] emit stop failed: {e}");
-                        }
-                    }
-                }
-            })
-            .map_err(|e| format!("Failed to register ptt shortcut '{variant}': {e}"))
-    };
-
-    // Unregister previous PTT variants.
-    let mut unregistered: Vec<String> = Vec::new();
-    for old in &old_shortcuts {
-        if let Err(e) = app.global_shortcut().unregister(old.as_str()) {
-            // Rollback already-unregistered ones.
-            for r in &unregistered {
-                if let Err(re) = register_shortcut(r) {
-                    log::warn!("[ptt] rollback failed for '{r}': {re}");
-                }
-            }
-            return Err(format!(
-                "Failed to unregister previous ptt shortcut '{old}': {e}"
-            ));
-        }
-        unregistered.push(old.clone());
-    }
-
-    // Register the new variants. Rollback on first failure.
-    let mut newly_registered: Vec<String> = Vec::new();
-    for v in &expanded {
-        if let Err(e) = register_shortcut(v) {
-            for r in &newly_registered {
-                if let Err(re) = app.global_shortcut().unregister(r.as_str()) {
-                    log::warn!("[ptt] rollback failed for '{r}': {re}");
-                }
-            }
-            for old in &old_shortcuts {
-                if let Err(re) = register_shortcut(old) {
-                    log::warn!("[ptt] rollback failed for '{old}': {re}");
-                }
-            }
-            return Err(e);
-        }
-        newly_registered.push(v.clone());
-    }
-
-    {
-        let state = app.state::<ptt_hotkeys::PttHotkeyState>();
-        let mut guard = state.shortcut.lock().unwrap();
-        *guard = expanded.clone();
-    }
-
-    log::info!("[ptt] registered: {}", expanded.join(", "));
-    Ok(())
-}
-
-/// Unregister the global PTT hotkey (if any).
-#[tauri::command]
-async fn unregister_ptt_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
-    log::info!("[ptt] unregister_ptt_hotkey: called");
-    let state = app.state::<ptt_hotkeys::PttHotkeyState>();
-    let old = {
-        let guard = state.shortcut.lock().unwrap();
-        guard.clone()
-    };
-    let mut still_registered: Vec<String> = Vec::new();
-    for s in &old {
-        if let Err(e) = app.global_shortcut().unregister(s.as_str()) {
-            log::warn!("[ptt] unregister '{s}' failed: {e}");
-            still_registered.push(s.clone());
-        }
-    }
-    // Only retain variants that genuinely failed to unregister; the rest are gone.
-    {
-        let mut guard = state.shortcut.lock().unwrap();
-        *guard = still_registered;
-    }
-    // Destroy the overlay window so resources are released.
-    ptt_overlay::destroy_window(&app);
-    Ok(())
-}
-
 fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
@@ -1308,13 +892,6 @@ fn set_titlebar_for_sidebar(app: AppHandle<AppRuntime>, collapsed: bool) -> Resu
     }
 }
 
-/// Tauri command: bring the main window to front from any webview (e.g. overlay orb click).
-#[tauri::command]
-fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
-    log::debug!("[window] activate_main_window called from overlay");
-    show_main_window(&app)
-}
-
 /// Show the floating mascot. macOS: native NSPanel + WKWebView (so the
 /// window is actually transparent — vendored tauri-cef can't render
 /// transparent windowed-mode browsers). Loads the Vite dev URL in
@@ -1359,61 +936,6 @@ fn mascot_native_window_is_open() -> bool {
 #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 fn mascot_native_window_is_open() -> bool {
     false
-}
-
-/// Dispatch a notch-panel mutation onto the app main thread.
-///
-/// The notch is a native NSPanel + WKWebView; AppKit requires it to be built
-/// and torn down on the main thread (and its `thread_local` storage lives
-/// there). Tauri runs these IPC command handlers on a worker thread, so we hop
-/// to the main thread via `run_on_main_thread`. Fire-and-forget: notch
-/// visibility is cosmetic (the frontend swallows errors), so we log the result
-/// on the main thread rather than blocking the command to propagate it back.
-#[cfg(target_os = "macos")]
-fn dispatch_notch_on_main(
-    app: AppHandle<AppRuntime>,
-    op: impl FnOnce(&AppHandle<AppRuntime>) + Send + 'static,
-) -> Result<(), String> {
-    app.clone()
-        .run_on_main_thread(move || op(&app))
-        .map_err(|e| format!("run_on_main_thread dispatch failed: {e}"))
-}
-
-/// Show the notch activity indicator. macOS only — transparent NSPanel + WKWebView
-/// anchored to the top-centre of the primary screen. Displays live voice and
-/// agent status (listening, thinking, executing) in a pill that emerges from
-/// the physical notch on supported MacBook Pros.
-#[tauri::command]
-fn notch_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
-    log::info!("[notch-window] show requested");
-    #[cfg(target_os = "macos")]
-    {
-        dispatch_notch_on_main(app, |app| {
-            if let Err(e) = notch_window::show(app) {
-                log::warn!("[notch-window] show failed: {e}");
-            }
-        })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = app;
-        Ok(()) // No-op on non-macOS
-    }
-}
-
-/// Hide the notch activity indicator.
-#[tauri::command]
-fn notch_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
-    log::info!("[notch-window] hide requested");
-    #[cfg(target_os = "macos")]
-    {
-        dispatch_notch_on_main(app, |_app| notch_window::hide())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = app;
-        Ok(())
-    }
 }
 
 /// Hide or show the OS top-level main-window frame on Windows by enumerating
@@ -1826,6 +1348,93 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
     }
 
     log::info!("[app] perform_early_teardown_sync — early teardown complete");
+}
+
+/// Whether the process has to end inside the `RunEvent::Exit` handler.
+///
+/// tao's Windows runner panics with `cannot move state from Destroyed` when it
+/// dispatches any event after `LoopDestroyed` (`runner.rs`, `move_state_to`).
+/// On a normal exit that can't happen: tao fires `LoopDestroyed` after the
+/// message loop has ended, resets the runner and calls `process::exit`. On
+/// `WM_ENDSESSION`, though, tao fires `LoopDestroyed` from inside the window
+/// procedure and goes back to `GetMessageW`. The next user event (a core
+/// event forwarded to the webview, a window hide from Tauri's cleanup) or
+/// redraw panics before Windows gets around to ending the process (#8505).
+/// When `Exit` arrives without an `ExitRequested` on Windows, nothing can
+/// safely run on the event loop again, so the handler must finish the
+/// teardown itself and exit.
+fn must_terminate_after_exit_event(exit_requested_seen: bool, is_windows: bool) -> bool {
+    is_windows && !exit_requested_seen
+}
+
+/// How long OS session-end teardown waits for provisioned-gateway cleanup.
+///
+/// Windows gives an app only a few seconds after `WM_ENDSESSION` before it
+/// force-kills the process, so the slow, network-bound gateway close must not
+/// hold up the exit. The core is stopped before this budget starts.
+const SESSION_END_GATEWAY_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Session-end teardown order: stop the core first (itself bounded, see
+/// `CoreProcessHandle::send_terminate_signal`), then give gateway cleanup at
+/// most `gateway_budget`. Returns whether the cleanup finished in time.
+///
+/// Generic over the two steps so the ordering and the bound are unit-testable
+/// without a running app.
+async fn session_end_teardown<C, G>(
+    stop_core: C,
+    gateway_cleanup: G,
+    gateway_budget: std::time::Duration,
+) -> bool
+where
+    C: std::future::Future<Output = ()>,
+    G: std::future::Future<Output = ()>,
+{
+    stop_core.await;
+    tokio::time::timeout(gateway_budget, gateway_cleanup)
+        .await
+        .is_ok()
+}
+
+/// Run-once teardown for an OS-initiated exit (`RunEvent::Exit` without
+/// `ExitRequested`, #8505). Unlike [`perform_early_teardown_sync`], the core
+/// stops first and gateway cleanup is bounded by
+/// [`SESSION_END_GATEWAY_BUDGET`], so a slow container or remote close cannot
+/// delay the core stop or the exit past Windows' session-end window.
+fn perform_session_end_teardown_once(app_handle: &AppHandle<AppRuntime>) {
+    if EARLY_TEARDOWN_RAN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        log::info!("[app] session-end teardown — already ran, skipping");
+        return;
+    }
+    log::info!(
+        "[app] session-end teardown — core first, gateway cleanup bounded to {SESSION_END_GATEWAY_BUDGET:?}"
+    );
+    shutdown_imessage_scanner(app_handle);
+
+    let core = app_handle
+        .try_state::<core_process::CoreProcessHandle>()
+        .map(|core| core.inner().clone());
+    let stop_core = async move {
+        if let Some(core) = core {
+            core.send_terminate_signal().await;
+        }
+    };
+    #[cfg(feature = "gateways")]
+    let gateway_cleanup = gateway::registry::shutdown();
+    #[cfg(not(feature = "gateways"))]
+    let gateway_cleanup = async {};
+
+    let finished = tauri::async_runtime::block_on(session_end_teardown(
+        stop_core,
+        gateway_cleanup,
+        SESSION_END_GATEWAY_BUDGET,
+    ));
+    if finished {
+        log::info!("[app] session-end teardown complete");
+    } else {
+        log::warn!(
+            "[app] session-end teardown: gateway cleanup exceeded {SESSION_END_GATEWAY_BUDGET:?}; exiting without waiting for it"
+        );
+    }
 }
 
 fn perform_early_teardown_sync_once(app_handle: &AppHandle<AppRuntime>, reason: &str) {
@@ -2372,14 +1981,10 @@ pub fn run() {
     // stderr is a console or file. See `stderr_panic_hook`.
     stderr_panic_hook::neutralize_broken_parent_stderr();
 
-    // The in-process core reaches the hosted backend only through the
-    // transport `openhuman-tinyhumans` installs. `main.rs` installs it before
-    // dispatching here; this call is idempotent and covers embedders of
-    // `run()` that skip `main.rs`.
-    if let Err(err) = openhuman_tinyhumans::install(openhuman_tinyhumans::InstallOptions::default())
-    {
-        log::error!("[boot] TinyHumans backend transport unavailable: {err}");
-    }
+    // No `openhuman_tinyhumans::install` here any more: the embedded core is
+    // booted through `openhuman_rpc::host::desktop` (see `core_process`),
+    // which connects the TinyHumans backend transport, the hosted RPC
+    // proxies and the Jev ranker as part of building its runtime.
 
     // Must run before any GTK/CEF code that could trigger X calls — otherwise
     // Xlib's default handler calls exit(1) on the first BadWindow and we never
@@ -2391,7 +1996,7 @@ pub fn run() {
     // Tauri's default async runtime uses tokio multi-thread workers with
     // a ~2 MB stack. The in-process core (spawned by
     // `core_process::CoreProcessHandle::ensure_running` via
-    // `tokio::spawn(run_server_embedded(..))`) runs *on* that runtime, so
+    // `tokio::spawn(openhuman_rpc::host::desktop(..))`) runs *on* that runtime, so
     // every JSON-RPC handler — including the deep tower
     // `web channel chat → orchestrator turn → integration action tool
     // → composio execute → load_config_with_timeout` (and, at the time, the
@@ -2410,18 +2015,15 @@ pub fn run() {
     // stack overflow` once an orchestrator delegated. PR #3155 raised the
     // standalone server to 16 MiB; the desktop Tauri host is the *same*
     // tower running on a *different* runtime and needs the same headroom.
-    // Share the constant with the rest of `crates/openhuman-core/src/core/*` via
-    // [`openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES`] so all
-    // multi-thread runtimes that may host an agent turn stay in sync.
+    // `embed::process::tokio_runtime` sizes the workers with the core's
+    // `AGENT_WORKER_STACK_BYTES` (and caps blocking threads at
+    // `MAX_BLOCKING_THREADS`) so all multi-thread runtimes that may host an
+    // agent turn stay in sync.
     //
     // Must happen before any `tauri::async_runtime::*` call, otherwise
     // `set(...)` panics with "runtime already initialized".
     {
-        let custom_runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
-            .max_blocking_threads(openhuman_core::core::runtime::MAX_BLOCKING_THREADS)
-            .build()
+        let custom_runtime = openhuman_rpc::embed::process::tokio_runtime()
             .expect("build custom tokio runtime for tauri async surface");
         let handle = custom_runtime.handle().clone();
         // Tauri docs: "you cannot drop the underlying TokioRuntime."
@@ -2441,193 +2043,29 @@ pub fn run() {
     // `tauri::cef_entry_point`) and the `OpenHuman core …` in-process core
     // path do NOT spin up a second client — those have their own reporting
     // surfaces.
-    let _sentry_guard = sentry::init(sentry::ClientOptions {
-        dsn: std::env::var("OPENHUMAN_TAURI_SENTRY_DSN")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| option_env!("OPENHUMAN_TAURI_SENTRY_DSN").map(|s| s.to_string()))
-            .filter(|s| !s.is_empty())
-            .and_then(|s| s.parse().ok()),
-        release: Some(std::borrow::Cow::Owned(build_sentry_release_tag())),
-        environment: Some(std::borrow::Cow::Owned(resolve_sentry_environment())),
-        send_default_pii: false,
-        before_send: Some(std::sync::Arc::new(|mut event| {
-            // Drop "dev-server fetch failed" noise: the vendored
-            // `tauri-runtime-cef` dev proxy
-            // (vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs) calls
-            // `log::error!("Failed to request {url}: {err}")` whenever the
-            // CEF webview asks for an asset on `http://localhost:1420` (the
-            // Vite dev URL baked into `tauri.conf.json`). That `log::error!`
-            // is bridged into `tracing` and picked up by the sentry-tracing
-            // layer as an Event — see `crates/openhuman-core/src/core/logging.rs::sentry_tracing_layer`.
-            // In packaged staging/production builds Vite isn't running, so
-            // the request correctly fails — but the failure is noise we
-            // don't want in Sentry (issue OPENHUMAN-TAURI-V, 66+ events).
-            // See [sentry-localhost-filter] log line below for diagnostics.
-            if event_is_localhost_dev_fetch_noise(&event) {
-                log::debug!(
-                    "[sentry-localhost-filter] dropping dev-server fetch noise event: {:?}",
-                    event.message.as_deref().unwrap_or("<no message>")
-                );
-                return None;
-            }
-            if openhuman_core::core::observability::is_budget_event(&event) {
-                // Log only structured tag metadata — `event.message` can carry
-                // upstream provider error text including tokens / pasted-through
-                // secrets, and per `CLAUDE.md` "never log secrets or full PII".
-                // The (domain, status) pair is sufficient diagnostic since
-                // those are the tags `is_budget_event` gates on.
-                log::debug!(
-                    "[sentry-budget-filter] dropping budget-exhausted event (domain={:?}, status={:?})",
-                    event.tags.get("domain"),
-                    event.tags.get("status")
-                );
-                return None;
-            }
-            // Defense-in-depth: drop max-tool-iterations cap events that
-            // slipped past the call-site filters in the core (see
-            // `openhuman_core::core::observability::is_max_iterations_event`
-            // for the rationale). The shell links the core in-process so
-            // any captured event for this deterministic agent-state
-            // outcome is filtered here too (OPENHUMAN-TAURI-99 / -98).
-            if openhuman_core::core::observability::is_max_iterations_event(&event) {
-                log::debug!(
-                    "[sentry-max-iter-filter] dropping max-iteration cap noise event: {:?}",
-                    event.message.as_deref().unwrap_or("<no message>")
-                );
-                return None;
-            }
-            if openhuman_core::core::observability::is_transient_backend_api_failure(&event)
-                || openhuman_core::core::observability::is_transient_integrations_failure(&event)
-                || openhuman_core::core::observability::is_updater_transient_event(&event)
-                || openhuman_core::core::observability::is_skill_install_user_fetch_failure(&event)
-            {
-                return None;
-            }
-            // Defense-in-depth: drop managed-backend `errorCode` events (#870)
-            // the backend owns (F2/F4). The shell links the core in-process,
-            // so a managed inference error captured here must be filtered
-            // identically to the core binary's main.rs chain. The malformed
-            // `BAD_REQUEST` carve-out (F8) is excluded by the underlying
-            // decision, so a client-built bad payload still pages.
-            if openhuman_core::core::observability::is_backend_error_code_event(&event) {
-                log::debug!(
-                    "[sentry-error-code-filter] dropping backend-owned errorCode event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Defense-in-depth: drop transient streaming transport blips
-            // (domain=llm_provider, failure=transport) — flaky-network
-            // timeouts/resets recovered by retry/fallback (F7). Mirrors the
-            // core binary's main.rs filter.
-            if openhuman_core::core::observability::is_transient_provider_transport_failure(&event)
-            {
-                log::debug!(
-                    "[sentry-transport-filter] dropping transient provider transport event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Drop 401 "Session expired. Please log in again." bodies and
-            // pre-flight "no session token stored" guards — mirrors the
-            // core binary's before_send chain. Since #1061 the Tauri shell
-            // links the core in-process, so any session-expired event
-            // captured by either surface lands in the same Sentry client
-            // here and must be filtered identically. Keeps
-            // OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off Sentry.
-            if openhuman_core::core::observability::is_session_expired_event(&event) {
-                // Metadata-only log shape — `event.message` carries the raw
-                // backend response body which CLAUDE.md forbids from local
-                // logs. Mirror the core binary's main.rs filter.
-                log::debug!(
-                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Drop provider insufficient-credits 402s — the user's own BYO
-            // account (e.g. OpenRouter) is out of balance, a billing state
-            // OpenHuman has no lever over once the request already caps
-            // max_tokens. The core binary's main.rs before_send already
-            // filters these; since #1061 the core runs in-process inside this
-            // shell, so the cron `agent_job` retries-exhausted report (and any
-            // other compatible-provider path) lands in THIS Sentry client and
-            // must be filtered identically. Closes the #3617 drift that wired
-            // the filter only into the standalone-CLI chain (TAURI-RUST-514 /
-            // -C62).
-            if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
-                // Metadata-only log shape — `event.message` carries the raw
-                // provider 402 body which CLAUDE.md forbids from local logs.
-                log::debug!(
-                    "[sentry-insufficient-credits-filter] dropping insufficient-credits 402 event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Drop provider monthly-quota exhausted events — the user's
-            // third-party plan has spent its allotment (e.g. Kiro
-            // `MONTHLY_REQUEST_COUNT`, sometimes wrapped in a 500 envelope so
-            // the 402-gated credits filter above misses it). No local lever;
-            // mirrors the core binary's main.rs before_send chain
-            // (TAURI-RUST-C9A: 9k events from a single quota-capped user).
-            if openhuman_core::core::observability::is_quota_exhausted_event(&event) {
-                // Metadata-only log shape — `event.message` carries the raw
-                // provider body which CLAUDE.md forbids from local logs.
-                log::debug!(
-                    "[sentry-quota-exhausted-filter] dropping monthly-quota event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Defense-in-depth: drop Windows `ERROR_FILE_SYSTEM_LIMITATION`
-            // (os error 665) — a persistent host-filesystem condition with
-            // zero local lever and no Sentry remediation path. The Tauri
-            // shell is a separate crate from the core, so the core's emit-site
-            // classifier (`expected_error_kind`) can only catch events that
-            // originate inside the core binary. Any filesystem-error event
-            // that starts in the shell (e.g. file_logging, window_state,
-            // CEF profile I/O) bypasses the core classifier and lands here;
-            // this filter is the only net for those events (TAURI-RUST-QT0:
-            // 6,050 events / 1 user).
-            if openhuman_core::core::observability::is_windows_file_system_limitation_event(&event)
-            {
-                log::debug!(
-                    "[sentry-fs-limitation-filter] dropping Windows file-system-limitation event (os error 665) event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Strip server_name (hostname) to avoid leaking machine identity.
-            event.server_name = None;
-            // Attach the cached account uid so Sentry can count unique users
-            // affected by an issue. We only carry `id` — never email, name,
-            // or IP — so this stays consistent with `send_default_pii: false`.
-            // Since #1061 the core runs in-process inside this shell, so this
-            // is the surface that tags ~all desktop events.
-            //
-            // Issue #3135: the primary source for `event.user` is now the
-            // Sentry scope, bound proactively at session boundaries
-            // (credentials::set_credential / clear_credential) and at server
-            // boot (run_server_inner). The shell's session owner mirrors the
-            // signed-in user id for this fallback, consulted only when the
-            // scope hasn't already bound a user — otherwise we'd silently
-            // clobber the scope binding when the slot is empty (the original
-            // userCount=0 root cause).
-            if event.user.is_none() {
-                event.user = session::peek_user_id().map(|id| sentry::User {
-                    id: Some(id),
-                    ..Default::default()
-                });
-            }
-            Some(event)
-        })),
-        sample_rate: 1.0,
-        transport: Some(std::sync::Arc::new(
-            openhuman_core::core::sentry_transport::factory,
-        )),
-        ..sentry::ClientOptions::default()
-    });
+    //
+    // The `before_send` chain is embed's shared one
+    // (`openhuman_rpc::embed::process::sentry`): the union of the shell's and
+    // the CLI's old filters (including this shell's dev-server
+    // "Failed to request http://localhost:…" noise, OPENHUMAN-TAURI-V), then
+    // hostname stripping, the user-id fallback and secret scrubbing. Since
+    // #1061 the core runs in-process here, so this is the surface that tags
+    // ~all desktop events. The fallback user id is the shell's session owner
+    // (`session::peek_user_id`), consulted only when the Sentry scope has not
+    // bound a user (#3135).
+    let _sentry_guard = {
+        use openhuman_rpc::embed::process::sentry as oh_sentry;
+        let mut config = oh_sentry::SentryConfig::new(
+            oh_sentry::first_non_blank([
+                std::env::var("OPENHUMAN_TAURI_SENTRY_DSN").ok(),
+                option_env!("OPENHUMAN_TAURI_SENTRY_DSN").map(str::to_owned),
+            ]),
+            build_sentry_release_tag(),
+            resolve_sentry_environment(),
+        );
+        config.user_id = session::peek_user_id;
+        sentry::init(oh_sentry::client_options(config))
+    };
     // Tag every Sentry event with CPU architecture and OS so Intel-specific
     // crashes (issue #1012 — SIGABRT in CrBrowserMain on x86_64 macOS) are
     // clearly identified without needing a separate build identifier.
@@ -3045,18 +2483,14 @@ pub fn run() {
         // Native backstop: the main webview never loads a remote page; any
         // http(s) navigation away from the app is handed to the OS browser.
         .plugin(external_navigation::init())
+        .register_asynchronous_uri_scheme_protocol(widget_scheme::SCHEME, widget_scheme::handle)
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // Auto-updater for the Tauri shell. Endpoint and minisign pubkey live
         // in `tauri.conf.json` under `plugins.updater`. Releases are signed at
         // build time with `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`); see
-        // gitbooks/overview/auto-update.md for the full pipeline.
+        // docs/gitbooks/en/overview/auto-update.md for the full pipeline.
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(dictation_hotkeys::DictationHotkeyState(
-            std::sync::Mutex::new(Vec::new()),
-        ))
-        .manage(ptt_hotkeys::PttHotkeyState::new())
         .manage(PendingAppUpdateState::default());
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     builder
@@ -3065,7 +2499,7 @@ pub fn run() {
                 if let Ok(resource_dir) = app.path().resource_dir() {
                     let bundled = resource_dir.join("bundled-modules");
                     if bundled.is_dir() {
-                        if openhuman_core::modules::ops::set_bundled_releases_dir(bundled)
+                        if openhuman_rpc::embed::modules::set_bundled_releases_dir(bundled)
                             .is_err()
                         {
                             log::warn!("[modules] bundled release directory was already set");
@@ -3104,7 +2538,7 @@ pub fn run() {
                         "[deep-link] openhuman:// scheme registration unhealthy — \
                          OAuth callbacks may never reach the app. \
                          register_all_error={register_err:?}, hkcu_status={status_log}. \
-                         See gitbooks/overview/troubleshooting-sign-in.md \
+                         See docs/gitbooks/en/overview/troubleshooting-sign-in.md \
                          (\"Windows: openhuman:// handler not registered\") for the manual repair."
                     );
                 }
@@ -3386,36 +2820,6 @@ pub fn run() {
                 }
             }
 
-            // Overlay window is currently disabled in `tauri.conf.json` (the
-            // `overlay` entry under `app.windows` was removed), so we skip
-            // the macOS NSPanel reclass + bottom-right pin + initial show
-            // here. The helpers (`configure_overlay_window_macos`,
-            // `pin_overlay_bottom_right`) and the React entry point
-            // (`src/overlay/OverlayApp.tsx`) are kept intact so the overlay
-            // can be re-enabled by restoring the config entry and the two
-            // setup blocks below.
-            //
-            //   #[cfg(target_os = "macos")]
-            //   if let Some(window) = app.get_webview_window("overlay") {
-            //       configure_overlay_window_macos(&window);
-            //   }
-            //   if let Some(window) = app.get_webview_window("overlay") {
-            //       pin_overlay_bottom_right(&window);
-            //       let _ = window.show();
-            //   }
-
-            // Notch activity indicator: transparent pill at the top-centre of
-            // the primary screen. Shows live voice / agent state. macOS only
-            // (physical notch or menu-bar HUD on older hardware).
-            //
-            // It is NOT auto-shown here: the notch is the always-on listening
-            // HUD, so its visibility is owned by the frontend, which calls
-            // `notch_window_show` / `notch_window_hide` (via `syncNotchVisibility`)
-            // to mirror `voice_server.always_on_enabled` — once on boot and
-            // whenever the Settings toggle flips. Showing it unconditionally
-            // here would flash the pill on every launch even with always-on
-            // listening disabled (the default).
-
             // Tray icon setup moved to RunEvent::Ready (see below) — GTK is only
             // initialized after the event loop starts, so we must delay tray creation
             // until the Ready event fires. Creating the tray here would panic on
@@ -3461,13 +2865,14 @@ pub fn run() {
             // runtime on a LAN IP that the secure `tauri://localhost` webview
             // cannot fetch directly (cleartext mixed content). See #3865.
             core_rpc::relay_http_rpc,
-            overlay_parent_rpc_url,
+            remote_ws_relay::relay_remote_socket,
             process_diagnostics_list_owned,
             // Artifact export — cross-platform. Previously macOS/Linux-gated,
             // but the `directories` + `tokio::fs::copy` flow compiles on Windows
-            // too (CodeRabbit on #4127). The Save-As dialog that used to sit in
-            // front of this went with the shell's `rfd` dependency.
+            // too (CodeRabbit on #4127). `save_artifact_as` puts the OS save
+            // dialog in front of the copy.
             artifact_commands::download_artifact_to_downloads,
+            artifact_commands::save_artifact_as,
             // Native directory chooser for the folder memory-source (#5831).
             // Unlike the Save-As dialog above it, this one has no renderer-side
             // substitute: a `webkitdirectory` input cannot report where the
@@ -3492,20 +2897,12 @@ pub fn run() {
             session::commands::auth_logout,
             session::commands::auth_state,
             session::commands::auth_current_user,
-            register_dictation_hotkey,
-            unregister_dictation_hotkey,
-            register_ptt_hotkey,
-            unregister_ptt_hotkey,
-            ptt_overlay::show_ptt_overlay,
             native_notifications::notification_permission_state,
             native_notifications::notification_permission_request,
-            activate_main_window,
             set_titlebar_for_sidebar,
             native_notifications::show_native_notification,
             mascot_window_show,
             mascot_window_hide,
-            notch_window_show,
-            notch_window_hide,
             file_logging::reveal_logs_folder,
             file_logging::logs_folder_path,
             workspace_paths::open_workspace_path,
@@ -3591,6 +2988,7 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
+                EXIT_REQUESTED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
                 // Persist the main window's geometry on every clean quit
                 // (Cmd+Q, tray "Quit", dock quit, or the frontend
                 // `app_quit` command) so the next launch restores the
@@ -3609,7 +3007,38 @@ pub fn run() {
                 perform_early_teardown_sync_once(app_handle, "exit_requested");
             }
             RunEvent::Exit => {
-                log::info!("[app] RunEvent::Exit — cef::shutdown follows");
+                let exit_requested_seen =
+                    EXIT_REQUESTED_SEEN.load(std::sync::atomic::Ordering::SeqCst);
+                if exit_requested_seen {
+                    log::info!("[app] RunEvent::Exit — event loop finished");
+                } else {
+                    // OS-initiated exit (Windows WM_ENDSESSION): no
+                    // ExitRequested ran, so neither did the teardown or the
+                    // geometry save.
+                    log::warn!(
+                        "[app] RunEvent::Exit without ExitRequested — OS session end; running teardown"
+                    );
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        window_state::save_main(&window);
+                    }
+                    perform_session_end_teardown_once(app_handle);
+                }
+                if must_terminate_after_exit_event(exit_requested_seen, cfg!(target_os = "windows")) {
+                    // tao's runner is now `Destroyed` but its message loop
+                    // keeps running. The next dispatched event would panic
+                    // with `cannot move state from Destroyed` (#8505). Do
+                    // what Tauri and tao would do after this callback
+                    // (tray cleanup, then exit), and exit here. Not
+                    // `cleanup_before_exit`: on Windows it hides every window,
+                    // and a hide can deliver WM_KILLFOCUS into the destroyed
+                    // runner. Resource tables go with the process.
+                    log::warn!(
+                        "[app] event loop destroyed by session end — exiting now (#8505)"
+                    );
+                    app_handle.remove_tray_by_id("openhuman-tray");
+                    process_kill::sweep_orphan_children();
+                    std::process::exit(0);
+                }
             }
             _ => {}
         });
@@ -3634,85 +3063,31 @@ fn should_center_main_window(restored: bool, windows: bool, maximized: bool) -> 
 }
 
 pub fn run_core_from_args(args: &[String]) -> Result<(), String> {
-    // Core lives in-process: dispatch directly through the linked `openhuman_core`
-    // library instead of shelling out to a separate binary. The Tauri main()
-    // routes `OpenHuman core <args>` here so users can still drive the core CLI
-    // from the bundled app. `run` / `serve` start the JSON-RPC server from
-    // `openhuman-rpc`, which the core cannot depend on, so install it first.
-    openhuman_rpc::server::install_cli_server();
-    openhuman_core::run_core_from_args(args).map_err(|e| format!("{e:#}"))
+    // Core lives in-process: dispatch through the shared CLI host entry
+    // instead of shelling out to a separate binary. The Tauri main() routes
+    // `OpenHuman core <args>` (and `mcp`) here so users can still drive the
+    // core CLI from the bundled app. `host::cli` connects the TinyHumans
+    // backend and puts the JSON-RPC server behind `run` / `serve`, exactly as
+    // the standalone `openhuman-core` binary does.
+    log::debug!(
+        "[core-cli] dispatch command={}",
+        args.first().map(String::as_str).unwrap_or("<none>")
+    );
+    openhuman_rpc::host::cli(args).map_err(|e| format!("{e:#}"))
 }
 
 // ---------------------------------------------------------------------------
 // Sentry release / environment resolution (Tauri shell — desktop only)
 // ---------------------------------------------------------------------------
 
-/// Canonical release tag: `openhuman@<version>[+<short_sha>]`.
-///
-/// Mirrors `build_release_tag` in `crates/openhuman-core/src/main.rs` and the
-/// `SENTRY_RELEASE` value computed in `app/vite.config.ts` so events from
-/// every surface (React frontend, standalone `openhuman-core` binary, Tauri
-/// shell) group under the same release in Sentry and benefit from the same
-/// source-map / debug-info upload.
-/// Return `true` when the Sentry event is a "Failed to request
-/// http://localhost:…" message originating from the vendored
-/// `tauri-runtime-cef` dev-server proxy.
-///
-/// The proxy logs this message via `log::error!` (see
-/// `crates/openhuman-app/vendor/tauri-cef/crates/tauri/src/protocol/tauri.rs`)
-/// every time the CEF webview asks for an asset on the Vite dev URL
-/// (`http://localhost:1420` per `tauri.conf.json`). In packaged
-/// staging/production builds Vite isn't running, so the request fails —
-/// but the failure is benign and shouldn't be reported.
-///
-/// The match is conservative: it checks the exact `Failed to request ` +
-/// `http://localhost` / `http://127.0.0.1` prefix that only the dev-proxy
-/// emits. Production HTTP errors from elsewhere in the shell or core use
-/// different message shapes and won't be filtered.
-fn event_is_localhost_dev_fetch_noise(event: &sentry::protocol::Event<'_>) -> bool {
-    // sentry-tracing 0.47 (with default `attach_stacktrace=false`) stores the
-    // log message in `event.message`. Check there first; fall back to the
-    // last exception's `value` for the (currently unused) stacktrace-enabled
-    // path so the filter stays correct if attach_stacktrace ever flips.
-    let direct = event.message.as_deref();
-    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
-    [direct, from_exception]
-        .into_iter()
-        .flatten()
-        .any(message_is_localhost_dev_fetch_noise)
-}
-
-/// Pure prefix check, separated from `event_is_localhost_dev_fetch_noise`
-/// so the matching rule can be unit-tested without constructing a full
-/// Sentry `Event`.
-fn message_is_localhost_dev_fetch_noise(message: &str) -> bool {
-    // The tauri-cef dev proxy formats the message as:
-    //   `Failed to request {url}: {err}`
-    // so anchoring on `Failed to request http://localhost` / `127.0.0.1` is
-    // sufficient and avoids matching unrelated "Failed to request …" errors
-    // elsewhere in the codebase that target real hosts.
-    //
-    // Note: no `[::1]` (IPv6 loopback) entry — the vendored tauri-cef dev
-    // proxy resolves `localhost` to IPv4 via reqwest's default resolver, so
-    // dev-server fetches always surface as `http://localhost:` or
-    // `http://127.0.0.1:`. Add an `[::1]` prefix if that ever changes
-    // (per graycyrus note on PR #1545).
-    const PREFIXES: &[&str] = &[
-        "Failed to request http://localhost:",
-        "Failed to request http://127.0.0.1:",
-    ];
-    PREFIXES.iter().any(|p| message.starts_with(p))
-}
-
+/// Canonical release tag: `openhuman@<version>[+<short_sha>]`, built by
+/// embed's shared `release_tag` so the shell, the `openhuman-core` binary,
+/// the TUI and the frontend's `SENTRY_RELEASE` all group under one release.
 fn build_sentry_release_tag() -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    let sha = option_env!("OPENHUMAN_BUILD_SHA").unwrap_or("").trim();
-    let sha_short: String = sha.chars().take(12).collect();
-    if sha_short.is_empty() {
-        format!("openhuman@{version}")
-    } else {
-        format!("openhuman@{version}+{sha_short}")
-    }
+    openhuman_rpc::embed::process::sentry::release_tag(
+        env!("CARGO_PKG_VERSION"),
+        option_env!("OPENHUMAN_BUILD_SHA"),
+    )
 }
 
 /// Resolve the Sentry environment tag from `OPENHUMAN_APP_ENV` (runtime) or
@@ -3751,6 +3126,9 @@ fn macos_os_version() -> Option<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
+
+#[cfg(test)]
+mod test_env;
 
 #[cfg(test)]
 #[path = "lib_tests.rs"]

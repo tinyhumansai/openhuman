@@ -9,6 +9,7 @@
 //! key storage — is intentionally NOT exposed as agent tools (exfiltration /
 //! auth-mutation risk). Those stay RPC-only.
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -25,10 +26,11 @@ use tinytools::{Tool, ToolResult};
 /// the tools reach them by wire name instead of calling them directly. With no
 /// hosted layer the tool reports the `BACKEND_UNAVAILABLE:` sentinel.
 async fn invoke_hosted(
+    ctx: DispatchCtx,
     method: &str,
     params: serde_json::Map<String, Value>,
 ) -> anyhow::Result<Value> {
-    match crate::core::all::try_invoke_registered_rpc(method, params).await {
+    match crate::core::all::try_invoke_registered_rpc(ctx, method, params).await {
         Some(Ok(value)) => Ok(strip_log_envelope(value)),
         Some(Err(err)) => Err(anyhow::anyhow!("{err}")),
         None => {
@@ -92,7 +94,7 @@ impl Tool for CredentialListTool {
             .and_then(Value::as_str)
             .map(str::to_string);
         emit!(
-            credentials::list_provider_credentials(&self.config, provider).await,
+            credentials::ops::list_provider_credentials(&self.config, provider).await,
             "credential_list"
         )
     }
@@ -129,7 +131,7 @@ impl Tool for SessionStateTool {
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][credentials] session_state invoked");
         emit!(
-            credentials::auth_get_state(&self.config).await,
+            credentials::ops::auth_get_state(&self.config).await,
             "session_state"
         )
     }
@@ -172,6 +174,16 @@ impl Tool for OAuthConnectUrlTool {
         })
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
         log::debug!("[tool][credentials] oauth_connect invoked");
         let provider = args
             .get("provider")
@@ -184,7 +196,7 @@ impl Tool for OAuthConnectUrlTool {
         if let Some(skill_id) = args.get("skill_id").and_then(Value::as_str) {
             params.insert("skillId".into(), json!(skill_id));
         }
-        let value = invoke_hosted("openhuman.auth_oauth_connect", params)
+        let value = invoke_hosted(ctx, "openhuman.auth_oauth_connect", params)
             .await
             .map_err(|e| anyhow::anyhow!("oauth_connect_url: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&value)?))
@@ -215,16 +227,42 @@ impl Tool for OAuthListTool {
     fn parameters_schema(&self) -> serde_json::Value {
         json!({ "type": "object", "properties": {} })
     }
-    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        log::debug!("[tool][credentials] oauth_list invoked");
-        let value = invoke_hosted("openhuman.auth_oauth_list_integrations", Default::default())
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
             .await
-            .map_err(|e| anyhow::anyhow!("oauth_list: {e}"))?;
+    }
+    async fn execute_with_context(
+        &self,
+        _args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
+        log::debug!("[tool][credentials] oauth_list invoked");
+        let value = invoke_hosted(
+            ctx,
+            "openhuman.auth_oauth_list_integrations",
+            Default::default(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("oauth_list: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&value)?))
     }
     fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
         true
     }
+}
+
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    vec![
+        Box::new(CredentialListTool::new(config.clone())),
+        Box::new(SessionStateTool::new(config.clone())),
+        Box::new(OAuthConnectUrlTool::new(config.clone())),
+        Box::new(OAuthListTool::new(config)),
+    ]
 }
 
 #[cfg(test)]

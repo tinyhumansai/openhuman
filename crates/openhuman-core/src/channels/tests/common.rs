@@ -1,6 +1,6 @@
-use crate::channels::{traits, Channel, SendMessage};
+use crate::channels::runtime::TestChannel;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 use tempfile::TempDir;
 use tinyinference_llm::message::{AssistantMessage, Message};
@@ -89,79 +89,7 @@ impl ChatModel<()> for DummyModel {
     }
 }
 
-#[derive(Default)]
-pub(super) struct RecordingChannel {
-    pub(super) sent_messages: tokio::sync::Mutex<Vec<String>>,
-    pub(super) start_typing_calls: AtomicUsize,
-    pub(super) stop_typing_calls: AtomicUsize,
-}
-
-#[derive(Default)]
-pub(super) struct TelegramRecordingChannel {
-    pub(super) sent_messages: tokio::sync::Mutex<Vec<String>>,
-}
-
-#[async_trait::async_trait]
-impl Channel for TelegramRecordingChannel {
-    fn name(&self) -> &str {
-        "telegram"
-    }
-
-    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
-        self.sent_messages
-            .lock()
-            .await
-            .push(format!("{}:{}", message.recipient, message.content));
-        Ok(())
-    }
-
-    async fn listen(
-        &self,
-        _tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn start_typing(&self, _recipient: &str) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl Channel for RecordingChannel {
-    fn name(&self) -> &str {
-        "test-channel"
-    }
-
-    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
-        self.sent_messages
-            .lock()
-            .await
-            .push(format!("{}:{}", message.recipient, message.content));
-        Ok(())
-    }
-
-    async fn listen(
-        &self,
-        _tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn start_typing(&self, _recipient: &str) -> anyhow::Result<()> {
-        self.start_typing_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-
-    async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
-        self.stop_typing_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-}
+pub(super) type RecordingChannel = TestChannel;
 
 pub(super) struct SlowModel {
     pub(super) delay: Duration,
@@ -340,29 +268,5 @@ impl Tool for MockPriceTool {
         }
 
         Ok(ToolResult::success("BTC is $65,000"))
-    }
-}
-
-pub(super) struct AlwaysFailChannel {
-    pub(super) name: &'static str,
-    pub(super) calls: Arc<AtomicUsize>,
-}
-
-#[async_trait::async_trait]
-impl Channel for AlwaysFailChannel {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    async fn send(&self, _message: &SendMessage) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn listen(
-        &self,
-        _tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
-    ) -> anyhow::Result<()> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        anyhow::bail!("listen boom")
     }
 }

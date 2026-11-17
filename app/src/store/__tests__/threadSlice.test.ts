@@ -7,10 +7,12 @@ import type { Thread, ThreadMessage } from '../../types/thread';
 import threadReducer, {
   addInferenceResponse,
   addMessageLocal,
+  applyChannelEvent,
   clearAllThreads,
   clearSelectedThread,
   clearStaleThread,
   clearThreadInferenceActive,
+  deleteThread,
   generateThreadTitleIfNeeded,
   loadThreadMessages,
   loadThreads,
@@ -84,6 +86,77 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.messages).toEqual([]);
     expect(state.isLoadingThreads).toBe(false);
     expect(state.isLoadingMessages).toBe(false);
+  });
+
+  it('deletes a thread from legacy persisted state without channel activity', () => {
+    const current = threadReducer(undefined, { type: '@@test/init' });
+    const legacyState = {
+      ...current,
+      channelActivityByThreadId: undefined,
+    } as unknown as typeof current;
+
+    expect(() =>
+      threadReducer(
+        legacyState,
+        deleteThread.fulfilled({ threadId: 't-legacy' }, 'request-1', 't-legacy')
+      )
+    ).not.toThrow();
+  });
+
+  it('applies provider reactions only to the exact OpenHuman row and persists read state in metadata', async () => {
+    const store = createStore();
+    const message = makeMessage({
+      id: 'user:row-42',
+      extraMetadata: {
+        channelActivity: {
+          reactions: { 'persisted-reaction': { actorId: 'bob', value: '🎉' } },
+          readReceipts: { 'persisted-receipt': { actorId: 'carol', timestamp: 123 } },
+        },
+      },
+    });
+    mockedThreadApi.getThreadMessages.mockResolvedValueOnce({ messages: [message], count: 1 });
+    await store.dispatch(loadThreadMessages('channel:telegram/alice/room-1'));
+
+    const event = {
+      client_id: 'channel-runtime',
+      thread_id: 'channel:telegram/alice/room-1',
+      request_id: 'event-9',
+      openhuman_message_id: 'user:row-42',
+      channel_event: {
+        version: 2,
+        eventId: 'event-9',
+        sourceEventId: null,
+        sourceTimestamp: null,
+        channel: { id: 'telegram', accountId: 'bot-1' },
+        conversation: {
+          kind: 'group',
+          id: 'room-1',
+          parentId: null,
+          scopeId: null,
+          threadId: null,
+          topicId: null,
+        },
+        type: 'reaction_added',
+        messageId: 'provider-message-42',
+        actor: { id: 'alice', altIds: [], name: null, isBot: false, roles: [] },
+        reaction: { value: '🔥', customEmojiId: null },
+      },
+    } as const satisfies Parameters<typeof applyChannelEvent>[0];
+    store.dispatch(applyChannelEvent(event));
+
+    expect(
+      store.getState().thread.messagesByThreadId['channel:telegram/alice/room-1']?.[0]
+        ?.extraMetadata?.channelActivity
+    ).toEqual({
+      reactions: [
+        { actorId: 'bob', value: '🎉' },
+        { actorId: 'alice', value: '🔥' },
+      ],
+      readReceipts: [{ actorId: 'carol', timestamp: 123 }],
+    });
+    expect(
+      store.getState().thread.messagesByThreadId['channel:telegram/alice/room-1']?.[0]?.id
+    ).toBe('user:row-42');
   });
 
   // [#1123] setWelcomeThreadId is now a true no-op — kept for TS compat but
@@ -168,6 +241,7 @@ describe('threadSlice synchronous reducers', () => {
     store.dispatch(setSelectedThread('t-1'));
     store.dispatch(setActiveThread('t-1'));
 
+    const selectionVersion = store.getState().thread.selectionIntentVersion;
     store.dispatch(clearAllThreads());
     const state = store.getState().thread;
     expect(state.threads).toEqual([]);
@@ -175,6 +249,7 @@ describe('threadSlice synchronous reducers', () => {
     expect(state.selectedThreadId).toBeNull();
     expect(state.activeThreadIds).toEqual({});
     expect(state.messages).toEqual([]);
+    expect(state.selectionIntentVersion).toBeGreaterThan(selectionVersion);
   });
 
   it('clearStaleThread removes stale selection, cache, and active id', async () => {
@@ -192,12 +267,14 @@ describe('threadSlice synchronous reducers', () => {
     store.dispatch(setSelectedThread('t-1'));
     store.dispatch(setActiveThread('t-1'));
 
+    const selectionVersion = store.getState().thread.selectionIntentVersion;
     store.dispatch(clearStaleThread('t-1'));
 
     const state = store.getState().thread;
     expect(state.threads.map(thread => thread.id)).toEqual(['t-2']);
     expect(state.messagesByThreadId['t-1']).toBeUndefined();
     expect(state.selectedThreadId).toBeNull();
+    expect(state.selectionIntentVersion).toBeGreaterThan(selectionVersion);
     expect(state.activeThreadIds).toEqual({});
     expect(state.messages).toEqual([]);
   });
@@ -206,6 +283,44 @@ describe('threadSlice synchronous reducers', () => {
 describe('threadSlice loadThreads thunk', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('does not restore threads from a load superseded by clearing all threads', async () => {
+    const store = createStore();
+    let resolveThreads!: (value: { threads: Thread[]; count: number }) => void;
+    mockedThreadApi.getThreads.mockImplementationOnce(
+      () => new Promise(resolve => (resolveThreads = resolve))
+    );
+
+    const request = store.dispatch(loadThreads());
+    store.dispatch(clearAllThreads());
+    resolveThreads({ threads: [makeThread({ id: 'stale' })], count: 1 });
+    await request;
+
+    expect(store.getState().thread.threads).toEqual([]);
+    expect(store.getState().thread.selectedThreadId).toBeNull();
+  });
+
+  it('does not restore a cleared stale thread from an older list response', async () => {
+    const store = createStore();
+    mockedThreadApi.getThreads.mockResolvedValueOnce({
+      threads: [makeThread({ id: 't-1' }), makeThread({ id: 't-2' })],
+      count: 2,
+    });
+    await store.dispatch(loadThreads());
+    store.dispatch(setSelectedThread('t-1'));
+
+    let resolveThreads!: (value: { threads: Thread[]; count: number }) => void;
+    mockedThreadApi.getThreads.mockImplementationOnce(
+      () => new Promise(resolve => (resolveThreads = resolve))
+    );
+    const request = store.dispatch(loadThreads());
+    store.dispatch(clearStaleThread('t-1'));
+    resolveThreads({ threads: [makeThread({ id: 't-1' }), makeThread({ id: 't-2' })], count: 2 });
+    await request;
+
+    expect(store.getState().thread.threads.map(thread => thread.id)).toEqual(['t-2']);
+    expect(store.getState().thread.selectedThreadId).toBeNull();
   });
 
   it('sets isLoadingThreads while pending and stores threads on fulfilled', async () => {
@@ -230,6 +345,21 @@ describe('threadSlice loadThreads thunk', () => {
     expect(result.type).toBe('thread/loadThreads/rejected');
     expect(store.getState().thread.isLoadingThreads).toBe(false);
   });
+
+  it('preserves a newer selection when an older thread-list response omits it', async () => {
+    const store = createStore();
+    let resolveThreads: ((value: { threads: Thread[]; count: number }) => void) | undefined;
+    mockedThreadApi.getThreads.mockImplementationOnce(
+      () => new Promise(resolve => (resolveThreads = resolve))
+    );
+
+    const request = store.dispatch(loadThreads());
+    store.dispatch(setSelectedThread('worker-created-after-request'));
+    resolveThreads?.({ threads: [makeThread({ id: 'existing-thread' })], count: 1 });
+    await request;
+
+    expect(store.getState().thread.selectedThreadId).toBe('worker-created-after-request');
+  });
 });
 
 describe('threadSlice loadThreadMessages thunk', () => {
@@ -249,6 +379,28 @@ describe('threadSlice loadThreadMessages thunk', () => {
     expect(state.messages).toEqual(messages);
     expect(state.isLoadingMessages).toBe(false);
     expect(state.messagesError).toBeNull();
+  });
+
+  it('preserves old message identities and order when rehydrating after the next turn', async () => {
+    const store = createStore();
+    store.dispatch(setSelectedThread('t-1'));
+    const history = [
+      makeMessage({ id: 'first-user', sender: 'user' }),
+      makeMessage({ id: 'first-answer', sender: 'agent', content: 'First answer' }),
+    ];
+    mockedThreadApi.getThreadMessages.mockResolvedValueOnce({ messages: history, count: 2 });
+    await store.dispatch(loadThreadMessages('t-1'));
+    const original = store.getState().thread.messages;
+    const next = [
+      ...history.map(message => ({ ...message, extraMetadata: { ...message.extraMetadata } })),
+      makeMessage({ id: 'try-now', sender: 'user', content: 'try now' }),
+    ];
+    mockedThreadApi.getThreadMessages.mockResolvedValueOnce({ messages: next, count: 3 });
+    await store.dispatch(loadThreadMessages('t-1'));
+    const refreshed = store.getState().thread.messages;
+    expect(refreshed.map(message => message.id)).toEqual(['first-user', 'first-answer', 'try-now']);
+    expect(refreshed[0]).toBe(original[0]);
+    expect(refreshed[1]).toBe(original[1]);
   });
 
   it('does not overwrite visible messages when loading a non-selected thread', async () => {

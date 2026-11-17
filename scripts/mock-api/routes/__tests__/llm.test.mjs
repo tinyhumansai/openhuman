@@ -15,12 +15,17 @@ import {
 } from "../../state.mjs";
 
 function createMockResponse() {
+  let finish;
+  const finished = new Promise((resolve) => {
+    finish = resolve;
+  });
   return {
     headers: {},
     statusCode: null,
     body: "",
     chunks: [],
     ended: false,
+    finished,
     setHeader(name, value) {
       this.headers[name] = value;
     },
@@ -36,6 +41,7 @@ function createMockResponse() {
     end(chunk = "") {
       if (chunk) this.write(chunk);
       this.ended = true;
+      finish();
     },
   };
 }
@@ -133,7 +139,7 @@ test("streams request-rule scripts for root chat completions path", async () => 
   const handled = handleLlmCompletions(ctx);
   assert.equal(handled, true);
 
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await ctx.res.finished;
 
   assert.equal(ctx.res.statusCode, 200);
   assert.match(ctx.res.body, /data: .*hello/);

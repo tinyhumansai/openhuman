@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { inFlightThreadKey } from '../helpers/chat-transcript';
 import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
@@ -100,7 +101,6 @@ async function sendMessage(page: Page, prompt: string): Promise<void> {
   await waitForSocketConnected(page);
   await dismissWalkthroughIfPresent(page);
   await page.getByTestId('chat-message-input').fill(prompt);
-  await dismissWalkthroughIfPresent(page);
   await expect(page.getByTestId('send-message-button')).toBeEnabled();
   await page.getByTestId('send-message-button').click();
 }
@@ -117,12 +117,15 @@ test.describe('Chat Tool Error Recovery', () => {
       'llmKeywordRules',
       JSON.stringify([
         {
-          keyword: 'Tell me something important.',
-          streamScript: [{ text: 'Starting to answer', delayMs: 30 }, { error: 'invalid API key' }],
+          keyword: 'Please try again with a fresh answer.',
+          streamScript: [
+            { text: `Recovery successful: ${RECOVERY_CANARY}`, delayMs: 500 },
+            { finish: 'stop' },
+          ],
         },
         {
-          keyword: 'Please try again with a fresh answer.',
-          streamScript: [{ text: `Recovery successful: ${RECOVERY_CANARY}` }, { finish: 'stop' }],
+          keyword: 'Tell me something important.',
+          streamScript: [{ text: 'Starting to answer', delayMs: 30 }, { error: 'invalid API key' }],
         },
       ])
     );
@@ -130,7 +133,12 @@ test.describe('Chat Tool Error Recovery', () => {
     await openChat(page);
     const threadId = await createNewThread(page);
     await sendMessage(page, 'Tell me something important.');
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeTruthy();
 
+    // A new thread starts with a null lifecycle too. Waiting only for null can
+    // therefore race ahead of the first turn and let the retry overlap it.
+    // The error card proves the failed turn actually ran before we retry.
+    await expect(page.getByText('Something went wrong')).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(async () => {
         const lifecycle = await page.evaluate(currentThreadId => {
@@ -151,11 +159,14 @@ test.describe('Chat Tool Error Recovery', () => {
         return lifecycle;
       })
       .toBeNull();
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeUndefined();
 
     const composer = page.getByTestId('chat-message-input');
     await expect(composer).toBeEnabled();
 
     await sendMessage(page, 'Please try again with a fresh answer.');
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeTruthy();
     await expect(page.getByText(RECOVERY_CANARY)).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeUndefined();
   });
 });

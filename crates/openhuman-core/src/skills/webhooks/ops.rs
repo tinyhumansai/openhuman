@@ -129,12 +129,13 @@ pub async fn register_agent(
 /// Trigger the triage/agent pipeline directly via RPC without requiring
 /// an incoming webhook request. Useful for testing and manual escalation.
 pub async fn trigger_agent(
+    ctx: &crate::core::runtime::DispatchCtx,
     source: &str,
     caller_id: &str,
     reason: &str,
     payload: serde_json::Value,
 ) -> Result<Outcome<serde_json::Value>, String> {
-    use crate::agent::triage::TriggerEnvelope;
+    use crate::triage::TriggerEnvelope;
 
     let envelope = match source {
         "webhook" => TriggerEnvelope::from_webhook(caller_id, "POST", "/trigger", payload),
@@ -155,22 +156,22 @@ pub async fn trigger_agent(
 
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        crate::agent::triage::run_triage(&envelope),
+        crate::triage::run_triage(ctx, &envelope),
     )
     .await
     .map_err(|_| "triage timed out after 60s".to_string())?
     .map_err(|e| format!("triage failed: {e}"))?;
 
     match outcome {
-        crate::agent::triage::TriageOutcome::Decision(run) => {
+        crate::triage::TriageOutcome::Decision(run) => {
             // Remote payload: a webhook body is attacker-influenceable, so the
             // dispatch parks rather than running on a trust root (#5634).
-            let origin = crate::agent::triage::remote_trigger_origin(&envelope);
+            let origin = crate::triage::remote_trigger_origin(&envelope);
             tokio::time::timeout(
                 std::time::Duration::from_secs(60),
-                crate::agent::turn_origin::with_origin(
+                crate::core::runtime::turn_origin::with_origin(
                     origin,
-                    crate::agent::triage::apply_decision(run.clone(), &envelope),
+                    crate::triage::apply_decision(ctx, run.clone(), &envelope),
                 ),
             )
             .await
@@ -188,7 +189,7 @@ pub async fn trigger_agent(
                 format!("webhooks.trigger_agent completed for {source}/{caller_id}"),
             ))
         }
-        crate::agent::triage::TriageOutcome::Deferred {
+        crate::triage::TriageOutcome::Deferred {
             defer_until_ms,
             reason,
         } => Ok(Outcome::single_log(
@@ -200,7 +201,7 @@ pub async fn trigger_agent(
             }),
             format!("webhooks.trigger_agent deferred for {source}/{caller_id}"),
         )),
-        crate::agent::triage::TriageOutcome::Terminal { reason } => Ok(Outcome::single_log(
+        crate::triage::TriageOutcome::Terminal { reason } => Ok(Outcome::single_log(
             serde_json::json!({
                 "decision": "terminal",
                 "resolution_path": "terminal",

@@ -1,294 +1,48 @@
-//! The entry point for the OpenHuman core application.
+//! The `openhuman-core` binary.
 //!
-//! This file is responsible for:
-//! - Initializing error tracking with Sentry.
-//! - Setting up secret scrubbing for outgoing error reports.
-//! - Dispatching command-line arguments to the core logic in `openhuman_core`.
+//! The binary depends on `openhuman-rpc` alone. The doctor command is handled
+//! in this CLI host before the generic namespace dispatcher; other commands
+//! continue through [`openhuman_rpc::host::cli`]. This file owns process-level
+//! details: SIGPIPE, the early `.env`, and (with `crash-reporting`) the shared
+//! Sentry client.
 
-/// Main application entry point.
-///
-/// It initializes the Sentry SDK for error monitoring, ensuring that sensitive
-/// information is redacted before being sent to the server. After setup, it
-/// delegates execution to the core library based on CLI arguments.
-fn main() {
+use openhuman_rpc::embed::process;
+
+fn main() -> std::process::ExitCode {
     restore_default_sigpipe();
 
-    // Load `.env` before `sentry::init` so a DSN defined only in the dotenv
-    // file is visible to the Sentry client at startup. `dotenvy::dotenv()` is
-    // a no-op for variables already present in the process environment, and
-    // the CLI dispatcher later calls `load_dotenv_for_cli` which honors
-    // `OPENHUMAN_DOTENV_PATH`; this early call handles the common default
-    // case (repo-local `.env`) so startup-time consumers (Sentry, config
-    // overrides) see the same values as runtime RPC handlers.
-    let _ = dotenvy::dotenv();
-
-    // Initialize Sentry as the very first operation so the guard outlives everything.
-    // Resolves the core Sentry DSN by checking, in order:
-    //   1. `OPENHUMAN_CORE_SENTRY_DSN` at runtime (preferred, namespaced name)
-    //   2. `OPENHUMAN_SENTRY_DSN` at runtime (legacy unprefixed name — kept
-    //      so existing CI vars and contributor `.env` files keep working until
-    //      the GH org-level variable can be renamed)
-    //   3. Each of the same names baked at compile time via `option_env!`
-    // If none resolve to a non-empty value, `sentry::init` returns a no-op guard.
-    //
-    // The whole init (guard + secret-scrubbing `before_send`) is gated on the
-    // `crash-reporting` feature; a slim build compiles it out entirely.
-    #[cfg(feature = "crash-reporting")]
-    let _sentry_guard = sentry::init(sentry::ClientOptions {
-        dsn: std::env::var("OPENHUMAN_CORE_SENTRY_DSN")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| std::env::var("OPENHUMAN_SENTRY_DSN").ok())
-            .filter(|s| !s.is_empty())
-            .or_else(|| option_env!("OPENHUMAN_CORE_SENTRY_DSN").map(|s| s.to_string()))
-            .filter(|s| !s.is_empty())
-            .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()))
-            .filter(|s| !s.is_empty())
-            .and_then(|s| s.parse().ok()),
-        release: Some(std::borrow::Cow::Owned(build_release_tag())),
-        environment: Some(std::borrow::Cow::Owned(resolve_environment())),
-        send_default_pii: false,
-        before_send: Some(std::sync::Arc::new(|mut event| {
-            // Defense-in-depth: drop transient-upstream provider failures that
-            // slipped past the call-site classifier. The reliable-provider
-            // layer already retries 429/408/502/503/504 with backoff +
-            // fallback, and the aggregate "all providers exhausted" event
-            // still fires for genuine outages. Per-attempt reports flood
-            // Sentry — see OPENHUMAN-TAURI-2E (~1393 events), -84 (~1050),
-            // -T (~871). The primary fix lives in
-            // `openhuman::inference::provider::ops::should_report_provider_http_failure`
-            // (transient codes excluded). This filter catches any future call
-            // site that bypasses it.
-            if openhuman_core::core::observability::is_transient_provider_http_failure(&event) {
-                return None;
-            }
-            if openhuman_core::core::observability::is_all_transient_provider_exhaustion_event(
-                &event,
-            ) {
-                return None;
-            }
-            // Defense-in-depth: drop managed-backend `errorCode` events (#870)
-            // the backend owns (F2/F4) — primary suppression lives in
-            // `api_error` / the streaming gates and the `web_channel`
-            // re-report classifier. The malformed `BAD_REQUEST` carve-out
-            // (F8) is excluded by the underlying decision, so a client-built
-            // bad payload still pages.
-            if openhuman_core::core::observability::is_backend_error_code_event(&event) {
-                return None;
-            }
-            // Defense-in-depth: drop transient streaming transport blips
-            // (domain=llm_provider, failure=transport) — flaky-network
-            // timeouts/resets recovered by retry/fallback (F7). The primary
-            // gate lives at the `stream_chat` / `stream_chat_history` emit
-            // sites.
-            if openhuman_core::core::observability::is_transient_provider_transport_failure(&event)
-            {
-                return None;
-            }
-            // Defense-in-depth for budget-exhausted 400s. Emit sites demote the
-            // known backend responses before they hit Sentry; this catches any
-            // future non_2xx/status=400 event that carries the same tight body
-            // phrases.
-            if openhuman_core::core::observability::is_budget_event(&event) {
-                return None;
-            }
-            // Defense-in-depth for insufficient-credits 402s. The native_chat
-            // emit site demotes them, but the compatible provider reports the
-            // same out-of-balance 402 from chat_with_system / chat_with_history
-            // / the streaming gates / api_error too; this is the single net
-            // that catches every path (TAURI-RUST-C62).
-            if openhuman_core::core::observability::is_insufficient_credits_event(&event) {
-                return None;
-            }
-            // Drop provider monthly-quota exhausted events — third-party plan
-            // allotment spent (e.g. Kiro `MONTHLY_REQUEST_COUNT`, sometimes
-            // wrapped in a 500 envelope so the 402-gated credits filter above
-            // misses it). No local lever (TAURI-RUST-C9A).
-            if openhuman_core::core::observability::is_quota_exhausted_event(&event) {
-                return None;
-            }
-            // Defense-in-depth for Ollama Cloud hosted-inference 500s. The
-            // native_chat / streaming_chat / api_error emit sites demote them and
-            // the agent re-report routes through `TransientUpstreamHttp`, but the
-            // compatible provider can report the same `Internal Server Error
-            // (ref: …)` body from other paths; this is the single net that
-            // catches every path (TAURI-RUST-5MV).
-            if openhuman_core::core::observability::is_ollama_cloud_internal_500_event(&event) {
-                return None;
-            }
-            // Defense-in-depth: drop Windows `ERROR_FILE_SYSTEM_LIMITATION`
-            // (os error 665) — a persistent host-filesystem condition with
-            // zero local lever and no Sentry remediation path. The primary
-            // suppression lives at the emit site via `expected_error_kind` →
-            // `ExpectedErrorKind::WindowsFileSystemLimitation`; this catches
-            // any call site that uses `report_error` directly instead of
-            // `report_error_or_expected` (TAURI-RUST-QT0: 6,050 events / 1 user).
-            if openhuman_core::core::observability::is_windows_file_system_limitation_event(&event)
-            {
-                log::debug!(
-                    "[sentry-fs-limitation-filter] dropping Windows file-system-limitation event (os error 665) event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Defense-in-depth: drop max-tool-iterations cap events that
-            // slipped past the call-site filters in
-            // `agent::session_host::runtime::run_single`,
-            // `channels::runtime::dispatch`, and
-            // `web_chat::run_chat_task`. The cap is a
-            // deterministic agent-state outcome surfaced to the user via
-            // the chat-rendered "Error: …" message — Sentry is the wrong
-            // surface for it (OPENHUMAN-TAURI-99 / -98).
-            if openhuman_core::core::observability::is_max_iterations_event(&event) {
-                return None;
-            }
-            if openhuman_core::core::observability::is_transient_backend_api_failure(&event)
-                || openhuman_core::core::observability::is_transient_integrations_failure(&event)
-                || openhuman_core::core::observability::is_updater_transient_event(&event)
-                || openhuman_core::core::observability::is_skill_install_user_fetch_failure(&event)
-            {
-                return None;
-            }
-            // Defense-in-depth: drop skill-install fetch 4xx (esp. 404/410) —
-            // a missing/renamed catalog `SKILL.md` is expected user-input state
-            // surfaced to the UI, not a Sentry-actionable defect. Primary
-            // suppression lives at the `install_workflow_from_url_with_home`
-            // emit site; this catches any future skills call site that reports
-            // a 4xx. 5xx (genuine remote failure) still reports. TAURI-RUST-CGE.
-            if openhuman_core::core::observability::is_skills_install_client_error_event(&event) {
-                return None;
-            }
-            // Defense-in-depth: 404 on PATCH/DELETE to a channel-message path
-            // is an expected state (provider-side delete or backend GC). Primary
-            // suppression lives in `authed_json`; this catches any future call
-            // site that bypasses it. Targets OPENHUMAN-TAURI-R7 (28 events).
-            if openhuman_core::core::observability::is_channel_message_not_found_event(&event) {
-                return None;
-            }
-            // Drop 401 "Session expired. Please log in again." bodies surfaced
-            // by llm_provider / backend_api, plus pre-flight "no session token
-            // stored" guards from the rpc dispatcher. Primary suppression
-            // lives at the call sites (`openhuman::inference::provider::ops::api_error`
-            // publishes a SessionExpired event_bus signal and short-circuits;
-            // the rpc dispatcher's `is_session_expired_error` skip-path in
-            // `crates/openhuman-rpc/src/server/http/rpc_handler.rs` redirects to a tracing::info). This
-            // filter catches any future call site that re-emits the same
-            // shape — keeping OPENHUMAN-TAURI-25 / -1Q / -27 / -1G off
-            // Sentry permanently (~185 events/day combined).
-            // Defense-in-depth: drop user-config provider errors that
-            // slipped past the call-site classifiers — 4xx client errors,
-            // subscription/payment issues, embedding API authorization
-            // failures. These are user misconfigurations, not application
-            // bugs (targets ~22 Sentry issues / ~26k events from the issue
-            // audit). Primary suppression lives at individual emit sites;
-            // this catch-all net catches any future new path that bypasses
-            // those gates.
-            if openhuman_core::core::observability::is_user_config_provider_event(&event) {
-                log::debug!(
-                    "[sentry-user-config-filter] dropping user-config provider event event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Defense-in-depth: drop connectivity / network flakiness events
-            // that escaped the call-site classifiers — "Failed to fetch",
-            // connection refused, gateway 502/504, HTTP 401 from frontend
-            // connectivity. These are transient self-resolving conditions,
-            // not actionable code defects (targets ~8 Sentry issues).
-            if openhuman_core::core::observability::is_connectivity_event(&event) {
-                log::debug!(
-                    "[sentry-connectivity-filter] dropping connectivity event event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Drop events from stale releases (clients running versions
-            // more than 6 minor versions behind the current build). Errors
-            // from ancient code are not actionable against the current
-            // codebase (targets ~4 Sentry issues).
-            if openhuman_core::core::observability::is_stale_release_event(&event) {
-                log::debug!(
-                    "[sentry-stale-release-filter] dropping stale release event event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            if openhuman_core::core::observability::is_session_expired_event(&event) {
-                // Metadata-only log shape — `event.message` carries the raw
-                // backend response body (often a JSON envelope with the
-                // session JWT context attached) which CLAUDE.md forbids from
-                // local logs. `event.event_id` is a correlation-safe Sentry
-                // uuid that lets triage match the dropped event against the
-                // breadcrumb chain without leaking the payload.
-                log::debug!(
-                    "[sentry-session-expired-filter] dropping session-expired event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
-            // Strip server_name (hostname) to avoid leaking machine identity
-            event.server_name = None;
-            // Attach the cached account uid so Sentry can count unique users
-            // affected by an issue. We only carry `id` — never email, name,
-            // or IP — so this stays consistent with `send_default_pii: false`.
-            //
-            // Issue #3135: the primary source for `event.user` is now the
-            // Sentry scope, bound proactively at session boundaries
-            // (credentials::set_credential / clear_credential) and at server
-            // boot (run_server_inner). The credential identity slot is kept as
-            // a fallback so any pre-boot / pre-login event that still rides
-            // the legacy path retains its previous attribution behaviour —
-            // but we only consult it when the scope hasn't already bound a
-            // user, otherwise we'd silently clobber the scope binding when
-            // the slot is empty (root cause of the original userCount=0).
-            if event.user.is_none() {
-                event.user =
-                    openhuman_core::security::credentials::identity::peek_credential_user_identity(
-                    )
-                    .and_then(|identity| identity.id)
-                    .map(|id| sentry::User {
-                        id: Some(id),
-                        ..Default::default()
-                    });
-            }
-            // Scrub secrets from exception values and top-level message.
-            for exc in &mut event.exception.values {
-                if let Some(ref value) = exc.value {
-                    exc.value = Some(scrub_secrets(value));
-                }
-            }
-            if let Some(msg) = event.message.take() {
-                event.message = Some(scrub_secrets(&msg));
-            }
-            Some(event)
-        })),
-        sample_rate: 1.0,
-        transport: Some(std::sync::Arc::new(
-            openhuman_core::core::sentry_transport::factory,
-        )),
-        ..sentry::ClientOptions::default()
-    });
-
-    // Collect command-line arguments, skipping the binary name.
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    // The core carries no backend client; every CLI subcommand that reaches
-    // the hosted backend (serve, auth, billing, composio, ...) needs the
-    // `openhuman-tinyhumans` transport installed before it dispatches.
-    if let Err(err) = openhuman_tinyhumans::install(openhuman_tinyhumans::InstallOptions::default())
-    {
-        eprintln!("failed to install the TinyHumans backend transport: {err}");
-        std::process::exit(1);
+    // Load `.env` before Sentry so a DSN defined only in the dotenv file is
+    // visible at startup. Honors `OPENHUMAN_DOTENV_PATH` and never overwrites
+    // variables already in the environment; the dispatcher loads it again
+    // with the same rules, which is a no-op by then.
+    if let Err(err) = process::load_dotenv_for_cli() {
+        // Not fatal here: the dispatcher re-runs the load and reports it.
+        log::debug!("[cli] early dotenv load failed: {err}");
     }
 
-    // `run` / `serve` start the JSON-RPC server from `openhuman-rpc`, which the
-    // core cannot depend on; hand it the launcher before dispatching.
-    openhuman_rpc::server::install_cli_server();
+    // Local development only: link the module implementation crates in and
+    // register them with the core's linked-module seam. They are served only
+    // when the configuration asks (`OPENHUMAN_MODULE_SOURCE=linked`).
+    #[cfg(feature = "linked-modules")]
+    openhuman_modules_linked::install();
 
-    // Delegate to the core library to handle the command.
-    if let Err(err) = openhuman_core::run_core_from_args(&args) {
-        eprintln!("{err}");
-        std::process::exit(1);
+    // The guard must outlive everything, so it is bound in `main`.
+    #[cfg(feature = "crash-reporting")]
+    let _sentry_guard = init_sentry();
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if doctor::is_doctor_command(&args) {
+        return std::process::ExitCode::from(doctor::run(&args[1..]));
+    }
+
+    match openhuman_rpc::host::cli(&args) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            // The alternate form prints the whole context chain: the outermost
+            // context alone ("building session agent ...") hides the cause.
+            eprintln!("{err:#}");
+            std::process::ExitCode::from(1)
+        }
     }
 }
 
@@ -305,61 +59,33 @@ fn restore_default_sigpipe() {
 #[cfg(not(unix))]
 fn restore_default_sigpipe() {}
 
-// ---------------------------------------------------------------------------
-// Release / environment resolution for Sentry
-// ---------------------------------------------------------------------------
-
-/// Canonical release tag: `openhuman@<version>[+<short_sha>]`.
-///
-/// Matches the string the frontend reports (`SENTRY_RELEASE` in
-/// `app/src/utils/config.ts`) so events from every surface group under
-/// the same release in the Sentry dashboard and benefit from the same
-/// source-map upload.
+/// Start the Sentry client with embed's shared filter chain. The fallback
+/// user id is the core's credential identity slot (the default of
+/// [`SentryConfig::new`](process::sentry::SentryConfig::new)); the primary
+/// source is the Sentry scope the core binds at login and server boot.
 #[cfg(feature = "crash-reporting")]
-fn build_release_tag() -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    let sha = option_env!("OPENHUMAN_BUILD_SHA").unwrap_or("").trim();
-    let sha_short: String = sha.chars().take(12).collect();
-    if sha_short.is_empty() {
-        format!("openhuman@{version}")
-    } else {
-        format!("openhuman@{version}+{sha_short}")
-    }
-}
-
-/// Resolve the deployment environment reported to Sentry.
-///
-/// Honors `OPENHUMAN_APP_ENV` at runtime (`staging` / `production`) so the
-/// same binary could in principle be redeployed between environments; falls
-/// back to debug/release detection when unset.
-#[cfg(feature = "crash-reporting")]
-fn resolve_environment() -> String {
-    if let Ok(value) = std::env::var("OPENHUMAN_APP_ENV") {
-        let trimmed = value.trim().to_ascii_lowercase();
-        if !trimmed.is_empty() {
-            return trimmed;
-        }
-    }
-    if cfg!(debug_assertions) {
-        "development".to_string()
-    } else {
-        "production".to_string()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Secret scrubbing
-// ---------------------------------------------------------------------------
-
-/// Sentry `before_send` secret scrubbing. Delegates to the shared, always-on
-/// [`openhuman_core::core::log_redaction::scrub_secrets`] so the redaction
-/// patterns stay a single source of truth (the same pass also runs on the
-/// always-on diagnostic logs in `core::observability`).
-#[cfg(feature = "crash-reporting")]
-fn scrub_secrets(input: &str) -> String {
-    openhuman_core::core::log_redaction::scrub_secrets(input)
+fn init_sentry() -> process::sentry::sdk::ClientInitGuard {
+    let config = process::sentry::SentryConfig::new(
+        process::sentry::core_dsn(
+            option_env!("OPENHUMAN_CORE_SENTRY_DSN"),
+            option_env!("OPENHUMAN_SENTRY_DSN"),
+        ),
+        process::sentry::release_tag(
+            env!("CARGO_PKG_VERSION"),
+            option_env!("OPENHUMAN_BUILD_SHA"),
+        ),
+        process::sentry::resolve_environment(std::env::var("OPENHUMAN_APP_ENV").ok()),
+    );
+    log::debug!(
+        "[cli] sentry init environment={} dsn_set={}",
+        config.environment,
+        config.dsn.is_some()
+    );
+    process::sentry::sdk::init(process::sentry::client_options(config))
 }
 
 #[cfg(all(test, feature = "crash-reporting"))]
 #[path = "main_tests.rs"]
 mod tests;
+
+mod doctor;

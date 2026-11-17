@@ -1,20 +1,21 @@
 use super::*;
 
-/// Maps a store-level [`FlowUpdateError`](store::FlowUpdateError) to the RPC
+/// Maps the Catalog bus [`FlowUpdateError`](tinyflows_bus::catalog::FlowUpdateError) to the RPC
 /// error string. A concurrency conflict is encoded as a JSON object the UI can
 /// parse (`{ code: "version_conflict", message, current }`) so it can offer a
 /// reload/diff instead of silently clobbering; other variants are plain text.
-fn map_flow_update_error(e: store::FlowUpdateError) -> String {
+fn map_flow_update_error(e: tinyflows_bus::catalog::FlowUpdateError) -> String {
     match e {
-        store::FlowUpdateError::NotFound => "flow not found".to_string(),
-        store::FlowUpdateError::Conflict(current) => serde_json::to_string(&json!({
-            "code": "version_conflict",
-            "message": "This flow changed since you loaded it. Reload to see the latest \
-                        version, then reapply your change.",
-            "current": *current,
-        }))
-        .unwrap_or_else(|_| "version_conflict".to_string()),
-        store::FlowUpdateError::Store(err) => err.to_string(),
+        tinyflows_bus::catalog::FlowUpdateError::NotFound { .. } => "flow not found".to_string(),
+        tinyflows_bus::catalog::FlowUpdateError::VersionConflict { message, current } => {
+            serde_json::to_string(&json!({
+                "code": "version_conflict",
+                "message": message,
+                "current": current,
+            }))
+            .unwrap_or_else(|_| "version_conflict".to_string())
+        }
+        tinyflows_bus::catalog::FlowUpdateError::Store { message } => message,
     }
 }
 
@@ -33,7 +34,7 @@ fn map_flow_update_error(e: store::FlowUpdateError) -> String {
 /// **B29 Rule 1 analogue for saves** (save/enable safety — same issue
 /// `flows_create` guards at creation time, see its doc): `flows_create`
 /// refuses to persist an automatic-trigger graph (`schedule` / `app_event` /
-/// `webhook`, see [`trigger_is_automatic`]) as `enabled`, but that guard only
+/// `webhook`) as `enabled`, but that guard only
 /// runs once, at creation. Without an equivalent here, a flow created
 /// `enabled: true` with a manual/no-op trigger could later have an
 /// automatic-trigger graph saved onto it — via the `save_workflow` agent
@@ -43,7 +44,7 @@ fn map_flow_update_error(e: store::FlowUpdateError) -> String {
 /// So: when the *new* graph's trigger is automatic and the *previous*
 /// graph's trigger was NOT automatic (a manual/none → automatic
 /// transition), this forces the persisted `enabled` back to `false` in the
-/// same store write — the user must explicitly re-arm via
+/// the same Catalog write — the user must explicitly re-arm via
 /// `flows_set_enabled` after reviewing the new trigger. An automatic →
 /// automatic re-edit (e.g. tweaking a cron expression) is left alone — the
 /// user already opted in once, and re-disarming on every edit would just be
@@ -52,7 +53,7 @@ fn map_flow_update_error(e: store::FlowUpdateError) -> String {
 /// The override is applied **unconditionally** on a manual/none → automatic
 /// transition — it does *not* gate on whether the flow *looked* enabled in
 /// the `existing` read above. That read is a snapshot taken before
-/// `store::update_flow_graph`'s own guarded UPDATE re-reads the row; a
+/// Catalog.PutWorkflow's guarded UPDATE re-reads the row; a
 /// concurrent `flows_set_enabled(id, true)` landing in the gap would leave
 /// this snapshot stale while the row is actually enabled by the time the
 /// guarded UPDATE runs — and since `set_enabled` bumps `updated_at` too,
@@ -71,7 +72,29 @@ pub async fn flows_update(
     require_approval: Option<bool>,
     expected_version: Option<String>,
 ) -> Result<Outcome<Flow>, String> {
-    flows_update_inner(
+    flows_update_with_context(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        id,
+        name,
+        graph_json,
+        require_approval,
+        expected_version,
+    )
+    .await
+}
+
+pub(crate) async fn flows_update_with_context(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    id: &str,
+    name: Option<String>,
+    graph_json: Option<Value>,
+    require_approval: Option<bool>,
+    expected_version: Option<String>,
+) -> Result<Outcome<Flow>, String> {
+    flows_update_with_disarm(
+        ctx,
         config,
         id,
         name,
@@ -83,7 +106,41 @@ pub async fn flows_update(
     .await
 }
 
+/// Same as [`flows_update_with_context`], but lets the caller force the
+/// automatic-trigger disarm. The builder host sets it on every graph save
+/// (#8489): a builder-authored revision must not go live on an
+/// already-enabled automatic-trigger flow without review. The module
+/// evaluates the flag against its freshly read row, so forcing it is a
+/// no-op on flows that aren't live automatic (already-disabled flows stay
+/// quiet, metadata-only saves are unaffected).
+pub(crate) async fn flows_update_with_disarm(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    id: &str,
+    name: Option<String>,
+    graph_json: Option<Value>,
+    require_approval: Option<bool>,
+    expected_version: Option<String>,
+    disarm_automatic: bool,
+) -> Result<Outcome<Flow>, String> {
+    ctx.enter(async move {
+        flows_update_inner(
+            ctx,
+            config,
+            id,
+            name,
+            graph_json,
+            require_approval,
+            expected_version,
+            disarm_automatic,
+        )
+        .await
+    })
+    .await
+}
+
 async fn flows_update_inner(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     id: &str,
     name: Option<String>,
@@ -101,75 +158,45 @@ async fn flows_update_inner(
     let graph_changed = graph_json.is_some();
     let graph = match graph_json {
         Some(raw) => {
-            let graph = validate_and_migrate_graph(raw)?;
-            ensure_config_aware_engine_compatible(config, &graph)?;
+            let graph = validate_and_migrate_graph(ctx, config, raw).await?;
+            ensure_config_aware_engine_compatible(ctx, config, &graph).await?;
             graph
         }
+        // Metadata-only updates preserve access to legacy graphs written by
+        // older versions, even when the current engine no longer accepts them.
         None => {
-            tinyflows::validate::validate(&existing.graph).map_err(|e| e.to_string())?;
+            validate_and_migrate_graph(ctx, config, existing.graph.clone()).await?;
             existing.graph.clone()
         }
     };
-    // B29 Rule 1 analogue: disarm every manual/none → automatic trigger
-    // transition, unconditionally. `now_auto` is safe to compute here (it
-    // only depends on `graph`, THIS call's own incoming graph — never
-    // stale). The "was it automatic before" half of the transition,
-    // however, is NOT decided here: R-m2 found that gating on the
-    // ops-level `existing.graph` read let a concurrent write race this
-    // call and slip an automatic-trigger graph through with `enabled: true`
-    // — `existing` can be arbitrarily stale by the time
-    // `store::update_flow_graph` actually performs its guarded write. That
-    // decision now lives inside `update_flow_graph`, computed against the
-    // row it just re-read there (see its doc comment).
-    let now_auto = trigger_is_automatic(&graph);
-    let forced_automatic_disarm = disarm_automatic && now_auto;
+    let forced_automatic_disarm = disarm_automatic;
+    // Catalog.PutWorkflow owns the automatic-trigger transition rule. It
+    // evaluates the new graph and fresh persisted row in the module before
+    // writing, and reports the result through `born_disabled`.
     tracing::debug!(
         target: "flows",
         flow_id = %id,
-        now_auto,
         currently_enabled = existing.enabled,
-        forced_automatic_disarm,
-        "[flows] flows_update: auto-trigger disarm decision inputs (transition itself decided \
-         store-side against a fresh read, see update_flow_graph)"
+        force_disarm_automatic = disarm_automatic,
+        "[flows] flows_update: delegating automatic-trigger transition policy to Catalog.PutWorkflow"
     );
-
-    // Rule 2 analogue (compound-bypass closure): re-apply the same outbound
-    // side-effect check `flows_create` applies on save — via the shared
-    // [`enforce_side_effect_approval`] helper — so an update that *adds* a
-    // tool_call/http_request/code node to a previously read-only graph can
-    // never persist `require_approval: false` just because the update path
-    // trusted the caller's toggle unconditionally.
-    let (effective_require_approval, side_effect_forced) =
-        enforce_side_effect_approval(&graph, new_require_approval);
-    if side_effect_forced {
-        tracing::info!(
-            target: "flows",
-            flow_id = %id,
-            "[flows] flows_update: forcing require_approval=true — graph contains outbound \
-             side-effect node(s) (tool_call / http_request / code)"
-        );
-    }
 
     tracing::debug!(
         target: "flows",
         flow_id = %id,
         has_expected = expected_version.is_some(),
-        require_approval = effective_require_approval,
-        side_effect_forced,
+        require_approval = new_require_approval,
         "[flows] flows_update: persisting changes"
     );
-    // The auto-disarm decision (both the unconditional manual→automatic
-    // transition and `disarm_automatic`'s forced-remote-authoring variant)
-    // is made INSIDE `update_flow_graph`, against the row it re-reads right
-    // before its guarded UPDATE — see R-m2 above and that function's doc
-    // comment. `enabled_override: None` here means "no explicit force from
-    // this caller"; the disarm, if any, still applies on top of that.
+    // The module computes automatic-trigger disarm against its freshly read
+    // row; the explicit request flag is set by authoring surfaces whose
+    // revisions must not go live without review (the builder host, #8489).
     let updated = store::update_flow_graph(
         config,
         id,
         new_name,
         graph,
-        effective_require_approval,
+        new_require_approval,
         None,
         disarm_automatic,
         expected_version.as_deref(),
@@ -183,7 +210,11 @@ async fn flows_update_inner(
     // happened store-side against a fresh read, so this is purely for the
     // info log / result message wording below and can't desync from what
     // was actually persisted.
-    let should_disarm = now_auto && existing.enabled && !updated.enabled;
+    let tinyflows_bus::catalog::PutWorkflowResult {
+        workflow: updated,
+        born_disabled: should_disarm,
+        approval_forced,
+    } = updated;
     if should_disarm {
         tracing::info!(
             target: "flows",
@@ -192,11 +223,37 @@ async fn flows_update_inner(
         );
     }
 
+    // A forced disarm is an enabled→disabled transition exactly like an
+    // explicit disable (#8489): tear down the previous automatic-dispatch
+    // binding, so the old schedule cron job does not linger ticking against
+    // a disabled flow — boot reconciliation only re-binds enabled flows, so
+    // the stale job would otherwise survive it. `should_disarm` is only
+    // true on a real enabled→disabled transition, and `unbind_trigger` is
+    // a no-op for non-schedule trigger kinds.
+    if should_disarm {
+        unbind_trigger(config, &existing);
+    }
+
     if graph_changed && updated.enabled {
-        let trigger_unchanged = bus::extract_trigger_kind(&existing)
-            == bus::extract_trigger_kind(&updated)
-            && bus::extract_trigger_config(&existing) == bus::extract_trigger_config(&updated);
-        if !trigger_unchanged {
+        let rebind = match (
+            bus::describe_trigger(config, &existing),
+            bus::describe_trigger(config, &updated),
+        ) {
+            (Ok(previous), Ok(current)) => previous != current,
+            (previous, current) => {
+                if let Err(error) = previous {
+                    tracing::warn!(target: "flows", flow_id = %id, %error, "[flows] could not describe previous trigger during update");
+                }
+                if let Err(error) = current {
+                    tracing::warn!(target: "flows", flow_id = %id, %error, "[flows] could not describe updated trigger during update");
+                }
+                // Trigger details are best-effort. Refresh when either
+                // description fails, so an old schedule is not kept live
+                // after a malformed schedule edit.
+                true
+            }
+        };
+        if rebind {
             tracing::debug!(target: "flows", flow_id = %id, "[flows] flows_update: trigger changed on an enabled flow — rebinding automatic-dispatch trigger");
             unbind_trigger(config, &existing);
             bind_trigger(config, &updated);
@@ -217,7 +274,7 @@ async fn flows_update_inner(
         };
         logs.push(reason.to_string());
     }
-    if side_effect_forced {
+    if approval_forced {
         logs.push(
             "require_approval forced to true because the graph contains outbound side-effect \
              nodes (tool_call / http_request / code)."
@@ -233,7 +290,7 @@ pub fn flows_get_history(
     config: &Config,
     id: &str,
     limit: usize,
-) -> Result<Outcome<Vec<crate::flows::FlowRevision>>, String> {
+) -> Result<Outcome<Vec<tinyflows_bus::catalog::WorkflowRevision>>, String> {
     let revisions = store::list_revisions(config, id, limit).map_err(|e| e.to_string())?;
     let count = revisions.len();
     Ok(Outcome::single_log(
@@ -252,18 +309,39 @@ pub async fn flows_rollback(
     revision_id: &str,
     expected_version: Option<String>,
 ) -> Result<Outcome<Flow>, String> {
-    let rev = store::revision_by_id(config, id, revision_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("revision '{revision_id}' not found for flow '{id}'"))?;
-
-    tracing::debug!(target: "flows", flow_id = %id, %revision_id, "[flows] flows_rollback: restoring prior revision");
-    flows_update(
+    flows_rollback_with_context(
+        &crate::core::runtime::DispatchCtx::ambient(),
         config,
         id,
-        Some(rev.name),
-        Some(rev.graph),
-        Some(rev.require_approval),
+        revision_id,
         expected_version,
     )
+    .await
+}
+
+pub(crate) async fn flows_rollback_with_context(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    id: &str,
+    revision_id: &str,
+    expected_version: Option<String>,
+) -> Result<Outcome<Flow>, String> {
+    ctx.enter(async move {
+        let rev = store::revision_by_id(config, id, revision_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("revision '{revision_id}' not found for flow '{id}'"))?;
+
+        tracing::debug!(target: "flows", flow_id = %id, %revision_id, "[flows] flows_rollback: restoring prior revision");
+        flows_update_with_context(
+            ctx,
+            config,
+            id,
+            Some(rev.name),
+            Some(rev.graph),
+            Some(rev.require_approval),
+            expected_version,
+        )
+        .await
+    })
     .await
 }

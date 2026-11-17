@@ -95,6 +95,57 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-EXPECTED_NAMES=311
+# 316 -> 311 on 2026-10-05: the upstream Memory lifecycle refresh removed
+# five names from the Linux flows graph; native builds remain at three.
+# 311 -> 320 on 2026-10-07: tinyskills v0.2.8 (#7054) brings cap-std and its
+# dependencies into the flows graph.
+# 320 -> 313 on 2026-10-09: the tinyagents and tinyflows mains shed seven
+# names from the flows graph.
+# 313 -> 314 on 2026-10-09: the config loader names the failing field path
+# through `serde_path_to_error` (pure Rust, no dependencies; already in the
+# product graph through axum).
+# 314 -> 315 on 2026-10-09: secrets on the storage backend add the
+# first-party tinystoragedrivers-secrets crate (its crypto deps were already
+# in the graph).
+# 315 -> 316 on 2026-10-09: cron and flows on the storage ports add the
+# first-party tinyflows-drivers crate (one package, one name; no new
+# external crate).
+# 316 -> 317: storage-file adds the first-party file driver.
+# 317 -> 318: pre-core registry vocabulary adds the pure tinycomputer-bus.
+
+# This matches the current `flows:338:315:3` entry in
+# scripts/kernel-floor.limits; its preceding entries are historical.
+# 318 -> 313: connector implementation cut (-8) and explicit flows loader (+3).
+# 313 -> 304: current-main runtime removal and combined released module cuts.
+# Measured by dep-sim --cut-nothing on the integrated branch.
+# 304 -> 298: re-measured merged upstream main at dc3ef0735281 on Linux.
+# cargo tree and dep-sim agree on 323 packages / 298 names / 2 native builds.
+# 298 -> 302 on 2026-10-13: tinyflows v0.8.14 replaces `tinyflows-sqlite` with
+# the `tinyflows-import` legacy importer (net zero by name) and the storage
+# stage re-measures the flows profile at 326 packages / 302 names / 2 native.
+# 302 -> 304 on 2026-10-13: main already resolves 303; the direct `tinymcp`
+# (`ui`) dependency in openhuman-core adds the `tinymcp` name (329 packages /
+# 304 names / 2 native on Linux). See kernel-floor.limits.
+# 303 -> 301 on 2026-10-16: CI after the upstream/main merge at ba83482245
+# measures the flows profile at 321 packages / 301 names / 2 native.
+# 301 -> 309 on 2026-10-18: configurable storage backends make
+# `tinystoragedrivers-core` (and its zstd closure) always-on; see the
+# 332/309/3 entry in `kernel-floor.limits`.
+# 309 -> 311 on 2026-10-19: `tinyagents-hooks` and `tinystoragedrivers-schema`
+# are split out of tinyagents-harness and tinystoragedrivers-core; see the
+# 334/311/3 entry in `kernel-floor.limits`.
+# 311 -> 315 on 2026-10-20: tinymemory 2.0.0 makes `async-lock`,
+# `event-listener` and `event-listener-strategy` unconditional; see the
+# 338/315/3 entry in `kernel-floor.limits`.
+# 315 -> 300 on 2026-10-21: the flows profile includes the harness-owned
+# tinyagents-harness-tools API and sysinfo disk diagnostics; see the
+# 320/300/3 entry in `kernel-floor.limits`.
+# 300 -> 303 on 2026-10-24: #8198 adds two names and the TinyStorageDrivers v2
+# split (#8229/#8231) nets one more; see the 331/303/3 entry in
+# `kernel-floor.limits`.
+# 312 -> 305 on 2026-10-30: the module roll-up's upstream ownership split
+# removes dependencies from the always-on flows graph; measured by both cargo
+# tree and dep-sim. See kernel-floor.limits.
+EXPECTED_NAMES=305
 
 exec python3 scripts/dep-sim.py --cut-nothing --expect-names "${EXPECTED_NAMES}"

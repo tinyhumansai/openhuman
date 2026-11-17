@@ -1,9 +1,105 @@
 use super::*;
+use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
+use std::sync::Arc;
+use tinymemory_api::conformance::ReferenceEngine;
+use tinymemory_api::{MemoryEngine, MemoryMeta, Role, SourceKind, StoreItem, Turn};
+
+async fn use_linked_channel_module(config: &mut Config) {
+    config.modules.source = crate::config::schema::ModuleSourceMode::Linked;
+    config.modules.allow_download = false;
+    let _client = crate::channels::module_fixture::client().await;
+}
+
+fn channel_memory_item(thread_id: &str, channel: &str) -> StoreItem {
+    StoreItem::Conversation {
+        turns: vec![Turn::new(Role::User, format!("hello from {channel}"))],
+        meta: MemoryMeta {
+            thread_id: Some(thread_id.into()),
+            channel: Some(channel.into()),
+            source: tinymemory_api::SourceRef {
+                kind: SourceKind::Conversation,
+                id: Some(thread_id.into()),
+            },
+            ..MemoryMeta::default()
+        },
+    }
+}
+
+fn account_context(config: &Config, profile: &str) -> DispatchCtx {
+    DispatchCtx::new(
+        CoreContext::for_test(DomainSet::none(), Some(config.workspace_dir.clone())).derive_with(
+            ContextOverlay::new(config.clone(), DomainSet::full(), Default::default())
+                .profile(profile),
+        ),
+    )
+}
+
+async fn store_channel_thread(
+    ctx: DispatchCtx,
+    config: &Config,
+    channel: &str,
+    id: &str,
+) -> String {
+    use crate::threads::store::{ConversationMessage, CreateConversationThread};
+    use serde_json::json;
+
+    let params = crate::channels::providers::relay::RelayInboundParams::new(
+        channel,
+        format!("chat-{id}"),
+        format!("sender-{id}"),
+        id,
+        "hello",
+    );
+    let identity = crate::modules::channel_controller::prepare_identity(
+        &crate::channels::module_fixture::client().await,
+        tinychannels_bus::module_inbound::PrepareChannelIdentityRequest {
+            channel: channel.to_string(),
+            sender: Some(format!("sender-{id}")),
+            reply_target: Some(format!("chat-{id}")),
+            thread_ts: None,
+        },
+    )
+    .await
+    .expect("TinyChannels module should prepare the canonical thread id");
+    let thread_id = identity.thread_id;
+    let now = chrono::Utc::now().to_rfc3339();
+    crate::threads::store::blocking::ensure_thread(
+        ctx.clone(),
+        config.workspace_dir.clone(),
+        CreateConversationThread {
+            id: thread_id.clone(),
+            title: params.thread_title(),
+            created_at: now.clone(),
+            parent_thread_id: None,
+            labels: None,
+            personality_id: None,
+            working_dir: None,
+        },
+    )
+    .await
+    .unwrap();
+    crate::threads::store::blocking::append_message(
+        ctx,
+        config.workspace_dir.clone(),
+        thread_id.clone(),
+        ConversationMessage {
+            id: format!("user:{id}"),
+            content: "hello".into(),
+            message_type: "text".into(),
+            extra_metadata: json!({"scope": "channel", "channel": channel}),
+            sender: "user".into(),
+            created_at: now,
+        },
+    )
+    .await
+    .unwrap();
+    thread_id
+}
 
 #[tokio::test]
-async fn connect_discord_bot_token_persists_runtime_config() {
+async fn persist_prepared_discord_configuration_and_encrypted_token() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "discord",
         ChannelAuthMode::BotToken,
@@ -11,6 +107,14 @@ async fn connect_discord_bot_token_persists_runtime_config() {
             "bot_token": "discord-token-123",
             "guild_id": "guild-1",
             "channel_id": "channel-2"
+        }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Discord(DiscordConfig {
+            bot_token: "discord-token-123".into(),
+            guild_id: Some("guild-1".into()),
+            channel_id: Some("channel-2".into()),
+            allowed_users: vec![],
+            listen_to_bots: false,
+            mention_only: false,
         }),
     )
     .await
@@ -46,9 +150,9 @@ async fn connect_discord_bot_token_persists_runtime_config() {
 }
 
 #[tokio::test]
-async fn connect_telegram_bot_token_persists_chat_id() {
+async fn persist_prepared_telegram_chat_target() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "telegram",
         ChannelAuthMode::BotToken,
@@ -56,6 +160,17 @@ async fn connect_telegram_bot_token_persists_chat_id() {
             "bot_token": "telegram-token-123",
             "chat_id": "  987654  "
         }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Telegram(
+            tinychannels_bus::config::TelegramConfig {
+                bot_token: "telegram-token-123".into(),
+                chat_id: Some("987654".into()),
+                allowed_users: vec![],
+                stream_mode: tinychannels_bus::config::StreamMode::Off,
+                draft_update_interval_ms: 1000,
+                silent_streaming: true,
+                mention_only: false,
+            },
+        ),
     )
     .await
     .expect("telegram connect should succeed");
@@ -81,18 +196,26 @@ async fn connect_telegram_bot_token_persists_chat_id() {
 }
 
 #[tokio::test]
-async fn connect_discord_omitted_allowlist_reuses_existing() {
+async fn persist_prepared_discord_retained_allowlist() {
     // Reconnecting without resending `allowed_users` keeps the saved list — the
     // reconnect-convenience path (#3794 review — Codex P2).
     let (_tmp, mut config) = isolated_test_config();
     seed_discord_with_allowlist(&mut config);
     config.save().await.expect("seed should persist");
 
-    connect_channel(
+    persist_module_fixture(
         &config,
         "discord",
         ChannelAuthMode::BotToken,
         serde_json::json!({ "bot_token": "discord-token-abc" }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Discord(DiscordConfig {
+            bot_token: "discord-token-abc".into(),
+            guild_id: None,
+            channel_id: None,
+            allowed_users: vec!["111".into(), "222".into()],
+            listen_to_bots: false,
+            mention_only: false,
+        }),
     )
     .await
     .expect("reconnect should succeed");
@@ -105,7 +228,7 @@ async fn connect_discord_omitted_allowlist_reuses_existing() {
 }
 
 #[tokio::test]
-async fn connect_discord_cleared_allowlist_allows_everyone() {
+async fn persist_prepared_discord_empty_allowlist() {
     // Clearing the allowlist in the UI submits an explicit empty value; the
     // backend must honor it (empty ⇒ allow-all) instead of reusing the old list
     // (#3794 review — Codex P2).
@@ -113,11 +236,19 @@ async fn connect_discord_cleared_allowlist_allows_everyone() {
     seed_discord_with_allowlist(&mut config);
     config.save().await.expect("seed should persist");
 
-    connect_channel(
+    persist_module_fixture(
         &config,
         "discord",
         ChannelAuthMode::BotToken,
         serde_json::json!({ "bot_token": "discord-token-abc", "allowed_users": "" }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Discord(DiscordConfig {
+            bot_token: "discord-token-abc".into(),
+            guild_id: None,
+            channel_id: None,
+            allowed_users: vec![],
+            listen_to_bots: false,
+            mention_only: false,
+        }),
     )
     .await
     .expect("reconnect should succeed");
@@ -162,14 +293,17 @@ async fn disconnect_discord_bot_token_clears_runtime_config() {
 
 // ── iMessage channel ───────────────────────────────────────────
 #[tokio::test]
-async fn connect_imessage_persists_allowed_contacts() {
+async fn persist_prepared_imessage_allowed_contacts() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "imessage",
         ChannelAuthMode::ManagedDm,
         serde_json::json!({
             "allowed_contacts": "+15551234567, user@icloud.com"
+        }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::IMessage(IMessageConfig {
+            allowed_contacts: vec!["+15551234567".into(), "user@icloud.com".into()],
         }),
     )
     .await
@@ -198,13 +332,16 @@ async fn connect_imessage_persists_allowed_contacts() {
 }
 
 #[tokio::test]
-async fn connect_imessage_allows_empty_contacts() {
+async fn persist_prepared_imessage_empty_contacts() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "imessage",
         ChannelAuthMode::ManagedDm,
         serde_json::json!({}),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::IMessage(IMessageConfig {
+            allowed_contacts: vec![],
+        }),
     )
     .await
     .expect("imessage connect with no contacts should succeed");
@@ -251,7 +388,7 @@ async fn channel_status_reports_managed_dm_credential_as_connected() {
     // Simulate the post-link state: `telegram_login_check` stored a
     // credential marker under `channel:telegram:managed_dm` with no
     // corresponding `channels_config.telegram` block.
-    crate::security::credentials::ops::store_provider_credentials(
+    crate::credentials::ops::store_provider_credentials(
         &config,
         "channel:telegram:managed_dm",
         None,
@@ -456,7 +593,7 @@ async fn connected_channel_slugs_merges_credentials_and_config() {
     });
 
     // Layer 2: credential-only channel (telegram managed_dm).
-    crate::security::credentials::ops::store_provider_credentials(
+    crate::credentials::ops::store_provider_credentials(
         &config,
         "channel:telegram:managed_dm",
         None,
@@ -489,7 +626,7 @@ async fn connected_channel_slugs_dedupes_when_both_layers_present() {
     });
 
     // Same slug appears in both layers — should collapse to one entry.
-    crate::security::credentials::ops::store_provider_credentials(
+    crate::credentials::ops::store_provider_credentials(
         &config,
         "channel:discord:managed_dm",
         None,
@@ -519,21 +656,9 @@ async fn connected_channel_slugs_empty_when_nothing_configured() {
 }
 
 #[tokio::test]
-async fn connect_yuanbao_rejects_invalid_credentials() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/v5/robotLogic/sign-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 40001,
-            "msg": "invalid signature",
-        })))
-        .mount(&server)
-        .await;
-
-    let (_tmp, config) = yuanbao_test_config(&server.uri());
+async fn unavailable_module_cannot_persist_yuanbao_credentials() {
+    let (_tmp, mut config) = isolated_test_config();
+    config.modules.enabled = false;
     let err = connect_channel(
         &config,
         "yuanbao",
@@ -544,16 +669,15 @@ async fn connect_yuanbao_rejects_invalid_credentials() {
     .expect_err("invalid yuanbao credentials should fail");
 
     assert!(
-        err.contains("yuanbao credential verification failed") && err.contains("invalid signature"),
-        "expected upstream API msg in error, got: {err}"
+        err.contains("module unavailable"),
+        "expected explicit unavailable module error, got: {err}"
     );
 
     // Nothing should be persisted on failure: no TOML write, no credential row.
     let raw = tokio::fs::read_to_string(&config.config_path).await.ok();
     if let Some(text) = raw {
         let parsed: toml::Value = toml::from_str(&text).expect("config parses");
-        // The mock api_domain we pre-loaded is allowed to be present, but
-        // app_key / app_secret must NOT have been written.
+        // No new credentials may be written when the module is unavailable.
         if let Some(yb) = parsed
             .get("channels_config")
             .and_then(|v| v.get("yuanbao"))
@@ -567,3 +691,6 @@ async fn connect_yuanbao_rejects_invalid_credentials() {
         }
     }
 }
+
+#[path = "ops_connect_memory_tests.rs"]
+mod memory_tests;

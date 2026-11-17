@@ -7,6 +7,7 @@ import type { PlanTier } from '../../../types/api';
 import { BILLING_DASHBOARD_URL } from '../../../utils/links';
 import { openUrl } from '../../../utils/openUrl';
 import LanguageSelect from '../../LanguageSelect';
+import TimezoneSelect from '../../TimezoneSelect';
 import { Badge, Button, Card, Field, Progress, TileGrid } from '../../ui';
 import SettingsPanel from '../layout/SettingsPanel';
 import LogoutAndClearActions from '../LogoutAndClearActions';
@@ -108,6 +109,11 @@ const AccountPanel = () => {
             label={t('settings.language')}
             description={t('settings.languageDesc')}
             control={<LanguageSelect ariaLabel={t('settings.language')} />}
+          />
+          <Field
+            label={t('settings.timezone')}
+            description={t('settings.timezoneDesc')}
+            control={<TimezoneSelect ariaLabel={t('settings.timezone')} />}
           />
         </Card>
       </TileGrid>

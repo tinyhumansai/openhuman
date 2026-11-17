@@ -5,14 +5,14 @@
 
 use crate::config::Config;
 use crate::core::events::DomainEvent;
-use crate::flows::store;
-use crate::flows::{flow_meta, flow_tag, FlowRun};
+use crate::flows::catalog_storage;
 use crate::memory::types::{ForgetParams, ItemsListParams, MAX_LIMIT};
-use crate::memory::{MemoryError, MemoryResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tinybus::EventHandler;
+use tinymemory_api::{Error, Result};
 use tinymemory_api::{ItemKind, MetaFilter, StoreItem};
+use {crate::flows::flow_meta, crate::flows::flow_tag, tinyflows_bus::catalog::FlowRun};
 
 /// Bounds a post-run memory digest to a compact, LLM-cheap size — a single
 /// run's summary must never dominate a later `flow_memory_recall`.
@@ -59,49 +59,93 @@ impl FlowRunDigestSubscriber {
         Self { config }
     }
 
-    async fn handle_finished(&self, flow_id: &str, run_id: &str, status: &str) {
+    pub(super) async fn handle_finished(
+        &self,
+        ctx: crate::core::runtime::DispatchCtx,
+        flow_id: &str,
+        run_id: &str,
+        status: &str,
+    ) {
+        // As the flow's owner: its own configuration (`super::owner`).
+        let config = super::owner::config_for_scope(&ctx, &self.config);
         if status != "completed" && status != "completed_with_warnings" {
             tracing::trace!(target: "flows", %flow_id, %run_id, %status, "[flows] digest: ignoring non-success terminal status");
             return;
         }
-        if !crate::memory::memory_is_on(&self.config) {
+        if !crate::memory::memory_is_on(&config).await {
             tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: memory is off — skipping");
             return;
         }
 
-        let flow_name = match store::get_flow(&self.config, flow_id) {
-            Ok(Some(flow)) => flow.name,
-            Ok(None) => {
-                tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: flow no longer exists — skipping");
+        let storage = match catalog_storage::register(&ctx, &config).await {
+            Ok(registration) => registration.storage(),
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, %error, "[flows] digest: failed to register scoped CatalogStorage");
                 return;
             }
-            Err(e) => {
-                tracing::warn!(target: "flows", %flow_id, %run_id, error = %e, "[flows] digest: failed to load flow — skipping");
+        };
+        let proxy = match crate::modules::tinyflows::catalog_proxy(&config).await {
+            Ok(proxy) => proxy,
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, %error, "[flows] digest: Catalog module unavailable");
                 return;
             }
         };
 
-        let run = match store::get_flow_run(&self.config, run_id) {
-            Ok(Some(run)) => run,
-            Ok(None) => {
-                tracing::warn!(target: "flows", %flow_id, %run_id, "[flows] digest: run row not found — skipping");
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(target: "flows", %flow_id, %run_id, error = %e, "[flows] digest: failed to load run — skipping");
+        let workflow: Option<tinyflows_bus::catalog::Workflow> = match proxy
+            .call(
+                tinyflows_bus::catalog::members::GET_WORKFLOW,
+                (storage.clone(), flow_id.to_owned()),
+            )
+            .await
+        {
+            Ok(workflow) => workflow,
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, error = %error, "[flows] digest: failed to load workflow");
                 return;
             }
         };
+        let flow_name = match workflow {
+            Some(flow) => flow.name,
+            None => {
+                tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: flow no longer exists — skipping");
+                return;
+            }
+        };
+
+        let wire_run: Option<tinyflows_bus::catalog::FlowRun> = match proxy
+            .call(
+                tinyflows_bus::catalog::members::GET_RUN,
+                (tinyflows_bus::catalog::RunIdRequest {
+                    storage,
+                    id: run_id.to_owned(),
+                },),
+            )
+            .await
+        {
+            Ok(run) => run,
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, error = %error, "[flows] digest: failed to load run — skipping");
+                return;
+            }
+        };
+        let Some(wire_run) = wire_run else {
+            tracing::warn!(target: "flows", %flow_id, %run_id, "[flows] digest: run row not found — skipping");
+            return;
+        };
+        let run: FlowRun = wire_run;
 
         let digest = render_run_digest(&flow_name, &run);
         let mut meta = flow_meta(flow_id, &[FLOW_RUN_DIGEST_TAG.to_string()]);
         meta.observed_at = Some(chrono::Utc::now());
-        match crate::memory::ops::store_item(&self.config, StoreItem::document(digest, meta)).await
-        {
+        // A machine-written run summary: searchable, but no facts or
+        // beliefs about the user are derived from it.
+        meta.derive = Some(false);
+        match crate::memory::ops::store_item(&config, StoreItem::document(digest, meta)).await {
             Ok(receipt) => {
                 tracing::debug!(target: "flows", %flow_id, %run_id, replayed = receipt.replayed, "[flows] digest: run digest stored");
             }
-            Err(MemoryError::Off(_)) => {
+            Err(Error::Off(_)) => {
                 tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: memory is off — skipping");
                 return;
             }
@@ -111,7 +155,7 @@ impl FlowRunDigestSubscriber {
             }
         }
 
-        match enforce_retention_cap(&self.config, flow_id, DIGEST_RETENTION_CAP).await {
+        match enforce_retention_cap(&config, flow_id, DIGEST_RETENTION_CAP).await {
             Ok(0) => {}
             Ok(forgotten) => {
                 tracing::debug!(target: "flows", %flow_id, forgotten, "[flows] digest: retention sweep forgot stale digests");
@@ -129,7 +173,7 @@ pub(super) async fn enforce_retention_cap(
     config: &Config,
     flow_id: &str,
     cap: usize,
-) -> MemoryResult<usize> {
+) -> Result<usize> {
     let mut digests = Vec::new();
     let mut cursor = None;
     loop {
@@ -140,6 +184,7 @@ pub(super) async fn enforce_retention_cap(
                 limit: Some(MAX_LIMIT),
                 cursor,
                 path: Vec::new(),
+                preview: false,
             },
         )
         .await?;
@@ -185,7 +230,14 @@ impl EventHandler<DomainEvent> for FlowRunDigestSubscriber {
             status,
         } = event
         {
-            self.handle_finished(flow_id, run_id, status).await;
+            // Settle the run as the agent its flow belongs to (`super::owner`).
+            // `FlowRunFinished` carries no tenant: the host's own, and in SaaS
+            // none (the run is then not settled here).
+            let host = crate::core::runtime::DispatchCtx::host_default();
+            super::owner::as_owner(&host, &self.config, flow_id, |ctx| {
+                self.handle_finished(ctx, flow_id, run_id, status)
+            })
+            .await;
         }
     }
 }
@@ -216,7 +268,11 @@ pub(super) fn render_run_digest(flow_name: &str, run: &FlowRun) -> String {
             break;
         }
         let status = step.status.as_deref().unwrap_or("?");
-        let output = truncate_chars(&step.output.to_string(), 120);
+        // Scrub the complete structured output before serialization and
+        // truncation, so sensitive fields are handled by the host policy
+        // even when their values fall beyond the digest's visible prefix.
+        let sanitized = crate::security::scrub::sanitize_json(&step.output);
+        let output = truncate_chars(&sanitized.value.to_string(), 120);
         let _ = writeln!(out, "- {} [{status}]: {output}", step.node_id);
     }
     truncate_chars(&out, DIGEST_MAX_CHARS)

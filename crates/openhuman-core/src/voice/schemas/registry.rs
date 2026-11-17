@@ -1,38 +1,38 @@
 //! Schema definitions and controller registry for the voice domain.
 
-use crate::core::all::RegisteredController;
+use crate::core::all::{ControllerEntry, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::util::params::{json_output, optional_string, required_string};
 
 use super::handlers::{
-    handle_overlay_stt_notify, handle_voice_agent_signed_url, handle_voice_cloud_transcribe,
-    handle_voice_list_models, handle_voice_reply_synthesize, handle_voice_server_start,
-    handle_voice_server_status, handle_voice_server_stop, handle_voice_set_providers,
+    handle_voice_list_models, handle_voice_reply_synthesize, handle_voice_set_providers,
     handle_voice_status, handle_voice_stt_dispatch, handle_voice_test_provider,
     handle_voice_transcribe, handle_voice_transcribe_bytes, handle_voice_tts,
-    handle_voice_tts_dispatch, handle_voice_update_provider_settings,
+    handle_voice_tts_dispatch, handle_voice_update_provider_settings, voice_list_models_controller,
+    voice_reply_synthesize_controller, voice_set_providers_controller, voice_status_controller,
+    voice_stt_dispatch_controller, voice_test_provider_controller,
+    voice_transcribe_bytes_controller, voice_transcribe_controller, voice_tts_controller,
+    voice_tts_dispatch_controller, voice_update_provider_settings_controller,
 };
-use super::helpers::{json_output, optional_bool, optional_string, required_string};
+use super::helpers::optional_bool;
 
 pub fn all_voice_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         voice_schemas("voice_status"),
-        voice_schemas("voice_agent_signed_url"),
         voice_schemas("voice_transcribe"),
         voice_schemas("voice_transcribe_bytes"),
         voice_schemas("voice_tts"),
         voice_schemas("voice_reply_synthesize"),
-        voice_schemas("voice_cloud_transcribe"),
         voice_schemas("voice_stt_dispatch"),
         voice_schemas("voice_tts_dispatch"),
         voice_schemas("voice_set_providers"),
         voice_schemas("voice_update_provider_settings"),
         voice_schemas("voice_list_models"),
         voice_schemas("voice_test_provider"),
-        voice_schemas("voice_server_start"),
-        voice_schemas("voice_server_stop"),
-        voice_schemas("voice_server_status"),
-        voice_schemas("overlay_stt_notify"),
     ]
+    .into_iter()
+    .chain(crate::voice::live::live_controller_schemas())
+    .collect()
 }
 
 pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
@@ -40,10 +40,6 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: voice_schemas("voice_status"),
             handler: handle_voice_status,
-        },
-        RegisteredController {
-            schema: voice_schemas("voice_agent_signed_url"),
-            handler: handle_voice_agent_signed_url,
         },
         RegisteredController {
             schema: voice_schemas("voice_transcribe"),
@@ -60,10 +56,6 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: voice_schemas("voice_reply_synthesize"),
             handler: handle_voice_reply_synthesize,
-        },
-        RegisteredController {
-            schema: voice_schemas("voice_cloud_transcribe"),
-            handler: handle_voice_cloud_transcribe,
         },
         RegisteredController {
             schema: voice_schemas("voice_stt_dispatch"),
@@ -89,23 +81,30 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
             schema: voice_schemas("voice_test_provider"),
             handler: handle_voice_test_provider,
         },
-        RegisteredController {
-            schema: voice_schemas("voice_server_start"),
-            handler: handle_voice_server_start,
-        },
-        RegisteredController {
-            schema: voice_schemas("voice_server_stop"),
-            handler: handle_voice_server_stop,
-        },
-        RegisteredController {
-            schema: voice_schemas("voice_server_status"),
-            handler: handle_voice_server_status,
-        },
-        RegisteredController {
-            schema: voice_schemas("overlay_stt_notify"),
-            handler: handle_overlay_stt_notify,
-        },
     ]
+    .into_iter()
+    .chain(crate::voice::live::live_registered_controllers())
+    .collect()
+}
+
+pub(crate) fn all_voice_controller_entries() -> Vec<ControllerEntry> {
+    vec![
+        voice_status_controller(),
+        voice_transcribe_controller(),
+        voice_transcribe_bytes_controller(),
+        voice_tts_controller(),
+        voice_reply_synthesize_controller(),
+        voice_stt_dispatch_controller(),
+        voice_tts_dispatch_controller(),
+        voice_set_providers_controller(),
+        voice_update_provider_settings_controller(),
+        voice_list_models_controller(),
+        voice_test_provider_controller(),
+    ]
+    .into_iter()
+    .map(ControllerEntry::bound)
+    .chain(crate::voice::live::schemas::bound_live_controller_entries())
+    .collect()
 }
 
 pub fn voice_schemas(function: &str) -> ControllerSchema {
@@ -116,16 +115,6 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             description: "Check whether the configured STT engine resolves and whether the local TTS binary/voice are installed.",
             inputs: vec![],
             outputs: vec![json_output("status", "Voice availability status.")],
-        },
-        "voice_agent_signed_url" => ControllerSchema {
-            namespace: "voice",
-            function: "agent_signed_url",
-            description: "Mint a short-lived signed URL for a realtime voice-agent session.",
-            inputs: vec![],
-            outputs: vec![
-                json_output("signed_url", "Signed WebSocket URL for the voice-agent session."),
-                json_output("agent_id", "The voice agent the URL was minted for."),
-            ],
         },
         "voice_transcribe" => ControllerSchema {
             namespace: "voice",
@@ -347,70 +336,6 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 "result",
                 "{ ok: bool, detail: string, latency_ms?: number }",
             )],
-        },
-        "voice_cloud_transcribe" => ControllerSchema {
-            namespace: "voice",
-            function: "cloud_transcribe",
-            description:
-                "Transcribe audio bytes via the hosted backend's STT endpoint. Used by the \
-                 mascot's mic-only composer so we don't ship a provider API key in the desktop app.",
-            inputs: vec![
-                required_string(
-                    "audio_base64",
-                    "Base64-encoded audio bytes (e.g. webm/opus from MediaRecorder).",
-                ),
-                optional_string("mime_type", "Audio MIME type (default: audio/webm)."),
-                optional_string("file_name", "Original filename hint (default: audio.webm)."),
-                optional_string("model", "Backend STT model id (default: whisper-v1)."),
-                optional_string("language", "BCP-47 language hint, e.g. 'en'."),
-            ],
-            outputs: vec![json_output("result", "CloudTranscribeResult: { text }.")],
-        },
-        "voice_server_start" => ControllerSchema {
-            namespace: "voice",
-            function: "server_start",
-            description:
-                "Start the voice dictation server (hotkey → record → transcribe → insert text).",
-            inputs: vec![
-                optional_string("hotkey", "Hotkey combination (default: Fn)."),
-                optional_string(
-                    "activation_mode",
-                    "Activation mode: tap or push (default: push).",
-                ),
-                optional_bool("skip_cleanup", "Skip LLM post-processing."),
-            ],
-            outputs: vec![json_output("status", "Voice server status after start.")],
-        },
-        "voice_server_stop" => ControllerSchema {
-            namespace: "voice",
-            function: "server_stop",
-            description: "Stop the voice dictation server.",
-            inputs: vec![],
-            outputs: vec![json_output("status", "Voice server status after stop.")],
-        },
-        "voice_server_status" => ControllerSchema {
-            namespace: "voice",
-            function: "server_status",
-            description: "Get the current voice dictation server status.",
-            inputs: vec![],
-            outputs: vec![json_output("status", "Current voice server status.")],
-        },
-        "overlay_stt_notify" => ControllerSchema {
-            namespace: "voice",
-            function: "overlay_stt_notify",
-            description:
-                "Notify the overlay of a voice/STT state change from the chat prompt button.",
-            inputs: vec![
-                required_string(
-                    "state",
-                    "State transition: recording_started, transcription_done, cancelled, error.",
-                ),
-                optional_string(
-                    "text",
-                    "Transcribed text (when state is transcription_done).",
-                ),
-            ],
-            outputs: vec![json_output("result", "Notification acknowledgement.")],
         },
         _ => ControllerSchema {
             namespace: "voice",

@@ -20,13 +20,30 @@ PW_CORE_RPC_TOKEN="${PW_CORE_RPC_TOKEN:-openhuman-playwright-token}"
 PW_CORE_RPC_URL="http://127.0.0.1:${OPENHUMAN_CORE_PORT}/rpc"
 PW_BASE_URL="http://127.0.0.1:${E2E_WEB_PORT}"
 
-OPENHUMAN_WORKSPACE="${OPENHUMAN_WORKSPACE:-$(mktemp -d)}"
+E2E_WEB_WORKSPACE_EXPLICIT="${OPENHUMAN_WORKSPACE:+1}"
 CREATED_TEMP_WORKSPACE=""
-if [ ! -d "${OPENHUMAN_WORKSPACE}" ] || [[ "${OPENHUMAN_WORKSPACE}" == /tmp/* ]]; then
+if [ -z "$E2E_WEB_WORKSPACE_EXPLICIT" ]; then
+  OPENHUMAN_WORKSPACE="$(mktemp -d)"
   CREATED_TEMP_WORKSPACE="$OPENHUMAN_WORKSPACE"
 fi
 export OPENHUMAN_WORKSPACE
 export OPENHUMAN_KEYRING_BACKEND="${OPENHUMAN_KEYRING_BACKEND:-file}"
+if [ -n "$E2E_WEB_WORKSPACE_EXPLICIT" ]; then
+  if [ -z "${OPENHUMAN_KEYRING_MASTER_KEY:-}" ] &&
+    [ -z "${OPENHUMAN_KEYRING_MASTER_KEY_FILE:-}" ] &&
+    [ "${OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY:-}" != "1" ]; then
+    echo "ERROR: an explicit OPENHUMAN_WORKSPACE requires OPENHUMAN_KEYRING_MASTER_KEY or OPENHUMAN_KEYRING_MASTER_KEY_FILE." >&2
+    exit 2
+  fi
+  if [ "${OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY:-}" = "1" ] &&
+    [ -z "${OPENHUMAN_KEYRING_MASTER_KEY:-}" ]; then
+    unset OPENHUMAN_KEYRING_MASTER_KEY_FILE
+  fi
+else
+  # A disposable workspace must not accidentally inherit a key-file path
+  # outside the test tree from the developer or runner environment.
+  unset OPENHUMAN_KEYRING_MASTER_KEY_FILE
+fi
 
 MOCK_PID=""
 CORE_PID=""
@@ -274,6 +291,11 @@ if [ -n "$STALE_SOURCE" ]; then
   exit 1
 fi
 
+if [ -z "${OPENHUMAN_KEYRING_MASTER_KEY:-}" ] &&
+  [ -z "${OPENHUMAN_KEYRING_MASTER_KEY_FILE:-}" ]; then
+  export OPENHUMAN_KEYRING_MASTER_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+fi
+
 export OPENHUMAN_CORE_BIN="$E2E_WEB_CORE_TARGET_DIR/debug/openhuman-core"
 if [ ! -x "$OPENHUMAN_CORE_BIN" ]; then
   echo "ERROR: standalone core binary is missing at $OPENHUMAN_CORE_BIN. Run pnpm --filter openhuman-app test:e2e:web:build first." >&2
@@ -286,10 +308,17 @@ export OPENHUMAN_CORE_TOKEN="$PW_CORE_RPC_TOKEN"
 # disclosure choreography. Advertise the compiled tool packs for this harness
 # core only; production hosts retain the fail-closed packed default.
 export OPENHUMAN_E2E=1
+# Sign-in stores the session through TinySecurity's keyring, which asks the
+# user to approve each operation; the e2e-test-support core answers for them.
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 # The skills registry defaults to a public HermesHub fetch. The browser E2E
 # lane must remain deterministic and offline, so serve its compact catalog
-# fixture from the local mock backend instead.
+# fixture from the local mock backend instead. The registry's fetch guard
+# only allows plain http to loopback with the local-http escape hatch, and
+# every SKILL.md is served from the same mock.
 export OPENHUMAN_SKILL_REGISTRY_CATALOG_URL="http://127.0.0.1:${E2E_MOCK_PORT}/skills/catalog.json"
+export OPENHUMAN_SKILL_REGISTRY_DOWNLOAD_BASE_URL="http://127.0.0.1:${E2E_MOCK_PORT}/skills"
+export OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP=1
 export OPENHUMAN_TELEGRAM_BOT_API_BASE="http://127.0.0.1:${E2E_MOCK_PORT}"
 export OPENHUMAN_COMPOSIO_DIRECT_BASE_V2="http://127.0.0.1:${E2E_MOCK_PORT}"
 export OPENHUMAN_COMPOSIO_DIRECT_BASE_V3="http://127.0.0.1:${E2E_MOCK_PORT}"

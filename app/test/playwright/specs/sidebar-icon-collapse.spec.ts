@@ -21,7 +21,7 @@ import {
  * 1. Collapsed-state contract — `collapsible="icon"` keeps a real, non-zero
  *    {@link ICON_WIDTH_PX}px column mounted across repeated toggles and window
  *    resizes (the DOM half of the punch-through question; the native-layer half
- *    stays manual, see docs/qa/sidebar-icon-collapse.md).
+ *    stays outside this browser geometry check).
  * 2. Traffic-light clearance — the collapsed rail reserves its draggable strip
  *    above every rail item (geometry only; clickability is macOS-manual).
  * 3. Seam colour — the rail indicator resolves to the live `--line-chrome`
@@ -45,7 +45,7 @@ const COLLAPSE_BUTTON = '[data-analytics-id="sidebar-header-collapse"]';
 const ICON_WIDTH_PX = 88;
 /** Mirrors `SIDEBAR_KEYBOARD_STEP` in `app/src/components/ui/Sidebar.tsx`. */
 const KEYBOARD_STEP_PX = 16;
-/** Mirrors `WINDOW_DRAG_BAR_HEIGHT` in `app/src/components/layout/shell/WindowDragBar.tsx`. */
+/** The collapsed rail's own spacer is 28px; the shell drag bar is separate. */
 const DRAG_STRIP_HEIGHT_PX = 28;
 /** Mirrors `SIDEBAR_MIN_WIDTH` / `SIDEBAR_MAX_WIDTH` in `app/src/components/ui/Sidebar.tsx`. */
 const MIN_WIDTH_PX = 188;
@@ -196,25 +196,43 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
     await expect(sidebar).toHaveAttribute('data-state', 'expanded');
   });
 
-  test.skip('collapsed rail reserves a traffic-light-clearing drag strip above its items', async ({
+  test('collapsed rail reserves a traffic-light-clearing drag strip above its items', async ({
     page,
   }) => {
     await bootOnChat(page);
     await page.click(COLLAPSE_BUTTON);
     await expect(page.locator(REOPEN)).toBeVisible();
 
-    const sidebarBox = await page.locator(SIDEBAR).boundingBox();
+    const sidebar = page.locator(SIDEBAR);
+    const sidebarBox = await sidebar.boundingBox();
+    const contentBox = await sidebar.evaluate(el => {
+      const style = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
+      const borderRight = Number.parseFloat(style.borderRightWidth) || 0;
+      const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+      const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+      const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+      const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+      return {
+        x: rect.x + borderLeft + paddingLeft,
+        y: rect.y + borderTop + paddingTop,
+        width: rect.width - borderLeft - borderRight - paddingLeft - paddingRight,
+      };
+    });
     // The drag marker is on the full-height collapsed body; its first direct
     // child is the fixed 28px spacer above the rail items.
     const strip = page.locator(`${SIDEBAR} [data-tauri-drag-region="deep"] > div`).first();
     const stripBox = await strip.boundingBox();
     if (!sidebarBox || !stripBox) throw new Error('collapsed rail geometry missing');
 
-    // Full-width strip pinned to the top of the column, one title-bar tall.
+    // Full-width strip pinned to the content box, one title-bar tall. The
+    // sidebar frame has a 1px border, so its outer bounding box begins one
+    // pixel before the child spacer.
     expect(stripBox.height).toBe(DRAG_STRIP_HEIGHT_PX);
-    expect(stripBox.x).toBeCloseTo(sidebarBox.x, 0);
-    expect(stripBox.y).toBeCloseTo(sidebarBox.y, 0);
-    expect(stripBox.width).toBeGreaterThanOrEqual(ICON_WIDTH_PX - 1);
+    expect(stripBox.x).toBeCloseTo(contentBox.x, 0);
+    expect(stripBox.y).toBeCloseTo(contentBox.y, 0);
+    expect(stripBox.width).toBeCloseTo(contentBox.width, 0);
 
     // Every interactive item starts below the strip, clear of the lights zone.
     const reopenBox = await page.locator(REOPEN).boundingBox();

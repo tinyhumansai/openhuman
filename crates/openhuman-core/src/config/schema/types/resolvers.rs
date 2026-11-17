@@ -7,6 +7,30 @@ use super::output_language::output_language_directive;
 use crate::config::schema::Config;
 
 impl Config {
+    /// Locale for host-generated native-channel messages. Unsupported and
+    /// unset preferences fall back to English; model-output language and RPC
+    /// metadata are not consulted.
+    pub fn native_channel_locale(&self) -> &'static str {
+        crate::inference::failure_copy::supported_channel_locale(self.channels_locale.as_deref())
+            .unwrap_or("en")
+    }
+
+    /// Render a classified native-channel failure with this config's trusted
+    /// locale preference and the shared product chat-error catalog.
+    pub fn render_native_channel_failure(
+        &self,
+        fallback_message: &str,
+        copy_key: Option<&str>,
+        copy_params: Option<&serde_json::Value>,
+    ) -> String {
+        crate::inference::failure_copy::render_channel_failure(
+            self.native_channel_locale(),
+            fallback_message,
+            copy_key,
+            copy_params,
+        )
+    }
+
     /// The folder agent deliverables are written to (#5505): the Settings
     /// override when set, else `~/OpenHuman/projects/Files`. Every producer
     /// and the boot migration read it through here.
@@ -74,6 +98,14 @@ impl Config {
             model.map(str::trim).filter(|value| !value.is_empty())
         }
 
+        // A hosted profile's operator-fixed model outranks every per-agent pin.
+        if let Some(model) = self
+            .profile_providers
+            .as_ref()
+            .and_then(|binding| binding.chat_model())
+        {
+            return Some(model);
+        }
         let agent_id = agent_id.trim();
         if agent_id.is_empty() {
             return None;

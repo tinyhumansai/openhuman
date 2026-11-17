@@ -99,6 +99,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
 
       - name: Cache pnpm store
         uses: actions/cache@v6
@@ -162,7 +165,11 @@ jobs:
 
       - name: Run E2E (${{ inputs.spec_label }})
         if: ${{ !inputs.full }}
+        env:
+          E2E_USE_TAURI_DRIVER: "1"
         run: |
+          export XDG_DATA_HOME="$(mktemp -d /root/openhuman-e2e-xdg.XXXXXX)"
+          chmod 700 "$XDG_DATA_HOME"
           bash scripts/ci-cancel-aware.sh \
             xvfb-run -a --server-args="-screen 0 1280x960x24" \
             bash app/scripts/e2e-run-session.sh "${{ inputs.spec_path }}" "${{ inputs.spec_label }}"
@@ -213,6 +220,9 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
 
       - name: Cache pnpm store
         uses: actions/cache@v6
@@ -270,19 +280,17 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 30
+    # The chat, skills, and journeys shard exceeded 30 minutes on a hosted
+    # runner. Give full-suite shards the same cold-cache budget as the build.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -290,6 +298,9 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
 
       - name: Cache pnpm store
         uses: actions/cache@v6
@@ -337,20 +348,12 @@ jobs:
 
       - name: Install native E2E test modules
         run: |
-          # Every shard calls Composio RPCs. Supply the connectors module
-          # (built from the checked-out submodule) so the packaged app never
-          # depends on release metadata or a runner-owned cache while tests
-          # are running.
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          connectors_dir="$module_root/tinyconnectors"
-          rm -rf "$connectors_dir"
-          mkdir -p "$connectors_dir"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
-          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
-            "$connectors_dir/libtinyconnectors.so"
-          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
-            >> "$GITHUB_ENV"
+          # Stage all native capabilities under a trusted tree, including
+          # release manifests for confidential wallet and channel calls.
+          module_root="/root/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
 
       - name: Run E2E shard (${{ matrix.shard.name }} — suites=${{ matrix.shard.suites }})
         env:
@@ -400,7 +403,9 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 30
+    # Run every Rust integration E2E suite even when the hosted container is
+    # cold; the prior 30-minute limit cancelled this lane before completion.
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
       RUST_BACKTRACE: "1"
@@ -412,6 +417,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
 
       - name: Cache pnpm store
         uses: actions/cache@v6
@@ -438,35 +446,18 @@ jobs:
 
       - name: Install checksum-pinned native test modules
         run: |
-          # Keep module-backed RPC coverage independent of release-metadata
-          # lookup. tinybus validates every directory ancestor, so keep each
-          # fixture outside the checkout owned by the host runner.
-          # Version and digest are the ubuntu-22.04-x86_64 registry pin; do
-          # not derive a replacement checksum from a local build.
-          juice_version="0.5.2"
-          juice_sha256="1a9bc9479ce51c87d82a6f145408cfcbe7d06de4613b0ca7cec1fd04bbc2b5b5"
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          juice_dir="$module_root/tinyjuice"
-          connectors_dir="$module_root/tinyconnectors"
-          juice_archive="$juice_dir/tinyjuice-module-${juice_version}-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$juice_dir" "$connectors_dir"
-          mkdir -p "$juice_dir" "$connectors_dir"
-          curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-            "https://github.com/tinyhumansai/tinyjuice/releases/download/v${juice_version}/$(basename "$juice_archive")" \
-            --output "$juice_archive"
-          echo "${juice_sha256}  $juice_archive" | sha256sum --check
-          tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
-          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
-            "$connectors_dir/libtinyconnectors.so"
-          echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" \
-            >> "$GITHUB_ENV"
-          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
-            >> "$GITHUB_ENV"
+          # Keep fixtures in a trusted tree and resolve their verified releases
+          # from the same registry the product uses.
+          module_root="/root/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
 
       - name: Run Rust E2E suite (tests/*_e2e.rs vs mock backend)
-        run: bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
+        run: |
+          export XDG_DATA_HOME="$(mktemp -d /root/openhuman-rust-e2e-xdg.XXXXXX)"
+          chmod 700 "$XDG_DATA_HOME"
+          bash scripts/ci-cancel-aware.sh pnpm test:rust:e2e
 
       # No artifact uploads here either — same release-workflow reuse
       # concern as the Tauri job above. Mock-backend log lives at
@@ -498,7 +489,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           # macos-latest is arm64, but the vendored tauri-cli's build.rs
           # compiles a CEF helper for x86_64-apple-darwin (universal binary),
@@ -507,7 +498,7 @@ jobs:
 
       - name: Verify cargo resolves to real toolchain
         run: |
-          rustup default 1.96.1 || true
+          rustup default 1.99.1 || true
           which cargo
           # `cargo --version` in the repo root materializes the
           # rust-toolchain.toml override toolchain. The action pin and
@@ -594,6 +585,10 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
+      # The TinyFlows fixture tree contains paths beyond MAX_PATH. Configure
+      # Git before checkout so recursive submodule checkout can create them.
+      - name: Enable long Git paths
+        run: git config --global core.longpaths true
       - name: Checkout code
         uses: actions/checkout@v7
         with:
@@ -614,7 +609,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -711,7 +706,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           # macos-latest is arm64, but the vendored tauri-cli's build.rs
           # compiles a CEF helper for x86_64-apple-darwin (universal binary),
@@ -721,7 +716,7 @@ jobs:
 
       - name: Verify cargo resolves to real toolchain
         run: |
-          rustup default 1.96.1 || true
+          rustup default 1.99.1 || true
           which cargo
           # `cargo --version` in the repo root materializes the
           # rust-toolchain.toml override toolchain. The action pin and
@@ -800,12 +795,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -876,6 +867,8 @@ jobs:
         env:
           E2E_BAIL_ON_FAILURE: ${{ vars.E2E_BAIL_ON_FAILURE || '' }}
         run: |
+          export XDG_DATA_HOME="$(mktemp -d /root/openhuman-e2e-xdg.XXXXXX)"
+          chmod 700 "$XDG_DATA_HOME"
           BAIL_FLAG=""
           if [[ "${E2E_BAIL_ON_FAILURE:-}" == "1" ]]; then
             BAIL_FLAG="--bail"
@@ -921,6 +914,10 @@ jobs:
     # Windows shard, so timing it out discards all downstream E2E coverage.
     timeout-minutes: 60
     steps:
+      # The TinyFlows fixture tree contains paths beyond MAX_PATH. Configure
+      # Git before checkout so recursive submodule checkout can create them.
+      - name: Enable long Git paths
+        run: git config --global core.longpaths true
       - name: Checkout code
         uses: actions/checkout@v7
         with:
@@ -940,7 +937,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -997,12 +994,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

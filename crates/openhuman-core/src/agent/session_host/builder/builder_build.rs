@@ -1,12 +1,10 @@
 //! `SessionHostBuilder::build` — validates and assembles the final [`OpenHumanSessionHost`].
 
-use super::{dedup_visible_tool_specs, visible_tool_specs_for_policy};
-use crate::agent::context::ContextManager;
+use super::visible_tool_specs_for_policy;
 use crate::agent::session_host::types::{OpenHumanSessionHost, SessionHostBuilder};
-use crate::tools::agent_policy::ToolPolicyEngine;
 use anyhow::Result;
 use std::sync::Arc;
-use tinytools::{Tool, ToolSpec};
+use tinytools::{Tool, ToolPolicyEngine, ToolSpec};
 
 impl SessionHostBuilder {
     /// Validates the configuration and constructs a new `OpenHumanSessionHost` instance.
@@ -15,11 +13,26 @@ impl SessionHostBuilder {
     /// setting up the context manager, and initializing the conversation history.
     /// It ensures that all required fields (provider, tools, dispatcher, …) are present.
     pub fn build(self) -> Result<OpenHumanSessionHost> {
+        let mut pack_registry_handle = self.pack_registry_handle.clone();
         let mut tools = self
             .tools
             .ok_or_else(|| anyhow::anyhow!("tools are required"))?;
+        if pack_registry_handle.is_none()
+            && tools
+                .iter()
+                .any(|tool| crate::tools::toolpacks::is_canonical_use_skill_tool(tool.as_ref()))
+        {
+            // Preserve the public `all_tools() -> Vec<_>` then `.tools(...)`
+            // flow: callers that do not receive a handle still get a proxy
+            // bound to this session's registry. Custom `use_skill` tools are
+            // left untouched; they can supply a handle through the builder.
+            tools.retain(|tool| {
+                !crate::tools::toolpacks::is_canonical_use_skill_tool(tool.as_ref())
+            });
+            pack_registry_handle = Some(crate::tools::toolpacks::append_pack_tools(&mut tools));
+        }
         // Advertise only the spawnable ids on the wire: see
-        // `SpawnAsyncSubagentTool::scoped` for why the spec-view narrowing
+        // `SpawnSubagentTool::scoped` for why the spec-view narrowing
         // alone did not reach a native-tool-calling provider.
         let spawn_scope_id = self
             .session_definition
@@ -31,15 +44,15 @@ impl SessionHostBuilder {
             if !allowed.is_empty() {
                 if let Some(slot) = tools
                     .iter_mut()
-                    .find(|tool| tool.name() == "spawn_async_subagent")
+                    .find(|tool| tool.name() == "spawn_subagent")
                 {
                     tracing::debug!(
                         agent = %agent_id,
                         ids = allowed.len(),
-                        "[tools] scoping spawn_async_subagent schema to the subagent allowlist"
+                        "[tools] scoping spawn_subagent schema to the subagent allowlist"
                     );
                     *slot = Box::new(
-                        crate::agent::orchestration::tools::SpawnAsyncSubagentTool::scoped(allowed),
+                        crate::agent::orchestration::tools::SpawnSubagentTool::scoped(allowed),
                     );
                 }
             }
@@ -47,10 +60,11 @@ impl SessionHostBuilder {
         // The synthesised set lives beside the durable registry, never inside
         // it (`OpenHumanSessionHost::synthesized_tools`); a durable name wins a collision.
         let synthesized_tools = self.synthesized_tools.unwrap_or_default();
-        super::super::managed_tools::reject_synthesized_collisions(
+        tinyagents_runtime::reject_synthesized_collisions(
             &self.permanent_tool_names,
             &synthesized_tools,
-        )?;
+        )
+        .map_err(anyhow::Error::msg)?;
         let synthesized_tools = super::drop_synthesized_name_collisions(&tools, synthesized_tools);
         let synthesized_tool_names: std::collections::HashSet<String> = synthesized_tools
             .iter()
@@ -142,20 +156,16 @@ impl SessionHostBuilder {
         // durable Hidden tool: `refresh_delegation_tools` (turn/tools.rs) only
         // swaps synthesised names, and `OpenHumanSessionHost::hide_tools` only seeds a set
         // that is still empty — see the matching strip there.
-        let discovery_opted_in =
-            visible_names.remove(crate::tools::implementations::meta::TOOL_SEARCH_NAME);
+        let discovery_opted_in = visible_names.remove(tinytools::TOOL_SEARCH_NAME);
         let discovery_enabled = (belt_is_wildcard || discovery_opted_in)
             && !self
                 .withheld_tool_names
-                .contains(crate::tools::implementations::meta::TOOL_SEARCH_NAME);
+                .contains(tinytools::TOOL_SEARCH_NAME);
         // A wildcard belt was seeded from the whole registry, so its durable
         // `Hidden` members (collapsed `todo_*`) leave here too.
         // A named belt never listed them.
         let mut deferred_names = if belt_is_wildcard {
-            crate::tools::implementations::meta::strip_deferred_from_visible(
-                &mut visible_names,
-                tools.as_slice(),
-            )
+            tinytools::strip_deferred_from_visible(&mut visible_names, tools.as_slice())
         } else {
             std::collections::HashSet::new()
         };
@@ -166,7 +176,7 @@ impl SessionHostBuilder {
             // are left alone on purpose — see the comment above.
             // Plus the tools this agent's definition defers for itself
             // (`deferred_tools`); see `meta::deferred_set`.
-            deferred_names.extend(crate::tools::implementations::meta::deferred_set(
+            deferred_names.extend(tinytools::deferred_set(
                 tools.as_slice(),
                 synthesized_tools.as_slice(),
                 &self.deferred_tools,
@@ -187,7 +197,7 @@ impl SessionHostBuilder {
             deferred_names.retain(|name| !self.withheld_tool_names.contains(name));
             if visible_names.is_empty() {
                 visible_names
-                    .insert(crate::agent::harness::definition::NO_TOOLS_SENTINEL.to_string());
+                    .insert(crate::agent_registry::host_definition::NO_TOOLS_SENTINEL.to_string());
             }
         }
         visible_names.extend(self.permanent_tool_names.iter().cloned());
@@ -254,11 +264,22 @@ impl SessionHostBuilder {
         );
         let mut subagent_tool_ceiling_names = self.subagent_tool_ceiling_names.unwrap_or_default();
         if channel_policy_session.has_restrictions() {
-            let policy_allowed: std::collections::HashSet<String> = tool_specs
+            let mut policy_allowed: std::collections::HashSet<String> = tool_specs
                 .iter()
                 .filter(|spec| channel_policy_session.is_allowed(&spec.name))
                 .map(|spec| spec.name.clone())
                 .collect();
+            // Packed tools are the owning specialist's belt, not this agent's:
+            // they are absent from `tool_specs` (reached through `use_skill` or a
+            // hand-off), so a ceiling taken from that list alone would strip a
+            // child of its own tools (`skill_setup` could not search or install).
+            // The child builds its own policy session, which still applies the
+            // channel's permission levels to them.
+            policy_allowed.extend(
+                crate::tools::toolpacks::all_packed_tool_names()
+                    .into_iter()
+                    .map(str::to_owned),
+            );
             if subagent_tool_ceiling_names.is_empty() {
                 subagent_tool_ceiling_names = policy_allowed;
             } else {
@@ -282,7 +303,7 @@ impl SessionHostBuilder {
         // accept duplicates, which hid this bug until #1710's per-role
         // routing started sending the same tool list to Anthropic.
         let visible_tool_specs: Vec<Arc<ToolSpec>> =
-            dedup_visible_tool_specs(visible_tool_specs_unfiltered);
+            tinyagents_runtime::dedup_visible_tool_specs(visible_tool_specs_unfiltered);
 
         let visible_names_list: Vec<&str> =
             visible_tool_specs.iter().map(|s| s.name.as_str()).collect();
@@ -307,19 +328,21 @@ impl SessionHostBuilder {
 
         let model_name = self
             .model_name
-            .unwrap_or_else(|| crate::config::DEFAULT_MODEL.into());
+            .or_else(|| {
+                self.runtime_config
+                    .as_ref()
+                    .and_then(|config| config.default_model.clone())
+            })
+            .or_else(|| {
+                crate::inference::registry::provider_default_model(
+                    crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                )
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("model_name or configured provider default is required")
+            })?;
 
-        // Assemble the per-session ContextManager. The manager owns
-        // the prompt builder, the reduction pipeline, and the
-        // summarizer — every concern that touches "what's in the
-        // model's context window" routes through this single handle.
         let context_config = self.context_config.unwrap_or_default();
-
-        // Live history reduction moved to the tinyagents graph
-        // (`ContextCompressionMiddleware` + `MessageTrimMiddleware`, issue
-        // #4249), so the session no longer constructs an in-turn summarizer
-        // here.
-        let context = ContextManager::new(&context_config, prompt_builder);
 
         let workspace_dir = self.workspace_dir.unwrap_or_else(|| {
             self.runtime_config
@@ -356,12 +379,13 @@ impl SessionHostBuilder {
         let hosted_config = Arc::new(hosted_config);
         #[cfg(test)]
         let definitions = Some(
-            crate::agent::harness::AgentDefinitionRegistry::global_arc().unwrap_or_else(|| {
-                Arc::new(crate::agent::harness::AgentDefinitionRegistry::builtins_only())
+            crate::agent_registry::host_definition::AgentDefinitionRegistry::current().unwrap_or_else(|| {
+                Arc::new(crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only())
             }),
         );
         #[cfg(not(test))]
-        let definitions = crate::agent::harness::AgentDefinitionRegistry::global_arc();
+        let definitions =
+            crate::agent_registry::host_definition::AgentDefinitionRegistry::current();
         // A caller that brought its own definition is the authority for this
         // session, so it does not need a process registry to exist before it
         // may run a turn. The stand-in is deliberately *empty* rather than
@@ -372,21 +396,23 @@ impl SessionHostBuilder {
         // is, so where a process registry does exist nothing about its
         // resolution changes.
         let session_definition = self.session_definition;
+        let security_policy = self.security_policy;
         let definitions = definitions.or_else(|| {
-            session_definition
-                .is_some()
-                .then(|| Arc::new(crate::agent::harness::AgentDefinitionRegistry::default()))
+            session_definition.is_some().then(|| {
+                Arc::new(crate::agent_registry::host_definition::AgentDefinitionRegistry::default())
+            })
         });
         let hosted_base = definitions.map(|definitions| {
             Arc::new(crate::agent::tinyagents::host::OpenHumanHostBase {
-                security_policy: Arc::new(crate::security::SecurityPolicy::from_config(
-                    &hosted_config.autonomy,
-                    &workspace_dir,
-                    &action_dir,
-                )),
+                security_policy: security_policy.clone().unwrap_or_else(|| {
+                    Arc::new(crate::security::SecurityPolicy::from_config(
+                        &hosted_config.autonomy,
+                        &workspace_dir,
+                        &action_dir,
+                    ))
+                }),
                 config: Arc::clone(&hosted_config),
                 definitions,
-                post_turn_hooks: self.post_turn_hooks.clone(),
                 // Usually this path names a registry id, and carries no
                 // definition of its own. A caller that supplied one with
                 // `agent_definition` is stamped with it here, the way
@@ -397,21 +423,25 @@ impl SessionHostBuilder {
 
         let tools = Arc::new(tools);
         let synthesized_tools = Arc::new(synthesized_tools);
-        // The pack tool lives inside this registry, so it can only be pointed
-        // at it once it exists. Re-bind after any later rebuild of this `Arc`.
-        crate::tools::toolpacks::bind_pack_registry(&tools);
-        // And at the delegates, which are NOT in that registry: every
-        // `delegate_*` is synthesised into its own `Arc`, so a packed delegate
-        // is unreachable through `use_skill` until this second binding runs.
-        crate::tools::toolpacks::bind_synthesized_pack_registry(&tools, &synthesized_tools);
+        // The pack handle is host-owned and retained beside the registry;
+        // rebind it after this Arc is built and after any future refresh.
+        if let Some(handle) = pack_registry_handle.as_ref() {
+            crate::tools::toolpacks::bind_pack_registry(handle, &tools);
+            crate::tools::toolpacks::bind_synthesized_pack_registry(handle, &synthesized_tools);
+        }
 
         Ok(OpenHumanSessionHost {
             runtime_session: None,
-            runtime_state: Arc::new(std::sync::Mutex::new(
-                super::super::runtime_session::OpenHumanSessionState::default(),
-            )),
+            runtime_state: Arc::new(std::sync::Mutex::new({
+                let mut state = super::super::runtime_session::OpenHumanSessionState::default();
+                state.time_zone = runtime_config
+                    .as_deref()
+                    .map(crate::config::Config::time_zone);
+                state
+            })),
             turn_model_source,
             tools,
+            pack_registry_handle,
             synthesized_tools,
             tool_specs: Arc::new(tool_specs),
             durable_tool_specs: Arc::new(durable_tool_specs),
@@ -423,6 +453,8 @@ impl SessionHostBuilder {
             requested_deferred_tools: Arc::from(self.deferred_tools.clone()),
             subagent_tool_ceiling_names,
             tool_policy_session,
+            prompt_builder: Arc::new(prompt_builder),
+            context_config,
             tool_dispatcher: std::sync::Arc::from(
                 self.tool_dispatcher
                     .ok_or_else(|| anyhow::anyhow!("tool_dispatcher is required"))?,
@@ -439,6 +471,11 @@ impl SessionHostBuilder {
             post_turn_hooks: self.post_turn_hooks,
             event_session_id,
             event_channel,
+            task_recency_window: None,
+            autonomous_iter_cap: None,
+            host_env: crate::agent::turn_env::HostTurnEnv::default(),
+            settle_headless_descendants: false,
+            scheduled_actions: false,
             thread_id: None,
             agent_definition_name: agent_definition_name.clone(),
             // Canonical registry id — captured here at build time
@@ -449,26 +486,9 @@ impl SessionHostBuilder {
             agent_definition_id: agent_definition_name.clone(),
             session_history_locator: self.session_history_locator,
             session_history_locator_memo: std::sync::OnceLock::new(),
-            session_key: {
-                let unix_ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let sanitized: String = agent_definition_name
-                    .chars()
-                    .map(|c| {
-                        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                            c
-                        } else {
-                            '_'
-                        }
-                    })
-                    .collect();
-                format!("{unix_ts}_{sanitized}")
-            },
+            session_key: crate::agent::session_host::session_key::mint(&agent_definition_name),
             session_parent_prefix: self.session_parent_prefix,
             session: None,
-            context: std::sync::Arc::new(std::sync::Mutex::new(context)),
             on_progress: None,
             run_queue: None,
             connected_integrations: Vec::new(),
@@ -476,12 +496,14 @@ impl SessionHostBuilder {
             runtime_config,
             hosted_base,
             definition: None,
+            host_only: false,
+            untrusted_input: false,
             omit_memory_context: self.omit_memory_context.unwrap_or(false),
             payload_summarizer: self.payload_summarizer,
             tokenjuice_compression: self.tokenjuice_compression,
-            tool_policy: self
-                .tool_policy
-                .unwrap_or_else(|| Arc::new(crate::agent::tool_policy::AllowAllToolPolicy)),
+            tool_policy: self.tool_policy.unwrap_or_else(|| {
+                Arc::new(crate::agent::tinyagents::middleware::tool_policy::AllowAllToolPolicy)
+            }),
             last_seen_integrations_hash: 0,
             composio_integrations_rx: None,
             skill_events_rx: None,

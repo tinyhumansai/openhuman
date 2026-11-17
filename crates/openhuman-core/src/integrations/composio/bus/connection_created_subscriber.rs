@@ -1,8 +1,10 @@
 //! Routes `ComposioConnectionCreated` events: once the connection is
 //! confirmed active, refreshes the integrations cache, then (after
-//! onboarding) fetches the account profile and starts an initial
-//! `composio_sync` for toolkits with a native sync provider.
+//! onboarding) fetches the account profile for toolkits with a native
+//! identity provider.
 
+use crate::core::runtime::DispatchCtx;
+use std::future::Future;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -12,10 +14,11 @@ use crate::config::rpc as config_rpc;
 use crate::config::Config;
 use crate::core::events::DomainEvent;
 use crate::integrations::composio::client::{resolve_composio_route, ComposioRoute};
-use crate::integrations::composio::module_client::{self as connectors, methods};
+use crate::integrations::composio::module_client::{self as connectors};
 use crate::integrations::composio::ops;
 use crate::integrations::composio::types::ComposioConnectionsResponse;
 use crate::integrations::composio::FetchConnectedIntegrationsStatus;
+use tinyconnectors_bus::names::methods;
 
 /// How long to keep polling after `composio_authorize` returns a
 /// `connectUrl`, waiting for the user to finish the hosted OAuth flow.
@@ -38,7 +41,7 @@ async fn backend_composio_config(config: &Config, toolkit: &str) -> anyhow::Resu
             .map_err(|e| {
                 anyhow::anyhow!("composio backend client: failed to reload live config: {e}")
             })?;
-    match resolve_composio_route(&live_config)? {
+    match resolve_composio_route(&live_config).await? {
         ComposioRoute::Backend => Ok(live_config),
         ComposioRoute::Direct(_) => Err(anyhow::anyhow!(
             "composio direct mode is not supported on this helper path; toolkit={toolkit}"
@@ -76,6 +79,7 @@ impl EventHandler<DomainEvent> for ComposioConnectionCreatedSubscriber {
             toolkit,
             connection_id,
             connect_url: _,
+            tenant,
         } = event
         else {
             return;
@@ -85,16 +89,34 @@ impl EventHandler<DomainEvent> for ComposioConnectionCreatedSubscriber {
             connection_id = %connection_id,
             "[composio:bus] connection_created"
         );
-        // The cache refresh runs for every toolkit; only the profile fetch and
-        // initial sync are gated on a native provider.
+        let Some(ctx) = DispatchCtx::for_event(tenant.as_ref()) else {
+            tracing::debug!(toolkit = %toolkit, "[composio:bus] connection_created has no tenant; skipped");
+            return;
+        };
+        // The cache refresh runs for every toolkit; only the profile fetch is gated on a native provider.
         let toolkit = toolkit.clone();
         let connection_id = connection_id.clone();
-        tokio::spawn(async move { on_connection_created(toolkit, connection_id).await });
+        spawn_connection_created_task(ctx, move |task_ctx| async move {
+            on_connection_created(&task_ctx, toolkit, connection_id).await;
+        });
     }
 }
 
-async fn on_connection_created(toolkit: String, connection_id: String) {
-    let config = match config_rpc::load_config_with_timeout().await {
+fn spawn_connection_created_task<F, Fut>(
+    ctx: DispatchCtx,
+    task: F,
+) -> tokio::task::JoinHandle<Fut::Output>
+where
+    F: FnOnce(DispatchCtx) -> Fut + Send + 'static,
+    Fut: Future + Send + 'static,
+    Fut::Output: Send + 'static,
+{
+    let task_ctx = ctx.clone();
+    ctx.spawn(task(task_ctx))
+}
+
+async fn on_connection_created(ctx: &DispatchCtx, toolkit: String, connection_id: String) {
+    let config = match ctx.load_config().await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(
@@ -105,7 +127,7 @@ async fn on_connection_created(toolkit: String, connection_id: String) {
             return;
         }
     };
-    if resolve_composio_route(&config).is_err() {
+    if resolve_composio_route(&config).await.is_err() {
         tracing::debug!(
             toolkit = %toolkit,
             "[composio:bus] no composio client (not signed in?), skipping hook"
@@ -149,7 +171,7 @@ async fn on_connection_created(toolkit: String, connection_id: String) {
                 connection_id = %connection_id,
                 last_status = ?last_status,
                 timeout_secs = CONNECTION_READY_TIMEOUT.as_secs(),
-                "[composio:bus] timed out waiting for connection to become active; skipping cache refresh + initial sync"
+                "[composio:bus] timed out waiting for connection to become active; skipping cache refresh"
             );
             return;
         }
@@ -158,7 +180,7 @@ async fn on_connection_created(toolkit: String, connection_id: String) {
                 toolkit = %toolkit,
                 connection_id = %connection_id,
                 error = %error,
-                "[composio:bus] backend lookup failed while waiting for connection; skipping cache refresh + initial sync"
+                "[composio:bus] backend lookup failed while waiting for connection; skipping cache refresh"
             );
             return;
         }
@@ -170,18 +192,18 @@ async fn on_connection_created(toolkit: String, connection_id: String) {
         tracing::info!(
             toolkit = %toolkit,
             connection_id = %connection_id,
-            "[composio:bus] onboarding not yet complete — skipping profile fetch and initial sync"
+            "[composio:bus] onboarding not yet complete — skipping profile fetch"
         );
         return;
     }
-    if !crate::integrations::composio::providers::has_native_provider(&toolkit) {
+    if !crate::integrations::composio::contract::has_native_provider(&toolkit) {
         tracing::debug!(
             toolkit = %toolkit,
-            "[composio:bus] no native sync provider for toolkit; skipping profile fetch and initial sync"
+            "[composio:bus] no native identity provider for toolkit; skipping profile fetch"
         );
         return;
     }
-    if let Err(e) = ops::composio_get_user_profile(&live_config, &connection_id).await {
+    if let Err(e) = ops::composio_get_user_profile(ctx, &live_config, &connection_id).await {
         tracing::warn!(
             toolkit = %toolkit,
             connection_id = %connection_id,
@@ -189,26 +211,11 @@ async fn on_connection_created(toolkit: String, connection_id: String) {
             "[composio:bus] connection bootstrap (profile fetch) failed"
         );
     }
-    match ops::composio_sync(
-        &live_config,
-        &connection_id,
-        Some("connection_created".to_string()),
-    )
-    .await
-    {
-        Ok(_) => tracing::info!(
-            toolkit = %toolkit,
-            connection_id = %connection_id,
-            "[composio:bus] initial sync started"
-        ),
-        Err(error) => tracing::debug!(
-            toolkit = %toolkit,
-            connection_id = %connection_id,
-            error = %error,
-            "[composio:bus] initial sync not started (memory off or unavailable)"
-        ),
-    }
 }
+
+#[cfg(test)]
+#[path = "connection_created_subscriber_tests.rs"]
+mod tests;
 
 // ── Connection-readiness polling ────────────────────────────────────
 

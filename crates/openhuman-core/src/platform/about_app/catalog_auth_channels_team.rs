@@ -104,6 +104,16 @@ Capability {
         privacy: None,
     },
 Capability {
+        id: "auth.tool_rules",
+        name: "Tool Rules",
+        domain: "auth",
+        category: CapabilityCategory::Auth,
+        description: "Allow, deny, hide or require approval for tools with name, family and tag patterns. One rule set governs what every agent is shown, what tool search finds, and what it may call, per channel if needed.",
+        how_to: "Add [[tool_rules.rules]] entries to config.toml, or tool_rules to an agent definition",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+Capability {
         id: "auth.backup_recovery_phrase",
         name: "Back Up Recovery Phrase",
         domain: "auth",
@@ -138,7 +148,9 @@ Capability {
         name: "Connect Messaging Platforms",
         domain: "channels",
         category: CapabilityCategory::Channels,
-        description: "Connect supported messaging platforms such as Telegram or Discord.",
+        description: "Connect supported messaging platforms such as Telegram or Discord. \
+                      Threads, reactions, typing indicators, media, and voice depend on \
+                      each configured provider's declared capabilities.",
         how_to: "Connections > Channels",
         status: CapabilityStatus::Beta,
         privacy: None,
@@ -211,7 +223,7 @@ Capability {
         name: "Browse MCP Server Registry",
         domain: "channels",
         category: CapabilityCategory::Channels,
-        description: "Search and discover MCP servers from the Smithery.ai and official modelcontextprotocol registries. The directory is browse-only: a server opens its own page, where its install instructions live.",
+        description: "Search and discover MCP servers from the Smithery.ai and official modelcontextprotocol registries. A hosted server that needs no setup is added to mcp.json in one click; any other server opens its own page, where its install instructions live.",
         how_to: "Connections > MCP Servers > Registry",
         status: CapabilityStatus::Beta,
         privacy: Some(CapabilityPrivacy {

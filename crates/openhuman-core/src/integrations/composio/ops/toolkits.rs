@@ -1,10 +1,11 @@
 //! Toolkit and capability listing ops.
 
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use crate::config::Config;
 use crate::core::Outcome;
+use tinyconnectors_bus::names::methods;
 
-use super::super::providers::agent_ready_toolkits;
+use super::super::contract::agent_ready_toolkits;
 use super::super::types::{ComposioCapabilitiesResponse, ComposioToolkitsResponse};
 use super::error_utils::{report_composio_op_error, OpResult};
 
@@ -76,12 +77,15 @@ pub async fn composio_list_capabilities(
 /// "preview / agent integration coming soon" so users aren't led into
 /// a broken `composio_list_tools` → max-iterations loop. See #2283.
 pub async fn composio_list_agent_ready_toolkits(
+    config: &Config,
 ) -> OpResult<Outcome<super::super::types::ComposioAgentReadyToolkitsResponse>> {
     tracing::debug!("[composio] rpc list_agent_ready_toolkits");
-    let toolkits: Vec<String> = agent_ready_toolkits()
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect();
+    // The list is the module's, read through the process snapshot; fill it
+    // first so this does not answer empty ahead of the first connector call.
+    connectors::ensure_catalogs(config).await.map_err(|error| {
+        format!("[composio] list_agent_ready_toolkits: curated catalogs unavailable: {error}")
+    })?;
+    let toolkits: Vec<String> = agent_ready_toolkits();
     let count = toolkits.len();
     let resp = super::super::types::ComposioAgentReadyToolkitsResponse { toolkits };
     Ok(Outcome::new(

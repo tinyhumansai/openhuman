@@ -89,51 +89,34 @@ impl From<tinymcp_bus::McpServerConfig> for McpServerConfig {
     }
 }
 
-/// How a configured MCP server's tools enter the model's catalogue.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum McpToolExposure {
-    /// Found through `tool_search`, then callable by name.
-    #[default]
-    Deferred,
-    /// Sent to the model every turn.
-    Direct,
-}
+// The contract's shapes for how tools enter the catalogue and how the client
+// identifies itself. OpenHuman only supplies its own identity as the default.
+pub use tinymcp_bus::{McpClientIdentityConfig, McpToolExposure};
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct McpClientIdentityConfig {
-    /// Client name sent during `initialize.clientInfo.name`.
-    #[serde(default = "default_mcp_client_name")]
-    pub name: String,
-    /// Client title sent during `initialize.clientInfo.title`.
-    #[serde(default = "default_mcp_client_title")]
-    pub title: String,
-    /// Client version sent during `initialize.clientInfo.version`.
-    #[serde(default = "default_mcp_client_version")]
-    pub version: String,
-}
-
-fn default_mcp_client_name() -> String {
-    "openhuman-core".into()
-}
-
-fn default_mcp_client_title() -> String {
-    "OpenHuman Core MCP Client".into()
-}
-
-fn default_mcp_client_version() -> String {
-    env!("CARGO_PKG_VERSION").into()
-}
-
-impl Default for McpClientIdentityConfig {
-    fn default() -> Self {
-        Self {
-            name: default_mcp_client_name(),
-            title: default_mcp_client_title(),
-            version: default_mcp_client_version(),
-        }
+/// OpenHuman's identity block: the config default for `[mcp_client.client_identity]`.
+pub(crate) fn default_client_identity() -> McpClientIdentityConfig {
+    McpClientIdentityConfig {
+        name: "openhuman-core".into(),
+        title: "OpenHuman Core MCP Client".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        ..McpClientIdentityConfig::default()
     }
+}
+
+/// Deserializes the identity table over OpenHuman's defaults, so a partial
+/// table (say only `name`) keeps OpenHuman's title and version rather than the
+/// module's.
+fn deserialize_client_identity<'de, D>(de: D) -> Result<McpClientIdentityConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let overlay = serde_json::Value::deserialize(de)?;
+    let mut base =
+        serde_json::to_value(default_client_identity()).map_err(serde::de::Error::custom)?;
+    if let (Some(base), serde_json::Value::Object(overlay)) = (base.as_object_mut(), overlay) {
+        base.extend(overlay);
+    }
+    serde_json::from_value(base).map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -148,7 +131,10 @@ pub struct McpClientConfig {
     #[serde(default)]
     pub servers: Vec<McpServerConfig>,
     /// Identity block sent during initialize.
-    #[serde(default)]
+    #[serde(
+        default = "default_client_identity",
+        deserialize_with = "deserialize_client_identity"
+    )]
     pub client_identity: McpClientIdentityConfig,
     /// Optional auth/overrides for the MCP *registry* browse APIs (Smithery +
     /// the official modelcontextprotocol/registry). Each value falls back to
@@ -162,8 +148,12 @@ impl Default for McpClientConfig {
         Self {
             enabled: defaults::default_true(),
             servers: Vec::new(),
-            client_identity: McpClientIdentityConfig::default(),
+            client_identity: default_client_identity(),
             registry_auth: McpRegistryAuthConfig::default(),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_tests.rs"]
+mod tests;

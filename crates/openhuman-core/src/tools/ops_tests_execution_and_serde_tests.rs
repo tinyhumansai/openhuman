@@ -1,7 +1,8 @@
 use super::*;
+use crate::tools::ops::default_tools;
 
-#[test]
-fn all_tools_includes_browser_when_enabled() {
+#[tokio::test]
+async fn all_tools_includes_browser_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
 
@@ -17,13 +18,13 @@ fn all_tools_includes_browser_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     // The browser tools are the `modules` gate's (tools/ops.rs): present when
     // it is compiled in, absent in a gates-off build.
@@ -36,8 +37,42 @@ fn all_tools_includes_browser_when_enabled() {
     assert!(names.contains(&"proxy_config"));
 }
 
-#[test]
-fn default_tools_all_have_descriptions() {
+#[tokio::test]
+async fn computer_component_off_unregisters_desktop_and_browser_tools() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let browser = BrowserConfig {
+        enabled: true,
+        allowed_domains: vec!["example.com".into()],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+    let mut root = Config::default();
+    root.components.computer = false;
+
+    let tools = all_tools(
+        Arc::new(root),
+        &security,
+        AuditSink::disabled(),
+        &browser,
+        &http,
+        tmp.path(),
+        &cfg,
+    )
+    .await;
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(!names.contains(&"browser_open"), "{names:?}");
+    assert!(!names.contains(&"browser"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("desktop_")),
+        "{names:?}"
+    );
+}
+
+#[tokio::test]
+async fn default_tools_all_have_descriptions() {
     let security = Arc::new(SecurityPolicy::default());
     let tools = default_tools(security);
     for tool in &tools {
@@ -49,8 +84,8 @@ fn default_tools_all_have_descriptions() {
     }
 }
 
-#[test]
-fn default_tools_all_have_schemas() {
+#[tokio::test]
+async fn default_tools_all_have_schemas() {
     let security = Arc::new(SecurityPolicy::default());
     let tools = default_tools(security);
     for tool in &tools {
@@ -68,159 +103,8 @@ fn default_tools_all_have_schemas() {
     }
 }
 
-#[test]
-fn all_tools_includes_delegate_when_agents_configured() {
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-
-    let browser = BrowserConfig::default();
-    let http = crate::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let mut agents = HashMap::new();
-    agents.insert(
-        "researcher".to_string(),
-        DelegateAgentConfig {
-            model: "llama3".to_string(),
-            system_prompt: None,
-            temperature: None,
-            max_depth: 3,
-        },
-    );
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        AuditLogger::disabled(),
-        &browser,
-        &http,
-        tmp.path(),
-        &agents,
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(names.contains(&"delegate"));
-}
-
-#[test]
-fn all_tools_excludes_delegate_when_no_agents() {
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-
-    let browser = BrowserConfig::default();
-    let http = crate::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        AuditLogger::disabled(),
-        &browser,
-        &http,
-        tmp.path(),
-        &HashMap::new(),
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(!names.contains(&"delegate"));
-}
-
-#[test]
-#[cfg(feature = "runtime-node")]
-fn all_tools_registers_node_exec_when_node_enabled() {
-    // Default NodeConfig has `enabled = true`, so both `node_exec` and
-    // `npm_exec` must appear in the registry. Regression guard for the
-    // skills integration — if this fires, managed-node skills silently
-    // lose both tools.
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-
-    let browser = BrowserConfig::default();
-    let http = crate::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        AuditLogger::disabled(),
-        &browser,
-        &http,
-        tmp.path(),
-        &HashMap::new(),
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(
-        names.contains(&"node_exec"),
-        "node_exec must be registered when node.enabled=true; got: {names:?}"
-    );
-    assert!(
-        names.contains(&"npm_exec"),
-        "npm_exec must be registered when node.enabled=true; got: {names:?}"
-    );
-}
-
-#[test]
-fn all_tools_registers_python_exec_when_python_enabled() {
-    // Default RuntimePythonConfig has `enabled = true`, so `python_exec` must
-    // appear in the registry (routes inline code through the runtime pool, #5106).
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-
-    let browser = BrowserConfig::default();
-    let http = crate::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        AuditLogger::disabled(),
-        &browser,
-        &http,
-        tmp.path(),
-        &HashMap::new(),
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(
-        names.contains(&"python_exec"),
-        "python_exec must be registered when runtime_python.enabled=true; got: {names:?}"
-    );
-}
-
-#[test]
-fn all_tools_excludes_node_exec_when_node_disabled() {
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-
-    let browser = BrowserConfig::default();
-    let http = crate::config::HttpRequestConfig::default();
-    let mut cfg = test_config(&tmp);
-    cfg.node.enabled = false;
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        AuditLogger::disabled(),
-        &browser,
-        &http,
-        tmp.path(),
-        &HashMap::new(),
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(
-        !names.contains(&"node_exec"),
-        "node_exec must NOT be registered when node.enabled=false; got: {names:?}"
-    );
-    assert!(
-        !names.contains(&"npm_exec"),
-        "npm_exec must NOT be registered when node.enabled=false; got: {names:?}"
-    );
-}
-
-#[test]
-fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
+#[tokio::test]
+async fn all_tools_registers_no_hosted_integration_families_without_a_tool_source() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -228,50 +112,60 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     let mut cfg = test_config(&tmp);
     cfg.api_url = Some("https://backend.example.test".to_string());
     cfg.integrations.google_places.enabled = true;
-    cfg.integrations.parallel.enabled = true;
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
-    cfg.integrations.twilio.enabled = true;
-    cfg.composio.enabled = true;
-    store_test_session_token(&cfg);
+    store_test_session_token(&cfg).await;
 
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
 
-    assert_contains_all(
-        &names,
-        &[
-            "google_places_search",
-            "google_places_details",
-            "stock_quote",
-            "stock_exchange_rate",
-            "stock_options",
-            "stock_crypto_series",
-            "stock_commodity",
-            "twilio_call",
-            "composio_list_toolkits",
-            "composio_list_connections",
-            "composio_authorize",
-            "composio_list_tools",
-            "composio_execute",
-        ],
+    // The hosted families (Google Places, stock data, file storage, managed
+    // media) come from a host's registered tool source, so a bare core offers
+    // none of them even when enabled and signed in.
+    for hosted in [
+        "google_places_search",
+        "google_places_details",
+        "stock_quote",
+        "stock_exchange_rate",
+        "stock_options",
+        "stock_crypto_series",
+        "stock_commodity",
+        "storage_upload_file",
+        "media_generate_image",
+    ] {
+        assert!(
+            !names.iter().any(|n| n == hosted),
+            "`{hosted}` must come from a tool source, not the core; got: {names:?}"
+        );
+    }
+    // Composio's backend mode is a route a host registers; a bare core has
+    // none, so a session alone does not register the composio tools.
+    assert!(
+        !names.iter().any(|n| n.starts_with("composio_")),
+        "composio backend mode needs a registered route; got: {names:?}"
+    );
+    // The backend retired its Twilio route; the agent must not be offered a
+    // tool that can only fail.
+    assert!(
+        !names.iter().any(|n| n == "twilio_call"),
+        "twilio_call must no longer be registered"
     );
 }
 
-#[test]
-fn all_tools_registers_brave_engine_and_lsp_when_enabled() {
+#[tokio::test]
+async fn all_tools_registers_brave_engine_when_enabled() {
     // Search registers one tool per capability role from the TinySearch
     // catalog; a usable BYOK Brave key yields the `search` role tool
-    // alongside lsp.
+    // alongside the builtin tool set.
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -283,38 +177,28 @@ fn all_tools_registers_brave_engine_and_lsp_when_enabled() {
     );
     cfg.search.brave.api_key = Some("test-brave-key".into());
 
-    let _env_guard = crate::config::TEST_ENV_LOCK.blocking_lock();
-    unsafe {
-        std::env::set_var(crate::tools::implementations::LSP_ENABLED_ENV, "1");
-    }
-
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
     assert_contains_all(
         &names,
         &[
             #[cfg(feature = "modules")]
             "web_search_tool",
-            "lsp",
         ],
     );
-
-    unsafe {
-        std::env::remove_var(crate::tools::implementations::LSP_ENABLED_ENV);
-    }
 }
 
-#[test]
-fn all_tools_registers_querit_as_the_search_role_when_enabled() {
+#[tokio::test]
+async fn all_tools_registers_querit_as_the_search_role_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -329,13 +213,13 @@ fn all_tools_registers_querit_as_the_search_role_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
     #[cfg(feature = "modules")]
     assert_contains_all(&names, &["web_search_tool"]);
@@ -346,8 +230,8 @@ fn all_tools_registers_querit_as_the_search_role_when_enabled() {
     );
 }
 
-#[test]
-fn all_tools_omits_search_surface_when_search_is_disabled() {
+#[tokio::test]
+async fn all_tools_omits_search_surface_when_search_is_disabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -358,18 +242,18 @@ fn all_tools_omits_search_surface_when_search_is_disabled() {
     cfg.search.brave.api_key = Some("test-brave-key".into());
     cfg.search.querit.api_key = Some("test-querit-key".into());
     cfg.integrations.tinyfish.enabled = true;
-    store_test_session_token(&cfg);
+    store_test_session_token(&cfg).await;
 
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
 
     for search_tool in [
@@ -389,38 +273,4 @@ fn all_tools_omits_search_surface_when_search_is_disabled() {
             "did not expect search tool `{search_tool}` when search is disabled; got: {names:?}"
         );
     }
-}
-
-#[tokio::test]
-async fn all_tools_executes_google_places_family_against_fake_backend() {
-    let backend = integration_test_support::spawn_fake_integration_backend().await;
-    let tmp = TempDir::new().unwrap();
-    let cfg = integration_test_config(&tmp, &backend.base_url);
-    store_test_session_token(&cfg);
-    let tools = integration_tools_for_config(&tmp, &cfg);
-
-    let search = find_tool(&tools, "google_places_search")
-        .execute(serde_json::json!({
-            "query": "coffee",
-            "max_results": 2
-        }))
-        .await
-        .expect("google_places_search execute");
-    assert!(search.output().contains("Found 2 place(s) for: coffee"));
-    assert!(search.output().contains("coffee Result 1"));
-
-    let details = find_tool(&tools, "google_places_details")
-        .execute(serde_json::json!({ "place_id": "place-1-coffee" }))
-        .await
-        .expect("google_places_details execute");
-    assert!(details.output().contains("Details for place-1-coffee"));
-    assert!(details.output().contains("OPERATIONAL"));
-
-    let requests = backend.requests();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].body["maxResults"], serde_json::json!(2));
-    assert_eq!(
-        requests[1].body["placeId"],
-        serde_json::json!("place-1-coffee")
-    );
 }

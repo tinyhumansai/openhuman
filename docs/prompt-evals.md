@@ -34,7 +34,7 @@ those agents: Composio actions are reached by the orchestrator through
 `tool_search`, and reminders through the `scheduling` skill (`use_skill`,
 then `cron`).
 Fleet-wide static coverage of all agents lives in the prompt tests under
-`crates/openhuman-core/src/agent/registry/agents/`, not here.
+`crates/openhuman-core/src/agent_registry/agents/`, not here.
 
 ```sh
 cargo test -p openhuman-cli --test in_process_all agent_prompt_comprehension_e2e

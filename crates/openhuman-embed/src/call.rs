@@ -56,13 +56,29 @@ where
     P: Serialize,
     R: DeserializeOwned,
 {
+    call_in(rt, std::sync::Arc::clone(rt.context()), method, params).await
+}
+
+/// [`call`] under `ctx` instead of the runtime's own context — a SaaS
+/// profile's, for instance, so the dispatch gate and every handler read that
+/// profile's scope ([`CoreRuntime::invoke_in`]).
+pub(crate) async fn call_in<P, R>(
+    rt: &CoreRuntime,
+    ctx: std::sync::Arc<openhuman_core::core::runtime::CoreContext>,
+    method: &'static str,
+    params: P,
+) -> Result<R, CoreError>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
     let params =
         serde_json::to_value(params).map_err(|source| CoreError::Encode { method, source })?;
 
     log::debug!("[embed] call method={method}");
 
     let raw = rt
-        .invoke(method, params)
+        .invoke_in(ctx, method, params)
         .await
         .map_err(|e| CoreError::from_rpc_string(method, e))?;
 

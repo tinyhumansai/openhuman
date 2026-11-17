@@ -1,0 +1,3342 @@
+{
+  "airtable": [
+    {
+      "scope": "read",
+      "slug": "AIRTABLE_LIST_RECORDS"
+    },
+    {
+      "scope": "read",
+      "slug": "AIRTABLE_GET_RECORD"
+    },
+    {
+      "scope": "read",
+      "slug": "AIRTABLE_GET_BASE_SCHEMA"
+    },
+    {
+      "scope": "read",
+      "slug": "AIRTABLE_LIST_BASES"
+    },
+    {
+      "scope": "read",
+      "slug": "AIRTABLE_LIST_COMMENTS"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_CREATE_RECORDS"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_UPDATE_RECORD"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_UPDATE_MULTIPLE_RECORDS"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_CREATE_FIELD"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_CREATE_TABLE"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_CREATE_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_UPLOAD_ATTACHMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_UPDATE_FIELD"
+    },
+    {
+      "scope": "write",
+      "slug": "AIRTABLE_UPDATE_TABLE"
+    },
+    {
+      "scope": "admin",
+      "slug": "AIRTABLE_DELETE_RECORD"
+    },
+    {
+      "scope": "admin",
+      "slug": "AIRTABLE_DELETE_MULTIPLE_RECORDS"
+    },
+    {
+      "scope": "admin",
+      "slug": "AIRTABLE_DELETE_COMMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "AIRTABLE_CREATE_BASE"
+    }
+  ],
+  "asana": [
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_A_TASK"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_A_PROJECT"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_MULTIPLE_TASKS"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_MULTIPLE_PROJECTS"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_CURRENT_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_MULTIPLE_WORKSPACES"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_PORTFOLIO"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_GOALS"
+    },
+    {
+      "scope": "read",
+      "slug": "ASANA_GET_CUSTOM_FIELDS_FOR_WORKSPACE"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_CREATE_A_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_CREATE_A_PROJECT"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_CREATE_SUBTASK"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_CREATE_TASK_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_UPDATE_A_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_ADD_FOLLOWERS_TO_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_ADD_TAG_TO_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_ADD_PROJECT_FOR_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_ADD_TASK_DEPENDENCIES"
+    },
+    {
+      "scope": "write",
+      "slug": "ASANA_CREATE_ATTACHMENT_FOR_TASK"
+    },
+    {
+      "scope": "admin",
+      "slug": "ASANA_DELETE_TASK"
+    },
+    {
+      "scope": "admin",
+      "slug": "ASANA_DELETE_PROJECT"
+    },
+    {
+      "scope": "admin",
+      "slug": "ASANA_DELETE_SECTION"
+    },
+    {
+      "scope": "admin",
+      "slug": "ASANA_DELETE_TAG"
+    },
+    {
+      "scope": "admin",
+      "slug": "ASANA_DELETE_CUSTOM_FIELD"
+    },
+    {
+      "scope": "admin",
+      "slug": "ASANA_DELETE_MEMBERSHIP"
+    }
+  ],
+  "clickup": [
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_AUTHORIZED_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_AUTHORIZED_TEAMS_WORKSPACES"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_SPACES"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_FOLDERS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_LISTS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_FOLDERLESS_LISTS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_FILTERED_TEAM_TASKS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_TASKS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_TASK"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_TASK_COMMENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_LIST_COMMENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_SEARCH_DOCS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_DOC_PAGES"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_VIEW_TASKS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_TIME_ENTRIES_WITHIN_A_DATE_RANGE"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_WORKSPACE_MEMBERS"
+    },
+    {
+      "scope": "read",
+      "slug": "CLICKUP_GET_TASK_MEMBERS"
+    },
+    {
+      "scope": "write",
+      "slug": "CLICKUP_CREATE_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "CLICKUP_UPDATE_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "CLICKUP_CREATE_TASK_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "CLICKUP_UPDATE_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "CLICKUP_CREATE_LIST"
+    },
+    {
+      "scope": "write",
+      "slug": "CLICKUP_UPDATE_LIST"
+    },
+    {
+      "scope": "admin",
+      "slug": "CLICKUP_DELETE_TASK"
+    },
+    {
+      "scope": "admin",
+      "slug": "CLICKUP_DELETE_COMMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "CLICKUP_DELETE_LIST"
+    }
+  ],
+  "discord": [
+    {
+      "scope": "read",
+      "slug": "DISCORD_GET_MY_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "DISCORD_GET_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "DISCORD_LIST_MY_GUILDS"
+    },
+    {
+      "scope": "read",
+      "slug": "DISCORD_GET_MY_GUILD_MEMBER"
+    },
+    {
+      "scope": "read",
+      "slug": "DISCORD_INVITE_RESOLVE"
+    },
+    {
+      "scope": "read",
+      "slug": "DISCORD_GET_GUILD_WIDGET"
+    },
+    {
+      "scope": "read",
+      "slug": "DISCORD_LIST_MY_CONNECTIONS"
+    }
+  ],
+  "dropbox": [
+    {
+      "scope": "read",
+      "slug": "DROPBOX_GET_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "DROPBOX_FILES_SEARCH"
+    },
+    {
+      "scope": "read",
+      "slug": "DROPBOX_LIST_FILE_MEMBERS"
+    },
+    {
+      "scope": "read",
+      "slug": "DROPBOX_GET_SHARED_LINK_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "DROPBOX_GET_ABOUT_ME"
+    },
+    {
+      "scope": "read",
+      "slug": "DROPBOX_GET_SPACE_USAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "DROPBOX_ALPHA_UPLOAD_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "DROPBOX_CREATE_FOLDER"
+    },
+    {
+      "scope": "write",
+      "slug": "DROPBOX_COPY_FILE_OR_FOLDER"
+    },
+    {
+      "scope": "write",
+      "slug": "DROPBOX_CREATE_SHARED_LINK"
+    },
+    {
+      "scope": "write",
+      "slug": "DROPBOX_ADD_FILE_MEMBER"
+    },
+    {
+      "scope": "admin",
+      "slug": "DROPBOX_DELETE_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "DROPBOX_DELETE_BATCH"
+    },
+    {
+      "scope": "admin",
+      "slug": "DROPBOX_ADD_TEAM_MEMBERS"
+    },
+    {
+      "scope": "admin",
+      "slug": "DROPBOX_CREATE_TEAM_FOLDER"
+    },
+    {
+      "scope": "admin",
+      "slug": "DROPBOX_ARCHIVE_TEAM_FOLDER"
+    }
+  ],
+  "excel": [
+    {
+      "scope": "read",
+      "slug": "EXCEL_GET_WORKBOOK"
+    },
+    {
+      "scope": "read",
+      "slug": "EXCEL_LIST_WORKSHEETS"
+    },
+    {
+      "scope": "read",
+      "slug": "EXCEL_GET_WORKSHEET"
+    },
+    {
+      "scope": "read",
+      "slug": "EXCEL_GET_RANGE"
+    },
+    {
+      "scope": "read",
+      "slug": "EXCEL_GET_USED_RANGE"
+    },
+    {
+      "scope": "read",
+      "slug": "EXCEL_LIST_TABLES"
+    },
+    {
+      "scope": "read",
+      "slug": "EXCEL_GET_TABLE_ROWS"
+    },
+    {
+      "scope": "write",
+      "slug": "EXCEL_CREATE_WORKSHEET"
+    },
+    {
+      "scope": "write",
+      "slug": "EXCEL_UPDATE_RANGE"
+    },
+    {
+      "scope": "write",
+      "slug": "EXCEL_APPEND_ROWS"
+    },
+    {
+      "scope": "write",
+      "slug": "EXCEL_INSERT_TABLE_ROW"
+    },
+    {
+      "scope": "write",
+      "slug": "EXCEL_UPDATE_TABLE_ROW"
+    },
+    {
+      "scope": "write",
+      "slug": "EXCEL_CREATE_TABLE"
+    },
+    {
+      "scope": "write",
+      "slug": "EXCEL_FORMAT_RANGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "EXCEL_DELETE_WORKSHEET"
+    },
+    {
+      "scope": "admin",
+      "slug": "EXCEL_DELETE_TABLE"
+    },
+    {
+      "scope": "admin",
+      "slug": "EXCEL_DELETE_TABLE_ROW"
+    },
+    {
+      "scope": "admin",
+      "slug": "EXCEL_CLEAR_RANGE"
+    }
+  ],
+  "figma": [
+    {
+      "scope": "read",
+      "slug": "FIGMA_GET_FILE_JSON"
+    },
+    {
+      "scope": "read",
+      "slug": "FIGMA_GET_FILE_NODES"
+    },
+    {
+      "scope": "read",
+      "slug": "FIGMA_GET_COMMENTS_IN_A_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "FIGMA_GET_CURRENT_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "FIGMA_DISCOVER_FIGMA_RESOURCES"
+    },
+    {
+      "scope": "read",
+      "slug": "FIGMA_GET_FILE_COMPONENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "FIGMA_GET_LOCAL_VARIABLES"
+    },
+    {
+      "scope": "read",
+      "slug": "FIGMA_EXTRACT_DESIGN_TOKENS"
+    },
+    {
+      "scope": "write",
+      "slug": "FIGMA_ADD_A_COMMENT_TO_A_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "FIGMA_CREATE_DEV_RESOURCES"
+    },
+    {
+      "scope": "write",
+      "slug": "FIGMA_CREATE_MODIFY_DELETE_VARIABLES"
+    },
+    {
+      "scope": "admin",
+      "slug": "FIGMA_DELETE_A_COMMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "FIGMA_DELETE_A_WEBHOOK"
+    },
+    {
+      "scope": "admin",
+      "slug": "FIGMA_DELETE_DEV_RESOURCE"
+    }
+  ],
+  "github": [
+    {
+      "scope": "read",
+      "slug": "GITHUB_GET_THE_AUTHENTICATED_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_GET_A_REPOSITORY"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_LIST_REPOSITORY_COLLABORATORS"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_SEARCH_REPOSITORIES"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_SEARCH_CODE"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_SEARCH_USERS"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_LIST_REPOSITORY_ISSUES"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_GET_AN_ISSUE"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_LIST_ISSUE_COMMENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_LIST_PULL_REQUESTS"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_GET_A_PULL_REQUEST"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_LIST_BRANCHES"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_GET_A_BRANCH"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_LIST_COMMITS"
+    },
+    {
+      "scope": "read",
+      "slug": "GITHUB_GET_A_COMMIT"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_OR_UPDATE_FILE_CONTENTS"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_A_COMMIT"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_A_COMMIT_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_AN_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_UPDATE_AN_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_AN_ISSUE_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_ADD_LABELS_TO_AN_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_ADD_ASSIGNEES_TO_AN_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_A_PULL_REQUEST"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_UPDATE_A_PULL_REQUEST"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_MERGE_A_PULL_REQUEST"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_A_REVIEW_FOR_A_PULL_REQUEST"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_A_REVIEW_COMMENT_FOR_A_PULL_REQUEST"
+    },
+    {
+      "scope": "write",
+      "slug": "GITHUB_CREATE_A_GIST"
+    },
+    {
+      "scope": "admin",
+      "slug": "GITHUB_DELETE_A_REPOSITORY"
+    },
+    {
+      "scope": "admin",
+      "slug": "GITHUB_DELETE_A_REFERENCE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GITHUB_DELETE_A_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GITHUB_ADD_A_REPOSITORY_COLLABORATOR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GITHUB_CANCEL_A_WORKFLOW_RUN"
+    }
+  ],
+  "gmail": [
+    {
+      "scope": "read",
+      "slug": "GMAIL_FETCH_EMAILS"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_LIST_MESSAGES"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_LIST_THREADS"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_GET_ATTACHMENT"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_GET_PROFILE"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_GET_CONTACTS"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_GET_PEOPLE"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_SEARCH_PEOPLE"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_LIST_DRAFTS"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_GET_DRAFT"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_LIST_LABELS"
+    },
+    {
+      "scope": "read",
+      "slug": "GMAIL_GET_LABEL"
+    },
+    {
+      "scope": "write",
+      "slug": "GMAIL_SEND_EMAIL"
+    },
+    {
+      "scope": "write",
+      "slug": "GMAIL_REPLY_TO_THREAD"
+    },
+    {
+      "scope": "write",
+      "slug": "GMAIL_FORWARD_MESSAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "GMAIL_CREATE_EMAIL_DRAFT"
+    },
+    {
+      "scope": "write",
+      "slug": "GMAIL_UPDATE_DRAFT"
+    },
+    {
+      "scope": "write",
+      "slug": "GMAIL_SEND_DRAFT"
+    },
+    {
+      "scope": "write",
+      "slug": "GMAIL_ADD_LABEL_TO_EMAIL"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_DELETE_MESSAGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_BATCH_DELETE_MESSAGES"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_MOVE_TO_TRASH"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_DELETE_THREAD"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_MOVE_THREAD_TO_TRASH"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_UNTRASH_THREAD"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_DELETE_DRAFT"
+    },
+    {
+      "scope": "admin",
+      "slug": "GMAIL_DELETE_LABEL"
+    }
+  ],
+  "google_calendar": [
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_EVENTS_LIST"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_FIND_EVENT"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_LIST_CALENDARS"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_EVENTS_GET"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_FIND_FREE_SLOTS"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_GET_CALENDAR"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_CREATE_EVENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_UPDATE_EVENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_PATCH_EVENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_QUICK_ADD"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_EVENTS_MOVE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_REMOVE_ATTENDEE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_EVENTS_IMPORT"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_DELETE_EVENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_CLEAR_CALENDAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_CALENDARS_DELETE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_DUPLICATE_CALENDAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_PATCH_CALENDAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_ACL_INSERT"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_ACL_DELETE"
+    }
+  ],
+  "google_docs": [
+    {
+      "scope": "read",
+      "slug": "GOOGLEDOCS_GET_DOCUMENT_BY_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDOCS_SEARCH_DOCUMENTS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_DOCUMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_DOCUMENT_MARKDOWN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_INSERT_TEXT_ACTION"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_INSERT_TABLE_ACTION"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_INSERT_INLINE_IMAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_UPDATE_EXISTING_DOCUMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_UPDATE_DOCUMENT_MARKDOWN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_UPDATE_DOCUMENT_SECTION_MARKDOWN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_REPLACE_ALL_TEXT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_COPY_DOCUMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_HEADER"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_FOOTER"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_CONTENT_RANGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_HEADER"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_FOOTER"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_NAMED_RANGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_TABLE_ROW"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_TABLE_COLUMN"
+    }
+  ],
+  "google_drive": [
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_FIND_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_LIST_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_GET_FILE_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_DOWNLOAD_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_LIST_PERMISSIONS"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_FIND_FOLDER"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_GET_ABOUT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_CREATE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_CREATE_FOLDER"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_UPLOAD_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_CREATE_FILE_FROM_TEXT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_COPY_FILE_ADVANCED"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_MOVE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_EDIT_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_RENAME_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_CREATE_PERMISSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_DELETE_PERMISSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_UPDATE_PERMISSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_DELETE_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_GOOGLE_DRIVE_DELETE_FOLDER_OR_FILE_ACTION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_EMPTY_TRASH"
+    }
+  ],
+  "google_sheets": [
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_BATCH_GET"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_VALUES_GET"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_GET_SPREADSHEET_INFO"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_GET_SHEET_NAMES"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_SEARCH_SPREADSHEETS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_VALUES_UPDATE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_UPDATE_VALUES_BATCH"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_UPSERT_ROWS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_CREATE_GOOGLE_SHEET1"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_ADD_SHEET"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_CREATE_SPREADSHEET_ROW"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_CREATE_SPREADSHEET_COLUMN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_FIND_REPLACE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_FORMAT_CELL"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_SET_DATA_VALIDATION_RULE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_SPREADSHEETS_VALUES_BATCH_CLEAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_DELETE_SHEET"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_DELETE_DIMENSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_UPDATE_SHEET_PROPERTIES"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_UPDATE_SPREADSHEET_PROPERTIES"
+    }
+  ],
+  "googlecalendar": [
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_EVENTS_LIST"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_FIND_EVENT"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_LIST_CALENDARS"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_EVENTS_GET"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_FIND_FREE_SLOTS"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_GET_CALENDAR"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_CREATE_EVENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_UPDATE_EVENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_PATCH_EVENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_QUICK_ADD"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_EVENTS_MOVE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_REMOVE_ATTENDEE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLECALENDAR_EVENTS_IMPORT"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_DELETE_EVENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_CLEAR_CALENDAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_CALENDARS_DELETE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_DUPLICATE_CALENDAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_PATCH_CALENDAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_ACL_INSERT"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLECALENDAR_ACL_DELETE"
+    }
+  ],
+  "googledocs": [
+    {
+      "scope": "read",
+      "slug": "GOOGLEDOCS_GET_DOCUMENT_BY_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDOCS_SEARCH_DOCUMENTS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_DOCUMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_DOCUMENT_MARKDOWN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_INSERT_TEXT_ACTION"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_INSERT_TABLE_ACTION"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_INSERT_INLINE_IMAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_UPDATE_EXISTING_DOCUMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_UPDATE_DOCUMENT_MARKDOWN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_UPDATE_DOCUMENT_SECTION_MARKDOWN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_REPLACE_ALL_TEXT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_COPY_DOCUMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_HEADER"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDOCS_CREATE_FOOTER"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_CONTENT_RANGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_HEADER"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_FOOTER"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_NAMED_RANGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_TABLE_ROW"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDOCS_DELETE_TABLE_COLUMN"
+    }
+  ],
+  "googledrive": [
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_FIND_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_LIST_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_GET_FILE_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_DOWNLOAD_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_LIST_PERMISSIONS"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_FIND_FOLDER"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLEDRIVE_GET_ABOUT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_CREATE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_CREATE_FOLDER"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_UPLOAD_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_CREATE_FILE_FROM_TEXT"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_COPY_FILE_ADVANCED"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_MOVE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_EDIT_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLEDRIVE_RENAME_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_CREATE_PERMISSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_DELETE_PERMISSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_UPDATE_PERMISSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_DELETE_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_GOOGLE_DRIVE_DELETE_FOLDER_OR_FILE_ACTION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLEDRIVE_EMPTY_TRASH"
+    }
+  ],
+  "googlesheets": [
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_BATCH_GET"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_VALUES_GET"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_GET_SPREADSHEET_INFO"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_GET_SHEET_NAMES"
+    },
+    {
+      "scope": "read",
+      "slug": "GOOGLESHEETS_SEARCH_SPREADSHEETS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_VALUES_UPDATE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_UPDATE_VALUES_BATCH"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_UPSERT_ROWS"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_CREATE_GOOGLE_SHEET1"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_ADD_SHEET"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_CREATE_SPREADSHEET_ROW"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_CREATE_SPREADSHEET_COLUMN"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_FIND_REPLACE"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_FORMAT_CELL"
+    },
+    {
+      "scope": "write",
+      "slug": "GOOGLESHEETS_SET_DATA_VALIDATION_RULE"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_SPREADSHEETS_VALUES_BATCH_CLEAR"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_DELETE_SHEET"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_DELETE_DIMENSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_UPDATE_SHEET_PROPERTIES"
+    },
+    {
+      "scope": "admin",
+      "slug": "GOOGLESHEETS_UPDATE_SPREADSHEET_PROPERTIES"
+    }
+  ],
+  "hubspot": [
+    {
+      "scope": "read",
+      "slug": "HUBSPOT_GET_CONTACTS"
+    },
+    {
+      "scope": "read",
+      "slug": "HUBSPOT_SEARCH_CONTACTS_BY_CRITERIA"
+    },
+    {
+      "scope": "read",
+      "slug": "HUBSPOT_LIST_CONTACTS_PAGE"
+    },
+    {
+      "scope": "read",
+      "slug": "HUBSPOT_GET_COMPANIES"
+    },
+    {
+      "scope": "read",
+      "slug": "HUBSPOT_GET_DEALS"
+    },
+    {
+      "scope": "read",
+      "slug": "HUBSPOT_GET_CRM_OBJECT_BY_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "HUBSPOT_BATCH_READ_COMPANIES_BY_PROPERTIES"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_CREATE_CONTACT"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_CREATE_COMPANY"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_CREATE_DEAL"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_CREATE_CONTACTS"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_UPDATE_CONTACT"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_UPDATE_COMPANY"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_CREATE_OBJECT_ASSOCIATION"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_CREATE_A_NEW_MARKETING_EMAIL"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_CREATE_BATCH_OF_OBJECTS"
+    },
+    {
+      "scope": "write",
+      "slug": "HUBSPOT_BATCH_UPDATE_QUOTES"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_CONTACT"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_COMPANY"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_DEAL"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_CONTACTS"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_COMPANIES"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_DEALS"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_CRM_OBJECT_BY_ID"
+    },
+    {
+      "scope": "admin",
+      "slug": "HUBSPOT_ARCHIVE_PROPERTY_BY_OBJECT_TYPE_AND_NAME"
+    }
+  ],
+  "jira": [
+    {
+      "scope": "read",
+      "slug": "JIRA_GET_ISSUE"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_GET_ALL_PROJECTS"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_FETCH_BULK_ISSUES"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_GET_ISSUE_TYPES"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_GET_PROJECT_ROLES"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_FIND_USERS2"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_GET_FIELDS"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_GET_ISSUE_EDIT_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "JIRA_GET_PROJECT_VERSIONS"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_CREATE_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_BULK_CREATE_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_EDIT_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_ADD_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_ASSIGN_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_ADD_ATTACHMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_CREATE_ISSUE_LINK"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_ADD_WORKLOG"
+    },
+    {
+      "scope": "write",
+      "slug": "JIRA_TRANSITION_ISSUE"
+    },
+    {
+      "scope": "admin",
+      "slug": "JIRA_DELETE_ISSUE"
+    },
+    {
+      "scope": "admin",
+      "slug": "JIRA_DELETE_COMMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "JIRA_DELETE_VERSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "JIRA_DELETE_WORKLOG"
+    },
+    {
+      "scope": "admin",
+      "slug": "JIRA_CREATE_PROJECT"
+    },
+    {
+      "scope": "admin",
+      "slug": "JIRA_ADD_USERS_TO_PROJECT_ROLE"
+    }
+  ],
+  "linear": [
+    {
+      "scope": "read",
+      "slug": "LINEAR_LIST_LINEAR_USERS"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_LIST_LINEAR_ISSUES"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_GET_LINEAR_ISSUE"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_SEARCH_ISSUES"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_LIST_LINEAR_TEAMS"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_LIST_LINEAR_PROJECTS"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_GET_LINEAR_PROJECT"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_LIST_LINEAR_STATES"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_GET_CYCLES_BY_TEAM_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "LINEAR_LIST_LINEAR_LABELS"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_CREATE_LINEAR_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_UPDATE_ISSUE"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_CREATE_LINEAR_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_UPDATE_LINEAR_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_CREATE_ATTACHMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_CREATE_ISSUE_RELATION"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_CREATE_LINEAR_PROJECT"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_UPDATE_LINEAR_PROJECT"
+    },
+    {
+      "scope": "write",
+      "slug": "LINEAR_CREATE_LINEAR_LABEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "LINEAR_DELETE_LINEAR_ISSUE"
+    },
+    {
+      "scope": "admin",
+      "slug": "LINEAR_REMOVE_ISSUE_LABEL"
+    }
+  ],
+  "microsoft": [
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_CHAT"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_CHANNEL"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_TEAM_FROM_GROUP"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_CHATS_GET_ALL_CHATS"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_PRESENCE"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_ONLINE_MEETING"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_SCHEDULE"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_CHANNEL"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_TEAM"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_MEETING"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_ADD_TEAM_MEMBER"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_ADD_CHAT_MEMBER"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_SHIFT"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_TIME_OFF_REQUEST"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_TEAM"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_CHANNEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_ARCHIVE_TEAM"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_ARCHIVE_CHANNEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_TAB"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_TIME_OFF"
+    }
+  ],
+  "microsoft_teams": [
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_CHAT"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_CHANNEL"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_TEAM_FROM_GROUP"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_CHATS_GET_ALL_CHATS"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_PRESENCE"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_ONLINE_MEETING"
+    },
+    {
+      "scope": "read",
+      "slug": "MICROSOFT_TEAMS_GET_SCHEDULE"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_CHANNEL"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_TEAM"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_MEETING"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_ADD_TEAM_MEMBER"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_ADD_CHAT_MEMBER"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_SHIFT"
+    },
+    {
+      "scope": "write",
+      "slug": "MICROSOFT_TEAMS_CREATE_TIME_OFF_REQUEST"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_TEAM"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_CHANNEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_ARCHIVE_TEAM"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_ARCHIVE_CHANNEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_TAB"
+    },
+    {
+      "scope": "admin",
+      "slug": "MICROSOFT_TEAMS_DELETE_TIME_OFF"
+    }
+  ],
+  "notion": [
+    {
+      "scope": "read",
+      "slug": "NOTION_SEARCH_NOTION_PAGE"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_FETCH_DATA"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_FETCH_DATABASE"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_FETCH_ROW"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_FETCH_BLOCK_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_FETCH_BLOCK_CONTENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_FETCH_ALL_BLOCK_CONTENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_FETCH_COMMENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_GET_PAGE_MARKDOWN"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_GET_PAGE_PROPERTY_ACTION"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_QUERY_DATABASE"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_QUERY_DATABASE_WITH_FILTER"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_QUERY_DATA_SOURCE"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_RETRIEVE_PAGE"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_RETRIEVE_COMMENT"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_RETRIEVE_DATABASE_PROPERTY"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_LIST_USERS"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_GET_ABOUT_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_GET_ABOUT_ME"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_LIST_FILE_UPLOADS"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_RETRIEVE_FILE_UPLOAD"
+    },
+    {
+      "scope": "read",
+      "slug": "NOTION_LIST_DATA_SOURCE_TEMPLATES"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_CREATE_NOTION_PAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_CREATE_DATABASE"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_CREATE_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_CREATE_FILE_UPLOAD"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_SEND_FILE_UPLOAD"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_UPDATE_PAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_UPDATE_BLOCK"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_UPDATE_ROW_DATABASE"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_INSERT_ROW_DATABASE"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_INSERT_ROW_FROM_NL"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_REPLACE_PAGE_CONTENT"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_ADD_PAGE_CONTENT"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_ADD_MULTIPLE_PAGE_CONTENT"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_APPEND_BLOCK_CHILDREN"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_APPEND_TEXT_BLOCKS"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_APPEND_TASK_BLOCKS"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_APPEND_CODE_BLOCKS"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_APPEND_MEDIA_BLOCKS"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_APPEND_LAYOUT_BLOCKS"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_APPEND_TABLE_BLOCKS"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_DUPLICATE_PAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "NOTION_MOVE_PAGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "NOTION_DELETE_BLOCK"
+    },
+    {
+      "scope": "admin",
+      "slug": "NOTION_ARCHIVE_NOTION_PAGE"
+    }
+  ],
+  "one": [
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_FILE_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_LIST_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_LIST_CHILDREN"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_SEARCH_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_DOWNLOAD_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_DRIVE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_UPLOAD_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_CREATE_FOLDER"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_COPY_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_MOVE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_UPDATE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_CREATE_SHARE_LINK"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_DELETE_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_DELETE_FOLDER"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_RESTORE_FILE"
+    }
+  ],
+  "one_drive": [
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_FILE_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_LIST_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_LIST_CHILDREN"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_SEARCH_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_DOWNLOAD_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_DRIVE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_UPLOAD_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_CREATE_FOLDER"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_COPY_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_MOVE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_UPDATE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_CREATE_SHARE_LINK"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_DELETE_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_DELETE_FOLDER"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_RESTORE_FILE"
+    }
+  ],
+  "onedrive": [
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_FILE_METADATA"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_LIST_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_LIST_CHILDREN"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_SEARCH_FILES"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_DOWNLOAD_FILE"
+    },
+    {
+      "scope": "read",
+      "slug": "ONE_DRIVE_GET_DRIVE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_UPLOAD_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_CREATE_FOLDER"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_COPY_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_MOVE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_UPDATE_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "ONE_DRIVE_CREATE_SHARE_LINK"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_DELETE_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_DELETE_FOLDER"
+    },
+    {
+      "scope": "admin",
+      "slug": "ONE_DRIVE_RESTORE_FILE"
+    }
+  ],
+  "outlook": [
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_GET_MESSAGE"
+    },
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_LIST_MESSAGES"
+    },
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_SEARCH_MESSAGES"
+    },
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_LIST_CALENDARS"
+    },
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_LIST_CALENDAR_EVENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_GET_CALENDAR_EVENT"
+    },
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_LIST_CONTACTS"
+    },
+    {
+      "scope": "read",
+      "slug": "OUTLOOK_LIST_MAIL_FOLDERS"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_SEND_EMAIL"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_CREATE_DRAFT"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_SEND_DRAFT"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_CREATE_DRAFT_REPLY"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_CREATE_ME_FORWARD_DRAFT"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_CALENDAR_CREATE_EVENT"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_CREATE_CONTACT"
+    },
+    {
+      "scope": "write",
+      "slug": "OUTLOOK_CREATE_MAIL_FOLDER"
+    },
+    {
+      "scope": "admin",
+      "slug": "OUTLOOK_DELETE_MESSAGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "OUTLOOK_BATCH_MOVE_MESSAGES"
+    },
+    {
+      "scope": "admin",
+      "slug": "OUTLOOK_BATCH_UPDATE_MESSAGES"
+    },
+    {
+      "scope": "admin",
+      "slug": "OUTLOOK_ACCEPT_EVENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "OUTLOOK_CANCEL_EVENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "OUTLOOK_CREATE_ME_CALENDAR_PERMISSION"
+    },
+    {
+      "scope": "admin",
+      "slug": "OUTLOOK_CREATE_EMAIL_RULE"
+    }
+  ],
+  "salesforce": [
+    {
+      "scope": "read",
+      "slug": "SALESFORCE_RUN_SOQL_QUERY"
+    },
+    {
+      "scope": "read",
+      "slug": "SALESFORCE_EXECUTE_SOSL_SEARCH"
+    },
+    {
+      "scope": "read",
+      "slug": "SALESFORCE_GET_ACCOUNT"
+    },
+    {
+      "scope": "read",
+      "slug": "SALESFORCE_GET_CAMPAIGN"
+    },
+    {
+      "scope": "read",
+      "slug": "SALESFORCE_GET_ALL_FIELDS_FOR_OBJECT"
+    },
+    {
+      "scope": "read",
+      "slug": "SALESFORCE_GET_ALL_CUSTOM_OBJECTS"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_CREATE_ACCOUNT"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_CREATE_CONTACT"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_CREATE_LEAD"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_CREATE_OPPORTUNITY"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_CREATE_CAMPAIGN"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_CREATE_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_UPDATE_ACCOUNT"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_UPDATE_CONTACT"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_UPDATE_OPPORTUNITY"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_ADD_OPPORTUNITY_LINE_ITEM"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_ADD_CONTACT_TO_CAMPAIGN"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_ADD_LEAD_TO_CAMPAIGN"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_ASSOCIATE_CONTACT_TO_ACCOUNT"
+    },
+    {
+      "scope": "write",
+      "slug": "SALESFORCE_CLONE_OPPORTUNITY_WITH_PRODUCTS"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_DELETE_ACCOUNT"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_DELETE_CONTACT"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_DELETE_LEAD"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_DELETE_OPPORTUNITY"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_DELETE_CAMPAIGN"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_DELETE_SOBJECT"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_DELETE_SOBJECT_COLLECTIONS"
+    },
+    {
+      "scope": "admin",
+      "slug": "SALESFORCE_CREATE_CUSTOM_FIELD"
+    }
+  ],
+  "shopify": [
+    {
+      "scope": "read",
+      "slug": "SHOPIFY_BULK_QUERY_OPERATION"
+    },
+    {
+      "scope": "read",
+      "slug": "SHOPIFY_COUNT_PRODUCTS"
+    },
+    {
+      "scope": "read",
+      "slug": "SHOPIFY_COUNT_ORDERS"
+    },
+    {
+      "scope": "read",
+      "slug": "SHOPIFY_COUNT_FULFILLMENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "SHOPIFY_COUNT_CUSTOMERS"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_ORDER"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_PRODUCT"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_DRAFT_ORDER"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_FULFILLMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_CUSTOMER"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_PRICE_RULE"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_ADJUST_INVENTORY_LEVEL"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_DISCOUNT_CODE"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_UPDATE_PRODUCT"
+    },
+    {
+      "scope": "write",
+      "slug": "SHOPIFY_CREATE_CUSTOM_COLLECTION"
+    },
+    {
+      "scope": "admin",
+      "slug": "SHOPIFY_CANCEL_ORDER"
+    },
+    {
+      "scope": "admin",
+      "slug": "SHOPIFY_CANCEL_FULFILLMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "SHOPIFY_DELETE_PRODUCT"
+    },
+    {
+      "scope": "admin",
+      "slug": "SHOPIFY_BULK_DELETE_CUSTOMER_ADDRESSES"
+    },
+    {
+      "scope": "admin",
+      "slug": "SHOPIFY_BULK_DELETE_METAFIELDS"
+    }
+  ],
+  "slack": [
+    {
+      "scope": "read",
+      "slug": "SLACK_FIND_CHANNELS"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_FIND_USERS"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_FETCH_CONVERSATION_HISTORY"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_LIST_ALL_CHANNELS"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_LIST_ALL_USERS"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_LIST_CONVERSATIONS"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_FETCH_TEAM_INFO"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_GET_USER_PRESENCE"
+    },
+    {
+      "scope": "read",
+      "slug": "SLACK_ASSISTANT_SEARCH_CONTEXT"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_SEND_MESSAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_POST_MESSAGE_TO_CHANNEL"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_SEND_MESSAGE_TO_CHANNEL"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_CREATE_CHANNEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_INVITE_USERS_TO_A_SLACK_CHANNEL"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_ADD_REACTION_TO_AN_ITEM"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_UPLOAD_FILE"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_CREATE_A_REMINDER"
+    },
+    {
+      "scope": "write",
+      "slug": "SLACK_CREATE_USER_GROUP"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_DELETE_CHANNEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_ARCHIVE_CONVERSATION"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_DELETE_FILE"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_DELETES_A_MESSAGE_FROM_A_CHAT"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_DELETE_REMINDER"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_LEAVE_CONVERSATION"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_INVITE_USER_TO_WORKSPACE"
+    },
+    {
+      "scope": "admin",
+      "slug": "SLACK_CONVERT_CHANNEL_TO_PRIVATE"
+    }
+  ],
+  "spotify": [
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_GET_CURRENT_USER_S_PROFILE"
+    },
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_GET_USER_S_TOP_TRACKS"
+    },
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_GET_PLAYLIST"
+    },
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_GET_PLAYLIST_ITEMS"
+    },
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_GET_RECENTLY_PLAYED_TRACKS"
+    },
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_GET_USER_S_SAVED_TRACKS"
+    },
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_SEARCH_FOR_ITEM"
+    },
+    {
+      "scope": "read",
+      "slug": "SPOTIFY_GET_AVAILABLE_DEVICES"
+    },
+    {
+      "scope": "write",
+      "slug": "SPOTIFY_ADD_ITEMS_TO_PLAYLIST"
+    },
+    {
+      "scope": "write",
+      "slug": "SPOTIFY_CREATE_PLAYLIST"
+    },
+    {
+      "scope": "write",
+      "slug": "SPOTIFY_SAVE_TRACKS_FOR_CURRENT_USER"
+    },
+    {
+      "scope": "write",
+      "slug": "SPOTIFY_PAUSE_PLAYBACK"
+    },
+    {
+      "scope": "write",
+      "slug": "SPOTIFY_ADD_ITEM_TO_PLAYBACK_QUEUE"
+    },
+    {
+      "scope": "write",
+      "slug": "SPOTIFY_CHANGE_PLAYLIST_DETAILS"
+    },
+    {
+      "scope": "admin",
+      "slug": "SPOTIFY_REMOVE_PLAYLIST_ITEMS"
+    },
+    {
+      "scope": "admin",
+      "slug": "SPOTIFY_REMOVE_USER_S_SAVED_TRACKS"
+    },
+    {
+      "scope": "admin",
+      "slug": "SPOTIFY_UNFOLLOW_ARTISTS_OR_USERS"
+    },
+    {
+      "scope": "admin",
+      "slug": "SPOTIFY_REMOVE_USER_S_SAVED_ALBUMS"
+    }
+  ],
+  "stripe": [
+    {
+      "scope": "read",
+      "slug": "STRIPE_GET_PAYMENT_INTENT"
+    },
+    {
+      "scope": "read",
+      "slug": "STRIPE_LIST_INVOICES"
+    },
+    {
+      "scope": "read",
+      "slug": "STRIPE_GET_CUSTOMER"
+    },
+    {
+      "scope": "read",
+      "slug": "STRIPE_LIST_CHARGES"
+    },
+    {
+      "scope": "read",
+      "slug": "STRIPE_GET_SUBSCRIPTION"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_CREATE_PAYMENT_INTENT"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_CREATE_INVOICE"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_CREATE_CUSTOMER"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_CREATE_CUSTOMER_SUBSCRIPTION"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_CREATE_CHECKOUT_SESSION"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_CONFIRM_PAYMENT_INTENT"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_CAPTURE_PAYMENT_INTENT"
+    },
+    {
+      "scope": "write",
+      "slug": "STRIPE_ATTACH_PAYMENT_METHOD"
+    },
+    {
+      "scope": "admin",
+      "slug": "STRIPE_CANCEL_SUBSCRIPTION"
+    },
+    {
+      "scope": "admin",
+      "slug": "STRIPE_CANCEL_PAYMENT_INTENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "STRIPE_CREATE_CHARGE_REFUND"
+    },
+    {
+      "scope": "admin",
+      "slug": "STRIPE_CLOSE_DISPUTE"
+    },
+    {
+      "scope": "admin",
+      "slug": "STRIPE_CANCEL_SETUP_INTENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "STRIPE_ARCHIVE_BILLING_ALERT"
+    }
+  ],
+  "telegram": [
+    {
+      "scope": "read",
+      "slug": "TELEGRAM_GET_UPDATES"
+    },
+    {
+      "scope": "read",
+      "slug": "TELEGRAM_GET_CHAT"
+    },
+    {
+      "scope": "read",
+      "slug": "TELEGRAM_GET_CHAT_HISTORY"
+    },
+    {
+      "scope": "read",
+      "slug": "TELEGRAM_GET_CHAT_MEMBER"
+    },
+    {
+      "scope": "read",
+      "slug": "TELEGRAM_GET_CHAT_MEMBERS_COUNT"
+    },
+    {
+      "scope": "read",
+      "slug": "TELEGRAM_GET_CHAT_ADMINISTRATORS"
+    },
+    {
+      "scope": "read",
+      "slug": "TELEGRAM_GET_ME"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_SEND_MESSAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_SEND_PHOTO"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_SEND_DOCUMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_SEND_LOCATION"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_SEND_POLL"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_FORWARD_MESSAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_EDIT_MESSAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "TELEGRAM_ANSWER_CALLBACK_QUERY"
+    },
+    {
+      "scope": "admin",
+      "slug": "TELEGRAM_DELETE_MESSAGE"
+    },
+    {
+      "scope": "admin",
+      "slug": "TELEGRAM_CREATE_CHAT_INVITE_LINK"
+    },
+    {
+      "scope": "admin",
+      "slug": "TELEGRAM_SET_MY_COMMANDS"
+    }
+  ],
+  "todoist": [
+    {
+      "scope": "read",
+      "slug": "TODOIST_GET_TASK"
+    },
+    {
+      "scope": "read",
+      "slug": "TODOIST_GET_ALL_TASKS"
+    },
+    {
+      "scope": "read",
+      "slug": "TODOIST_LIST_COMPLETED_TASKS"
+    },
+    {
+      "scope": "read",
+      "slug": "TODOIST_GET_PROJECTS"
+    },
+    {
+      "scope": "read",
+      "slug": "TODOIST_GET_PROJECT"
+    },
+    {
+      "scope": "read",
+      "slug": "TODOIST_GET_SECTIONS"
+    },
+    {
+      "scope": "read",
+      "slug": "TODOIST_GET_LABELS"
+    },
+    {
+      "scope": "read",
+      "slug": "TODOIST_GET_COMMENTS"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_CREATE_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_UPDATE_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_CLOSE_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_REOPEN_TASK"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_CREATE_PROJECT"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_UPDATE_PROJECT"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_CREATE_SECTION"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_CREATE_LABEL"
+    },
+    {
+      "scope": "write",
+      "slug": "TODOIST_CREATE_COMMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "TODOIST_DELETE_TASK"
+    },
+    {
+      "scope": "admin",
+      "slug": "TODOIST_DELETE_PROJECT"
+    },
+    {
+      "scope": "admin",
+      "slug": "TODOIST_DELETE_SECTION"
+    },
+    {
+      "scope": "admin",
+      "slug": "TODOIST_DELETE_LABEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "TODOIST_DELETE_COMMENT"
+    }
+  ],
+  "trello": [
+    {
+      "scope": "read",
+      "slug": "TRELLO_GET_BOARDS_BY_ID_BOARD"
+    },
+    {
+      "scope": "read",
+      "slug": "TRELLO_GET_ACTIONS_BY_ID_ACTION"
+    },
+    {
+      "scope": "read",
+      "slug": "TRELLO_GET_BATCH"
+    },
+    {
+      "scope": "read",
+      "slug": "TRELLO_GET_BOARDS_ACTIONS_BY_ID_BOARD"
+    },
+    {
+      "scope": "read",
+      "slug": "TRELLO_GET_MEMBERS_BOARDS_BY_ID_MEMBER"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_ADD_CARDS"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_ADD_BOARDS"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_ADD_LISTS"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_ADD_CARDS_ACTIONS_COMMENTS_BY_ID_CARD"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_ADD_MEMBER_TO_CARD"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_CREATE_CARD_LABEL"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_ADD_CARDS_ATTACHMENTS_BY_ID_CARD"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_ADD_CARDS_CHECKLISTS_BY_ID_CARD"
+    },
+    {
+      "scope": "write",
+      "slug": "TRELLO_CREATE_WEBHOOK"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_DELETE_CARDS_BY_ID_CARD"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_DELETE_BOARD"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_DELETE_CHECKLISTS_BY_ID_CHECKLIST"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_ARCHIVE_ALL_LIST_CARDS"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_DELETE_CARD_COMMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_DELETE_LABELS_BY_ID_LABEL"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_DELETE_ORGANIZATIONS_BY_ID_ORG"
+    },
+    {
+      "scope": "admin",
+      "slug": "TRELLO_DELETE_WEBHOOKS_BY_ID_WEBHOOK"
+    }
+  ],
+  "twitter": [
+    {
+      "scope": "read",
+      "slug": "TWITTER_RECENT_SEARCH"
+    },
+    {
+      "scope": "read",
+      "slug": "TWITTER_GET_USER_BY_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "TWITTER_POST_LOOKUP_BY_POST_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "TWITTER_FOLLOWERS_BY_USER_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "TWITTER_FOLLOWING_BY_USER_ID"
+    },
+    {
+      "scope": "read",
+      "slug": "TWITTER_BOOKMARKS_BY_USER"
+    },
+    {
+      "scope": "read",
+      "slug": "TWITTER_GET_LIST_MEMBERS"
+    },
+    {
+      "scope": "read",
+      "slug": "TWITTER_FULL_ARCHIVE_SEARCH"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_CREATION_OF_A_POST"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_RETWEET_POST"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_ADD_POST_TO_BOOKMARKS"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_FOLLOW_USER"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_MUTE_USER"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_CREATE_DM_CONVERSATION"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_CREATE_LIST"
+    },
+    {
+      "scope": "write",
+      "slug": "TWITTER_ADD_LIST_MEMBER"
+    },
+    {
+      "scope": "admin",
+      "slug": "TWITTER_POST_DELETE_BY_POST_ID"
+    },
+    {
+      "scope": "admin",
+      "slug": "TWITTER_DELETE_LIST"
+    },
+    {
+      "scope": "admin",
+      "slug": "TWITTER_REMOVE_LIST_MEMBER"
+    },
+    {
+      "scope": "admin",
+      "slug": "TWITTER_DELETE_DM"
+    },
+    {
+      "scope": "admin",
+      "slug": "TWITTER_REMOVE_POST_FROM_BOOKMARKS"
+    }
+  ],
+  "whatsapp": [
+    {
+      "scope": "read",
+      "slug": "WHATSAPP_GET_PHONE_NUMBERS"
+    },
+    {
+      "scope": "read",
+      "slug": "WHATSAPP_GET_MESSAGE_TEMPLATES"
+    },
+    {
+      "scope": "read",
+      "slug": "WHATSAPP_GET_PHONE_NUMBER"
+    },
+    {
+      "scope": "read",
+      "slug": "WHATSAPP_GET_BUSINESS_PROFILE"
+    },
+    {
+      "scope": "read",
+      "slug": "WHATSAPP_GET_TEMPLATE_STATUS"
+    },
+    {
+      "scope": "read",
+      "slug": "WHATSAPP_GET_MEDIA_INFO"
+    },
+    {
+      "scope": "write",
+      "slug": "WHATSAPP_SEND_MESSAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "WHATSAPP_SEND_TEMPLATE_MESSAGE"
+    },
+    {
+      "scope": "write",
+      "slug": "WHATSAPP_SEND_MEDIA"
+    },
+    {
+      "scope": "write",
+      "slug": "WHATSAPP_SEND_MEDIA_BY_ID"
+    },
+    {
+      "scope": "write",
+      "slug": "WHATSAPP_SEND_INTERACTIVE_BUTTONS"
+    },
+    {
+      "scope": "write",
+      "slug": "WHATSAPP_SEND_INTERACTIVE_LIST"
+    },
+    {
+      "scope": "write",
+      "slug": "WHATSAPP_UPLOAD_MEDIA"
+    },
+    {
+      "scope": "admin",
+      "slug": "WHATSAPP_CREATE_MESSAGE_TEMPLATE"
+    },
+    {
+      "scope": "admin",
+      "slug": "WHATSAPP_DELETE_MESSAGE_TEMPLATE"
+    }
+  ],
+  "youtube": [
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_SEARCH_YOU_TUBE"
+    },
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_LIST_CHANNEL_VIDEOS"
+    },
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_GET_CHANNEL_STATISTICS"
+    },
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_LIST_COMMENT_THREADS2"
+    },
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_LIST_COMMENTS"
+    },
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_GET_VIDEO_DETAILS_BATCH"
+    },
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_LIST_USER_PLAYLISTS"
+    },
+    {
+      "scope": "read",
+      "slug": "YOUTUBE_LIST_PLAYLIST_ITEMS"
+    },
+    {
+      "scope": "write",
+      "slug": "YOUTUBE_UPLOAD_VIDEO"
+    },
+    {
+      "scope": "write",
+      "slug": "YOUTUBE_UPDATE_VIDEO"
+    },
+    {
+      "scope": "write",
+      "slug": "YOUTUBE_CREATE_PLAYLIST"
+    },
+    {
+      "scope": "write",
+      "slug": "YOUTUBE_ADD_VIDEO_TO_PLAYLIST"
+    },
+    {
+      "scope": "write",
+      "slug": "YOUTUBE_POST_COMMENT"
+    },
+    {
+      "scope": "write",
+      "slug": "YOUTUBE_RATE_VIDEO"
+    },
+    {
+      "scope": "write",
+      "slug": "YOUTUBE_UPDATE_PLAYLIST"
+    },
+    {
+      "scope": "admin",
+      "slug": "YOUTUBE_DELETE_VIDEO"
+    },
+    {
+      "scope": "admin",
+      "slug": "YOUTUBE_DELETE_PLAYLIST"
+    },
+    {
+      "scope": "admin",
+      "slug": "YOUTUBE_DELETE_COMMENT"
+    },
+    {
+      "scope": "admin",
+      "slug": "YOUTUBE_DELETE_PLAYLIST_ITEM"
+    }
+  ]
+}

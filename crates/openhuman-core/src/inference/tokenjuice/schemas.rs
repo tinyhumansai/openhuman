@@ -6,12 +6,13 @@
 //! fetch an offloaded original. Mirrors the controller pattern in
 //! `threads/schemas.rs`.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::types::{ContentHint, ContentKind};
+use {tinyjuice_bus::types::ContentHint, tinyjuice_bus::types::ContentKind};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
@@ -68,8 +69,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "detect" => ControllerSchema {
             namespace: "tokenjuice",
             function: "detect",
-            description:
-                "Detect the content kind of a blob (json/code/log/search/diff/html/plain_text).",
+            description: "Detect the content kind of a blob (json/code/log/search/diff/html/plain_text).",
             inputs: vec![
                 FieldSchema {
                     name: "content",
@@ -201,7 +201,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "settings",
                 ty: TypeSchema::Json,
-                comment: "The tokenjuice config (router/CCR/compressor toggles + ML fields).",
+                comment: "The tokenjuice config (router/CCR/compressor toggles).",
                 required: true,
             }],
         },
@@ -263,19 +263,33 @@ pub fn schemas(function: &str) -> ControllerSchema {
 
 // ── Handlers ─────────────────────────────────────────────────────────
 
+/// Refuse with the typed `COMPONENT_DISABLED:juice` error while `[components]
+/// juice` is off for the context the call runs under; a call with no context
+/// is on, since the set only narrows.
+fn gate(ctx: &DispatchCtx) -> Result<(), String> {
+    if ctx.components().juice {
+        Ok(())
+    } else {
+        log::debug!("[tokenjuice][rpc] refused, component 'juice' disabled");
+        Err(crate::core::runtime::components::component_disabled("juice").encode())
+    }
+}
+
 fn str_param(params: &Map<String, Value>, key: &str) -> Option<String> {
     params.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
-fn handle_detect(params: Map<String, Value>) -> ControllerFuture {
+fn handle_detect(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        gate(&ctx)?;
         let content = str_param(&params, "content").ok_or("missing 'content'")?;
         let hint = ContentHint {
             source_tool: str_param(&params, "tool_name"),
             extension: str_param(&params, "extension"),
             ..Default::default()
         };
-        let kind = super::detect(content, hint).await?;
+        let config = ctx.load_config().await?;
+        let kind = super::detect_with_config(&config, content, hint).await?;
         Ok(serde_json::json!({ "kind": kind }))
     })
 }
@@ -315,11 +329,13 @@ fn compress_hint_from_params(params: &Map<String, Value>) -> Result<ContentHint,
     })
 }
 
-fn handle_compress(params: Map<String, Value>) -> ControllerFuture {
+fn handle_compress(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        gate(&ctx)?;
         let content = str_param(&params, "content").ok_or("missing 'content'")?;
         let hint = compress_hint_from_params(&params)?;
-        let res = super::compress(content, hint).await?;
+        let config = ctx.load_config().await?;
+        let res = super::compress_with_config(&config, content, hint).await?;
         Ok(serde_json::json!({
             "applied": res.applied,
             "kind": res.content_kind.as_str(),
@@ -333,26 +349,32 @@ fn handle_compress(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_cache_stats(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_cache_stats(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let stats = super::cache_stats().await?;
+        gate(&ctx)?;
+        let config = ctx.load_config().await?;
+        let stats = super::cache_stats_with_config(&config).await?;
         Ok(serde_json::json!({ "entries": stats.entries, "bytes": stats.bytes }))
     })
 }
 
-fn handle_retrieve(params: Map<String, Value>) -> ControllerFuture {
+fn handle_retrieve(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        gate(&ctx)?;
         let token = str_param(&params, "token").ok_or("missing 'token'")?;
-        match super::retrieve(token, None).await? {
+        let config = ctx.load_config().await?;
+        match super::retrieve_with_config(&config, token, None).await? {
             Some(content) => Ok(serde_json::json!({ "found": true, "content": content })),
             None => Ok(serde_json::json!({ "found": false, "content": Value::Null })),
         }
     })
 }
 
-fn handle_settings_get(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_settings_get(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = crate::config::Config::load_or_init()
+        gate(&ctx)?;
+        let config = ctx
+            .load_config()
             .await
             .map_err(|e| format!("load config: {e}"))?;
         let settings = serde_json::to_value(&config.tokenjuice)
@@ -361,8 +383,9 @@ fn handle_settings_get(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_settings_update(params: Map<String, Value>) -> ControllerFuture {
+fn handle_settings_update(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        gate(&ctx)?;
         // Accept either {"patch": {...}} or a bare object of fields.
         let patch = params
             .get("patch")
@@ -371,14 +394,14 @@ fn handle_settings_update(params: Map<String, Value>) -> ControllerFuture {
         let patch: super::config_patch::TokenjuiceSettingsPatch =
             serde_json::from_value(patch).map_err(|e| format!("invalid patch: {e}"))?;
 
-        let mut config = crate::config::Config::load_or_init()
+        let mut config = ctx
+            .load_config()
             .await
             .map_err(|e| format!("load config: {e}"))?;
         patch.apply(&mut config.tokenjuice);
-        config
-            .save()
-            .await
-            .map_err(|e| format!("save config: {e}"))?;
+        config.save().await.map_err(|error| {
+            crate::config::ops::config_save_error_with_context(error, "save config", true)
+        })?;
 
         // Re-install so router flags / CCR limits / threshold take effect live.
         crate::inference::tokenjuice::install_from_config(&config).await?;
@@ -389,10 +412,13 @@ fn handle_settings_update(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_savings_stats(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_savings_stats(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let cache = super::cache_stats().await?;
-        let agg = super::savings::stats();
+        gate(&ctx)?;
+        let config = ctx.load_config().await.map_err(|e| e.to_string())?;
+        let cache = super::cache_stats_with_config(&config).await?;
+        super::install_from_config(&config).await?;
+        let agg = super::savings::stats(&super::client(&config)).await?;
         Ok(serde_json::json!({
             "attributionModel": super::savings::attribution_model(),
             "total": agg.total,
@@ -403,9 +429,12 @@ fn handle_savings_stats(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_savings_reset(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_savings_reset(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        super::savings::reset();
+        gate(&ctx)?;
+        let config = ctx.load_config().await.map_err(|e| e.to_string())?;
+        super::install_from_config(&config).await?;
+        super::savings::reset(&super::client(&config)).await?;
         Ok(serde_json::json!({ "ok": true }))
     })
 }

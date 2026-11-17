@@ -4,7 +4,7 @@ Thank you for your interest in contributing to OpenHuman. This guide is the fast
 
 > **New to open source or coding?** Start with [`docs/CONTRIBUTING-BEGINNERS.md`](docs/CONTRIBUTING-BEGINNERS.md) — it walks you through every step from installing tools to opening your first PR.
 
-For deeper architecture and subsystem references, use the GitBook under [`gitbooks/developing/`](gitbooks/developing/). For coding-agent and repository-specific implementation rules, see [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is a symlink to the same file).
+For deeper architecture and subsystem references, use the GitBook under [`docs/gitbooks/en/developing/`](docs/gitbooks/en/developing/). For coding-agent and repository-specific implementation rules, see [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is a symlink to the same file).
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 ## Getting Started
 
 - Read the [README](README.md) for product context.
-- Use [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) for the current system architecture.
+- Use [`docs/gitbooks/en/developing/architecture.md`](docs/gitbooks/en/developing/architecture.md) for the current system architecture.
 - Check [open issues](https://github.com/tinyhumansai/openhuman/issues) and [Discussions](https://github.com/tinyhumansai/openhuman/discussions) before starting work.
 - Stuck rather than fixing something? [`docs/SUPPORT.md`](docs/SUPPORT.md) routes questions, install trouble, memory behavior, and model problems to the right category; [`docs/community/discussions.md`](docs/community/discussions.md) explains how those threads are triaged.
 - For security issues, follow [SECURITY.md](SECURITY.md) and do not file public issues.
@@ -38,7 +38,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 | Git                     | Current stable                                             | Required for cloning and updating vendored submodules.                                                                                                       |
 | Node.js                 | `>=24.0.0` from [`app/package.json`](app/package.json)     | Install the current Node 24 release or newer.                                                                                                                |
 | pnpm                    | `pnpm@10.10.0` from [`package.json`](package.json)         | The repo enforces pnpm via the root `packageManager` field.                                                                                                  |
-| Rust                    | `1.96.1` from [`rust-toolchain.toml`](rust-toolchain.toml) | Install with `rustup`; `rustfmt` and `clippy` are required components.                                                                                       |
+| Rust                    | `1.99.1` from [`rust-toolchain.toml`](rust-toolchain.toml) | Install with `rustup`; `rustfmt` and `clippy` are required components.                                                                                       |
 | CMake                   | Current stable                                             | Optional. Only `aws-lc-sys` (via `rustls`) needs it, and only when the root workspace is built with non-default features; default builds do not use it.      |
 | Ninja                   | Current stable                                             | Required on Windows: `scripts/run-dev-win.sh` exits if `ninja` is not on PATH (it pins `CMAKE_GENERATOR=Ninja` for any CMake-driven crate).                  |
 | ripgrep (`rg`)          | Current stable                                             | Used by the `lint:commands-tokens` pre-push step (scans `app/src/components/commands/`). Without it, `git push` fails the hook with `rg: command not found`. |
@@ -59,8 +59,8 @@ Rust's `cargo` needs a linker on Windows. The easiest way to get one is during `
 Install the pinned toolchain and required components with `rustup`:
 
 ```powershell
-rustup toolchain install 1.96.1 --profile minimal
-rustup component add rustfmt clippy --toolchain 1.96.1
+rustup toolchain install 1.99.1 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.99.1
 ```
 
 **3. CMake and Ninja**
@@ -99,18 +99,18 @@ pnpm --version
 
 - **Web-only development** needs Node, pnpm, and the Rust toolchain present in the repo. You can usually ignore desktop-only system packages.
 - **Desktop development** uses Tauri with Wry as its webview on every platform (`crates/openhuman-app/Cargo.lock` resolves `tauri-runtime-wry`; there is no CEF crate). Use `pnpm --filter openhuman-app dev:app` on macOS and `pnpm dev:app:win` on native Windows.
-- **Linux desktop builds** require extra system packages beyond Node/Rust. Follow the distro-specific Tauri dependency list before running desktop commands, then use the OpenHuman scripts below. For deeper platform troubleshooting, see [`gitbooks/developing/getting-set-up.md`](gitbooks/developing/getting-set-up.md).
+- **Linux desktop builds** require extra system packages beyond Node/Rust. Follow the distro-specific Tauri dependency list before running desktop commands, then use the OpenHuman scripts below. For deeper platform troubleshooting, see [`docs/gitbooks/en/developing/getting-set-up.md`](docs/gitbooks/en/developing/getting-set-up.md).
 - **Windows 10 WSL + classic X11 forwarding** is unsupported for the desktop app. The Tauri desktop flow can hang, render blank windows, or crash before useful app logs are available. Use native Windows development, or Windows 11 WSLg if you need a Linux GUI workflow. OpenHuman logs a startup warning when it detects WSL with `DISPLAY` set but no `WAYLAND_DISPLAY`/WSLg markers.
 - **Windows desktop builds** additionally require Visual Studio C++ Build Tools (MSVC v143), CMake, and Ninja. See [Windows-specific setup](#windows-specific-setup) for the full list and install order.
 - **macOS desktop builds** require a one-time codesigning cert. After cloning, run `bash scripts/setup-dev-codesign.sh` once to create the local "OpenHuman Dev Signer" self-signed certificate that Tauri uses when bundling dev builds. Without it, `pnpm --filter openhuman-app dev:app` fails at the bundle/sign step with `OpenHuman Dev Signer: no identity found`.
-- **Skills development** happens in the separate [`tinyhumansai/openhuman-skills`](https://github.com/tinyhumansai/openhuman-skills) repository. This repo consumes built skill bundles from GitHub or a local override path; it does not vendor the skills source as a submodule.
+- **Skills development** happens in the separate [`tinyhumansai/skill-registry`](https://github.com/tinyhumansai/skill-registry) repository. This repo consumes built skill bundles from GitHub or a local override path; it does not vendor the skills source as a submodule.
 
 Example macOS bootstrap with Homebrew:
 
 ```bash
 brew install node@24 pnpm rustup-init ripgrep
-rustup toolchain install 1.96.1 --profile minimal
-rustup component add rustfmt clippy --toolchain 1.96.1
+rustup toolchain install 1.99.1 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.99.1
 ```
 
 ### 2. Clone and install
@@ -247,9 +247,9 @@ Useful local paths during development:
 
 Most contributor-visible configuration and state flows are documented in:
 
-- [`gitbooks/developing/getting-set-up.md`](gitbooks/developing/getting-set-up.md)
-- [`gitbooks/developing/architecture/frontend.md`](gitbooks/developing/architecture/frontend.md)
-- [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)
+- [`docs/gitbooks/en/developing/getting-set-up.md`](docs/gitbooks/en/developing/getting-set-up.md)
+- [`docs/gitbooks/en/developing/architecture/frontend.md`](docs/gitbooks/en/developing/architecture/frontend.md)
+- [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](docs/gitbooks/en/developing/architecture/tauri-shell.md)
 
 ## Project Layout
 
@@ -266,7 +266,7 @@ openhuman/
 ├── examples/               # Embedding examples (explicit [[example]] targets)
 ├── vendor/                 # Recursive git submodules (tinyagents, tinymemory, ...)
 ├── docs/                   # Internal maintainer docs
-├── gitbooks/               # Public product and contributor docs
+├── docs/gitbooks/en/               # Public product and contributor docs
 ├── scripts/                # Dev, test, CI, and release scripts
 └── AGENTS.md               # Repo rules for contributors and coding agents (CLAUDE.md symlinks here)
 ```
@@ -283,7 +283,7 @@ Short version:
 - `app/` is the UI and desktop shell.
 - `crates/openhuman-core/` is the Rust core and JSON-RPC surface; see the
   "Rust domain structure" section of AGENTS.md.
-- `gitbooks/developing/` is the canonical place for deeper subsystem docs.
+- `docs/gitbooks/en/developing/` is the canonical place for deeper subsystem docs.
 
 ## Git Workflow
 
@@ -338,5 +338,52 @@ If you are contributing through a coding agent or remote environment, include th
 - Use the controller registry and domain module structure described in [`AGENTS.md`](AGENTS.md) for new Rust functionality.
 - Keep logs grep-friendly and avoid logging secrets, tokens, or full PII.
 - Follow ESLint, Prettier, and Rust formatting output as authoritative.
+
+### UI translations
+
+All locales use the same workflow. Use `useT()` for UI text and treat
+`app/src/lib/i18n/en.ts` as the key source. Preserve existing good translations,
+translate new or changed English meanings, and remove keys retired from English.
+`scripts/apply-i18n-translations.ts` applies translation JSON files, retains
+existing values, removes obsolete keys, and writes keys in English order. Supply
+real translations for new strings; its English fallback is not a finished translation.
+Run `pnpm i18n:check`, `pnpm i18n:english:check`, the i18n coverage test, and Prettier.
+Preserve interpolation placeholders exactly, including repeated placeholders and
+double braces. Keep product names, paths, commands, and technical identifiers intact.
+
+#### Japanese UI copy
+
+Review text where it appears: a button, setting label, status, empty state, or
+confirmation dialog. Prefer short action labels and plain, polite sentences.
+Remove roundabout wording, not information: keep conditions, units, upload
+destinations, consent requirements, and deletion scope. Errors should describe
+what happened without guessing a cause. For example, keep "no answer" distinct
+from "no data" or a connection failure.
+
+| Context | Prefer | Avoid |
+| --- | --- | --- |
+| Save button | 保存 | 変更内容の保存を実行 |
+| Saved status | 保存しました | 正常に保存されました |
+| Available action | 変更できます | 変更することができます |
+| Delete a stored memory item | メモリーから削除 | 忘れる |
+
+Use these terms consistently on the Memory screens. Translate by meaning rather
+than substituting words mechanically; source connections and answer citations are
+different concepts.
+
+| Concept | Japanese |
+| --- | --- |
+| Memory / memory engine | メモリー / メモリーエンジン |
+| Learning / preference | 学習内容 / 好み |
+| Brain / belief / memory pack | ブレイン / 信念 / メモリーパック |
+| Source to sync / answer citation | ソース / 出典 |
+| Context brief | コンテキスト要約; 要約 when the context is clear |
+| Sync / import | 同期 / インポート |
+| Endpoint URL / API key | 接続先URL / APIキー |
+| Conversation / thread / turn | 会話 / スレッド / ターン |
+
+Keep backend count units such as ターン; do not reinterpret them as messages or
+conversations. This is contributor writing guidance, not a separate Japanese key
+matcher, fallback, or validation rule.
 
 Thank you for contributing to OpenHuman.
