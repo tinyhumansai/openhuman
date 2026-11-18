@@ -158,7 +158,10 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
     // Nextest forks per test. LLVM merges counters losslessly into eight
     // files per binary instead of retaining a separate file per process.
     ...(ex63 ? { LLVM_PROFILE_FILE_NAME: "openhuman-%8m.profraw" } : {}),
-    ...(!ex63 ? { CARGO_BUILD_JOBS: "1" } : {}),
+    // hosted: two rustc processes on the 4-core, 16 GB runner. One left three
+    // cores idle and made each cold core build ~20 min; more than two risks
+    // running out of memory while instrumented crates compile side by side.
+    ...(!ex63 ? { CARGO_BUILD_JOBS: "2" } : {}),
   };
   const modulesDir = ex63
     ? `${scratch}/test-modules`
