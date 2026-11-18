@@ -333,6 +333,8 @@ test("hosted matrix only spins up groups with active lanes", () => {
     [
       "checks",
       "rust-lint",
+      "rust-embed",
+      "rust-gates-off",
       ...RUST_COV_SHARDS.map((s) => `rust-cov-${s}`),
     ],
   );
@@ -1084,7 +1086,7 @@ test("private docs drift reuses the storage-schema build instead of compiling th
 
 test("offline examples build in the dev profile so no release artifacts need cleaning", () => {
   for (const plan of plans()) {
-    const lint = plan.lanes.find((lane) => lane.name === "rust-lint");
+    const lint = plan.lanes.find((lane) => lane.name === "rust-embed");
     const examples = lint.checks.find((c) => c.name === "embed-offline-examples");
     assert.equal(
       examples.run,
@@ -1101,15 +1103,28 @@ test("offline examples build in the dev profile so no release artifacts need cle
   }
 });
 
-test("offline embed examples install staged modules in their own rust-lint job", () => {
+test("offline embed examples install staged modules in their own rust-embed job", () => {
   for (const plan of plans()) {
-    const lint = plan.lanes.find((lane) => lane.name === "rust-lint");
-    const install = lint.checks.find((check) => check.name === "install-test-modules");
-    const examples = lint.checks.find((check) => check.name === "embed-offline-examples");
-    assert.ok(install, `${plan.profile} rust-lint must provision its module artifacts`);
+    const embed = plan.lanes.find((lane) => lane.name === "rust-embed");
+    const install = embed.checks.find((check) => check.name === "install-test-modules");
+    const examples = embed.checks.find((check) => check.name === "embed-offline-examples");
+    assert.ok(install, `${plan.profile} rust-embed must provision its module artifacts`);
     assert.match(install.run, /install-test-modules\.sh/);
     assert.deepEqual(examples.needs, ["install-test-modules"]);
   }
+});
+
+test("hosted lint, embed build and gates-off each get a job and a Rust cache of their own", () => {
+  const matrix = hostedMatrix(buildPlan({ profile: "hosted", areas: ALL }));
+  for (const lane of ["rust-lint", "rust-embed", "rust-gates-off"]) {
+    const group = matrix.find((g) => g.lanes === lane);
+    assert.ok(group, `${lane} must be a hosted job on its own`);
+    assert.equal(group.group, lane);
+  }
+  assert.match(
+    ciLanes,
+    /matrix\.group == 'rust-lint' \|\| matrix\.group == 'rust-embed' \|\| matrix\.group == 'rust-gates-off'/,
+  );
 });
 
 test("the tauri lane stages the test modules its coverage run loads", () => {

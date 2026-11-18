@@ -56,10 +56,19 @@ export const HOSTED_GROUPS = [
     maxParallel: 3,
     container: true,
   },
-  // Lint and gates-off share one `target/` on a ~14 GB disk, so run in turn.
+  // Lint, the embed build and gates-off each take a runner and a Rust cache
+  // of their own (`ci-fast-<group>`). In one job, in turn, they were the
+  // slowest job of the run (~66 min); apart, each is ~10-21 min of checks.
+  { group: "rust-lint", lanes: ["rust-lint"], maxParallel: 1, container: true },
   {
-    group: "rust-lint",
-    lanes: ["rust-lint", "rust-gates-off"],
+    group: "rust-embed",
+    lanes: ["rust-embed"],
+    maxParallel: 1,
+    container: true,
+  },
+  {
+    group: "rust-gates-off",
+    lanes: ["rust-gates-off"],
     maxParallel: 1,
     container: true,
   },
@@ -522,15 +531,32 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "bash scripts/ci-cancel-aware.sh cargo check -p openhuman-embed --no-default-features --features langfuse",
         },
         {
-          name: "embed-doctests",
-          when: core,
-          run: "bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed --doc",
-        },
-        {
           name: "embed-rustdoc",
           when: core,
           env: { RUSTDOCFLAGS: "-D warnings" },
           run: "bash scripts/ci-cancel-aware.sh cargo doc -p openhuman-embed --no-deps",
+        },
+        {
+          name: "tinyhumans-clippy",
+          when: core,
+          run: "cargo clippy -p openhuman-tinyhumans --all-targets -- -D warnings",
+        },
+      ],
+    },
+    {
+      // The embed checks that build and run code, where rust-lint only checks
+      // it. Hosted runs it in a job of its own; ex63 shares rust-lint's target.
+      name: "rust-embed",
+      // Compiles the core crate; hosted runners can cap heavy-compile slots
+      // (lanes.mjs). Lower number = served first.
+      heavy: 1,
+      targetDir: targetDir("lint"),
+      env: { ...rustEnv },
+      checks: [
+        {
+          name: "embed-doctests",
+          when: core,
+          run: "bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed --doc",
         },
         {
           name: "install-test-modules",
@@ -546,11 +572,6 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           // shares the plain dev build instead of a thin-LTO one nothing else
           // can reuse (and that would need cleaning afterwards).
           run: withModules("node scripts/run-embed-examples.mjs --profile dev"),
-        },
-        {
-          name: "tinyhumans-clippy",
-          when: core,
-          run: "cargo clippy -p openhuman-tinyhumans --all-targets -- -D warnings",
         },
       ],
     },

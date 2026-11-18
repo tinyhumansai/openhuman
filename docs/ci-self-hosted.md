@@ -23,7 +23,8 @@ unused `ex63` profile.
 | `frontend`        | pnpm install, tsc, prettier, eslint, i18n, docs, script self-tests                                                                                                                                                                                                        |
 | `frontend-tests`  | the complete vitest suite with coverage                                                                                                                                                                                                                                   |
 | `rust-cov`        | test modules from the registry, then `scripts/ci/rust-coverage.sh`                                                                                                                                                                                                        |
-| `rust-lint`       | clippy (product set; embed's clippy covers the core's contributor set), embed and tinyhumans lint, embed gates-off check                                                                                                                                                  |
+| `rust-lint`       | clippy (product set; embed's clippy covers the core's contributor set), embed and tinyhumans lint, embed feature-set checks, embed rustdoc                                                                                                                                |
+| `rust-embed`      | embed doctests, then test modules from the registry and the offline embed examples                                                                                                                                                                                        |
 | `rust-gates-off`  | gates-off checks and gate-contract tests, kernel floor, dep-sim calibration                                                                                                                                                                                               |
 | `tauri`           | Tauri clippy and coverage                                                                                                                                                                                                                                                 |
 | `pester`          | `install.ps1` tests                                                                                                                                                                                                                                                       |
@@ -88,7 +89,7 @@ for any commit without posting it.
 ## Job groups
 
 Lanes are grouped into jobs sized for 4-core, ~14 GB runners: `checks`,
-`rust-lint` (lint and gates-off in turn), `rust-cov-core`, `rust-cov-product`,
+`rust-lint`, `rust-embed`, `rust-gates-off`, `rust-cov-core`, `rust-cov-product`,
 `rust-cov-facades` and `rust-cov-tui` (the `rust-cov` lane in four jobs, each a whole
 section of `scripts/ci/rust-coverage.sh`, picked by `OH_COV_SHARD`; the gate merges their
 lcov files and fails if any is missing), `tauri`, `pester` and `inbound-e2e`.
