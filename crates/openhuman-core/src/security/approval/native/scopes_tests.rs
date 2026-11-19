@@ -94,3 +94,17 @@ fn a_sweep_is_due_once_per_interval() {
     assert!(!scope.sweep_due(std::time::Duration::from_secs(30)));
     assert!(scope.sweep_due(std::time::Duration::ZERO));
 }
+
+#[test]
+fn a_posture_free_caller_never_replaces_a_live_scopes_posture() {
+    let live = r#"[true,true,[]]"#;
+    let conservative = r#"[true,false,[]]"#;
+    // A check registers the posture it needs, replacing a different one.
+    assert!(needs_registration(None, live, false));
+    assert!(needs_registration(Some(conservative), live, false));
+    assert!(!needs_registration(Some(live), live, false));
+    // The import or an orphan's dismissal registers its fallback only on a
+    // scope the module holds nothing for, and otherwise leaves it alone.
+    assert!(needs_registration(None, conservative, true));
+    assert!(!needs_registration(Some(live), conservative, true));
+}

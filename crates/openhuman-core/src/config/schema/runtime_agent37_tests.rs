@@ -80,3 +80,33 @@ fn only_a_request_above_the_largest_shape_exceeds_it() {
     };
     assert!(too_much_memory.exceeds_largest_shape());
 }
+
+#[test]
+fn boxes_sleep_after_fifteen_idle_minutes_and_go_after_thirty_days_asleep() {
+    let config = Agent37RuntimeConfig::default();
+    assert_eq!(config.idle_sleep_secs, 900);
+    assert_eq!(config.delete_after_secs, 30 * 24 * 60 * 60);
+    assert_eq!(config.max_live, 50);
+}
+
+#[test]
+fn retention_settings_are_read_from_the_table() {
+    let config: Agent37RuntimeConfig =
+        toml::from_str("idle_sleep_secs = 600\ndelete_after_secs = 86400\nmax_live = 7")
+            .expect("parses");
+    assert_eq!(config.idle_sleep_secs, 600);
+    assert_eq!(config.delete_after_secs, 86_400);
+    assert_eq!(config.max_live, 7);
+    // Unset fields keep their defaults.
+    assert_eq!(config.template, DEFAULT_AGENT37_TEMPLATE);
+}
+
+#[test]
+fn the_retention_namespace_defaults_to_blank_and_can_be_set() {
+    assert_eq!(Agent37RuntimeConfig::default().retention_namespace, "");
+    let config: Agent37RuntimeConfig = toml::from_str("").expect("empty table parses");
+    assert_eq!(config.retention_namespace, "");
+    let config: Agent37RuntimeConfig =
+        toml::from_str("retention_namespace = \"chat-prod\"").expect("parses");
+    assert_eq!(config.retention_namespace, "chat-prod");
+}

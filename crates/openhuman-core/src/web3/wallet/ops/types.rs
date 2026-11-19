@@ -17,12 +17,39 @@ pub enum WalletSetupSource {
 }
 
 /// A public account retained in OpenHuman's wallet setup state.
+///
+/// Every chain has one primary account at `index` 0, which is the only
+/// account the TinyWallet module's transfers, swaps and x402 payments use.
+/// A chain may also have secondary accounts from the same recovery phrase
+/// (`index` 1 and up, see [`super::SECONDARY_ACCOUNTS`]); they sign only
+/// through `wallet.execute_prepared_program`, under their own
+/// `[wallet_policy.accounts.<chain>_<index>]` section.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletAccount {
     pub chain: WalletChain,
     pub address: String,
     pub derivation_path: String,
+    /// Account index on the chain. Absent in state written before secondary
+    /// accounts existed, which reads as the primary account.
+    #[serde(default, skip_serializing_if = "is_primary_index")]
+    pub index: u32,
+    /// Optional human label for a secondary account (`giveaway`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_primary_index(index: &u32) -> bool {
+    *index == 0
+}
+
+impl WalletAccount {
+    /// Whether this is the chain's primary (index 0) account.
+    #[must_use]
+    pub fn is_primary(&self) -> bool {
+        self.index == 0
+    }
 }
 
 /// Host-owned wallet setup status exposed by the existing RPC surface.
@@ -38,7 +65,12 @@ pub struct WalletStatus {
     pub source: Option<WalletSetupSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mnemonic_word_count: Option<u8>,
+    /// The primary (index 0) account of each chain.
     pub accounts: Vec<WalletAccount>,
+    /// Secondary accounts (index 1 and up). Kept out of `accounts` so callers
+    /// that expect one account per chain are unaffected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_accounts: Vec<WalletAccount>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at_ms: Option<u64>,
 }
@@ -67,7 +99,9 @@ pub struct WalletRecoveryMaterial {
     /// Standard BIP-39 seed bytes. The frontend uses these only for the
     /// existing OpenHuman storage-key KDF and clears its temporary buffer.
     pub seed: Vec<u8>,
-    /// Public addresses and derivation paths for the four supported chains.
+    /// Public addresses and derivation paths for the four supported chains'
+    /// primary accounts, followed by the secondary accounts
+    /// ([`super::SECONDARY_ACCOUNTS`]).
     pub accounts: Vec<WalletAccount>,
 }
 

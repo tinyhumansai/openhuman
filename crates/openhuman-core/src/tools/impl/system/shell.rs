@@ -2,6 +2,7 @@ use super::shell_description::{command_param_description, shell_description};
 use super::shell_run::{audit_once, run_in_policy, run_native, AuditOnce, YieldRequest};
 #[cfg(feature = "modules")]
 use super::shell_support::container_environment;
+#[cfg(feature = "modules")]
 use super::shell_support::{command_failure, tool_timeout_message};
 use crate::agent::tinyagents::host::run_context::{
     command_environment_for_tool, dispatch_ctx_for_tool,
@@ -20,6 +21,7 @@ use tinytools::ToolRunContext;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout};
 
 /// Maximum output size in bytes (1MB).
+#[cfg(any(feature = "modules", test))]
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
 #[cfg(feature = "modules")]
 fn docker_module_result(
@@ -202,7 +204,7 @@ impl Tool for ShellTool {
     /// True for any command the current tier prompts on (Write / Network /
     /// Destructive in ask-before-edit; Network / Destructive in Full). The
     /// harness routes these through the `ApprovalGate`; the read-only `Block`
-    /// and the structural guard are enforced in `run_with_security`.
+    /// and the structural guard are enforced in `run_with_security_in_context`.
     fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
         let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
         // This synchronous declaration cannot consult TinyBox. Be
@@ -289,31 +291,6 @@ impl ShellTool {
     /// Run the command through the security policy and runtime. Returns
     /// `(allowed, result)` where `allowed=false` means the policy or rate
     /// limiter blocked execution before the command was launched.
-    ///
-    /// Exposed as `pub(crate)` so workflow phase scripts can reuse the
-    /// same gated execution path as the `shell` tool — all security
-    /// checks (rate limits, path guards, approval gate routing) apply
-    /// identically to workflow-triggered commands.
-    pub(crate) async fn run_with_security(
-        &self,
-        ctx: &DispatchCtx,
-        command: &str,
-        requested_timeout: Option<u64>,
-    ) -> (bool, ToolResult) {
-        let come_back = YieldRequest::default();
-        let audit = std::sync::Mutex::new(None);
-        self.run_with_security_in_context(
-            ctx,
-            command,
-            requested_timeout,
-            come_back,
-            None,
-            None,
-            &audit,
-        )
-        .await
-    }
-
     async fn run_with_security_in_context(
         &self,
         ctx: &DispatchCtx,
@@ -609,7 +586,7 @@ impl ShellTool {
                 )
             }
         };
-        let policy = crate::sandbox::policy::route_for_mode(
+        let mut policy = crate::sandbox::policy::route_for_mode(
             tinyagents_definition::SandboxMode::Sandboxed,
             action_dir,
             &self.security.workspace_dir,
@@ -617,6 +594,13 @@ impl ShellTool {
             &config.runtime,
             false,
         );
+        // The definition's own opt-in (`sandbox_filesystem_only`); the plan asks for
+        // files only when the spawn is the operator's agent with the host network.
+        policy.filesystem_only =
+            crate::agent::tinyagents::host::run_context::sandbox_filesystem_only_for_tool(context);
+        if policy.filesystem_only {
+            tracing::debug!("[shell] the agent opted into a files-only sandbox");
+        }
         let timeout = requested_timeout;
         run_in_policy(
             ctx, policy, command, timeout, come_back, action_dir, context, meter, audit,

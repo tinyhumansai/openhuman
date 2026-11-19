@@ -64,10 +64,11 @@ built its own `CoreRuntime` can call `serve` directly.
    `ServiceSet::rpc_http` (a harness-only embedder has no transport).
 2. Resolves host and port: the builder's values, else `OPENHUMAN_CORE_HOST`
    / `OPENHUMAN_CORE_PORT`, else `127.0.0.1:7788`.
-3. Refuses a public bind without an operator-supplied RPC token
-   (`OPENHUMAN_CORE_TOKEN` or an in-memory bearer). The generated
-   `core.token` file does not count.
-4. Picks a port with `pick_listen_port_for_host_with`. With `ready_tx` (the
+3. Refuses a public bind ([`public_bind.rs`](public_bind.rs)) without an
+   operator-supplied RPC token (`OPENHUMAN_CORE_TOKEN` or an in-memory
+   bearer). The generated `core.token` file does not count.
+4. Picks a port with `pick_listen_port_for_host_with`
+   ([`listen_port.rs`](listen_port.rs)). With `ready_tx` (the
    desktop shell) another core already on the port is taken over
    (`OccupiedByCore::Takeover`); a headless serve moves to a free port
    instead (`Fallback`).
@@ -124,8 +125,10 @@ because a profile's turns are recovered when its lease is taken over, not
 when its stores open. On shutdown it releases the leases of idle profiles.
 
 In place of the single-context layer, [`saas_gateway.rs`](saas_gateway.rs)
-picks each request's context (the decision is
-`openhuman::profiles::gateway`):
+picks each request's context. It owns the gateway protocol (the user and
+signature headers, the HMAC-SHA256 signature in a ±60 s window, the refusal
+statuses); mapping the user to a profile and opening it is the core's
+`ProfileHost::resolve_user` (`openhuman::profiles::gateway`):
 
 - routes a SaaS core never serves (`/v1`, `/events/*`, `/ws/*`,
   `/socket.io`, `/dev/connect`, `/oauth/*`) answer `404`, and so does
@@ -209,8 +212,12 @@ Socket.IO, separate from the main renderer's Tauri event.
 | [`http/rpc_handler.rs`](http/rpc_handler.rs) | `POST /rpc`. |
 | [`http/cors.rs`](http/cors.rs) | CORS headers and preflight over the shared origin rule. |
 | [`http/health.rs`](http/health.rs) | `GET /health` and `GET /schema`. |
+| [`listen_port.rs`](listen_port.rs) | Listener port selection: `pick_listen_port*`, `OccupiedByCore`, `PickListenPortError`, and the stale-listener fingerprint (`identify_listener`). |
+| [`public_bind.rs`](public_bind.rs) | `is_public_bind`, the check behind the public-bind refusal. |
+| [`saas_gateway.rs`](saas_gateway.rs) | The SaaS gateway layer and protocol: headers, `sign` / `verify`, `GatewayRefusal`, `resolve_scope`. |
 | [`http/events.rs`](http/events.rs) | The three SSE routes. |
-| [`http/dictation.rs`](http/dictation.rs), [`http/live_voice.rs`](http/live_voice.rs) | WebSocket upgrade guards; the sessions themselves live in the core's `voice` domain. |
+| [`http/events_bind_tokens.rs`](http/events_bind_tokens.rs) | The single-shot `/events` bind-token store; installs its minter into the core's `core.events_subscribe_token` hook. |
+| [`http/live_voice.rs`](http/live_voice.rs) | WebSocket upgrade guard; the session itself lives in the core's `voice` domain. |
 | [`http/oauth_mcp.rs`](http/oauth_mcp.rs) | MCP OAuth callback, handing off to `mcp::registry::oauth::complete`. |
 | [`http/pages.rs`](http/pages.rs) | Static HTML pages for OAuth callbacks. |
 
@@ -230,11 +237,13 @@ Socket.IO, separate from the main renderer's Tauri event.
 - Controllers, params, errors and session-expiry semantics are the core's.
   Never add method-name branches here; register controllers in
   `openhuman-core/src/core/all.rs` (or as an extension, as `http_host` does).
-- The `/v1` inference router, the dictation and live-voice sessions, and the
+- The `/v1` inference router, the live-voice session, and the
   MCP OAuth completion are domain code in the core, mounted here behind the
   core's `http-server` gate.
-- The token is minted and verified by `openhuman::core::auth`; listener
-  port selection is `openhuman::platform::connectivity::rpc`.
+- The token is minted and verified by `openhuman::core::auth`. The
+  `connectivity.diag` RPC stays in the core
+  (`openhuman::platform::connectivity::rpc`); listener port selection is
+  [`listen_port.rs`](listen_port.rs) here.
 - The event payload types (`WebChannelEvent` and friends) are constructed by
   core domains; this module only transports them.
 

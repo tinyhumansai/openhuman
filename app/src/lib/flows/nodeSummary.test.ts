@@ -125,6 +125,12 @@ describe('describeNode', () => {
     ).toContain('Summarize the thread');
   });
 
+  it('does not break an emoji at the agent prompt summary boundary', () => {
+    const prompt = `${'a'.repeat(38)}😀 more text`;
+    const summary = describeNode('agent', { prompt }, [], t, locale);
+    expect(summary).toBe(`“${'a'.repeat(38)}…” · default model`);
+  });
+
   it('describes branch nodes and reflects output routes', () => {
     expect(describeNode('condition', { field: 'status' }, [], t, locale)).toBe(
       'If status → true / false'

@@ -380,9 +380,6 @@ pub struct Config {
     #[serde(default)]
     pub searxng: SearxngConfig,
 
-    #[serde(default)]
-    pub web_search: WebSearchConfig,
-
     /// Unified search-engine selector. Picks exactly one engine
     /// (managed / parallel / brave) and layers the corresponding tools.
     #[serde(default)]
@@ -519,6 +516,11 @@ pub struct Config {
     /// Hosting provider credentials and switch (`hosting` feature).
     #[serde(default)]
     pub hosting: HostingConfig,
+
+    /// Native-wallet spend policy for executes without a per-transfer human
+    /// confirmation (`[wallet_policy]`); read by `web3::wallet::policy`.
+    #[serde(default)]
+    pub wallet_policy: WalletPolicyConfig,
 
     /// Storage backend for state on the `tinystoragedrivers` ports
     /// (`[storage]`). Empty uses the default, `sqlite:<workspace>/storage`.

@@ -298,6 +298,9 @@ pub struct OpenHumanSessionHost {
     /// Whether this specific single-shot host turn should settle all native
     /// driver descendants before returning its result. Normal chat stays async.
     pub(super) settle_headless_descendants: bool,
+    /// Whether the cron scheduler marked this session as the root of an
+    /// opted-in scheduled-actions run (`enable_scheduled_actions`).
+    pub(super) scheduled_actions: bool,
     /// Backend/session thread explicitly owned by this agent run. It is kept
     /// separate from event identity: CLI and worker event sessions are not
     /// necessarily user conversation threads.

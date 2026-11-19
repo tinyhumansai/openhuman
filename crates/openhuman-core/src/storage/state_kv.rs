@@ -76,6 +76,34 @@ impl StateKv {
         Ok(Self { repo, owner, ns })
     }
 
+    /// Like [`StateKv::open`], but in the wallet-owner scope: the tenant's
+    /// profile when the work runs for one, else the shared local scope, never
+    /// the acting agent's. State that belongs to a workspace-wide resource
+    /// (the native wallet) must not fork per agent. SaaS mode without a
+    /// profile is refused, so tenants stay isolated.
+    ///
+    /// # Errors
+    ///
+    /// When the backend cannot be opened or, in SaaS mode, there is no profile.
+    pub fn open_owner_scoped(
+        workspace_dir: &Path,
+        owner: &'static str,
+        ns: &'static str,
+    ) -> Result<Self> {
+        #[cfg(all(test, feature = "storage-sqlite"))]
+        super::local::use_persistent_default_for_test(workspace_dir);
+
+        let saas = crate::core::runtime::mode::is_saas();
+        let tenant = crate::core::runtime::DispatchCtx::ambient()
+            .tenant()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let scope = super::scope_from(tenant.profile.as_deref(), None, saas)
+            .context("[storage::state_kv] resolve the owner scope")?;
+        let backend = super::local::backend_for(workspace_dir)
+            .context("[storage::state_kv] open the storage backend")?;
+        Self::on_backend(&backend, &scope, owner, ns)
+    }
+
     /// The state for an explicit backend and scope, for importers that must
     /// keep data on the backend they are migrating rather than reopen a URL.
     pub(crate) fn on_backend(

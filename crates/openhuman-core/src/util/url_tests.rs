@@ -77,3 +77,26 @@ fn security_configured_off_classifies_provider_hosts_by_loopback() {
     assert!(provider_host_is_local("127.0.0.1"));
     assert!(!provider_host_is_local("api.example.com"));
 }
+
+/// Without an armed TinySecurity module locality is unknown, so even loopback
+/// hosts are not local: callers that gate a credential on locality (the
+/// hosted Langfuse environment classifier) fail closed.
+#[cfg(feature = "security-module")]
+#[test]
+fn provider_locality_fails_closed_without_tinysecurity() {
+    let _absent = crate::modules::security::test_host::absent();
+    for host in [
+        "[::1]",
+        "[0:0:0:0:0:0:0:1]",
+        "[::]",
+        "api.localhost",
+        "0.0.0.0",
+        "192.168.1.20",
+        "10.0.0.5",
+    ] {
+        assert!(
+            !provider_host_is_local(host),
+            "{host} must fail closed without TinySecurity"
+        );
+    }
+}

@@ -296,6 +296,10 @@ pub struct OpenHumanRunContext {
     /// This root run owns settlement of driver jobs before its host turn
     /// returns. Inherited by recursive child contexts, never by ordinary chat.
     pub(crate) headless_descendant_settlement: bool,
+    /// This root run belongs to a cron job whose agent opted into scheduled
+    /// actions (`cron::origin::scheduled_actions_enabled`); its security gate
+    /// may lift the read-only cron stage. Never inherited by a child.
+    pub(crate) scheduled_actions: bool,
     /// Stable owner scope for the whole headless descendant tree. Native child
     /// runs get their own thread ids, but the root turn's settlement lease must
     /// retain every descendant under one owner key.
@@ -319,6 +323,9 @@ pub struct OpenHumanRunContext {
     pub autonomous_iter_cap: Option<usize>,
     /// Sandbox mode of the agent definition executing this turn.
     pub sandbox_mode: Option<SandboxMode>,
+    /// The definition executing this turn opted its sandboxed shell into a
+    /// files-only jail (`AgentExt::sandbox_filesystem_only`). Root runs only.
+    pub sandbox_filesystem_only: bool,
     /// Zero-based OpenHuman subagent depth (the root is zero).
     pub spawn_depth: usize,
     /// This run's subagent usage roll-up; intentionally isolated for children.
@@ -414,9 +421,9 @@ pub(crate) struct HarnessHostPolicy {
 pub use super::operation_context::{approval_for_tool, OpenHumanRunExt};
 pub(crate) use super::operation_context::{
     command_environment_for_tool, dispatch_ctx_for_tool, memory_identity_for_tool,
-    memory_in_prompt_for_tool, parent_agent_id_for_tool, sandbox_mode_for_tool,
-    shell_processes_for_tool, task_recency_window_for_tool, turn_origin_for_tool,
-    HostOperationContext,
+    memory_in_prompt_for_tool, parent_agent_id_for_tool, sandbox_filesystem_only_for_tool,
+    sandbox_mode_for_tool, shell_processes_for_tool, task_recency_window_for_tool,
+    turn_origin_for_tool, HostOperationContext,
 };
 #[cfg(test)]
 pub(crate) use super::operation_context::{test_turn_run, tool_context_with_approval};

@@ -85,3 +85,78 @@ async fn an_unknown_engine_id_is_off_without_a_fallback_name() {
     assert_eq!(row.driver, "null");
     assert!(row.fell_back_from.is_none());
 }
+
+// --- The `subsystems` wire row ---------------------------------------------
+
+#[test]
+fn row_serializes_every_field_with_opaque_capabilities() {
+    let row = SubsystemStatus {
+        slot: "memory".to_string(),
+        driver: "tinyhumans".to_string(),
+        class: "external".to_string(),
+        health: "ready".to_string(),
+        health_reason: None,
+        contract_version: "2.0".to_string(),
+        capabilities: vec!["recall".to_string(), "some_future_op".to_string()],
+        fell_back_from: None,
+        last_error: None,
+    };
+    let value = serde_json::to_value(&row).expect("serializes");
+    assert_eq!(value["slot"], "memory");
+    assert_eq!(value["driver"], "tinyhumans");
+    assert_eq!(value["contract_version"], "2.0");
+    assert_eq!(
+        value["capabilities"],
+        serde_json::json!(["recall", "some_future_op"])
+    );
+    assert!(value["health_reason"].is_null());
+    assert!(value["last_error"].is_null());
+}
+
+// --- The `subsystems` RPC namespace -----------------------------------------
+
+#[test]
+fn subsystem_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_subsystems_controller_schemas(), "subsystems");
+    crate::core::all::assert_schema_controller_parity(
+        &all_subsystems_controller_schemas(),
+        &all_subsystems_registered_controllers(),
+        "status",
+    );
+}
+
+#[tokio::test]
+async fn handler_returns_a_subsystems_array_containing_the_memory_slot() {
+    // The handler loads the process-default config, which reads the workspace
+    // environment other tests point at temp dirs under this lock.
+    let _env = crate::config::TEST_ENV_LOCK.lock().await;
+    let value = handle_status(DispatchCtx::process_default(), Map::new())
+        .await
+        .expect("handler succeeds");
+    let rows = value["subsystems"].as_array().expect("array");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["slot"], "memory");
+    assert!(rows[0]["contract_version"].is_string());
+    assert!(rows[0]["capabilities"].is_array());
+}
+
+// --- `openhuman subsystems` -------------------------------------------------
+
+#[test]
+fn help_flag_short_circuits_without_probing_a_driver() {
+    run_subsystems_command(&["--help".to_string()]).expect("help succeeds");
+    run_subsystems_command(&["-h".to_string()]).expect("short help succeeds");
+}
+
+#[test]
+fn bare_invocation_renders_the_table() {
+    run_subsystems_command(&[]).expect("table renders");
+}
+
+#[test]
+fn namespace_has_a_registered_cli_adapter() {
+    assert!(
+        crate::core::all::cli_handler_for_namespace("subsystems").is_some(),
+        "bare `openhuman subsystems` must reach the table, not the generic help"
+    );
+}

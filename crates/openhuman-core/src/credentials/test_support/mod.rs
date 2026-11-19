@@ -25,6 +25,7 @@ where
     F::Output: Send + 'static,
 {
     use crate::security::approval::{ApprovalDecision, ApprovalGate};
+    let _explicit = crate::modules::security::test_host::explicit_consent();
     crate::modules::security::ensure_loaded(config)
         .await
         .expect("admit native cipher module");

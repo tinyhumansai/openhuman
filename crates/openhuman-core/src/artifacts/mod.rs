@@ -13,6 +13,8 @@ pub(crate) use storage_schema::collection_specs;
 #[cfg(feature = "legacy-import")]
 pub(crate) use storage_schema::upgrade_records;
 pub mod tiny_store;
+#[cfg(feature = "documents")]
+pub mod tools;
 pub mod types;
 pub mod version_documents;
 

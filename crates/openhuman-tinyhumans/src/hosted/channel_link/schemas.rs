@@ -1,10 +1,10 @@
 use openhuman_embed::__host::core::runtime::DispatchCtx;
+use openhuman_embed::__host::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
-use openhuman_embed::__host::core::Outcome;
 use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 #[derive(Debug, Deserialize)]
@@ -153,12 +153,6 @@ fn handle_discord_link_check(ctx: DispatchCtx, params: Map<String, Value>) -> Co
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-/// Channel results serialize bare (no logs), exactly as the core's channel
-/// handlers answered.
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

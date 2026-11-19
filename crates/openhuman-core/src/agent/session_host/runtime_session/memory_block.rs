@@ -98,12 +98,26 @@ pub(super) enum RenderedBlock {
     Empty,
     /// The read failed.
     Failed,
+    /// A memory change (a write, an erase, an engine or account change)
+    /// voided the render while it read: what it read must not be used, nor
+    /// may the block recorded before the change stand in for it.
+    Voided,
     /// The deadline lapsed before the render finished (see
     /// `memory_block_ready.rs`): the render goes on in the background.
     Deferred,
     /// A block rendered ahead of this generation start; `None` when that
     /// render found nothing known.
     Ready(Option<Message>),
+}
+
+/// What an out-of-band compaction does about the successor's memory block.
+pub(crate) enum NewGenerationBlock {
+    /// Put this freshly rendered block into the successor's prefix.
+    Fresh(Message),
+    /// Leave the inherited block for the next turn to refresh.
+    Keep,
+    /// Remove the inherited block: a memory change voided the render.
+    Drop,
 }
 
 /// What a read of memory is made as: the session's config and acting
@@ -243,7 +257,7 @@ impl OpenHumanTurnPrelude {
                 SetupPhase::MemoryBlock,
                 self.block_for_generation(max_tokens, reason),
                 |rendered| match rendered {
-                    RenderedBlock::Failed => SetupOutcome::Failed,
+                    RenderedBlock::Failed | RenderedBlock::Voided => SetupOutcome::Failed,
                     RenderedBlock::Deferred => SetupOutcome::Skipped,
                     _ => SetupOutcome::Completed,
                 },
@@ -252,7 +266,7 @@ impl OpenHumanTurnPrelude {
             {
                 RenderedBlock::Block(block) => Some(block),
                 RenderedBlock::Ready(block) => block,
-                RenderedBlock::Empty => None,
+                RenderedBlock::Empty | RenderedBlock::Voided => None,
                 RenderedBlock::Failed | RenderedBlock::Deferred => recorded.clone(),
             },
             None => {
@@ -320,19 +334,47 @@ impl OpenHumanSessionHost {
     /// A freshly rendered memory block for a transcript generation this
     /// session opens outside a turn (an out-of-band compaction): put it into
     /// the successor's prefix with [`with_memory_block`]. `None` when the
-    /// agent has no memory block, nothing is known, or memory cannot be read.
+    /// agent has no memory block, nothing is known, memory cannot be read, or
+    /// a memory change voided the render (see
+    /// [`Self::new_generation_block`] to tell that last case apart).
+    #[cfg(test)]
     pub(crate) async fn memory_block_for_new_generation(&self) -> Option<Message> {
+        match self.new_generation_block().await {
+            NewGenerationBlock::Fresh(block) => Some(block),
+            NewGenerationBlock::Keep | NewGenerationBlock::Drop => None,
+        }
+    }
+
+    /// What the successor generation of an out-of-band compaction does about
+    /// its memory block: take a freshly rendered one, keep the inherited one
+    /// (nothing known, memory unreadable), or drop it because a memory change
+    /// (an erase, say) voided the render and the inherited block may still
+    /// hold what was erased.
+    pub(crate) async fn new_generation_block(&self) -> NewGenerationBlock {
         let prelude = self.create_turn_prelude(false);
-        let max_tokens = prelude.memory_block_budget()?;
-        match prelude
-            .render_memory_block(max_tokens, "new_generation")
-            .await
-        {
-            RenderedBlock::Block(block) => Some(block),
+        let Some(max_tokens) = prelude.memory_block_budget() else {
+            return NewGenerationBlock::Keep;
+        };
+        let Some((scope, ticket)) = prelude.scope_and_ticket("new_generation").await else {
+            return NewGenerationBlock::Keep;
+        };
+        let rendered = prelude
+            .render_in(&scope, max_tokens, "new_generation")
+            .await;
+        if !ticket.is_live() {
+            tracing::info!(
+                thread_id = self.thread_id.as_deref().unwrap_or(""),
+                "[memory_block] new-generation render voided by a memory change, dropping the inherited block"
+            );
+            return NewGenerationBlock::Drop;
+        }
+        match rendered {
+            RenderedBlock::Block(block) => NewGenerationBlock::Fresh(block),
+            RenderedBlock::Voided => NewGenerationBlock::Drop,
             RenderedBlock::Empty
             | RenderedBlock::Failed
             | RenderedBlock::Deferred
-            | RenderedBlock::Ready(_) => None,
+            | RenderedBlock::Ready(_) => NewGenerationBlock::Keep,
         }
     }
 }

@@ -3,9 +3,8 @@
 //! Where the core keeps durable state that has moved onto the
 //! `tinystoragedrivers` ports. Empty (the default) is `sqlite:<workspace>/storage`,
 //! one SQLite database per workspace, which is what the desktop app uses; the
-//! per-domain files older installs wrote are imported into it once. The retired
-//! `classic` opt-out is read as unset. A URL points the process at one backend
-//! instead:
+//! per-domain files older installs wrote are imported into it once. A URL
+//! points the process at one backend instead:
 //!
 //! ```toml
 //! [storage]

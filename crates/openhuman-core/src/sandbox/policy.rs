@@ -74,6 +74,7 @@ pub fn route_for_mode(
         "[sandbox] spawn policy"
     );
     SandboxPolicy {
+        filesystem_only: false,
         backend,
         workspace_root: action_dir.to_path_buf(),
         state_dir: state_dir.to_path_buf(),

@@ -24,10 +24,16 @@ pub fn should_report_provider_http_failure(status: reqwest::StatusCode) -> bool 
     should_report_provider_http_status(status.as_u16())
 }
 
-/// Whether this is the OpenHuman backend rejecting the app session JWT. This
-/// path only sends the session credential, so `api_key` is always false.
+/// Only a 401 on a request sent with the session credential means the session
+/// expired: 402/403/404 (plan, tier, WAF, proxy) are refusals that keep it.
+/// The host-owned provider path only sends the session credential.
+fn session_credential_status_expired(status: u16) -> bool {
+    status == 401
+}
+
+/// Whether this is the OpenHuman backend rejecting the app session JWT.
 pub fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> bool {
-    crate::core::session_expiry::backend_status_means_session_expired(status.as_u16(), false)
+    session_credential_status_expired(status.as_u16())
         && classify_backend_error(Some(provider), "").is_some_and(|result| result.provider_owned)
 }
 
@@ -188,9 +194,7 @@ impl ErrorReporter for HostErrorReporter<'_> {
         };
         let decision = select_demotion(&facts, is_backend, self.backend_error_code_owned);
 
-        if is_backend
-            && crate::core::session_expiry::backend_status_means_session_expired(status, false)
-        {
+        if is_backend && session_credential_status_expired(status) {
             publish_backend_session_expired(operation, provider, status_code, self.message);
         } else {
             match decision {

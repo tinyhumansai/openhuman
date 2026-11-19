@@ -83,6 +83,8 @@ Use a disposable staging account/workspace and synthetic facts. Keep inference r
 
 ### macOS
 
+- [ ] **Claude Code sign-in opens Terminal and reports launch failures** — In Connections > LLM > LLM Providers, use Claude Code Sign in. Allow the macOS Automation prompt and verify Terminal opens. On a separate fresh test account, deny Automation and verify the settings card reports a launch failure instead of success; the app must remain responsive. A permission prompt left unanswered must stop waiting within 30 seconds.
+
 - [ ] **Screenshot paste in normal chat (4.2.8)** — Copy a screenshot to the clipboard, focus the chat message input, and press Cmd+V. Expected: one image preview appears, the draft text is preserved, and no message is sent. Repeat via Edit → Paste, then paste plain text and confirm normal insertion.
 
 - [ ] **Gatekeeper accepts the signed `.app` on first launch** — Double-click the `.app` from a fresh download (Quarantine attribute set). Expected: app opens without `"OpenHuman" cannot be opened because the developer cannot be verified` dialog. If it appears, the build is unsigned or the notarization stapler is missing.

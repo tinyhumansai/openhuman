@@ -261,3 +261,23 @@ fn a_custom_base_does_not_allow_a_wider_tool_scope() {
         Err(AgentError::WidensRuntime(_))
     ));
 }
+
+#[test]
+fn scheduled_actions_reaches_the_core_definition_and_never_a_delegate() {
+    let acting = AgentDefinitionSpec::new()
+        .bare_prompt("Build and test.")
+        .tools(ToolScopeSpec::Named(vec!["shell".into()]))
+        .scheduled_actions(true);
+    let def = acting.clone().into_core("builder").expect("definition");
+    assert!(def.extensions.scheduled_actions);
+    let default = AgentDefinitionSpec::new()
+        .bare_prompt("Read.")
+        .into_core("reader")
+        .expect("definition");
+    assert!(
+        !default.extensions.scheduled_actions,
+        "scheduled turns stay read-only unless the agent opts in"
+    );
+    let delegate = acting.into_subagent_core("worker").expect("definition");
+    assert!(!delegate.extensions.scheduled_actions);
+}

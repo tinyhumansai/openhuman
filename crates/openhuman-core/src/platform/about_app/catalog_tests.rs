@@ -573,3 +573,19 @@ fn computer_capabilities_disclose_the_components_ceiling() {
         );
     }
 }
+
+#[test]
+fn browser_automation_discloses_the_optional_upstream_proxy() {
+    let capability =
+        lookup("workflows.computer_browser_automation").expect("browser automation is listed");
+    assert!(capability
+        .description
+        .contains("[browser] upstream_proxies"));
+    let privacy = capability.privacy.expect("browser automation has privacy");
+    assert!(privacy
+        .destinations
+        .iter()
+        .any(|destination| destination.contains("upstream HTTP proxy")
+            && destination.contains("[browser] upstream_proxies")
+            && destination.contains("next core start")));
+}

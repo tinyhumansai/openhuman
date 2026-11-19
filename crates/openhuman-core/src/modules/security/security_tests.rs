@@ -65,18 +65,13 @@ async fn native_cipher_bus_rejects_a_handle_not_minted_by_master_resolution() {
     let client = client(&config)
         .await
         .expect("pinned TinySecurity module should load with secret callbacks");
-    let scope = super::super::ops::security_secret_scope()
-        .await
-        .expect("the module should retain its persisted audit scope");
+    let tenant = super::super::ops::security_tenant(&config)
+        .expect("the config's runtime secret scope should be registered");
+    let scope = tenant.scope.clone();
     let consumer = super::super::ops::security_cipher_consumer()
         .await
         .expect("the exact module binding should retain its cipher consumer");
-    let module_config = super::super::ops::security_module_config(&config)
-        .await
-        .expect("the module should retain its admitted config");
-    let registration_id = module_config["secret_cipher"]["registration_id"]
-        .as_str()
-        .expect("cipher registration should be present");
+    let registration_id = tenant.ids.registration_id.as_str();
 
     let result = super::secret_cipher::run(
         &client,

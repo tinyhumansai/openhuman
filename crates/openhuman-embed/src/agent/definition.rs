@@ -91,6 +91,7 @@ pub struct AgentDefinitionSpec {
     /// The prompt is the whole system prompt, with nothing composed around it.
     bare_prompt: bool,
     refresh_prompt_on_resume: Option<bool>,
+    scheduled_actions: Option<bool>,
     memory_block: Option<MemoryBlockSpec>,
     tools: Option<ToolScopeSpec>,
     disallowed_tools: Vec<String>,
@@ -159,6 +160,7 @@ impl AgentDefinitionSpec {
         self.refresh_prompt_on_resume = self
             .refresh_prompt_on_resume
             .or(lower.refresh_prompt_on_resume);
+        self.scheduled_actions = self.scheduled_actions.or(lower.scheduled_actions);
         self.memory_block = self.memory_block.or(lower.memory_block);
         self.tools = self.tools.or(lower.tools);
         self.disallowed_tools.extend(lower.disallowed_tools);
@@ -224,6 +226,22 @@ impl AgentDefinitionSpec {
     /// state it renders (connected integrations, skills, AGENTS.md).
     pub fn refresh_prompt_on_resume(mut self, refresh: bool) -> Self {
         self.refresh_prompt_on_resume = Some(refresh);
+        self
+    }
+
+    /// Let a cron job that runs this agent use acting tools (shell, file
+    /// writes, external effects) without a person's approval.
+    ///
+    /// Off by default: a scheduled turn is read-only. On, it takes effect only
+    /// when the agent's tools are named explicitly
+    /// ([`ToolScopeSpec::Named`] or [`ToolScopeSpec::HostOnly`], never the
+    /// wildcard) and the job's target names this agent. Only the job's own
+    /// run is lifted: sub-agents it spawns stay read-only, and the autonomy
+    /// tier, TinySecurity's command analysis and protected-path floor, the
+    /// sandbox, the browser's allowed websites and its checkpoint before
+    /// payment still apply. Ignored in SaaS mode.
+    pub fn scheduled_actions(mut self, enabled: bool) -> Self {
+        self.scheduled_actions = Some(enabled);
         self
     }
 
@@ -351,6 +369,9 @@ impl AgentDefinitionSpec {
         if let Some(refresh) = self.refresh_prompt_on_resume {
             def.extensions.refresh_prompt_on_resume = refresh;
         }
+        if let Some(enabled) = self.scheduled_actions {
+            def.extensions.scheduled_actions = enabled;
+        }
         if let Some(block) = self.memory_block {
             def.extensions.memory_block = Some(
                 openhuman_core::agent_registry::host_definition::MemoryBlock {
@@ -447,6 +468,8 @@ impl AgentDefinitionSpec {
         def.subagents.clear();
         def.delegate_name = None;
         def.extensions.searches_connected_mcp = false;
+        // A delegate never carries the scheduled-actions opt-in.
+        def.extensions.scheduled_actions = false;
         Ok(def)
     }
 }

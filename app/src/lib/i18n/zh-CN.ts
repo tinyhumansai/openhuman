@@ -206,6 +206,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': '智能体与自主性',
   'settings.devGroups.automationIntegrations': '自动化与集成',
   'settings.tokenUsage.title': '令牌节省',
+  'settings.secretGrant.title': '允许 OpenHuman 解锁您保存的密钥吗？',
+  'settings.secretGrant.subtitle': '保存此设置需要您一次性批准对其加密。拒绝即可取消保存。',
   'settings.tokenUsage.menuDesc': '压缩设置以及它们已节省的令牌和美元数量',
   'settings.tokenUsage.saving': '正在保存…',
   'settings.tokenUsage.saved': '已保存',

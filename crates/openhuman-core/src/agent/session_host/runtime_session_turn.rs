@@ -117,6 +117,7 @@ impl OpenHumanSessionHost {
         let mut context = OpenHumanRunContext::new().with_host_env(&host_env);
         context.hosted_base = self.hosted_base.clone();
         context.headless_descendant_settlement = headless;
+        context.scheduled_actions = self.scheduled_actions;
         let headless_owner = headless.then(|| {
             crate::agent::tinyagents::tool_registration::subagent_owner_key(
                 &self.workspace_dir,

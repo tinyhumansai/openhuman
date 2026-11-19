@@ -9,6 +9,15 @@ use tinyagents_harness::ids::CallId;
 use tinyagents_harness::tool::ToolExecutionContext;
 use tinytools::{Tool, ToolCallOptions};
 
+/// A private folder to run jailed commands in: the jail's bwrap backend owns
+/// `/tmp` as a private mount and refuses a grant on `/tmp` itself.
+fn jail_workdir() -> std::path::PathBuf {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().expect("jailed command working folder"))
+        .path()
+        .to_path_buf()
+}
+
 #[test]
 fn a_call_yields_only_when_the_turn_moved_its_timeout() {
     let none = YieldRequest::from_args(&json!({"command": "ls", "timeout_secs": 60}));
@@ -99,10 +108,14 @@ fn a_backend_that_cannot_yield_takes_no_place() {
 }
 
 fn unsandboxed_policy() -> crate::sandbox::SandboxPolicy {
+    // The module canonicalizes the state folder before it runs a command, so it
+    // must exist, as the core's `workspace_dir` does in a booted host.
+    let state = jail_workdir().join("oh-shell-run-state");
+    std::fs::create_dir_all(&state).expect("shell run state folder");
     crate::sandbox::policy::route_for_mode(
         tinyagents_definition::SandboxMode::None,
-        &std::env::temp_dir(),
-        &std::env::temp_dir().join("oh-shell-run-state"),
+        &jail_workdir(),
+        &state,
         &crate::config::SandboxConfig::default(),
         &crate::config::RuntimeConfig::default(),
         false,
@@ -112,6 +125,9 @@ fn unsandboxed_policy() -> crate::sandbox::SandboxPolicy {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
+    let _storage = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
     let run = test_turn_run();
     let call = ToolExecutionContext::from_run_context(&run, CallId::new("c1"));
     let audit = Mutex::new(None);
@@ -124,7 +140,7 @@ async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
             allowed: true,
             requested: Some(1),
         },
-        &std::env::temp_dir(),
+        &jail_workdir(),
         Some(&call),
         None,
         &audit,
@@ -154,6 +170,9 @@ async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
+    let _storage = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
     let (_, result) = run_in_policy(
         &crate::core::runtime::DispatchCtx::unbound(),
         unsandboxed_policy(),
@@ -163,7 +182,7 @@ async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
             allowed: true,
             requested: Some(30),
         },
-        &std::env::temp_dir(),
+        &jail_workdir(),
         None,
         None,
         &Mutex::new(None),

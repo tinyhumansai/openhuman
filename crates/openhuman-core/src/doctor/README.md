@@ -29,6 +29,13 @@ contain sensitive data. A passing check uses “No action required.” as its hi
 | `connect` | Static checks and bounded, read-only connectivity probes. This is the default. | 10 seconds per check. |
 | `live` | Static and connect checks plus probes that may incur inference cost or write disposable remote test data. | 60 seconds per check. |
 
+The live chat and embedding probes build inspection-only models from the
+selected profile's frozen, read-only credential and send one fixed probe
+string. The doctor never loads TinySecurity, so these models carry no
+TinySecurity egress guard; instead the host's local-only privacy check runs
+before either probe is built, as it does for every other inference route.
+Ordinary inference and embedding traffic keeps the TinySecurity guard.
+
 The runner allows at most eight checks at once. Synchronous checks run on
 Tokio's blocking pool; async checks stay on the runtime. A timeout or failed
 worker becomes an error finding and does not stop sibling checks. Tier and

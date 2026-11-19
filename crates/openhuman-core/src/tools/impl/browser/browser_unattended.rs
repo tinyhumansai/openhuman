@@ -17,6 +17,7 @@ fn is_unattended(origin: &AgentTurnOrigin) -> bool {
         origin,
         AgentTurnOrigin::TrustedAutomation {
             source: TrustedAutomationSource::Cron
+                | TrustedAutomationSource::CronActions
                 | TrustedAutomationSource::Background
                 | TrustedAutomationSource::Workflow {
                     require_approval: false
@@ -40,6 +41,8 @@ fn unattended_kind(
 }
 
 /// Whether a turn with `origin` may take `kind` without the approval gate.
+/// Test-only: production decides through [`allow`], which also logs.
+#[cfg(test)]
 pub(super) fn allowed_for(
     origin: Option<&AgentTurnOrigin>,
     browser: &BrowserConfig,

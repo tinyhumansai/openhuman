@@ -261,7 +261,7 @@ pub fn user_rpc_with(
     method: &str,
     params: Value,
 ) -> (u16, Value) {
-    use openhuman_core::profiles::gateway::{sign, USER_HEADER, USER_SIG_HEADER};
+    use openhuman_rpc::server::saas_gateway::{sign, USER_HEADER, USER_SIG_HEADER};
     let signature = sig
         .map(str::to_owned)
         .unwrap_or_else(|| sign(BEARER, user, now()));
@@ -307,7 +307,7 @@ pub fn thread_ids(body: &Value) -> Vec<String> {
 
 /// Open `/events?client_id=` for `user` and forward each SSE `data:` line.
 pub fn user_events(base: &str, user: &str, client_id: &str) -> std::sync::mpsc::Receiver<String> {
-    use openhuman_core::profiles::gateway::{sign, USER_HEADER, USER_SIG_HEADER};
+    use openhuman_rpc::server::saas_gateway::{sign, USER_HEADER, USER_SIG_HEADER};
     use std::io::BufRead;
     let (tx, rx) = std::sync::mpsc::channel();
     let url = format!("{base}/events?client_id={client_id}");

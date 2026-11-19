@@ -11,7 +11,7 @@ use tinywallet_bus::wire::{NativeWalletServiceRequest, NativeWalletTransactionRe
 pub use tinywallet_bus::wire::{
     BalanceInfo, ChainStatus, ExecutePreparedParams, ExecutionResult, PrepareTransferParams,
     PreparedKind, PreparedStatus, PreparedTransaction, ProviderStatus, SupportedAsset,
-    TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
+    TokenBalanceInfo, TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
 };
 
 use tinywallet_bus::wire::{EvmNetwork, WalletNetworkDefaults};
@@ -96,6 +96,26 @@ pub async fn balances(ctx: &DispatchCtx) -> Result<Outcome<Vec<BalanceInfo>>, St
     ))
 }
 
+/// Live balances of the catalogued tokens (the cluster's USDC SPL mint on
+/// Solana), read by the module (`NativeWalletTokenBalances`, contract 1.15).
+pub async fn token_balances(ctx: &DispatchCtx) -> Result<Outcome<Vec<TokenBalanceInfo>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_TOKEN_BALANCES,
+            NativeWalletServiceRequest { service },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(Outcome::new(
+        result,
+        vec!["wallet token balances listed".to_string()],
+    ))
+}
+
 /// Validate a transfer and store a quote for it.
 pub async fn prepare_transfer(
     ctx: &DispatchCtx,
@@ -112,14 +132,26 @@ pub async fn prepare_transfer(
     ))
 }
 
-/// Confirm and execute a prepared transfer.
+/// Confirm and execute a prepared transfer from the wallet UI's RPC, where a
+/// person pressed confirm (an interactive execute under the spend policy).
 pub async fn execute_prepared(
     ctx: &DispatchCtx,
     params: ExecutePreparedParams,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<Outcome<ExecutionResult>, String> {
+    execute_prepared_as(ctx, params, owner, super::policy::ExecutionOrigin::rpc()).await
+}
+
+/// Confirm and execute a prepared transfer for `origin`, through the spend
+/// policy and ledger (`super::policy`).
+pub async fn execute_prepared_as(
+    ctx: &DispatchCtx,
+    params: ExecutePreparedParams,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
+    origin: super::policy::ExecutionOrigin,
+) -> Result<Outcome<ExecutionResult>, String> {
     let config = ctx.load_config().await?;
-    let result = wallet_service::execute_native_transfer(ctx, &config, owner, params)
+    let result = wallet_service::execute_native_transfer(ctx, &config, owner, params, origin)
         .await
         .map_err(|error| error.to_string())?;
     Ok(Outcome::new(

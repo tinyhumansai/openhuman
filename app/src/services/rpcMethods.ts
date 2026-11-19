@@ -1,4 +1,5 @@
 export const CORE_RPC_METHODS = {
+  agentRegistryAvailableTools: 'openhuman.agent_registry_available_tools',
   authClearCredential: 'openhuman.auth_clear_credential',
   authGetSessionToken: 'openhuman.auth_get_session_token',
   authGetState: 'openhuman.auth_get_state',

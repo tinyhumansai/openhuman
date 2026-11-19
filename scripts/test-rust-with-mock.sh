@@ -90,7 +90,7 @@ local_source_ids=()
 if local_module_source_is_source; then
   local_source_ids+=(tinyconnectors tinyflows tinyjuice tinysearch tinyhosts tinymcp)
 else
-  for released_id in tinychannels tinyflows tinyjuice tinysearch; do
+  for released_id in tinychannels tinyflows tinyjuice tinysearch tinyeventqueues; do
     released_dir="$(stage_release_module "$released_id" "$wallet_platform" "$module_ext")"
     if [ "$released_id" = "tinychannels" ]; then
       tinychannels_dir="$released_dir"
@@ -105,6 +105,13 @@ fi
 if local_module_source_is_source; then
   released_dir="$(stage_release_module tinychannels "$wallet_platform" "$module_ext")"
   tinychannels_dir="$released_dir"
+  export OPENHUMAN_MODULE_PATH="$released_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
+fi
+
+# inbound_module_e2e loads the TinyEventQueues release in either mode; it is
+# not among the modules built from source above.
+if local_module_source_is_source; then
+  released_dir="$(stage_release_module tinyeventqueues "$wallet_platform" "$module_ext")"
   export OPENHUMAN_MODULE_PATH="$released_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
 fi
 
@@ -394,6 +401,10 @@ run_full_suite() {
       run_in_process_modules "$@"
     elif [[ "$target" =~ ^json_rpc_.*_e2e$ ]]; then
       run_json_rpc_e2e "$target" "$@"
+    elif [ "$target" = "inbound_module_e2e" ]; then
+      # Outside the product set (e2e-test-support); it loads the staged
+      # TinyEventQueues release from OPENHUMAN_MODULE_PATH (#8155).
+      cargo_test --features modules,inbound-queues,e2e-test-support --test "$target" -- "$@"
     elif [ "$target" = "tinymcp_storage_smoke_e2e" ]; then
       OPENHUMAN_MODULE_PATH="$tinymcp_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}" \
         cargo_test --features e2e-test-support --test "$target" -- "$@"

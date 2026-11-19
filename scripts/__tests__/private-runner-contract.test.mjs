@@ -12,6 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { classifyElf } from "../ci/self-hosted/verify-linkage.mjs";
+import {
+  assertGithubHostedRunners,
+  jobBlock,
+} from "../ci/workflow-contract.mjs";
 
 const helper = new URL("../ci/self-hosted/verify-runner.sh", import.meta.url);
 const pin = readFileSync(
@@ -47,12 +51,44 @@ test("every PR runs the hosted lanes, with nothing routing it to another runner"
   assert.match(hosted, /^  pull_request:$/m);
   assert.match(hosted, /uses: \.\/\.github\/workflows\/ci-lanes\.yml/);
   // A condition or dependency on the lanes job can skip them, and the gate
-  // never counts a skipped job as a pass.
-  const lanesJob = hosted.slice(hosted.indexOf("  lanes:"));
+  // never counts a skipped job as a pass. jobBlock throws when the job is
+  // missing, so renaming it cannot make these checks vacuous.
+  const lanesJob = jobBlock(hosted, "lanes");
   assert.doesNotMatch(lanesJob, /^    (if|needs):/m);
   assert.doesNotMatch(hosted, /ci-fast-route/);
   assert.equal(existsSync(new URL("ci-fast.yml", root)), false);
-  assert.doesNotMatch(lanes, /runs-on:\s*\n?\s*(group|\[self-hosted)|openhuman-ex63/);
+  assertGithubHostedRunners(lanes);
+  assert.doesNotMatch(lanes, /openhuman-ex63/);
+});
+
+test("the workflow contract helpers fail loudly instead of passing vacuously", () => {
+  const renamed = "jobs:\n  gate:\n    if: false\n    name: Lanes\n";
+  assert.throws(() => jobBlock(renamed, "lanes"), /no job "lanes"/);
+  // The block of a job stops at the next job, so a sibling's condition is not
+  // attributed to it.
+  const two = "jobs:\n  lanes:\n    name: L\n  other:\n    if: false\n";
+  assert.doesNotMatch(jobBlock(two, "lanes"), /if:/);
+  assert.match(jobBlock(two, "other"), /if: false/);
+  const wrap = (runsOn) => `jobs:\n  a:\n    runs-on: ${runsOn}\n`;
+  for (const ok of ["ubuntu-latest", "ubuntu-22.04", "windows-2022", "macos-15"])
+    assert.doesNotThrow(() => assertGithubHostedRunners(wrap(ok)), ok);
+  for (const bad of [
+    "self-hosted",
+    "[ self-hosted, linux ]",
+    "[self-hosted]",
+    "openhuman-ex63",
+    "{ group: private }",
+    "${{ inputs.runner }}",
+  ])
+    assert.throws(() => assertGithubHostedRunners(wrap(bad)), /runs-on/, bad);
+  assert.throws(
+    () => assertGithubHostedRunners("jobs:\n  a:\n    runs-on:\n      group: x\n"),
+    /runs-on/,
+  );
+  assert.throws(
+    () => assertGithubHostedRunners("jobs:\n  a:\n    name: no runner\n"),
+    /no runs-on/,
+  );
 });
 
 test("mold proof distinguishes instrumented binaries from ordinary executables", () => {

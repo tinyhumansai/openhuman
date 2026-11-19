@@ -63,7 +63,6 @@ async fn measure(count: usize) -> anyhow::Result<()> {
     let mut config = openhuman_embed::RuntimeConfig::default();
     config.local_ai.runtime_enabled = false;
     config.memory.conversations.enabled = false;
-    config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;
     config.default_temperature = 0.0;
     let before_boot = rss_kib()?;

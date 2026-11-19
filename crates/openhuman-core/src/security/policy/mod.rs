@@ -8,6 +8,7 @@ mod native_paths;
 mod path_checks;
 
 mod types;
+mod workspace_scope;
 
 pub use module_gate::{host_action_class, PathKind};
 #[cfg(test)]
@@ -22,6 +23,7 @@ pub use types::{
     tool_result_artifacts_dir, AutonomyLevel, CommandClass, GateDecision, SecurityPolicy,
     ToolOperation, TrustedAccess, TrustedRoot,
 };
+pub use workspace_scope::scoped_to_workspace;
 
 #[cfg(test)]
 use std::path::PathBuf;

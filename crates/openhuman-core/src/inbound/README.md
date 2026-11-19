@@ -23,6 +23,7 @@ Two kinds of event take this path:
 | [`settings.rs`](./settings.rs) | `[inbound]` resolved: queues, pipeline (with one policy per external source first), backend, whether routing is on |
 | [`events.rs`](./events.rs) | a trigger envelope or an external event as an `InboundEvent`, and back |
 | [`route.rs`](./route.rs) | the hand-off; the direct path when the queues do not take an event |
+| [`claims.rs`](./claims.rs) | who runs an event whose hand-off was ambiguous: the direct path or `Deliver`, never both; direct-path events recorded in `inbound.direct` (30 days) |
 | [`deliver.rs`](./deliver.rs) | `Deliver` and `ClassifySalience`: triage or the pinned agent, ack semantics, retries, dead letters |
 | [`pinned.rs`](./pinned.rs) | rendering a batch's prompt, running the pinned agent under `external_inbound_origin`, resuming unfinished turns at boot |
 | [`results.rs`](./results.rs) | pinned turns' results: `running`, `completed`, `failed`; listing, ack, TTL pruning |

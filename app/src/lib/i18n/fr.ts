@@ -227,6 +227,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agents et autonomie',
   'settings.devGroups.automationIntegrations': 'Automatisation et intégrations',
   'settings.tokenUsage.title': 'Économies de tokens',
+  'settings.secretGrant.title': 'Autoriser OpenHuman à déverrouiller vos secrets enregistrés ?',
+  'settings.secretGrant.subtitle':
+    "L'enregistrement de ce paramètre nécessite votre approbation ponctuelle pour le chiffrer. Refusez pour annuler l'enregistrement.",
   'settings.tokenUsage.menuDesc':
     'Paramètres de compression et combien de tokens et de dollars ils ont économisés',
   'settings.tokenUsage.saving': 'Enregistrement…',

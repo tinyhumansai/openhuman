@@ -9,6 +9,21 @@ use crate::security::secret_storage::SecretStore;
 
 use super::LOCK_FILENAME;
 
+/// Whether profile secrets go to TinySecurity's keyring for this
+/// `OPENHUMAN_KEYRING_BACKEND` selection. Every keyring operation there waits
+/// for a human to approve it, so an operator who chose a `file`,
+/// `encrypted_file` or `memory` keyring (a headless core: no OS keyring and no
+/// one to answer the prompt) keeps them in the encrypted profile document
+/// instead. Otherwise each write waited out the prompt and was refused.
+fn keyring_selected_for_profiles(selection: Option<&str>) -> bool {
+    use crate::security::secret_storage::store::{backend_kind_from_env_value, BackendKind};
+
+    !matches!(
+        selection.and_then(backend_kind_from_env_value),
+        Some(BackendKind::File | BackendKind::EncryptedFile | BackendKind::Memory)
+    )
+}
+
 impl AuthProfilesStore {
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         Self::construct(state_dir, encrypt_secrets, None)
@@ -38,7 +53,11 @@ impl AuthProfilesStore {
         security_config: Option<crate::config::Config>,
     ) -> Self {
         let user_id = super::user_id_from_state_dir(state_dir);
-        let use_keychain = security_config.is_some() && cfg!(feature = "security-module");
+        let use_keychain = security_config.is_some()
+            && cfg!(feature = "security-module")
+            && keyring_selected_for_profiles(
+                std::env::var("OPENHUMAN_KEYRING_BACKEND").ok().as_deref(),
+            );
         log::debug!(
             "[auth] AuthProfilesStore::new state_dir={} user_id={user_id} use_keychain={use_keychain}",
             state_dir.display()
@@ -48,6 +67,7 @@ impl AuthProfilesStore {
             |config| SecretStore::new_with_config(state_dir, encrypt_secrets, config),
         );
         Self {
+            state_dir: state_dir.to_path_buf(),
             path: super::profiles_file(state_dir),
             legacy_path: super::legacy_profiles_file(state_dir),
             lock_path: state_dir.join(LOCK_FILENAME),
@@ -67,13 +87,14 @@ impl AuthProfilesStore {
     /// are published atomically, so this snapshot stays internally consistent.
     pub async fn load(&self) -> Result<AuthProfilesData> {
         let (persisted, can_publish) = match self.acquire_read_lock()? {
-            Some(_lock) => (self.read_persisted_locked()?, true),
+            Some(lock) => (self.read_persisted(&lock)?, true),
             None => {
                 log::warn!(
                     "[auth] profile lease unavailable on a full or read-only filesystem; \
                      serving a lock-free read-only snapshot"
                 );
-                (self.read_persisted_locked()?, false)
+                let lock = super::lock::AuthProfileLockGuard::lock_free();
+                (self.read_persisted(&lock)?, false)
             }
         };
         let before = serde_json::to_vec(&persisted).context("serialize auth profile snapshot")?;
@@ -93,10 +114,10 @@ impl AuthProfilesStore {
     ) -> Result<()> {
         let candidate = serde_json::to_vec(cleaned).context("serialize cleaned auth profiles")?;
         if candidate != expected {
-            let _lock = self.acquire_lock()?;
-            let current = self.read_persisted_locked()?;
+            let lock = self.acquire_lock()?;
+            let current = self.read_persisted(&lock)?;
             if serde_json::to_vec(&current)? == expected {
-                self.write_persisted_locked(cleaned)?;
+                self.write_persisted(&lock, cleaned)?;
             }
         }
         Ok(())
@@ -104,8 +125,8 @@ impl AuthProfilesStore {
 
     async fn snapshot(&self) -> Result<(PersistedAuthProfiles, Vec<u8>)> {
         let persisted = {
-            let _lock = self.acquire_lock()?;
-            self.read_persisted_locked()?
+            let lock = self.acquire_lock()?;
+            self.read_persisted(&lock)?
         };
         let version = serde_json::to_vec(&persisted).context("serialize auth profile snapshot")?;
         Ok((persisted, version))
@@ -120,14 +141,14 @@ impl AuthProfilesStore {
         // Cipher operations can ask the operator for consent. Prepare the
         // candidate document before reacquiring the non-Send local lease.
         let persisted = self.prepare_persisted(data, previous).await?;
-        let _lock = self.acquire_lock()?;
-        let current = self.read_persisted_locked()?;
+        let lock = self.acquire_lock()?;
+        let current = self.read_persisted(&lock)?;
         let current_version =
             serde_json::to_vec(&current).context("serialize current auth profile snapshot")?;
         if current_version != expected_version {
             return Ok(false);
         }
-        self.write_persisted_locked(&persisted)?;
+        self.write_persisted(&lock, &persisted)?;
         Ok(true)
     }
 
@@ -185,12 +206,12 @@ impl AuthProfilesStore {
                     .retain(|_, active| active != profile_id);
                 candidate.updated_at = Utc::now().to_rfc3339();
                 {
-                    let _lock = self.acquire_lock()?;
-                    let current = serde_json::to_vec(&self.read_persisted_locked()?)?;
+                    let lock = self.acquire_lock()?;
+                    let current = serde_json::to_vec(&self.read_persisted(&lock)?)?;
                     if current != version {
                         continue;
                     }
-                    self.write_persisted_locked(&candidate)?;
+                    self.write_persisted(&lock, &candidate)?;
                 }
                 if keyring_owned {
                     if let Err(error) = self.keychain_delete_secrets(profile_id).await {
@@ -233,8 +254,8 @@ impl AuthProfilesStore {
         persisted_before: &PersistedAuthProfiles,
         delete_error: anyhow::Error,
     ) -> Result<bool> {
-        let _lock = self.acquire_lock()?;
-        let mut current = self.read_persisted_locked()?;
+        let lock = self.acquire_lock()?;
+        let mut current = self.read_persisted(&lock)?;
         if !current.profiles.contains_key(profile_id) {
             if let Some(profile) = persisted_before.profiles.get(profile_id) {
                 current
@@ -249,7 +270,7 @@ impl AuthProfilesStore {
                     }
                 }
                 current.updated_at = Utc::now().to_rfc3339();
-                self.write_persisted_locked(&current)?;
+                self.write_persisted(&lock, &current)?;
             }
         }
         Err(delete_error.context("profile removal was not completed"))

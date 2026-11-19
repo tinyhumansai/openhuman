@@ -658,3 +658,6 @@ async fn an_agent_without_a_memory_block_has_nothing_to_prewarm() {
 
 #[path = "memory_block_invalidation_tests.rs"]
 mod invalidation;
+
+#[path = "memory_block_voiding_tests.rs"]
+mod voiding;

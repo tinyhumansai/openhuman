@@ -2,9 +2,8 @@
 //! function, plus the field-shape helpers they are built from.
 
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use crate::inference::schema_fields::{
-    json_output, optional_string, optional_u64, required_string,
-};
+use crate::inference::schema_fields::optional_u64;
+use crate::util::params::{json_output, optional_string, required_string};
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
@@ -132,6 +131,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_bool(
                     "checkpoint",
                     "Keep the previous local settings in the core and add a `checkpoint_id` to the snapshot, so a failed connection check can undo this save with rollback_local_settings.",
+                ),
+                optional_bool(
+                    "native_tool_calling",
+                    "Whether the local provider gets native tools instead of the text tool protocol.",
                 ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],

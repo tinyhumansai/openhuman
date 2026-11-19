@@ -4,12 +4,13 @@
 //! `set_api_key`, `clear_api_key`.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::ControllerFuture;
 use crate::integrations::composio::ops;
 
-use super::util::{read_optional, read_required_non_empty, to_json};
+use super::util::{read_optional, read_required_non_empty};
 
 pub(super) fn handle_list_toolkits(
     ctx: DispatchCtx,

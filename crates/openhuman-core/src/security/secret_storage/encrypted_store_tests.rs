@@ -73,3 +73,23 @@ fn keyring_user_id_uses_directory_name_or_stable_hash() {
     assert_eq!(first, keyring_user_id_from_dir(Path::new("/")));
     assert!(first.starts_with("secretstore-path-"));
 }
+
+/// The first cipher call in a process must admit the module itself. Reading the
+/// secret scope first reported an unavailable scope on every embedder that had
+/// not loaded TinySecurity some other way (`--example profiles`).
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_first_cipher_call_admits_the_module_before_it_reads_the_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    let store = SecretStore::new_with_config(dir.path(), true, &config);
+
+    let outcome = store.encrypt_via_security("first-call").await;
+
+    if let Err(error) = outcome {
+        assert!(
+            !error.to_string().contains("secret scope is unavailable"),
+            "{error}"
+        );
+    }
+}

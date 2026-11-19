@@ -93,32 +93,6 @@ impl Default for SearxngConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct WebSearchConfig {
-    #[serde(default = "default_web_search_max_results")]
-    pub max_results: usize,
-    #[serde(default = "default_web_search_timeout_secs")]
-    pub timeout_secs: u64,
-}
-
-fn default_web_search_max_results() -> usize {
-    5
-}
-
-fn default_web_search_timeout_secs() -> u64 {
-    15
-}
-
-impl Default for WebSearchConfig {
-    fn default() -> Self {
-        Self {
-            max_results: default_web_search_max_results(),
-            timeout_secs: default_web_search_timeout_secs(),
-        }
-    }
-}
-
 // ── Search providers ────────────────────────────────────────────────
 //
 // Several providers can be active at once. Each provider has a route —
@@ -146,8 +120,14 @@ pub(crate) const SEARCH_SCHEMA_PROVIDERS: u32 = 2;
 pub const SEARCH_ROLE_SEARCH: &str = "search";
 pub const SEARCH_ROLE_ANSWER: &str = "answer";
 pub const SEARCH_ROLE_CONTENTS: &str = "contents";
-/// Capability roles, in display order.
-pub const SEARCH_ROLES: &[&str] = &[SEARCH_ROLE_SEARCH, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS];
+pub const SEARCH_ROLE_IMAGES: &str = "images";
+/// Capability roles, in display order: every `tinysearch_bus::Role`, by its key.
+pub const SEARCH_ROLES: &[&str] = &[
+    SEARCH_ROLE_SEARCH,
+    SEARCH_ROLE_ANSWER,
+    SEARCH_ROLE_CONTENTS,
+    SEARCH_ROLE_IMAGES,
+];
 
 /// Providers the host can configure — the TinySearch catalog.
 pub const SEARCH_PROVIDERS: &[&str] = tinysearch_bus::PROVIDERS;

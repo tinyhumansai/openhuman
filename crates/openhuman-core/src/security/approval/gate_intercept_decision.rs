@@ -31,7 +31,7 @@ impl ApprovalGate {
                     "[approval::gate] decision received"
                 );
                 if decision.is_approve() {
-                    if tool_name == "native_secret_grant" {
+                    if tool_name == NATIVE_SECRET_GRANT_TOOL {
                         // TinySecurity's ExecuteSecret2 consumes the native
                         // HumanOnce grant itself; a generic approval reservation
                         // would consume the row before the module can verify it.
@@ -244,6 +244,21 @@ impl ApprovalGate {
             agent_id: route.agent_id.clone(),
         });
     }
+}
+
+/// Whether a forced approval for `tool_name` may park without a chat route.
+///
+/// Only the native secret master grant may, and only when nothing remote or
+/// automated asked for it: a Settings RPC (no turn, `Unknown`), the CLI or a
+/// direct local chat. A scheduled job, a background task, a workflow or an
+/// external channel still fails closed, because the person who would see the
+/// prompt did not start the action behind it.
+pub(crate) fn secret_grant_parks_unrouted(tool_name: &str, origin: &AgentTurnOrigin) -> bool {
+    tool_name == NATIVE_SECRET_GRANT_TOOL
+        && matches!(
+            origin,
+            AgentTurnOrigin::Unknown | AgentTurnOrigin::Cli | AgentTurnOrigin::DirectChat
+        )
 }
 
 /// Whether this SaaS call can ask the user through its authenticated WebChat

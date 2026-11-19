@@ -140,7 +140,7 @@ impl EventHandler<DomainEvent> for WebhookRequestSubscriber {
                     let spawner = ctx.clone();
                     spawner.spawn(async move {
                         let config = ctx.load_config().await.ok();
-                        let queued = route_agent_trigger(
+                        let routed = route_agent_trigger(
                             config,
                             &envelope,
                             &corr,
@@ -148,12 +148,13 @@ impl EventHandler<DomainEvent> for WebhookRequestSubscriber {
                             None,
                         )
                         .await;
-                        if !queued {
+                        if let AgentRoute::Direct(on_handled) = routed {
                             triage_agent_directly(
                                 ctx,
                                 envelope,
                                 corr,
                                 Arc::new(crate::triage::RemoteTriage),
+                                on_handled,
                             );
                         }
                     });
@@ -261,30 +262,44 @@ impl EventHandler<DomainEvent> for WebhookRequestSubscriber {
     }
 }
 
-/// Queue an agent webhook in the inbound event queues. `true` when they own
-/// it; `false` when the caller triages it directly. `client` reaches the
-/// queues module (`None`: the configured module client).
+/// Told, when the direct path ends, whether it handled the webhook.
+pub(super) type OnHandled = Box<dyn FnOnce(bool) + Send>;
+
+/// Where an agent webhook went.
+pub(super) enum AgentRoute {
+    /// The inbound event queues own it.
+    Queued,
+    /// The caller triages it directly, telling `on_handled` (when the queues
+    /// may hold it too) whether it handled it.
+    Direct(Option<OnHandled>),
+}
+
+/// Queue an agent webhook in the inbound event queues, or say it is the
+/// caller's to triage directly. `client` reaches the queues module (`None`:
+/// the configured module client).
 pub(super) async fn route_agent_trigger(
     config: Option<crate::config::Config>,
     envelope: &crate::triage::TriggerEnvelope,
     correlation_id: &str,
     #[cfg(feature = "inbound-queues")] client: Option<tinybus::module::ModuleClient>,
-) -> bool {
+) -> AgentRoute {
     #[cfg(feature = "inbound-queues")]
     if let Some(config) = config.as_ref() {
         match crate::inbound::events::webhook(envelope, correlation_id) {
             Ok(event) => {
                 let client = client.unwrap_or_else(|| crate::modules::ops::client(config.clone()));
-                if crate::inbound::route::offer(config, &client, event)
-                    .await
-                    .is_queued()
-                {
+                let (offered, claim) =
+                    crate::inbound::route::offer_or_direct(config, &client, event).await;
+                if offered.is_queued() {
                     tracing::debug!(
                         correlation_id = %correlation_id,
                         "[webhook] handed to the inbound event queues"
                     );
-                    return true;
+                    return AgentRoute::Queued;
                 }
+                return AgentRoute::Direct(
+                    claim.map(|claim| Box::new(move |handled| claim.finish(handled)) as OnHandled),
+                );
             }
             Err(why) => tracing::info!(
                 correlation_id = %correlation_id,
@@ -295,16 +310,18 @@ pub(super) async fn route_agent_trigger(
     }
     #[cfg(not(feature = "inbound-queues"))]
     let _ = (config, envelope, correlation_id);
-    false
+    AgentRoute::Direct(None)
 }
 
 /// Triage an agent webhook in its own task and emit the result as a second
-/// webhook response: the direct path.
+/// webhook response: the direct path. `on_handled` hears whether the agent
+/// answered.
 pub(super) fn triage_agent_directly(
     ctx: crate::core::runtime::DispatchCtx,
     envelope: crate::triage::TriggerEnvelope,
     corr: String,
     runner: Arc<dyn crate::triage::TriageRunner>,
+    on_handled: Option<OnHandled>,
 ) -> tokio::task::JoinHandle<()> {
     // Spawn the triage pipeline so we don't block the broadcast channel's
     // dispatch task during LLM calls.
@@ -313,8 +330,11 @@ pub(super) fn triage_agent_directly(
             run_agent_trigger(&ctx, &envelope, runner.as_ref()).await
         })
         .await;
+        if let Some(on_handled) = on_handled {
+            on_handled(matches!(result, Ok(Ok((_, true)))));
+        }
         let (resp, err) = match result {
-            Ok(Ok(output)) => (build_agent_response(&corr, 200, &output), None),
+            Ok(Ok((output, _))) => (build_agent_response(&corr, 200, &output), None),
             Ok(Err(e)) => {
                 crate::core::observability::report_error(
                     e.as_str(),
@@ -380,12 +400,13 @@ fn decode_webhook_body(base64_body: &str) -> Result<serde_json::Value, String> {
 }
 
 /// Run the triage pipeline for a trigger envelope and return the
-/// human-readable decision summary on success.
+/// human-readable decision summary on success, with whether it handled the
+/// webhook (a decision applied, or a terminal triage; not a deferral).
 async fn run_agent_trigger(
     ctx: &crate::core::runtime::DispatchCtx,
     envelope: &crate::triage::TriggerEnvelope,
     runner: &dyn crate::triage::TriageRunner,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> {
     let outcome = runner
         .run(ctx, envelope)
         .await
@@ -401,18 +422,24 @@ async fn run_agent_trigger(
                 .await
                 .map_err(|e| format!("apply_decision failed: {e}"))?;
 
-            Ok(format!(
-                "Triage decision: {} (agent: {:?})",
-                run.decision.action.as_str(),
-                run.decision.target_agent
+            Ok((
+                format!(
+                    "Triage decision: {} (agent: {:?})",
+                    run.decision.action.as_str(),
+                    run.decision.target_agent
+                ),
+                true,
             ))
         }
         crate::triage::TriageOutcome::Deferred {
             defer_until_ms,
             reason,
-        } => Ok(format!("Triage deferred until {defer_until_ms}: {reason}")),
+        } => Ok((
+            format!("Triage deferred until {defer_until_ms}: {reason}"),
+            false,
+        )),
         crate::triage::TriageOutcome::Terminal { reason } => {
-            Ok(format!("Triage reached terminal state: {reason}"))
+            Ok((format!("Triage reached terminal state: {reason}"), true))
         }
     }
 }

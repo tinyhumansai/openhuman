@@ -179,6 +179,7 @@ fn a_parent_can_keep_python_buffering_with_an_empty_value() {
 
 #[tokio::test]
 async fn a_spawned_shell_gets_unbuffered_python_output() {
+    let _storage = native_shell_storage();
     // A developer's own setting wins, so expect it when present.
     let expected = std::env::var("PYTHONUNBUFFERED").unwrap_or_else(|_| "1".to_string());
     let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime(), test_audit());
@@ -197,6 +198,7 @@ async fn a_spawned_shell_gets_unbuffered_python_output() {
 
 #[tokio::test]
 async fn a_spawned_shell_sees_the_python_utf8_defaults() {
+    let _storage = native_shell_storage();
     // A developer's own setting wins, so expect it when present.
     let expected = std::env::var("PYTHONUTF8").unwrap_or_else(|_| "1".to_string());
     let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime(), test_audit());

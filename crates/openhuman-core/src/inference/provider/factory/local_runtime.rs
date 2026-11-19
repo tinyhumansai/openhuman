@@ -5,7 +5,7 @@ use super::*;
 use crate::inference::provider::factory::access_gates::{
     enforce_local_only_endpoint, is_loopback_endpoint, is_ollama_cloud_model, LocalOnlyRequestGuard,
 };
-use tinyinference_llm::providers::openai::build_local_runtime_chat_model;
+use tinyinference_llm::providers::openai::build_local_runtime_chat_model_with_native_tools;
 use tinyinference_llm::providers::openai::AuthStyle as CompatAuthStyle;
 
 /// Local OpenAI-compatible runtimes (Ollama / LM Studio / MLX / OMLX /
@@ -153,7 +153,7 @@ fn try_create_local_runtime_chat_model_from_string_with_identity(
         "[chat-factory] local runtime resolved slug={}",
         resolved.kind.as_str()
     );
-    let chat = build_local_runtime_chat_model(
+    let chat = build_local_runtime_chat_model_with_native_tools(
         resolved.kind.as_str(),
         &resolved.endpoint,
         &resolved.api_key,
@@ -162,6 +162,7 @@ fn try_create_local_runtime_chat_model_from_string_with_identity(
         &config.temperature_unsupported_models,
         resolved.temperature,
         resolved.num_ctx,
+        config.local_ai.native_tool_calling,
     );
     let chat: Arc<dyn ChatModel<()>> = Arc::new(LocalOnlyRequestGuard {
         inner: chat,

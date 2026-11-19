@@ -132,3 +132,70 @@ fn progressive_delivery_status_rejects_partial_or_unsupported_terminal_results()
     };
     assert!(!delivery_succeeded(&unsupported));
 }
+
+#[test]
+fn progressive_delivery_failure_kinds_name_sanitized_causes_only() {
+    use tinychannels_bus::channel::{ChannelSendError, ChannelSendOutcome, SendErrorKind};
+    use tinychannels_bus::module_progressive::{ProgressiveOutputFailure, ProgressiveResult};
+
+    fn outcome(kind: Option<SendErrorKind>) -> ChannelSendOutcome {
+        ChannelSendOutcome {
+            receipt: Default::default(),
+            error: kind.map(|kind| ChannelSendError {
+                kind,
+                message: "provider said something sensitive".into(),
+                ..Default::default()
+            }),
+        }
+    }
+
+    let failed_outcome = ProgressiveResult::DeliveryOutcome {
+        outcome: Box::new(outcome(Some(SendErrorKind::Transient))),
+    };
+    assert_eq!(delivery_failure_kinds(&failed_outcome), ["transient"]);
+
+    let failed_outcomes = ProgressiveResult::DeliveryOutcomes {
+        outcomes: vec![
+            outcome(Some(SendErrorKind::RateLimited)),
+            outcome(Some(SendErrorKind::Transient)),
+            outcome(Some(SendErrorKind::RateLimited)),
+            outcome(None),
+        ],
+    };
+    assert_eq!(
+        delivery_failure_kinds(&failed_outcomes),
+        ["rate_limited", "transient"]
+    );
+
+    let batch = ProgressiveResult::DeliveryBatch {
+        outcomes: vec![outcome(Some(SendErrorKind::Forbidden))],
+        unsupported: vec![tinychannels_bus::channel::OutboundContentPart::Content {
+            part: tinychannels_bus::channel::ContentPart::Text {
+                text: "retained content".into(),
+                markdown_dialect: None,
+            },
+        }],
+        failure: Some(ProgressiveOutputFailure::ProviderTransport),
+        hosted_accepted: false,
+    };
+    assert_eq!(
+        delivery_failure_kinds(&batch),
+        ["forbidden", "unsupported_parts", "provider_transport"]
+    );
+
+    let unsupported = ProgressiveResult::DeliveryUnsupported {
+        parts: vec![tinychannels_bus::channel::OutboundContentPart::Content {
+            part: tinychannels_bus::channel::ContentPart::Text {
+                text: "retained content".into(),
+                markdown_dialect: None,
+            },
+        }],
+    };
+    assert_eq!(delivery_failure_kinds(&unsupported), ["unsupported_parts"]);
+
+    let clean_outcome = ProgressiveResult::DeliveryOutcome {
+        outcome: Box::new(outcome(None)),
+    };
+    assert!(delivery_failure_kinds(&clean_outcome).is_empty());
+    assert!(delivery_failure_kinds(&ProgressiveResult::Updated).is_empty());
+}

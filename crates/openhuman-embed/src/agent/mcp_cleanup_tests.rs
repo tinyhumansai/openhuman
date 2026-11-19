@@ -239,10 +239,15 @@ fn a_failed_purge_fences_the_same_directory_after_its_original_runtime_is_gone()
     executor.block_on(async {
         tokio::spawn(async {
             let scratch = tempfile::tempdir().unwrap();
+            // `Workspace::Dir` keeps credentials (`config.toml`, `core.token`,
+            // the secret store) in the workspace's *parent*. Name a child of
+            // the private scratch directory: the temp root itself is shared
+            // and world-writable, which the secret store refuses to admit.
+            let workspace = scratch.path().join("workspace");
             let make_runtime = || {
                 crate::Runtime::builder()
                     .config(openhuman_core::config::Config::default())
-                    .workspace(crate::Workspace::Dir(scratch.path().into()))
+                    .workspace(crate::Workspace::Dir(workspace.clone()))
                     .access(crate::Access::full())
             };
             let spec = || {
@@ -255,7 +260,7 @@ fn a_failed_purge_fences_the_same_directory_after_its_original_runtime_is_gone()
             };
             let runtime = make_runtime().build().await.unwrap();
             let agent = runtime.agent(spec()).unwrap();
-            let home = scratch.path().join("agents/worker");
+            let home = workspace.join("agents/worker");
             std::fs::remove_dir_all(&home).unwrap();
             std::fs::write(&home, "force purge failure").unwrap();
             // No MCP entry means close is already confirmed. This pins the
@@ -301,9 +306,14 @@ fn repairing_and_retrying_purge_on_the_original_runtime_releases_the_directory()
     executor.block_on(async {
         tokio::spawn(async {
             let scratch = tempfile::tempdir().unwrap();
+            // `Workspace::Dir` keeps credentials (`config.toml`, `core.token`,
+            // the secret store) in the workspace's *parent*. Name a child of
+            // the private scratch directory: the temp root itself is shared
+            // and world-writable, which the secret store refuses to admit.
+            let workspace = scratch.path().join("workspace");
             let runtime = crate::Runtime::builder()
                 .config(openhuman_core::config::Config::default())
-                .workspace(crate::Workspace::Dir(scratch.path().into()))
+                .workspace(crate::Workspace::Dir(workspace.clone()))
                 .access(crate::Access::full())
                 .build()
                 .await
@@ -317,7 +327,7 @@ fn repairing_and_retrying_purge_on_the_original_runtime_releases_the_directory()
                     .access(crate::Access::full())
             };
             let agent = runtime.agent(spec()).unwrap();
-            let home = scratch.path().join("agents/worker");
+            let home = workspace.join("agents/worker");
             std::fs::remove_dir_all(&home).unwrap();
             std::fs::write(&home, "force purge failure").unwrap();
             assert!(matches!(
@@ -326,8 +336,7 @@ fn repairing_and_retrying_purge_on_the_original_runtime_releases_the_directory()
             ));
             drop(agent);
             assert!(openhuman_core::mcp::host::agent_close_pending(
-                scratch.path(),
-                "worker"
+                &workspace, "worker"
             ));
             std::fs::remove_file(&home).unwrap();
             std::fs::create_dir_all(&home).unwrap();
@@ -335,8 +344,7 @@ fn repairing_and_retrying_purge_on_the_original_runtime_releases_the_directory()
             runtime.remove_agent("worker").purge().await.unwrap();
             assert!(!home.exists());
             assert!(!openhuman_core::mcp::host::agent_close_pending(
-                scratch.path(),
-                "worker"
+                &workspace, "worker"
             ));
             let successor = runtime
                 .agent(spec())

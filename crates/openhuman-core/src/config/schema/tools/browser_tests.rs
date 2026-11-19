@@ -82,3 +82,38 @@ fn an_allowed_kind_resolves_to_its_static_canonical_name() {
     assert_eq!(config.unattended_kind("click"), None);
     assert_eq!(config.unattended_kind("#secret selector"), None);
 }
+
+#[test]
+fn upstream_proxies_parse_from_toml_and_default_to_none() {
+    let parsed: BrowserConfig = toml::from_str(
+        r#"upstream_proxies = [{ domains = ["reddit.com", "redd.it"], url = "http://user:hunter2@gate.example:7000" }]"#,
+    )
+    .unwrap();
+    assert_eq!(
+        parsed.upstream_proxies,
+        vec![BrowserUpstreamProxy {
+            domains: vec!["reddit.com".into(), "redd.it".into()],
+            url: "http://user:hunter2@gate.example:7000".into(),
+        }]
+    );
+    let absent: BrowserConfig = toml::from_str("enabled = true").unwrap();
+    assert!(absent.upstream_proxies.is_empty());
+    // Unset, the key is not written back.
+    let written = toml::to_string(&BrowserConfig::default()).unwrap();
+    assert!(!written.contains("upstream_proxies"));
+}
+
+#[test]
+fn an_upstream_proxy_url_never_appears_in_debug_output() {
+    let config = BrowserConfig {
+        upstream_proxies: vec![BrowserUpstreamProxy {
+            domains: vec!["reddit.com".into()],
+            url: "http://user:hunter2@gate.example:7000".into(),
+        }],
+        ..BrowserConfig::default()
+    };
+    let debug = format!("{config:?}");
+    assert!(!debug.contains("hunter2"));
+    assert!(!debug.contains("gate.example"));
+    assert!(debug.contains("reddit.com"));
+}

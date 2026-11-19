@@ -448,7 +448,7 @@ for (const runner of ["test-rust-with-mock.sh", "test-rust-e2e.sh"]) {
       writeFileSync(join(boxDir, "libtinybox.so"), "fixture");
       // The E2E runner stages these releases too. Cache them as well: staging
       // stops on a download that fails, so an uncached one fails the runner.
-      for (const id of ["tinyconnectors", "tinyflows", "tinysearch"]) {
+      for (const id of ["tinyconnectors", "tinyflows", "tinysearch", "tinyeventqueues"]) {
         const dir = join(root, `target/test-modules/${id}/test-digest`);
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, `lib${id}_module.so`), "fixture");
@@ -601,6 +601,10 @@ test("the core workflow isolates tests that need staged callback modules", () =>
     "inbound::ops::tests::the_operations_reach_the_module",
     "inbound::ops::tests::three_offers_within_the_window_run_one_turn_with_one_result_and_one_event",
     "inbound::route::tests::an_accepted_event_is_queued_and_a_redelivery_ends_at_ingress",
+    "inbound::route::tests::a_timed_out_ingest_that_landed_is_triaged_once",
+    "inbound::route::tests::an_event_delivered_while_its_offer_waited_is_not_run_directly",
+    "inbound::route::tests::an_ingest_that_landed_still_runs_once_when_the_direct_path_fails",
+    "inbound::route::tests::a_second_ambiguous_offer_of_an_event_does_not_run_it_directly_again",
     "integrations::composio::bus::trigger_subscriber::tests::a_deferred_composio_trigger_is_retried_at_its_defer_time_instead_of_dropped",
     "integrations::composio::bus::trigger_subscriber::tests::a_redelivered_composio_trigger_produces_one_turn",
     "integrations::composio::bus::trigger_subscriber::tests::without_a_config_a_trigger_is_triaged_directly",

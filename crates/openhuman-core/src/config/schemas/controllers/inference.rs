@@ -1,13 +1,14 @@
 //! Handlers for config snapshot reads and model, memory, runtime, and local-AI inference settings.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 
 use super::super::helpers::{
-    deserialize_params, to_json, LocalAiSettingsUpdate, MemorySettingsUpdate, ModelSettingsUpdate,
+    deserialize_params, LocalAiSettingsUpdate, MemorySettingsUpdate, ModelSettingsUpdate,
     RuntimeSettingsUpdate,
 };
 
@@ -226,6 +227,7 @@ pub(super) fn handle_update_local_ai_settings(
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
             api_key: update.api_key,
+            native_tool_calling: update.native_tool_calling,
         };
         // Same save as `inference.update_local_settings`: it drops a pending
         // connect checkpoint (#8172) and resets the local probe, so the next

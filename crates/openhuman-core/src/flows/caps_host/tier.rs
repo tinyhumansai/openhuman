@@ -103,6 +103,26 @@ pub(crate) async fn current_tier_policy(
 /// snapshot for another part of its operation (Composio integrations).
 pub(crate) fn tier_policy_from_config(
     ctx: &crate::core::runtime::DispatchCtx,
+    captured_config: &crate::config::Config,
+    live_config: Option<&crate::config::Config>,
+    baseline: &SecurityPolicy,
+) -> Result<SecurityPolicy> {
+    let mut policy = derive_tier_policy(ctx, captured_config, live_config, baseline)?;
+    // A clone shares the baseline's cached TinySecurity answers (budget and
+    // class gates). Those answers were made for the baseline's tier, so a
+    // policy at another tier must not read them: it would take a stricter
+    // tier's refusal as an allow, or a looser tier's allow as a refusal,
+    // until something refreshed the shared cells. Give it cells of its own;
+    // the async tier gate (and the test host) fills them for this tier.
+    if policy.enabled != baseline.enabled || policy.autonomy != baseline.autonomy {
+        policy.budget_snapshot = Default::default();
+        policy.class_gate_snapshot = Default::default();
+    }
+    Ok(policy)
+}
+
+fn derive_tier_policy(
+    ctx: &crate::core::runtime::DispatchCtx,
     _captured_config: &crate::config::Config,
     live_config: Option<&crate::config::Config>,
     baseline: &SecurityPolicy,

@@ -123,8 +123,8 @@ pub(crate) fn openshell() -> SandboxExecutor2 {
     }
 }
 
-/// A box per command on the hosted agent37 service: a container with its own
-/// workspace and egress denied. Filesystem and network are enforced, but the
+/// The tenant's retained box on the hosted agent37 service: a container with
+/// its own workspace and egress denied. Filesystem and network are enforced, but the
 /// service snaps CPU and memory up to fixed instance shapes, so those are
 /// best effort — a requested bound is a floor the service rounds up, never a
 /// ceiling it holds the box to. Reporting them as enforced would feed

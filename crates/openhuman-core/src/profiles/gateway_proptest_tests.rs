@@ -1,8 +1,9 @@
-//! Property tests for the gateway's user header and its signature. Both
-//! headers are attacker-shaped (a gateway may forward a client's headers by
-//! mistake), so whatever arrives the outcome is a refusal (400, 401 or 403)
-//! or the profile of exactly the user that was signed for — never another
-//! user's profile, and never the operator plane.
+//! Property tests for resolving a gateway user to a profile. The user header
+//! is attacker-shaped (a gateway may forward a client's headers by mistake),
+//! so whatever arrives the outcome is a refusal or the profile of exactly the
+//! claimed user — never another user's profile — and only once the signature
+//! check accepted. The HMAC itself is the server's (`openhuman-rpc`, with its
+//! own properties); here a stand-in check accepts `sig:<user>` alone.
 //!
 //! Case counts follow `PROPTEST_CASES` (default 256); CI pins the seed with
 //! `PROPTEST_RNG_SEED`.
@@ -24,9 +25,6 @@ fn block<T>(future: impl std::future::Future<Output = T>) -> T {
     })
     .block_on(future)
 }
-
-const SECRET: &str = "gateway-secret-0123456789abcdef0123456789";
-const NOW: u64 = 1_700_000_000;
 
 /// Users provisioned on the shared test host: two raw ids and one that hashes.
 const PROVISIONED: &[&str] = &["alice", "bob", "Carol@example.com"];
@@ -78,95 +76,50 @@ fn user_header() -> impl Strategy<Value = String> {
     ]
 }
 
-/// How a signature header is built for a request claiming `user`.
+/// The signature a request claiming `user` carries.
 #[derive(Debug, Clone)]
 enum Sig {
     Missing,
-    /// Signed for `signed_for` at `NOW + skew`.
-    Signed {
-        signed_for: SignedFor,
-        skew: i64,
-    },
-    /// A valid header with the tag cut to `keep` hex characters.
-    Truncated {
-        keep: usize,
-    },
-    /// A valid header with extra parts, duplicates or whitespace around it.
-    Decorated {
-        before: String,
-        after: String,
-    },
-    /// A valid tag paired with a different timestamp.
-    WrongT {
-        delta: u64,
-    },
+    /// Valid for the claimed user.
+    Valid,
+    /// Valid for another user: a replay of A's signature as B.
+    For(String),
     Garbage(String),
 }
 
-#[derive(Debug, Clone)]
-enum SignedFor {
-    /// The user the request claims.
-    Claimed,
-    /// Some other user: a replay of A's signature as B.
-    Other(String),
-    /// The claimed user under another secret.
-    OtherSecret,
-}
-
 fn sig() -> impl Strategy<Value = Sig> {
-    let signed_for = prop_oneof![
-        3 => Just(SignedFor::Claimed),
-        2 => prop::sample::select(PROVISIONED.to_vec()).prop_map(|u| SignedFor::Other(u.to_string())),
-        1 => "[a-zA-Z0-9@. ]{0,12}".prop_map(SignedFor::Other),
-        1 => Just(SignedFor::OtherSecret),
-    ];
-    let skew = prop_oneof![
-        3 => -(SIGNATURE_WINDOW_SECS as i64)..=SIGNATURE_WINDOW_SECS as i64,
-        1 => -100_000i64..100_000,
-        1 => Just(SIGNATURE_WINDOW_SECS as i64 + 1),
-        1 => Just(-(SIGNATURE_WINDOW_SECS as i64) - 1),
-    ];
     prop_oneof![
         1 => Just(Sig::Missing),
-        4 => (signed_for, skew).prop_map(|(signed_for, skew)| Sig::Signed { signed_for, skew }),
-        1 => (0usize..64).prop_map(|keep| Sig::Truncated { keep }),
-        1 => ("[ ,=tv1a-f0-9]{0,12}", "[ ,=tv1a-f0-9]{0,12}")
-            .prop_map(|(before, after)| Sig::Decorated { before, after }),
-        1 => (1u64..10_000).prop_map(|delta| Sig::WrongT { delta }),
+        3 => Just(Sig::Valid),
+        2 => prop::sample::select(PROVISIONED.to_vec()).prop_map(|u| Sig::For(u.to_string())),
         1 => any::<String>().prop_map(Sig::Garbage),
     ]
 }
 
 fn build_sig(sig: &Sig, claimed: &str) -> Option<String> {
-    let valid = || sign(SECRET, claimed, NOW);
     match sig {
         Sig::Missing => None,
-        Sig::Signed { signed_for, skew } => {
-            let ts = NOW.saturating_add_signed(*skew);
-            Some(match signed_for {
-                SignedFor::Claimed => sign(SECRET, claimed, ts),
-                SignedFor::Other(other) => sign(SECRET, other, ts),
-                SignedFor::OtherSecret => sign("another-secret", claimed, ts),
-            })
-        }
-        Sig::Truncated { keep } => {
-            let header = valid();
-            let (head, tag) = header.split_once("v1=").unwrap();
-            Some(format!("{head}v1={}", &tag[..(*keep).min(tag.len())]))
-        }
-        Sig::Decorated { before, after } => Some(format!("{before}{}{after}", valid())),
-        Sig::WrongT { delta } => {
-            let tag = valid().split_once("v1=").unwrap().1.to_string();
-            Some(format!("t={},v1={tag}", NOW + delta))
-        }
+        Sig::Valid => Some(format!("sig:{claimed}")),
+        Sig::For(other) => Some(format!("sig:{other}")),
         Sig::Garbage(s) => Some(s.clone()),
     }
 }
 
-/// Whether `header` would verify for `user` at `NOW`, recomputed from first
-/// principles: some `t` within the window, and a `v1` equal to the full tag.
-fn is_valid_for(user: &str, header: &str) -> bool {
-    verify(SECRET, user, header, NOW).is_ok()
+/// The stand-in signature check: accepts `sig:<user>` for `user` alone.
+fn check(user: &str, header: Option<&str>) -> Result<(), String> {
+    match header {
+        None => Err("missing signature".to_string()),
+        Some(header) if header == format!("sig:{user}") => Ok(()),
+        Some(_) => Err("user signature does not match".to_string()),
+    }
+}
+
+fn resolve(
+    host: &ProfileHost,
+    user: &str,
+    header: Option<&str>,
+) -> Result<Arc<Profile>, ResolveUserError> {
+    block(host.resolve_user(user, || check(user, header)))
 }
 
 proptest! {
@@ -175,43 +128,9 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// `verify` never panics, and accepts a header only when its `v1` is the
-    /// full HMAC of `<t>.<user>` for a `t` inside the window.
-    #[test]
-    fn verify_only_accepts_a_full_tag_for_this_user(user in user_header(), header in any::<String>()) {
-        if verify(SECRET, &user, &header, NOW).is_ok() {
-            let ts = header.split(',').filter_map(|p| p.trim().strip_prefix("t=")).next_back();
-            let ts: u64 = ts.and_then(|t| t.parse().ok()).expect("accepted without a t");
-            prop_assert!(ts.abs_diff(NOW) <= SIGNATURE_WINDOW_SECS);
-            prop_assert!(header.to_ascii_lowercase().contains(sign(SECRET, &user, ts).split_once("v1=").unwrap().1));
-        }
-    }
-
-    /// A signature for one user never verifies for another, at any skew.
-    #[test]
-    fn a_signature_never_transfers_between_users(
-        a in user_header(),
-        b in user_header(),
-        skew in -(SIGNATURE_WINDOW_SECS as i64)..=SIGNATURE_WINDOW_SECS as i64,
-    ) {
-        prop_assume!(a != b);
-        let header = sign(SECRET, &a, NOW.saturating_add_signed(skew));
-        prop_assert!(verify(SECRET, &a, &header, NOW).is_ok());
-        prop_assert!(verify(SECRET, &b, &header, NOW).is_err());
-    }
-
-    /// A truncated tag never verifies, down to an empty `v1=`.
-    #[test]
-    fn a_truncated_tag_never_verifies(user in user_header(), keep in 0usize..64) {
-        let header = sign(SECRET, &user, NOW);
-        let (head, tag) = header.split_once("v1=").unwrap();
-        let cut = format!("{head}v1={}", &tag[..keep]);
-        prop_assert!(verify(SECRET, &user, &cut, NOW).is_err(), "{cut}");
-    }
-
-    /// Whatever the headers, resolving a named user yields a refusal with a
-    /// client status, or exactly the profile of the claimed user — and only
-    /// when the signature is genuinely valid for that user.
+    /// Whatever the headers, resolving a named user yields a refusal, or
+    /// exactly the profile of the claimed user — and only when the signature
+    /// check accepted it.
     #[test]
     fn resolving_a_user_is_a_refusal_or_their_own_profile(
         user in user_header(),
@@ -220,17 +139,18 @@ proptest! {
     ) {
         let host = host(mode);
         let header = build_sig(&sig, &user);
-        match block(resolve_user_on(host, &user, header.as_deref(), SECRET, NOW)) {
+        match resolve(host, &user, header.as_deref()) {
             Ok(profile) => {
                 let expected = ProfileId::for_user(&user, mode).unwrap();
                 prop_assert_eq!(&profile.id, &expected, "{:?} landed on another profile", user);
                 prop_assert_eq!(profile.context().profile(), Some(expected.as_str()));
                 prop_assert_eq!(profile.context().session_agent(), None);
                 prop_assert!(PROVISIONED.contains(&user.as_str()), "{:?} opened", user);
-                prop_assert!(is_valid_for(&user, header.as_deref().unwrap_or("")));
+                prop_assert!(check(&user, header.as_deref()).is_ok());
             }
-            Err(refusal) => {
-                prop_assert!(matches!(refusal.status, 400 | 401 | 403), "{refusal:?}");
+            Err(ResolveUserError::InvalidUser(_) | ResolveUserError::Signature(_)) => {}
+            Err(ResolveUserError::Open(error)) => {
+                prop_assert!(matches!(error, OpenError::NotProvisioned(_)), "{error:?}");
             }
         }
     }
@@ -244,16 +164,15 @@ proptest! {
         let unknown = "mallory";
         let known_header = build_sig(&sig, known);
         let unknown_header = build_sig(&sig, unknown);
-        // A genuinely valid signature is not a probe (and would push proptest
-        // past its global reject cap at high case counts if assumed away).
-        if is_valid_for(known, known_header.as_deref().unwrap_or(""))
-            || is_valid_for(unknown, unknown_header.as_deref().unwrap_or(""))
+        // A valid signature is not a probe.
+        if check(known, known_header.as_deref()).is_ok()
+            || check(unknown, unknown_header.as_deref()).is_ok()
         {
             return Ok(());
         }
-        let a = block(resolve_user_on(host, known, known_header.as_deref(), SECRET, NOW)).unwrap_err();
-        let b = block(resolve_user_on(host, unknown, unknown_header.as_deref(), SECRET, NOW)).unwrap_err();
-        prop_assert_eq!(a.status, 401);
+        let a = resolve(host, known, known_header.as_deref()).unwrap_err();
+        let b = resolve(host, unknown, unknown_header.as_deref()).unwrap_err();
+        prop_assert!(matches!(a, ResolveUserError::Signature(_)), "{a:?}");
         prop_assert_eq!(a, b);
     }
 }

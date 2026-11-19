@@ -245,6 +245,11 @@ name = "embedded_server_shutdown_e2e"
 path = "../../tests/embedded_server_shutdown_e2e.rs"
 
 [[test]]
+# Its own binary: it boots a core and owns the process event bus.
+name = "socketio_bridge_e2e"
+path = "../../tests/socketio_bridge_e2e.rs"
+
+[[test]]
 name = "observability_smoke"
 path = "../../tests/observability_smoke.rs"
 # The `is_*_event` Sentry filters are all `#[cfg(feature = "crash-reporting")]`.
@@ -359,6 +364,10 @@ name = "security_keyring_fixture"
 path = "../../tests/security_keyring_fixture.rs"
 
 [[test]]
+name = "prompt_screen_live_scope_e2e"
+path = "../../tests/prompt_screen_live_scope_e2e.rs"
+
+[[test]]
 name = "raw_coverage_all"
 path = "../../tests/raw_coverage_all.rs"
 # The merged raw-coverage target spans ~76 former files, so it reaches the
@@ -393,6 +402,13 @@ path = "../../tests/cli_agent_chat_headless_e2e.rs"
 [[test]]
 name = "cli_storage_url_e2e"
 path = "../../tests/cli_storage_url_e2e.rs"
+
+[[test]]
+# Spawns the real binary with its native TinySecurity cipher and no keyring
+# consent responder, as a product build runs.
+name = "settings_secret_grant_e2e"
+path = "../../tests/settings_secret_grant_e2e.rs"
+required-features = ["security-module"]
 
 [[test]]
 # Boots `openhuman-core serve` on a workspace with legacy approval rows.

@@ -31,6 +31,13 @@ async fn boot_skips_disabled_components() {
     }
     load_declared_modules(&config).await;
     for record in crate::modules::registry::ALL {
+        // TinySecurity has no `[components]` switch: only the global module
+        // switch controls it (see `registry::COMPONENT_OF`), so a config with
+        // every component off still boots it.
+        if crate::modules::registry::component_for(record.id).is_none() {
+            assert_eq!(record.id, "tinysecurity");
+            continue;
+        }
         assert!(
             crate::modules::ops::disabled_component(&config, record.id).is_some(),
             "{} should be disabled",

@@ -64,15 +64,19 @@ pub const PACKS: &[ToolPack] = &[
     ToolPack {
         id: "web3",
         summary: "Crypto wallet and market actions: quotes, swaps, bridges, contract calls, x402.",
-        // `wallet_balances`, `wallet_network_defaults`, `wallet_supported_assets`,
-        // `wallet_encode_erc20_transfer` and `wallet_execute_prepared` are NOT
-        // listed: they exist as `wallet.*` RPC methods but have no agent Tool
-        // wrapper, and `render_pack_filtered` skips an unresolvable name
-        // silently — so listing them only made the rendered menu quietly short.
+        // `wallet_network_defaults`, `wallet_supported_assets` and
+        // `wallet_encode_erc20_transfer` are NOT listed: they exist as
+        // `wallet.*` RPC methods but have no agent Tool wrapper, and
+        // `render_pack_filtered` skips an unresolvable name silently — so
+        // listing them only made the rendered menu quietly short.
+        // `wallet_balances` and `wallet_execute_prepared` are the policy-bound
+        // tools in `web3::wallet::automation_tools`.
         tools: &[
             "wallet_status",
             "wallet_chain_status",
+            "wallet_balances",
             "wallet_prepare_transfer",
+            "wallet_execute_prepared",
             "wallet_tx_status",
             "wallet_tx_receipt",
             "wallet_lookup_tx",

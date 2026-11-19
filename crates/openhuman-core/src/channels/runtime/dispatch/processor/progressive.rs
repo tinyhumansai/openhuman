@@ -277,7 +277,7 @@ pub(crate) fn delivery_succeeded(
     }
 }
 
-fn delivery_outcome_count(
+pub(crate) fn delivery_outcome_count(
     result: &tinychannels_bus::module_progressive::ProgressiveResult,
 ) -> usize {
     use tinychannels_bus::module_progressive::ProgressiveResult;
@@ -289,7 +289,7 @@ fn delivery_outcome_count(
     }
 }
 
-fn delivery_unsupported_count(
+pub(crate) fn delivery_unsupported_count(
     result: &tinychannels_bus::module_progressive::ProgressiveResult,
 ) -> usize {
     use tinychannels_bus::module_progressive::ProgressiveResult;
@@ -304,6 +304,86 @@ fn delivery_unsupported_count(
 
 pub(crate) fn output_event(progress: AgentProgress) -> Option<ChannelOutputEvent> {
     crate::agent::turn_progress::turn_event(progress)
+}
+
+/// Content-free failure kinds for an incomplete progressive delivery result.
+///
+/// Only machine-readable categories are returned: the `SendErrorKind` of
+/// each failed outcome, the `ProgressiveOutputFailure` that stopped a
+/// batch, and `unsupported_parts` when rich content was retained instead of
+/// delivered. No message text, receipt, or content part is ever included, so
+/// the returned kinds are safe to log.
+pub(crate) fn delivery_failure_kinds(
+    result: &tinychannels_bus::module_progressive::ProgressiveResult,
+) -> Vec<&'static str> {
+    use tinychannels_bus::channel::SendErrorKind;
+    use tinychannels_bus::module_progressive::{ProgressiveOutputFailure, ProgressiveResult};
+
+    fn send_error_kind(kind: SendErrorKind) -> &'static str {
+        match kind {
+            SendErrorKind::TooLong => "too_long",
+            SendErrorKind::BadFormat => "bad_format",
+            SendErrorKind::Forbidden => "forbidden",
+            SendErrorKind::NotFound => "not_found",
+            SendErrorKind::RateLimited => "rate_limited",
+            SendErrorKind::Transient => "transient",
+            SendErrorKind::Unknown => "unknown",
+        }
+    }
+
+    fn push_kind(kinds: &mut Vec<&'static str>, kind: &'static str) {
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+
+    fn push_outcome_error(
+        kinds: &mut Vec<&'static str>,
+        outcome: &tinychannels_bus::channel::ChannelSendOutcome,
+    ) {
+        if let Some(error) = &outcome.error {
+            push_kind(kinds, send_error_kind(error.kind));
+        }
+    }
+
+    let mut kinds = Vec::new();
+    match result {
+        ProgressiveResult::DeliveryOutcome { outcome } => {
+            push_outcome_error(&mut kinds, outcome);
+        }
+        ProgressiveResult::DeliveryOutcomes { outcomes } => {
+            for outcome in outcomes {
+                push_outcome_error(&mut kinds, outcome);
+            }
+        }
+        ProgressiveResult::DeliveryBatch {
+            outcomes,
+            unsupported,
+            failure,
+            ..
+        } => {
+            for outcome in outcomes {
+                push_outcome_error(&mut kinds, outcome);
+            }
+            if !unsupported.is_empty() {
+                push_kind(&mut kinds, "unsupported_parts");
+            }
+            if let Some(failure) = failure {
+                push_kind(
+                    &mut kinds,
+                    match failure {
+                        ProgressiveOutputFailure::ObservationCallback => "observation_callback",
+                        ProgressiveOutputFailure::ProviderTransport => "provider_transport",
+                    },
+                );
+            }
+        }
+        ProgressiveResult::DeliveryUnsupported { .. } => {
+            push_kind(&mut kinds, "unsupported_parts");
+        }
+        _ => {}
+    }
+    kinds
 }
 
 #[cfg(test)]

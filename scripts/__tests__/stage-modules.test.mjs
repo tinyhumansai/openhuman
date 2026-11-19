@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { crc32, gzipSync } from "node:zlib";
+import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 import { test } from "node:test";
 
 import { readRegistrySource } from "../ci/self-hosted/test-module-assets.mjs";
@@ -27,6 +27,7 @@ import {
   findWindowsVcRuntimeDir,
   hostKeyForTarget,
   extractWindowsZip,
+  extractZip,
   isWindowsHostKey,
   keepsArchive,
   normalizeStagedPermissions,
@@ -494,25 +495,28 @@ test("stageWindowsAppLocalRuntime refuses a non-PE source file", () => {
  * CRC, while Windows `System.IO.Compression.ZipFile` tolerates it (which is
  * why an earlier revision passed on win32 and failed on every other CI leg).
  */
-function makeSingleEntryZip(entryPath, payload) {
+function makeSingleEntryZip(entryPath, payload, { deflate = false } = {}) {
   const name = Buffer.from(entryPath);
   const payloadCrc = crc32(payload);
+  const uncompressed = payload.length;
+  if (deflate) payload = deflateRawSync(payload);
   const localHeader = Buffer.alloc(30);
   localHeader.writeUInt32LE(0x04034b50, 0);
   localHeader.writeUInt16LE(20, 4);
   localHeader.writeUInt16LE(0, 6);
-  localHeader.writeUInt16LE(0, 8);
+  localHeader.writeUInt16LE(deflate ? 8 : 0, 8);
   localHeader.writeUInt32LE(payloadCrc, 14);
   localHeader.writeUInt32LE(payload.length, 18);
-  localHeader.writeUInt32LE(payload.length, 22);
+  localHeader.writeUInt32LE(uncompressed, 22);
   localHeader.writeUInt16LE(name.length, 26);
   const central = Buffer.alloc(46);
   central.writeUInt32LE(0x02014b50, 0);
   central.writeUInt16LE(20, 4);
   central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(deflate ? 8 : 0, 10);
   central.writeUInt32LE(payloadCrc, 16);
   central.writeUInt32LE(payload.length, 20);
-  central.writeUInt32LE(payload.length, 24);
+  central.writeUInt32LE(uncompressed, 24);
   central.writeUInt16LE(name.length, 28);
   const localSize = localHeader.length + name.length + payload.length;
   const end = Buffer.alloc(22);
@@ -523,6 +527,47 @@ function makeSingleEntryZip(entryPath, payload) {
   end.writeUInt32LE(localSize, 16);
   return Buffer.concat([localHeader, name, payload, central, name, end]);
 }
+
+// extractZip is what stages a `.zip` off Windows. It must not need an `unzip`
+// binary (the CI image has none), and it must keep unzip's refusals.
+function extractedFrom(entryPath, payload, options) {
+  const root = mkdtempSync(join(tmpdir(), "openhuman-extract-zip-"));
+  const archive = join(root, "a.zip");
+  writeFileSync(archive, makeSingleEntryZip(entryPath, payload, options));
+  const out = join(root, "out");
+  mkdirSync(out);
+  return { root, archive, out };
+}
+
+test("extractZip extracts stored and deflated entries, including nested paths", () => {
+  for (const options of [{}, { deflate: true }]) {
+    const { archive, out } = extractedFrom("nested/demo.dll", Buffer.from("library bytes ".repeat(50)), options);
+    extractZip(archive, out);
+    assert.equal(readFileSync(join(out, "nested", "demo.dll"), "utf8"), "library bytes ".repeat(50));
+  }
+});
+
+test("extractZip refuses an entry that would land outside the destination", () => {
+  for (const name of ["../escape.dll", "a/../../escape.dll", "/abs.dll", "a\\b.dll"]) {
+    const { root, archive, out } = extractedFrom(name, Buffer.from("x"));
+    assert.throws(() => extractZip(archive, out), /outside the destination/, name);
+    assert.ok(!existsSync(join(root, "escape.dll")), `${name} did not escape`);
+  }
+});
+
+test("extractZip refuses an entry whose bytes do not match its checksum", () => {
+  const { archive, out } = extractedFrom("demo.dll", Buffer.from("library bytes"));
+  const bytes = readFileSync(archive);
+  bytes[30 + "demo.dll".length] ^= 0xff;
+  writeFileSync(archive, bytes);
+  assert.throws(() => extractZip(archive, out), /checksum mismatch/);
+});
+
+test("extractZip refuses a file that is not a ZIP", () => {
+  const { archive, out } = extractedFrom("demo.dll", Buffer.from("x"));
+  writeFileSync(archive, "not a zip");
+  assert.throws(() => extractZip(archive, out), /not a ZIP archive/);
+});
 
 // stageModules asserts exactly one native library per archive. The staged VC
 // runtime files are also `.dll`s; they must not count toward that invariant or

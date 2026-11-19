@@ -8,8 +8,8 @@ Capability {
         name: "Configure Local Provider",
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
-        description: "Point OpenHuman at a local runtime you run yourself: Ollama, LM Studio, MLX, oMLX, or a generic OpenAI-compatible server. OpenHuman does not install the runtime or download models; pull them in your runtime (e.g. `ollama pull <model>`). Local chat inference does not require an OpenHuman account.",
-        how_to: "Connections → API keys → LLM, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, omlx:<model>, local-openai:<model>",
+        description: "Point OpenHuman at a local runtime you run yourself: Ollama, LM Studio, MLX, oMLX, or a generic OpenAI-compatible server. OpenHuman does not install the runtime or download models; pull them in your runtime (e.g. `ollama pull <model>`). Local chat inference does not require an OpenHuman account. Local runtimes get tools through a text protocol in the prompt by default; an endpoint whose model calls tools natively (often a hosted gateway behind local-openai) can opt into native tool calls instead.",
+        how_to: "Connections → API keys → LLM, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, omlx:<model>, local-openai:<model>. Native tool calls are off by default; turn them on with `native_tool_calling: true` on the core `config_update_local_ai_settings` (or `inference_update_local_settings`) method, and off again before switching to a model that rejects native tools.",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -389,6 +389,25 @@ Capability {
         how_to: "Set sandbox_mode = \"sandboxed\" in agent.toml, or configure runtime.kind = \
                  \"docker\" in the TOML config. Use openhuman.sandbox_status / \
                  openhuman.sandbox_resolve_policy RPC to inspect. Switched off by [components] sandbox = false (also set by the legacy [sandbox] enabled = false), which never loads the TinyBox module, runs commands unjailed under the Rust path checks, and answers COMPONENT_DISABLED:sandbox.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+Capability {
+        id: "security.unattended_secret_unlock",
+        name: "Unattended Config-Secret Unlock",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Lets a headless openhuman-core serve host read and write encrypted config \
+                      fields (provider API keys) without a person approving the one-time \
+                      \"Unlock configuration secrets\" request, which nobody can answer on a \
+                      server. Honoured only when the operator supplied a usable keyring master key \
+                      (OPENHUMAN_KEYRING_MASTER_KEY or OPENHUMAN_KEYRING_MASTER_KEY_FILE) to a file \
+                      or encrypted_file keyring. Without such a key a person still approves each \
+                      unlock. A SaaS core ignores the setting: its usual WebChat approval applies, \
+                      and an unlock with no WebChat route (a background config load) is refused.",
+        how_to: "Set [secrets] unattended_unlock = true in config.toml, or \
+                 OPENHUMAN_SECRETS_UNATTENDED_UNLOCK=1, alongside an operator-supplied keyring \
+                 master key.",
         status: CapabilityStatus::Beta,
         privacy: None,
     },

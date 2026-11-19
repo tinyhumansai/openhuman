@@ -56,6 +56,7 @@ pub(super) struct InferenceUpdateLocalSettingsParams {
     usage_embeddings: Option<bool>,
     api_key: Option<String>,
     checkpoint: Option<bool>,
+    native_tool_calling: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +193,7 @@ pub(super) fn handle_inference_update_local_settings(
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
             api_key: update.api_key,
+            native_tool_calling: update.native_tool_calling,
         };
         to_json(
             crate::inference::ops::inference_update_local_settings(

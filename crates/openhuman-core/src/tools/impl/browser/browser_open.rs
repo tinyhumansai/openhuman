@@ -47,6 +47,12 @@ impl Tool for BrowserOpenTool {
         let url = args["url"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
+        if !self.security.can_act() {
+            return Ok(ToolResult::error(format!(
+                "{} Action blocked: autonomy is read-only",
+                tinytools::status::POLICY_BLOCKED_MARKER
+            )));
+        }
         if let Err(error) = self.validate_url(url) {
             return Ok(ToolResult::error(error.to_string()));
         }

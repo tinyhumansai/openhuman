@@ -88,6 +88,7 @@ fn shell_tool_schema_has_command() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_executes_allowed_command() {
+    let _storage = native_shell_storage();
     let tool = ShellTool::new(
         test_security(AutonomyLevel::Supervised),
         test_runtime(),
@@ -126,13 +127,14 @@ async fn shell_destructive_command_is_gated_not_run_inline() {
 /// This test constructs a `SecurityPolicy` whose `action_dir` is a
 /// fresh tempdir (distinct from `workspace_dir` and from `cwd`),
 /// runs `pwd`, and asserts the captured stdout canonicalises to the
-/// same path as `action_dir`. If `ShellTool::run_with_security`
+/// same path as `action_dir`. If `ShellTool::run_with_security_in_context`
 /// stops passing `&security.action_dir` as the module request's working
 /// directory, this
 /// test fails before the regression ships.
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_pwd_returns_action_dir_not_workspace_dir() {
+    let _storage = native_shell_storage();
     let action_tmp = tempfile::tempdir().expect("create action tempdir");
     let workspace_tmp = tempfile::tempdir().expect("create workspace tempdir");
     let security = Arc::new(SecurityPolicy {
@@ -171,7 +173,7 @@ async fn shell_pwd_returns_action_dir_not_workspace_dir() {
         actual,
         expected,
         "pwd must report `action_dir`. got `{}`, expected `{}`. \
-         If this fails, `ShellTool::run_with_security` likely stopped \
+         If this fails, `ShellTool::run_with_security_in_context` likely stopped \
          passing `&security.action_dir` as the native shell request's cwd. See #3238.",
         actual.display(),
         expected.display(),
@@ -235,6 +237,7 @@ fn shell_timeout_honors_explicit_per_call_value() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_per_call_timeout_kills_slow_command() {
+    let _storage = native_shell_storage();
     let tool = ShellTool::new(
         test_security(AutonomyLevel::Supervised),
         test_runtime(),

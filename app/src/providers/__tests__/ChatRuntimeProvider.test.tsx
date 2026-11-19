@@ -1649,6 +1649,36 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       // has ever opened.
       expect(socketService.subscribeThread).not.toHaveBeenCalled();
     });
+
+    it('subscribes to the selected thread room when the selection changes', async () => {
+      // Selecting an existing thread only dispatches `setSelectedThread` + a
+      // message read, so without this the socket never joins `thread:<id>`
+      // and a background turn cold-booting on that thread sends its sub-agent
+      // cards to a room nobody is in.
+      renderProvider();
+      vi.mocked(socketService.subscribeThread).mockClear();
+
+      act(() => {
+        store.dispatch(setSelectedThread('t-selected'));
+      });
+
+      await waitFor(() => expect(socketService.subscribeThread).toHaveBeenCalledWith('t-selected'));
+    });
+
+    it('does not subscribe on selection while disconnected', async () => {
+      renderProvider();
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+      vi.mocked(socketService.subscribeThread).mockClear();
+
+      act(() => {
+        store.dispatch(setSelectedThread('t-offline'));
+      });
+      await act(async () => {});
+
+      expect(socketService.subscribeThread).not.toHaveBeenCalled();
+    });
   });
 
   describe('mid-turn streaming invariants', () => {

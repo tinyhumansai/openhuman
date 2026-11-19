@@ -97,6 +97,24 @@ fn to_audit(stored: &Versioned<Value>) -> Option<ApprovalAuditEntry> {
 }
 
 #[cfg(feature = "security-module")]
+fn to_undecided(stored: &Versioned<Value>) -> super::store_import::LegacyApproval {
+    let doc = &stored.doc;
+    let created_at = from_ms(millis(doc, "created_ms")).unwrap_or_else(Utc::now);
+    super::store_import::LegacyApproval {
+        request_id: stored.id.clone(),
+        tool_name: text(doc, "tool_name").unwrap_or_default().to_string(),
+        agent_id: text(doc, "agent_id").map(str::to_owned),
+        created_at,
+        expires_at: from_ms(millis(doc, "deadline_ms")),
+        decided_at: None,
+        decision: None,
+        executed: false,
+        summary: text(doc, "action_summary").map(str::to_owned),
+        args_redacted: text(doc, "args_redacted").map(str::to_owned),
+    }
+}
+
+#[cfg(feature = "security-module")]
 impl Docs {
     pub(super) fn new(scoped: &Storage) -> Self {
         Self {
@@ -131,6 +149,22 @@ impl Docs {
                     .limit(limit);
             let page = docs.query(APPROVALS, &query).await?;
             Ok(page.items.iter().filter_map(to_audit).collect())
+        })
+    }
+
+    /// Reads undecided requests for TinySecurity's one-time import, newest
+    /// first, with the redacted summary and arguments the store kept.
+    #[cfg(feature = "security-module")]
+    pub(super) fn list_undecided(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<super::store_import::LegacyApproval>> {
+        self.run(|docs| async move {
+            let query = Query::filter(Filter::eq("pending", true))
+                .sort(Sort::desc("created_ms"))
+                .limit(limit);
+            let page = docs.query(APPROVALS, &query).await?;
+            Ok(page.items.iter().map(to_undecided).collect())
         })
     }
 

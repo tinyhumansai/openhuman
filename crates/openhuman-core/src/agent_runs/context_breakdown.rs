@@ -1,5 +1,5 @@
 //! RPC `agent.context_breakdown` — a UI-friendly view over
-//! [`PromptSizeReport`](super::debug::prompt_size::PromptSizeReport) plus,
+//! [`PromptSizeReport`](crate::agent::cli::debug::prompt_size::PromptSizeReport) plus,
 //! when a `thread_id` is given, that thread's persisted history spend, so
 //! the composer's context-usage indicator can show a system/tools/history
 //! split instead of just the fixed per-turn prefix.
@@ -18,9 +18,9 @@ use crate::core::runtime::Tenant;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
+use crate::agent::cli::debug::prompt_size::{PromptSizeReport, SectionSize, ToolSize};
+use crate::agent::cli::debug::DumpPromptOptions;
 use crate::config::Config;
-use crate::core::agent_cli::debug::prompt_size::{PromptSizeReport, SectionSize, ToolSize};
-use crate::core::agent_cli::debug::DumpPromptOptions;
 use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 
@@ -66,7 +66,7 @@ pub struct ContextBreakdownResponse {
 }
 
 fn est_tokens(bytes: usize) -> usize {
-    bytes / crate::core::agent_cli::debug::prompt_size::EST_BYTES_PER_TOKEN.max(1)
+    bytes / crate::agent::cli::debug::prompt_size::EST_BYTES_PER_TOKEN.max(1)
 }
 
 /// Coarse "did anything in config change" fingerprint. Correctness only
@@ -181,7 +181,7 @@ async fn history_section(
     // the module's own byte-per-token estimate so `bytes` stays a consistent
     // (if approximate) unit across every section in the response.
     let est = history_tokens(usage.last_turn_context_tokens as usize, fixed_prompt_tokens);
-    let bytes = est.saturating_mul(crate::core::agent_cli::debug::prompt_size::EST_BYTES_PER_TOKEN);
+    let bytes = est.saturating_mul(crate::agent::cli::debug::prompt_size::EST_BYTES_PER_TOKEN);
     Some(ContextSection {
         label: "history".to_string(),
         bytes,

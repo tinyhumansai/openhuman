@@ -102,6 +102,12 @@ pub(crate) fn current_route_tenant() -> crate::core::runtime::Tenant {
     crate::core::runtime::tenant::current_tenant_or_isolated("approval_gate")
 }
 
+/// The approval the native secret cipher raises to unlock the configuration's
+/// User master (`modules::security::secret_cipher`). TinySecurity consumes its
+/// HumanOnce grant itself, and it is the one forced approval that may park
+/// without a chat route ([`secret_grant_parks_unrouted`]).
+pub const NATIVE_SECRET_GRANT_TOOL: &str = "native_secret_grant";
+
 /// Phrase every TTL-expiry denial carries, so a caller that renders its own
 /// refusal (the approval resolver, `middleware::approval`) can tell "nobody answered" from
 /// "the user said no" without parsing the rest of the reason. See
@@ -461,6 +467,9 @@ include!("gate_surface.rs");
 include!("gate_intercept.rs");
 include!("gate_intercept_decision.rs");
 include!("gate_state.rs");
+include!("gate_orphans.rs");
+include!("gate_saas_grant.rs");
+include!("gate_host_grant.rs");
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

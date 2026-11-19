@@ -185,9 +185,10 @@ default_model = "claude-sonnet-4"
     let loaded = Config::load_from_config_path(&config_path, &workspace)
         .await
         .unwrap();
-    assert_eq!(loaded.schema_version, 14);
+    let current = crate::config::migrations::CURRENT_SCHEMA_VERSION;
+    assert_eq!(loaded.schema_version, current);
     let once = std::fs::read_to_string(&config_path).unwrap();
-    assert!(once.contains("schema_version = 14"));
+    assert!(once.contains(&format!("schema_version = {current}")));
     assert!(!once.contains("type = \"anthropic\""));
     let reloaded = Config::load_from_config_path(&config_path, &workspace)
         .await

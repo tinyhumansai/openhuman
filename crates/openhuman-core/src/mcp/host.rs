@@ -156,9 +156,12 @@ fn credentialed_endpoint_transport_allowed(server: &crate::config::McpServerConf
     if url.scheme() == "https" || !matches!(url.scheme(), "http") {
         return true;
     }
-    let loopback = url
-        .host_str()
-        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
+    let loopback = match url.host() {
+        Some(url::Host::Domain(host)) => host == "localhost",
+        Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
+        Some(url::Host::Ipv6(addr)) => addr.is_loopback(),
+        None => false,
+    };
     if loopback {
         return true;
     }

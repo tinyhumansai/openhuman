@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 fn test_policy() -> SandboxPolicy {
     SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: PathBuf::from("/tmp/test-workspace"),
         state_dir: PathBuf::from("/tmp/state"),

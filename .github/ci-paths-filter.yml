@@ -288,3 +288,25 @@ storage:
   - 'rust-toolchain.toml'
   - '.gitmodules'
   - 'vendor/**'
+# The host side of the inbound event queues against the verified TinyEventQueues
+# release (tests/inbound_module_e2e.rs). Its `e2e-test-support` gate keeps that
+# target out of the product feature set, so the rust-cov shards skip it; this
+# area arms the one lane that runs it (#8155). The module pin is the gitlink.
+inbound:
+  - '.github/workflows/ci-*.yml'
+  - '.github/ci-paths-filter.yml'
+  - 'scripts/ci/self-hosted/**'
+  - 'scripts/ci-cancel-aware.sh'
+  - 'crates/openhuman-core/src/inbound/**'
+  - 'crates/openhuman-core/src/modules/**'
+  - 'crates/openhuman-core/src/integrations/composio/bus/**'
+  - 'crates/openhuman-core/src/skills/webhooks/**'
+  - 'tests/inbound_module_e2e.rs'
+  - 'Cargo.toml'
+  - 'Cargo.lock'
+  - 'crates/openhuman-*/Cargo.toml'
+  - '.gitmodules'
+  - 'vendor/tinyeventqueues'
+  - 'vendor/tinyeventqueues/**'
+  - 'vendor/tinybus'
+  - 'vendor/tinybus/**'

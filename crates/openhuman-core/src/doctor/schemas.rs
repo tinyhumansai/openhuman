@@ -1,4 +1,5 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -7,7 +8,6 @@ use crate::core::all::{
     BoundRegisteredController, ControllerEntry, ControllerFuture, ControllerTask,
     RegisteredController,
 };
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -175,10 +175,6 @@ fn read_optional<T: DeserializeOwned>(
             .map(Some)
             .map_err(|e| format!("invalid '{key}': {e}")),
     }
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

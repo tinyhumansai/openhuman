@@ -159,9 +159,7 @@ impl FetchMeError {
                 // proxy.  Do not carry them into the manager's logs.
                 let message = format!("http {status}: {}", error_body_shape(&body));
                 // `/auth/me` always carries the session credential.
-                if openhuman_embed::__host::core::session_expiry::backend_status_means_session_expired(
-                    status, false,
-                ) {
+                if crate::session::expiry::backend_status_means_session_expired(status, false) {
                     Self::Rejected(message)
                 } else {
                     Self::Transient(message)

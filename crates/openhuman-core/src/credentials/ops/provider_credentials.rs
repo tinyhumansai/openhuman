@@ -2,7 +2,6 @@
 
 use serde_json::json;
 
-use crate::config::schema::MEMORY_CORTEXDB_KEY_NAME;
 use crate::config::Config;
 use crate::core::Outcome;
 use crate::credentials::session_state::{
@@ -72,12 +71,7 @@ fn clear_provider_auth_error(provider: &str) {
 /// A change to the memory engine's API key leaves what memory was read with
 /// the old one behind, so it is dropped.
 fn drop_memory_read_with(provider: &str) {
-    if provider
-        .trim()
-        .eq_ignore_ascii_case(MEMORY_CORTEXDB_KEY_NAME)
-    {
-        crate::memory::lifecycle::prefetch::invalidate_all();
-    }
+    crate::memory::engine::drop_memory_reads_for_provider(provider);
 }
 
 pub async fn remove_provider_credentials(

@@ -40,6 +40,9 @@ export function coerceWorkflowProposal(parsed: unknown): WorkflowProposal | null
   return {
     name: obj.name,
     graph: obj.graph,
+    ...(typeof obj.proposal_id === 'string' && obj.proposal_id
+      ? { proposalId: obj.proposal_id }
+      : {}),
     // The Rust tool defaults `require_approval` to `true` when the caller
     // omits it, so treat anything other than an explicit `false` as `true`
     // here too — keeps the client's fallback in lockstep with the server's.

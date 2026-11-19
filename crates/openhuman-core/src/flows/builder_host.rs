@@ -96,14 +96,25 @@ impl FlowsHost {
                     .value)
                 }
                 PortOperation::FlowsUpdate => {
-                    let outcome = ops::flows_update_with_context(
+                    let graph: Option<Value> = optional_field(&payload, "graph")?;
+                    // #8489: a builder save that writes a new graph must not
+                    // push it live onto an already-enabled automatic-trigger
+                    // flow with no review. Forcing the disarm persists the
+                    // revision disabled; the user re-enables it via
+                    // flows_set_enabled after reviewing. The module no-ops
+                    // the flag on flows that aren't live automatic, so
+                    // metadata-only saves and already-disabled flows are
+                    // unaffected.
+                    let disarm_automatic = graph.is_some();
+                    let outcome = ops::flows_update_with_disarm(
                         &context,
                         &config,
                         &required::<String>(&payload, "id")?,
                         optional_field(&payload, "name")?,
-                        optional_field(&payload, "graph")?,
+                        graph,
                         None,
                         None,
+                        disarm_automatic,
                     )
                     .await?;
                     json!({"value": outcome.value, "logs": outcome.logs})

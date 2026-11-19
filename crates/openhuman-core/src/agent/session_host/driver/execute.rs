@@ -144,6 +144,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             let mut run_context = run_context;
             run_context.workspace = self.workspace.clone().or(run_context.workspace);
             run_context.sandbox_mode = Some(self.sandbox_mode);
+            run_context.sandbox_filesystem_only = self.sandbox_filesystem_only;
             let provider_id = turn_models.provider_id().to_string();
             TurnSpec {
                 run_context,

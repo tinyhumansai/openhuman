@@ -93,20 +93,27 @@ async fn load_or_init_for_workspace(root: &std::path::Path) -> Config {
 
 #[tokio::test]
 async fn preflight_config_load_preserves_sealed_secrets_until_security_is_ready() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let root = tempfile::tempdir().unwrap();
     let config_path = root.path().join("config.toml");
     let sealed = format!("enc2:{}", "00".repeat(32));
     let config = Config {
         config_path: config_path.clone(),
         workspace_dir: root.path().join("workspace"),
-        secrets: crate::config::schema::SecretsConfig { encrypt: true },
+        secrets: crate::config::schema::SecretsConfig {
+            encrypt: true,
+            unattended_unlock: false,
+        },
         api_key: Some(sealed.clone()),
         ..Config::default()
     };
     tokio::fs::write(&config_path, toml::to_string(&config).unwrap())
         .await
         .unwrap();
-    let env = MapEnv::default();
+    // Pin the config to this workspace: without it the loader resolves the
+    // active user's `users/local` directory and finds no file here.
+    let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.path().to_str().unwrap());
 
     let loaded = Config::load_or_init_unsealed_with_env_lookup(
         root.path(),
@@ -149,3 +156,5 @@ mod profile_layout_parity_tests;
 
 #[path = "load_managed_provider_tests.rs"]
 mod managed_provider_tests;
+#[path = "load_retired_keys_compat_tests.rs"]
+mod retired_keys_compat_tests;

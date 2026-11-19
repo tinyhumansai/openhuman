@@ -6,6 +6,7 @@
 //! detach into the user's native terminal so they complete login there,
 //! then return to OpenHuman and click Recheck in the settings card.
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::process::Command;
 
 /// The CLI's authentication entry point, as argv.
@@ -94,6 +95,9 @@ fn linux_launch_candidates() -> Vec<(&'static str, Vec<String>)> {
 ///
 /// Returns the name of the terminal emulator we launched (for UI
 /// confirmation) or an error string if no terminal could be opened.
+/// On macOS a failed or timed-out Terminal launch is an error, not a
+/// success: `osascript` reports an Automation denial through its exit
+/// status, and a successful spawn alone proves nothing.
 ///
 /// Platform behaviour:
 ///   - Windows: `cmd /c start "" cmd /k claude auth login --claudeai`
@@ -101,7 +105,7 @@ fn linux_launch_candidates() -> Vec<(&'static str, Vec<String>)> {
 ///   - Linux:   try `x-terminal-emulator`, then `gnome-terminal`,
 ///              `konsole`, `xfce4-terminal`, `xterm` in that order
 #[tauri::command]
-pub fn claude_code_login_launch() -> Result<String, String> {
+pub async fn claude_code_login_launch() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         Command::new("cmd")
@@ -113,10 +117,12 @@ pub fn claude_code_login_launch() -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("osascript")
-            .args(["-e", &macos_launch_script()])
-            .spawn()
-            .map_err(|e| format!("failed to open Terminal.app: {e}"))?;
+        // Starting osascript does not prove Terminal opened: an Automation
+        // denial is reported by its exit status. Await it off the UI thread
+        // and bound the wait while macOS may be showing a permission prompt.
+        let mut command = tokio::process::Command::new("/usr/bin/osascript");
+        command.arg("-e").arg(macos_launch_script());
+        wait_for_terminal(command, std::time::Duration::from_secs(30)).await?;
         Ok("Terminal.app".into())
     }
 
@@ -139,6 +145,43 @@ pub fn claude_code_login_launch() -> Result<String, String> {
     {
         Err("claude_code_login_launch is not supported on this platform".into())
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+async fn wait_for_terminal(
+    mut command: tokio::process::Command,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    let output = tokio::time::timeout(timeout, command.kill_on_drop(true).output())
+        .await
+        .map_err(|_| {
+            log::warn!("[claude-code][login] Terminal launch timed out");
+            "Timed out opening Terminal.app".to_string()
+        })?
+        .map_err(|e| {
+            log::warn!("[claude-code][login] Terminal launch spawn failed: {e}");
+            format!("failed to open Terminal.app: {e}")
+        })?;
+    if !output.status.success() {
+        // Keep the launcher's own diagnostic: an Automation denial prints
+        // its reason to stderr, and the settings card otherwise has nothing
+        // to show but a generic failure. Cap it so a chatty launcher cannot
+        // flood the log or the invoke error.
+        let stderr: String = String::from_utf8_lossy(&output.stderr)
+            .trim()
+            .chars()
+            .take(500)
+            .collect();
+        let message = if stderr.is_empty() {
+            format!("Terminal.app launch failed: {}", output.status)
+        } else {
+            format!("Terminal.app launch failed: {}: {}", output.status, stderr)
+        };
+        log::warn!("[claude-code][login] {message}");
+        return Err(message);
+    }
+    log::debug!("[claude-code][login] Terminal.app opened");
+    Ok(())
 }
 
 #[cfg(test)]

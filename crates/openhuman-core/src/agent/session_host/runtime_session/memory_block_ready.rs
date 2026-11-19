@@ -83,12 +83,17 @@ impl OpenHumanSessionHost {
             );
             return MemoryBlockPrewarm::Failed;
         };
-        match rendered {
+        let stored = match rendered {
             RenderedBlock::Block(block) => put(key, Some(block.text()), ticket),
             RenderedBlock::Empty => put(key, None, ticket),
             _ => return MemoryBlockPrewarm::Failed,
+        };
+        // A render a memory change voided stored nothing: no block waits.
+        if stored {
+            MemoryBlockPrewarm::Ready
+        } else {
+            MemoryBlockPrewarm::Failed
         }
-        MemoryBlockPrewarm::Ready
     }
 }
 
@@ -124,7 +129,25 @@ impl OpenHumanTurnPrelude {
             .memory_block_deadline_ms
             .map(Duration::from_millis)
         else {
-            return self.render_in(&scope, max_tokens, reason).await;
+            let rendered = self.render_in(&scope, max_tokens, reason).await;
+            // A memory change while it read voids it: no block rather than
+            // one read before the erase.
+            return if ticket.is_live() {
+                // Taken straight by this generation start: an older render
+                // finishing later must not store its block over it.
+                if matches!(rendered, RenderedBlock::Block(_) | RenderedBlock::Empty) {
+                    delivered_to_generation(key, ticket);
+                }
+                rendered
+            } else {
+                tracing::info!(
+                    thread_id = self.thread_id.as_deref().unwrap_or(""),
+                    agent_id = self.agent_definition_id.as_str(),
+                    reason,
+                    "[memory_block] render voided by a memory change, dropping it"
+                );
+                RenderedBlock::Voided
+            };
         };
         let (mut sender, mut receiver) = tokio::sync::oneshot::channel();
         let prelude = self.clone();
@@ -132,12 +155,19 @@ impl OpenHumanTurnPrelude {
         let scope_owned = scope.clone();
         let thread_id = self.thread_id.clone().unwrap_or_default();
         let agent_id = self.agent_definition_id.clone();
+        let watch = ticket.watch();
         self.spawn_memory_work(async move {
             let mut render = Box::pin(prelude.render_in(&scope_owned, max_tokens, &reason_owned));
             // The turn waits for the render up to its deadline.
-            let rendered = match tokio::time::timeout(deadline, &mut render).await {
-                Ok(rendered) => rendered,
-                Err(_) => {
+            // A turn that is cancelled drops its receiver: that ends the
+            // wait early, and the render is background work from then on.
+            let waited = tokio::select! {
+                waited = tokio::time::timeout(deadline, &mut render) => waited.ok(),
+                () = sender.closed() => None,
+            };
+            let rendered = match waited {
+                Some(rendered) => rendered,
+                None => {
                     // Past it the render is background work, which a slow
                     // engine must not pile up: at the limit it is dropped,
                     // and the next generation start renders for itself.
@@ -180,15 +210,22 @@ impl OpenHumanTurnPrelude {
                     reason = reason_owned.as_str(),
                     "[memory_block] render voided by a memory change, dropping it"
                 );
-                RenderedBlock::Failed
+                RenderedBlock::Voided
             };
             // Nobody waiting any more: the render is for the next start.
-            if let Err(rendered) = sender.send(rendered) {
-                match rendered {
-                    RenderedBlock::Block(block) => put(key, Some(block.text()), ticket),
-                    RenderedBlock::Empty => put(key, None, ticket),
-                    _ => {}
+            let delivered = matches!(rendered, RenderedBlock::Block(_) | RenderedBlock::Empty);
+            match sender.send(rendered) {
+                // The waiting generation took it: an older render finishing
+                // later must not store its block over this one's.
+                Ok(()) if delivered => delivered_to_generation(key, ticket),
+                Ok(()) => {}
+                Err(RenderedBlock::Block(block)) => {
+                    put(key, Some(block.text()), ticket);
                 }
+                Err(RenderedBlock::Empty) => {
+                    put(key, None, ticket);
+                }
+                Err(_) => {}
             }
         });
         match tokio::time::timeout(deadline, &mut receiver).await {
@@ -201,6 +238,17 @@ impl OpenHumanTurnPrelude {
                 receiver.close();
                 if let Ok(rendered) = receiver.try_recv() {
                     return rendered;
+                }
+                // Voided while it was pending: the block recorded before the
+                // change must not stand in for it, as it may for a deferral.
+                if !watch.is_live() {
+                    tracing::info!(
+                        thread_id = self.thread_id.as_deref().unwrap_or(""),
+                        agent_id = self.agent_definition_id.as_str(),
+                        reason,
+                        "[memory_block] render voided by a memory change while deferred"
+                    );
+                    return RenderedBlock::Voided;
                 }
                 tracing::info!(
                     thread_id = self.thread_id.as_deref().unwrap_or(""),
@@ -220,7 +268,7 @@ impl OpenHumanTurnPrelude {
     /// taken before the (possibly slow) config load, so a change of memory
     /// while the scope resolves voids the render instead of slipping between
     /// the two.
-    async fn scope_and_ticket(&self, reason: &str) -> Option<(MemoryScope, Ticket)> {
+    pub(super) async fn scope_and_ticket(&self, reason: &str) -> Option<(MemoryScope, Ticket)> {
         let early = ticket(&self.workspace_dir);
         let scope = self.memory_scope(reason).await?;
         if scope.config.workspace_dir == self.workspace_dir {
@@ -325,21 +373,44 @@ impl Ticket {
     }
 }
 
-impl Drop for Ticket {
-    fn drop(&mut self) {
-        if self.tracked {
-            lock(&self.state).in_flight.remove(&self.seq);
+impl Ticket {
+    /// A view of this ticket that can be asked whether it is live after the
+    /// ticket itself has moved to the render's task.
+    pub(super) fn watch(&self) -> TicketWatch {
+        TicketWatch {
+            state: Arc::clone(&self.state),
+            seq: self.seq,
         }
     }
 }
 
-/// A stored block: `None` once taken, its sequence staying behind so an older
-/// render cannot store its own afterwards; then the block, which is itself
-/// `None` for a render that found nothing known.
-struct Entry {
-    block: Option<Option<String>>,
-    at: Instant,
+/// Asks whether a [`Ticket`] is still live; holding it keeps nothing.
+pub(super) struct TicketWatch {
+    state: Arc<Mutex<State>>,
     seq: u64,
+}
+
+impl TicketWatch {
+    /// Whether no invalidation has voided the ticket since it was taken.
+    pub(super) fn is_live(&self) -> bool {
+        lock(&self.state).in_flight.contains_key(&self.seq)
+    }
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        if self.tracked {
+            let mut state = lock(&self.state);
+            state.in_flight.remove(&self.seq);
+            state.prune_marks();
+        }
+    }
+}
+
+/// A stored block, itself `None` for a render that found nothing known.
+struct Entry {
+    block: Option<String>,
+    at: Instant,
 }
 
 #[derive(Default)]
@@ -349,6 +420,21 @@ struct State {
     in_flight: HashMap<u64, PathBuf>,
     /// Counts renders started.
     seq: u64,
+    /// For each key, the sequence of the newest render that stored or was
+    /// taken for it: an older render finishing later must not store its own.
+    /// Kept while a render older than the mark is still in flight, however
+    /// many other blocks come and go, and no longer.
+    marks: HashMap<ReadyKey, u64>,
+}
+
+impl State {
+    /// Forgets the marks no render in flight is older than.
+    fn prune_marks(&mut self) {
+        match self.in_flight.keys().min().copied() {
+            Some(oldest) => self.marks.retain(|_, mark| *mark > oldest),
+            None => self.marks.clear(),
+        }
+    }
 }
 
 fn lock(state: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
@@ -393,6 +479,7 @@ impl ReadyBlocks {
                 state.in_flight.clear();
             }
         }
+        state.prune_marks();
     }
 
     /// Holds `block` for `key`, replacing an earlier one, unless `ticket` is
@@ -401,36 +488,75 @@ impl ReadyBlocks {
         &self,
         key: ReadyKey,
         block: Option<String>,
+        ticket: Ticket,
+        now: Instant,
+    ) -> bool {
+        self.store(key, Some(block), ticket, now)
+    }
+
+    /// Records that the render of `ticket` went straight to a generation
+    /// start: nothing waits, but its sequence is kept so an older render
+    /// finishing later cannot store its own block over it.
+    pub(super) fn delivered_at(&self, key: ReadyKey, ticket: Ticket, now: Instant) {
+        self.store(key, None, ticket, now);
+    }
+
+    /// `block` is what to hold for `key`; `None` records only that the
+    /// render went straight to a generation start, dropping an older block
+    /// that waited.
+    fn store(
+        &self,
+        key: ReadyKey,
+        block: Option<Option<String>>,
         mut ticket: Ticket,
         now: Instant,
-    ) {
+    ) -> bool {
         let mut state = self.lock();
         ticket.tracked = false;
-        if state.in_flight.remove(&ticket.seq).is_none() {
-            return;
-        }
-        let entries = &mut state.entries;
-        entries.retain(|_, entry| fresh(entry.at, now));
-        if entries.get(&key).is_some_and(|held| held.seq > ticket.seq) {
-            return;
-        }
-        if entries.len() >= READY_CAPACITY && !entries.contains_key(&key) {
-            let oldest = entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.at)
-                .map(|(key, _)| key.clone());
-            if let Some(oldest) = oldest {
-                entries.remove(&oldest);
+        let live = state.in_flight.remove(&ticket.seq).is_some();
+        let newer = state
+            .marks
+            .get(&key)
+            .copied()
+            .filter(|mark| *mark > ticket.seq);
+        let stored = if !live {
+            tracing::debug!(
+                seq = ticket.seq,
+                "[memory_block] render not stored: voided by a memory change"
+            );
+            false
+        } else if let Some(newer) = newer {
+            tracing::debug!(
+                seq = ticket.seq,
+                newer_seq = newer,
+                "[memory_block] render not stored: a newer render came first"
+            );
+            false
+        } else {
+            state.marks.insert(key.clone(), ticket.seq);
+            let entries = &mut state.entries;
+            entries.retain(|_, entry| fresh(entry.at, now));
+            match block {
+                Some(block) => {
+                    if entries.len() >= READY_CAPACITY && !entries.contains_key(&key) {
+                        let oldest = entries
+                            .iter()
+                            .min_by_key(|(_, entry)| entry.at)
+                            .map(|(key, _)| key.clone());
+                        if let Some(oldest) = oldest {
+                            entries.remove(&oldest);
+                        }
+                    }
+                    entries.insert(key, Entry { block, at: now });
+                }
+                None => {
+                    entries.remove(&key);
+                }
             }
-        }
-        entries.insert(
-            key,
-            Entry {
-                block: Some(block),
-                at: now,
-                seq: ticket.seq,
-            },
-        );
+            true
+        };
+        state.prune_marks();
+        stored
     }
 
     /// Holds `block` for `key`, replacing an earlier one.
@@ -444,12 +570,8 @@ impl ReadyBlocks {
     /// stale. `Some(None)` is a ready render that found nothing known.
     pub(super) fn take_at(&self, key: &ReadyKey, now: Instant) -> Option<Option<String>> {
         let mut state = self.lock();
-        let entry = state.entries.get_mut(key)?;
-        if !fresh(entry.at, now) {
-            state.entries.remove(key);
-            return None;
-        }
-        entry.block.take()
+        let entry = state.entries.remove(key)?;
+        fresh(entry.at, now).then_some(entry.block)
     }
 
     /// Whether a fresh block is ready for `key`.
@@ -457,7 +579,7 @@ impl ReadyBlocks {
         self.lock()
             .entries
             .get(key)
-            .is_some_and(|entry| entry.block.is_some() && fresh(entry.at, now))
+            .is_some_and(|entry| fresh(entry.at, now))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -477,9 +599,16 @@ pub(super) fn ticket(workspace: &Path) -> Ticket {
     READY.ticket(workspace)
 }
 
-/// Holds `block` for `key` in the process-wide store.
-pub(super) fn put(key: ReadyKey, block: Option<String>, ticket: Ticket) {
-    READY.put_ticketed_at(key, block, ticket, Instant::now());
+/// Holds `block` for `key` in the process-wide store; whether it was kept
+/// (not when a memory change voided its render, or a newer one came first).
+pub(super) fn put(key: ReadyKey, block: Option<String>, ticket: Ticket) -> bool {
+    READY.put_ticketed_at(key, block, ticket, Instant::now())
+}
+
+/// Records a render a generation start took directly; see
+/// [`ReadyBlocks::delivered_at`].
+pub(super) fn delivered_to_generation(key: ReadyKey, ticket: Ticket) {
+    READY.delivered_at(key, ticket, Instant::now());
 }
 
 /// Drops the waiting blocks (of one workspace, or all) and voids renders in

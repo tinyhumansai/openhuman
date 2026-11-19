@@ -2,7 +2,6 @@ use serde::de::{DeserializeOwned, Deserializer};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::core::Outcome;
 use crate::core::{FieldSchema, TypeSchema};
 
 pub(super) const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
@@ -115,6 +114,10 @@ pub(super) struct ComputerSettingsUpdate {
     pub(super) planner_model: Option<String>,
     pub(super) rescue_model: Option<String>,
     pub(super) max_rescues: Option<u32>,
+    pub(super) captcha_solver: Option<bool>,
+    pub(super) captcha_provider: Option<String>,
+    pub(super) captcha_model: Option<String>,
+    pub(super) max_captcha_attempts: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +146,7 @@ pub(super) struct LocalAiSettingsUpdate {
     pub(super) chat_model_id: Option<String>,
     pub(super) usage_embeddings: Option<bool>,
     pub(super) api_key: Option<String>,
+    pub(super) native_tool_calling: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -254,30 +258,12 @@ where
     Value::deserialize(deserializer).map(Some)
 }
 
-pub fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
 pub fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
         comment,
         required: false,
-    }
-}
-
-pub fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
     }
 }
 
@@ -297,17 +283,4 @@ pub fn optional_number(name: &'static str, comment: &'static str) -> FieldSchema
         comment,
         required: false,
     }
-}
-
-pub fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
-}
-
-pub(super) fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

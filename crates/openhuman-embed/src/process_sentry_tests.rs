@@ -24,8 +24,9 @@ fn the_chain_is_the_union_of_both_hosts_with_unique_names() {
     // 19 CLI predicates + 1 shell-only (localhost dev fetch); the shell's other
     // 11 were already in the CLI chain. `is_transient_backend_api_failure` and
     // its three siblings were one `||` group in both hosts. +1 disk-full
-    // (#8508, TAURI-RUST-15PJ).
-    assert_eq!(NOISE_FILTERS.len(), 22);
+    // (#8508, TAURI-RUST-15PJ). -1 channel-message-404, now registered by the
+    // TinyHumans layer (`register_crash_noise_filter`).
+    assert_eq!(NOISE_FILTERS.len(), 21);
     let mut names: Vec<_> = NOISE_FILTERS.iter().map(|(name, _)| *name).collect();
     names.sort_unstable();
     names.dedup();
@@ -73,18 +74,6 @@ fn each_known_noise_class_is_dropped() {
                     tinyagents_harness::agent_error::MAX_ITERATIONS_ERROR_PREFIX
                 ),
                 &[],
-            ),
-        ),
-        (
-            "channel-message-404",
-            event(
-                "DELETE /channels/c1/messages/m1 -> 404",
-                &[
-                    ("domain", "backend_api"),
-                    ("failure", "non_2xx"),
-                    ("status", "404"),
-                    ("method", "DELETE"),
-                ],
             ),
         ),
         (
@@ -298,4 +287,21 @@ fn core_dsn_precedence_is_runtime_then_baked_and_skips_blanks() {
         Some("bl")
     );
     assert_eq!(select_core_dsn(None, None, None, Some("  ")), None);
+}
+
+/// A host-registered filter joins the chain after the built-in ones.
+#[test]
+fn a_host_registered_filter_is_consulted_after_the_built_in_chain() {
+    fn is_host_noise(event: &Event<'static>) -> bool {
+        event.message.as_deref() == Some("host-only noise shape")
+    }
+    let noise = event("host-only noise shape", &[]);
+    assert_eq!(known_noise(&noise), None);
+    obs::register_crash_noise_filter(obs::CrashNoiseFilter {
+        name: "test-host-noise",
+        matches: is_host_noise,
+    });
+    assert_eq!(known_noise(&noise), Some("test-host-noise"));
+    assert!(before_send(noise, no_user).is_none());
+    assert!(obs::unregister_crash_noise_filter("test-host-noise"));
 }

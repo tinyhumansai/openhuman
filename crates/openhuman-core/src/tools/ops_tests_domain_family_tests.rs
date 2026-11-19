@@ -1,8 +1,5 @@
 use super::*;
-#[cfg(feature = "modules")]
-use crate::tools::BrowserOpenTool;
-use crate::tools::{filter_tools_by_user_preference, http_request_tool};
-use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
+use crate::tools::filter_tools_by_user_preference;
 
 /// Every acting tool gates on `can_act()` and returns its own read-only refusal
 /// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
@@ -12,9 +9,19 @@ use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
 /// literal to the marker const — drift between them fails here rather than
 /// silently letting the agent grind on a doomed call. Args are the minimum
 /// needed to reach the `can_act()` check in each tool.
+///
+/// Needs the module: a build without it has security disabled, so `can_act()`
+/// is always true and no tool refuses (`crate::security::switch`).
+///
+/// `browser_open` is not listed: it no longer gates itself (f8a08f11f8 moved
+/// that to the host authorization stage), so a tool-level marker is not its
+/// contract.
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn readonly_acting_tools_carry_policy_blocked_marker() {
     use crate::security::AutonomyLevel;
+    use crate::tools::http_request_tool;
+    use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
     use tinytools::status::POLICY_BLOCKED_MARKER;
 
     let tmp = TempDir::new().unwrap();
@@ -33,19 +40,6 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
         (
             Box::new(CsvExportTool::new(sec.clone())),
             serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
-        ),
-        // The `computer`-family tools are compiled out with the
-        // `desktop-automation` feature; gate these two cases per-element so the
-        // rest of the read-only policy assertions still run in the slim build.
-        #[cfg(feature = "modules")]
-        (
-            Box::new(BrowserOpenTool::new(
-                sec.clone(),
-                Arc::new(crate::modules::browser::BrowserClient::new(Arc::new(
-                    crate::config::Config::default(),
-                ))),
-            )),
-            serde_json::json!({ "url": "https://example.com" }),
         ),
         (
             Box::new(http_request_tool(
@@ -360,4 +354,21 @@ async fn desktop_default_off_tools_retained_when_opted_in() {
             "opted-in tool `{on}` must be retained; got: {names:?}"
         );
     }
+}
+
+/// No provider can fetch tasks today (senamakel/openhuman#324), so the full
+/// registry must not offer the model a `task_source_*` tool: a source added
+/// through one would never ingest anything.
+#[tokio::test]
+async fn task_source_tools_are_not_offered_while_no_provider_can_fetch() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp).await);
+    let offered: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("task_source_"))
+        .collect();
+    assert!(
+        offered.is_empty(),
+        "task_source tools offered with no fetch-capable provider: {offered:?}"
+    );
 }

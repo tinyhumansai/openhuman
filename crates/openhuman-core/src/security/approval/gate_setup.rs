@@ -44,6 +44,18 @@ impl ApprovalGate {
         )
     }
 
+    /// A private gate over the real engine for the test host, which answers
+    /// the master grant in a process that installed no global gate. Leaves
+    /// [`Self::try_global`] as the process had it.
+    #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+    pub(crate) fn for_test_host(config: Config) -> Arc<Self> {
+        Arc::new(Self::new(
+            config,
+            format!("session-{}", uuid::Uuid::new_v4()),
+            None,
+        ))
+    }
+
     /// The engine this build asks: the TinySecurity module, or, in a build
     /// without it, one that refuses every gated call.
     fn engine_for(config: &Config) -> SharedEngine {
@@ -226,6 +238,33 @@ impl ApprovalGate {
             None,
             &mut _park_bound_elapsed,
             None,
+            Mode::forced(true).untracked(),
+        )
+        .await
+        .0
+    }
+
+    /// [`Self::intercept_forced`] whose park carries `correlation` as its
+    /// `tool_call_id`, so the caller can tell its own pending request from any
+    /// other one with the same tool. A host answering a grant for the operator
+    /// (`modules::security::unattended_unlock`) decides only the park it
+    /// raised.
+    pub(crate) async fn intercept_forced_correlated(
+        &self,
+        tool_name: &str,
+        action_summary: &str,
+        args_redacted: serde_json::Value,
+        correlation: &str,
+    ) -> GateOutcome {
+        let mut _park_bound_elapsed = false;
+        self.intercept_audited_inner(
+            &ApprovalTurnContext::default(),
+            tool_name,
+            action_summary,
+            args_redacted,
+            None,
+            &mut _park_bound_elapsed,
+            Some(correlation),
             Mode::forced(true).untracked(),
         )
         .await

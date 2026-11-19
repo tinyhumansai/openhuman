@@ -10,9 +10,6 @@
 //! redaction passes content through unchanged. A build without the
 //! `security-module` feature behaves as `off` whatever this says, because there
 //! is no module to ask (`crate::security::switch`).
-//!
-//! This is not the daemon's [`SecurityConfig`](super::SecurityConfig), which
-//! configures sandboxing, resource limits and the audit sink.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -93,19 +90,6 @@ impl SecurityJudgeRoute {
         Self {
             api_key: api_key.into(),
             endpoint: "https://openrouter.ai/api/v1/systemone".to_owned(),
-            dialect: SecurityJudgeDialect::OpenRouter,
-        }
-    }
-
-    /// Jev through the TinyHumans gateway at `base_url`.
-    #[must_use]
-    pub fn tinyhumans(base_url: &str, api_key: impl Into<String>) -> Self {
-        Self {
-            api_key: api_key.into(),
-            endpoint: format!(
-                "{}/agent-integrations/openrouter/systemone",
-                base_url.trim_end_matches('/')
-            ),
             dialect: SecurityJudgeDialect::OpenRouter,
         }
     }

@@ -53,9 +53,12 @@ pub(crate) async fn append(request: AuditSinkRequest2) -> Result<AuditSinkRespon
     // The batch names its subject only by the module's identifier hash, so the
     // stream the host assigned to the subject is what identifies it; the first
     // batch fixes how the stream's subject is spelled and later ones must repeat it.
-    let scope = by_stream(&request.stream_id)
-        .await
-        .ok_or("audit sink: unknown stream")?;
+    // A tenant's approval stream is known by its id; TinySecurity's shared
+    // init stream carries audited permissions, routed by their correlation.
+    let scope = match by_stream(&request.stream_id).await {
+        Some(scope) => scope,
+        None => super::route_permission_batch(&request).ok_or("audit sink: unknown stream")?,
+    };
     if !scope.audit_scope_matches(&request.scope) {
         tracing::warn!("{LOG} audit batch names another subject than its stream's");
         return Err("audit sink: the stream belongs to another subject".into());
@@ -156,10 +159,24 @@ pub(crate) async fn verify_human(
     let (request_id, choice, actor) = host()
         .ticket(&request.decision_ticket)
         .ok_or("human verification: the ticket is unknown or expired")?;
-    let known = host()
-        .request(&request.row.request_id)
-        .ok_or("human verification: the request is not pending in this process")?;
-    if request_id != request.row.request_id || known.delivered.as_ref() != Some(&request.row) {
+    // A request of this process must match the row it delivered; a pending
+    // orphan (an earlier launch's request) the row a person is dismissing, and
+    // only a denial is ever verified for one.
+    let shown = match host().request(&request.row.request_id) {
+        Some(known) => known.delivered,
+        None => {
+            let listed = host()
+                .orphan_review(&request.row.request_id)
+                .ok_or("human verification: the request is not pending in this process")?;
+            if choice != ApprovalChoice2::Deny {
+                return Err(
+                    "human verification: an earlier launch's request can only be denied".into(),
+                );
+            }
+            Some(listed)
+        }
+    };
+    if request_id != request.row.request_id || shown.as_ref() != Some(&request.row) {
         tracing::warn!("{LOG} human ticket does not match the pending row");
         return Err("human verification: the ticket is not for this request".into());
     }

@@ -97,6 +97,24 @@ async fn wait_pending(gate: &ApprovalGate, tool: &str) -> PendingApproval {
     panic!("no pending approval appeared for {tool}");
 }
 
+/// Decide a parked call from a blocking thread, as a person's answer arrives.
+///
+/// `ApprovalGate::decide` blocks on the engine, and the engine's decision waits
+/// for the parked call's check to release its subject's audit stream. That
+/// check finishes on the task `intercept` was spawned as, on this test's
+/// current-thread runtime: deciding inline here would stall the only thread
+/// that can finish it, and the test would hang whenever the row became visible
+/// before the check returned.
+async fn decide_parked(gate: &Arc<ApprovalGate>, request_id: &str, decision: ApprovalDecision) {
+    let gate = Arc::clone(gate);
+    let request_id = request_id.to_owned();
+    let decided = tokio::task::spawn_blocking(move || gate.decide(&request_id, decision))
+        .await
+        .expect("the decision thread")
+        .expect("the gate applies the decision");
+    assert!(decided.is_some(), "the parked request was decided");
+}
+
 fn secs_until_expiry(p: &PendingApproval) -> i64 {
     (p.expires_at.expect("parked rows carry an expiry") - Utc::now()).num_seconds()
 }
@@ -135,8 +153,7 @@ async fn park_and_approve(
         .await
     });
     let pending = wait_pending(&gate, tool).await;
-    gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce)
-        .unwrap();
+    decide_parked(&gate, &pending.request_id, ApprovalDecision::ApproveOnce).await;
     assert!(matches!(handle.await.unwrap(), GateOutcome::Allow));
     pending
 }
@@ -194,8 +211,7 @@ async fn detached_subagent_park_is_clamped_to_180s_and_marked_detached() {
     let pending = wait_pending(&gate, "char_ttl_subagent").await;
     assert_window(&pending, 180);
     assert!(gate.request_is_detached(&pending.request_id));
-    gate.decide(&pending.request_id, ApprovalDecision::Deny)
-        .unwrap();
+    decide_parked(&gate, &pending.request_id, ApprovalDecision::Deny).await;
     assert!(matches!(handle.await.unwrap(), GateOutcome::Deny { .. }));
 }
 
@@ -374,7 +390,7 @@ async fn bypass_outcome_with_auto_approve_all(tool: &str) -> GateOutcome {
 }
 
 #[tokio::test]
-async fn auto_approve_all_allows_without_parking_or_writing_audit_history() {
+async fn auto_approve_all_allows_without_parking_and_writes_audit_history() {
     let _lock = env_guard::env_lock_async().await;
     let fx = fixture();
     let outcome = bypass_outcome_with_auto_approve_all("char_auto_all").await;
@@ -385,13 +401,17 @@ async fn auto_approve_all_allows_without_parking_or_writing_audit_history() {
         .unwrap()
         .iter()
         .all(|p| p.tool_name != "char_auto_all"));
+    // TinySecurity audits the automatic host-policy approval: the bypass skips
+    // the human prompt, not the audit trail (docs/gitbooks/en/features/
+    // approval-gate.md, "auto_approve_all"). Recording it is the intended,
+    // more auditable behaviour, so the characterization now pins the row.
     assert!(
         fx.gate
             .list_recent_decisions(500)
             .unwrap()
             .iter()
-            .all(|entry| entry.tool_name != "char_auto_all"),
-        "the host auto-approval bypass is not written to approval history"
+            .any(|entry| entry.tool_name == "char_auto_all"),
+        "the host auto-approval bypass is written to approval history"
     );
     // The unknown-origin exclusion still holds with the bypass on.
     let ws = fx.config.workspace_dir.clone();
@@ -494,9 +514,7 @@ async fn flow_trust_is_scoped_to_the_exact_flow_and_tool() {
         pending.source_context.is_some(),
         "flow parks carry flow/run context"
     );
-    fx.gate
-        .decide(&pending.request_id, ApprovalDecision::Deny)
-        .unwrap();
+    decide_parked(&fx.gate, &pending.request_id, ApprovalDecision::Deny).await;
     assert!(matches!(handle.await.unwrap(), GateOutcome::Deny { .. }));
 
     // Revocation removes the grant.

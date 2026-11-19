@@ -14,7 +14,7 @@ use tinybus::module::{ModuleHost, ModuleInfo};
 /// TinyBus's generic search-path loader, which initializes them with `{}`.
 /// Leave those artifacts for the configured load below.
 pub fn configured_module_lib_stems() -> Vec<String> {
-    ["tinymcp", "tinyeventqueues", "tinysecurity"]
+    super::ops::CALLBACK_BOUND_MODULES
         .into_iter()
         .filter_map(super::registry::find)
         .flat_map(|record| {
@@ -33,7 +33,7 @@ pub fn configured_module_lib_stems() -> Vec<String> {
 /// binding. Their search-path artifacts remain available to the normal
 /// `ensure_loaded` path, which installs that binding before loading.
 fn callback_bound_module_lib_stems() -> Vec<String> {
-    ["tinysecurity"]
+    super::ops::CALLBACK_BOUND_MODULES
         .into_iter()
         .filter_map(super::registry::find)
         .flat_map(|record| {

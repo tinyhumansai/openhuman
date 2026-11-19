@@ -170,10 +170,68 @@ fn owner() -> tinysecurity_bus::SubjectScope {
 fn the_config_names_a_stable_alias_not_the_rotating_policy() {
     // TinyBus fixes TinyComputer's config at load; a policy id in it would
     // change at the first re-registration and every refresh would be refused.
-    let alias = browser_dial_alias();
+    let config = crate::config::Config::default();
+    let alias = browser_dial_alias(&config);
     assert_eq!(alias["policy_id"], BROWSER_POLICY_ALIAS);
     assert_eq!(alias["generation"], BROWSER_POLICY_ALIAS_GENERATION);
-    assert_eq!(alias, browser_dial_alias());
+    assert_eq!(alias, browser_dial_alias(&config));
+    // With nothing routed the section holds exactly the alias, which every
+    // TinyComputer release accepts.
+    assert_eq!(alias.as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn a_refresh_keeps_the_upstream_proxies_admitted_at_load() {
+    // TinyBus refuses a callback-bound refresh whose bytes differ from the
+    // load's, so an edited or rotated proxy list must wait for the next load.
+    let slot = parking_lot::Mutex::new(None);
+    let mut loaded = crate::config::Config::default();
+    loaded.browser.upstream_proxies = vec![crate::config::schema::BrowserUpstreamProxy {
+        domains: vec!["reddit.com".into()],
+        url: "http://resi:old@gate.example:7000".into(),
+    }];
+    let admitted = admit_in(&slot, &loaded);
+
+    let mut edited = loaded.clone();
+    edited.browser.upstream_proxies[0].url = "http://resi:rotated@gate.example:7000".into();
+    assert_eq!(refresh_alias_in(&slot, &edited), admitted);
+    let mut removed = loaded.clone();
+    removed.browser.upstream_proxies.clear();
+    assert_eq!(refresh_alias_in(&slot, &removed), admitted);
+    assert_eq!(refresh_alias_in(&slot, &loaded), admitted);
+
+    // Before any load, a refresh builds from the current config.
+    let empty = parking_lot::Mutex::new(None);
+    assert_eq!(
+        refresh_alias_in(&empty, &edited),
+        browser_dial_alias(&edited)
+    );
+    // The next load admits the edit.
+    assert_eq!(admit_in(&slot, &edited), browser_dial_alias(&edited));
+    assert_eq!(
+        refresh_alias_in(&slot, &edited),
+        browser_dial_alias(&edited)
+    );
+}
+
+#[test]
+fn configured_upstream_proxies_ride_in_the_private_egress_section() {
+    let mut config = crate::config::Config::default();
+    config.browser.upstream_proxies = vec![crate::config::schema::BrowserUpstreamProxy {
+        domains: vec!["reddit.com".into(), "redd.it".into()],
+        url: "http://resi:secret@gate.example:7000".into(),
+    }];
+    let alias = browser_dial_alias(&config);
+    assert_eq!(alias["policy_id"], BROWSER_POLICY_ALIAS);
+    assert_eq!(
+        alias["upstream_proxies"],
+        serde_json::json!([{
+            "url": "http://resi:secret@gate.example:7000",
+            "domains": ["reddit.com", "redd.it"],
+        }])
+    );
+    // Stable bytes: TinyBus refuses a callback-bound refresh that differs.
+    assert_eq!(alias, browser_dial_alias(&config));
 }
 
 #[test]
