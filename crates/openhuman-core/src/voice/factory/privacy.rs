@@ -17,6 +17,9 @@ use crate::config::PrivacyMode;
 /// providers carry no endpoint the core can inspect, so they fail closed.
 pub(super) const HOSTED_STT_LABEL: &str = "a hosted transcription service";
 
+/// Destination named for an endpoint whose host cannot be established.
+pub(super) const UNPARSEABLE_ENDPOINT_LABEL: &str = "an endpoint that could not be parsed";
+
 /// Pure decision: under `mode`, would building an STT provider that posts audio
 /// to `endpoint` violate local-only? `None` means permitted; `Some` names the
 /// destination for the error. `endpoint` is `None` for a registered provider.
@@ -34,10 +37,11 @@ pub(super) fn local_only_stt_violation(
         Ok(parsed) => match parsed.host_str() {
             Some(host) if crate::util::url::loopback_host(host) => None,
             Some(host) => Some(host.to_string()),
-            None => Some(endpoint.to_string()),
+            None => Some(UNPARSEABLE_ENDPOINT_LABEL.to_string()),
         },
-        // A destination we cannot establish is not a local one.
-        Err(_) => Some(endpoint.to_string()),
+        // A destination we cannot establish is not a local one. The raw value
+        // is not echoed: it may carry credentials.
+        Err(_) => Some(UNPARSEABLE_ENDPOINT_LABEL.to_string()),
     }
 }
 

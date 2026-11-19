@@ -59,8 +59,15 @@ fn local_only_refuses_remote_and_lan_endpoints_and_names_the_host() {
 fn an_unparseable_endpoint_is_refused_rather_than_assumed_local() {
     assert_eq!(
         local_only_stt_violation(PrivacyMode::LocalOnly, Some("not a url")).as_deref(),
-        Some("not a url")
+        Some(UNPARSEABLE_ENDPOINT_LABEL)
     );
+    // Credentials in a malformed endpoint never reach the error or the log.
+    let leaked = local_only_stt_violation(
+        PrivacyMode::LocalOnly,
+        Some("http://user:secret@host:notaport/v1"),
+    )
+    .expect("refused");
+    assert!(!leaked.contains("secret"), "{leaked}");
 }
 
 #[test]
