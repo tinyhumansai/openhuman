@@ -25,6 +25,9 @@ impl Profile {
         let mut cfg = Config::default();
         cfg.workspace_dir = dir.path().join("workspace");
         cfg.config_path = dir.path().join("config.toml");
+        // These tests are about the checkpoint, not secret sealing, which
+        // needs the security module.
+        cfg.secrets.encrypt = false;
         std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
         cfg.save().await.expect("initial save");
         Self { dir }

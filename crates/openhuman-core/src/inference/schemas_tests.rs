@@ -107,7 +107,12 @@ async fn inference_local_settings_checkpoint_rolls_back_over_rpc() {
     let _workspace_guard =
         crate::config::test_env::EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
     let ctx = DispatchCtx::ambient();
-    let before = ctx.load_config().await.expect("config").local_ai.provider;
+    // The key is saved in plaintext: secret sealing needs the security module
+    // and is not what this test covers.
+    let mut config = ctx.load_config().await.expect("config");
+    config.secrets.encrypt = false;
+    config.save().await.expect("save plaintext config");
+    let before = config.local_ai.provider;
 
     let params = Map::from_iter([
         ("provider".to_string(), Value::from("lm_studio")),
