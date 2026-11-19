@@ -57,6 +57,7 @@ mod tests;
 // Re-export the public API — exact visibility preserved from the original file.
 pub use entry::{create_stt_provider, create_tts_provider, DEFAULT_PIPER_VOICE, DEFAULT_STT_MODEL};
 pub use helpers::{effective_stt_provider, effective_tts_provider};
+pub use privacy::enforce_local_only_stt;
 pub use stt_providers::ExternalSttProvider;
 pub use traits::{SttProvider, SttResult, TtsProvider};
 pub use tts_providers::{ExternalTtsProvider, PiperTtsProvider};

@@ -20,6 +20,11 @@ pub async fn transcribe_cloud(
     audio_base64: &str,
     options: &CloudTranscribeOptions,
 ) -> Result<Outcome<CloudTranscribeResult>, String> {
+    // Every hosted transcription (the STT provider and the retained
+    // `voice_cloud_transcribe` RPC) ends here, so local-only is enforced once,
+    // before the audio or the credential is touched (#6870).
+    openhuman_embed::__host::voice_registry::enforce_local_only_stt("cloud", None)
+        .map_err(|error| error.to_string())?;
     // The session JWT or the TinyHumans API key. The vendored client sends it
     // as `Authorization: Bearer`, which the backend accepts for either.
     let credential = resolve_backend_credential(config).await?;

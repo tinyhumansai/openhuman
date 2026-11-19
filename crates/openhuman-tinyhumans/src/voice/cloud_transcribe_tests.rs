@@ -118,3 +118,27 @@ async fn api_key_transcribes_via_safe_backend_with_bearer_and_multipart_audio() 
     assert!(body.contains("name=\"file\""));
     assert!(body.contains("name=\"model\""));
 }
+
+/// Under local-only the hosted transcription refuses before resolving a
+/// credential or sending anything, whichever caller reached it (#6870).
+#[tokio::test]
+async fn local_only_refuses_hosted_transcription_before_sending() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TRANSCRIPTIONS_PATH))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp, Some(server.uri()));
+    let _mode = openhuman_core::security::live_policy::test_privacy_scope(
+        openhuman_core::config::PrivacyMode::LocalOnly,
+    );
+
+    let error = transcribe_cloud(&config, "AAAA", &CloudTranscribeOptions::default())
+        .await
+        .err()
+        .expect("local-only must refuse hosted transcription");
+    assert!(error.contains("Local-only privacy mode"), "{error}");
+}

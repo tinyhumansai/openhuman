@@ -9,7 +9,11 @@
 //! on this machine keeps audio on it. Under `LocalOnly` that is the only
 //! speech-to-text permitted: a loopback endpoint passes; a registered provider
 //! (the hosted proxy), a remote endpoint and a LAN address are refused when the
-//! provider is built, before any audio is recorded (#6870).
+//! provider is built, before any audio is sent (#6870). The hosted transcribe
+//! path calls [`enforce_local_only_stt`] itself, so the retained
+//! `voice_cloud_transcribe` RPC is held to the same rule.
+//!
+//! Live voice sessions (`voice::live`) are a separate path and not covered.
 
 use crate::config::PrivacyMode;
 
@@ -45,9 +49,10 @@ pub(super) fn local_only_stt_violation(
     }
 }
 
-/// Refuse to build an STT provider that would send microphone audio off this
-/// machine while the live policy is `LocalOnly`.
-pub(super) fn enforce_local_only_stt(provider: &str, endpoint: Option<&str>) -> anyhow::Result<()> {
+/// Refuse speech-to-text that would send microphone audio off this machine
+/// while the live policy is `LocalOnly`. `endpoint` is `None` for a provider
+/// whose endpoint the core cannot inspect (the hosted proxy).
+pub fn enforce_local_only_stt(provider: &str, endpoint: Option<&str>) -> anyhow::Result<()> {
     let mode = crate::security::live_policy::current_privacy_mode();
     let Some(destination) = local_only_stt_violation(mode, endpoint) else {
         log::debug!(
