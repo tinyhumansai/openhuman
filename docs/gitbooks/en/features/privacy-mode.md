@@ -2,8 +2,8 @@
 description: >-
   One switch, enforced in the Rust core. Local-only mode blocks cloud model
   calls, network tools, web search, integrations and cloud embeddings, and
-  allows only on-device runtimes. Voice is the exception, because there is no
-  local speech-to-text engine.
+  allows only on-device runtimes. Speech-to-text is allowed only when it runs
+  on this computer.
 icon: lock
 ---
 
@@ -16,7 +16,7 @@ The `[privacy]` config block defines three modes:
 | Mode | What it means |
 | --- | --- |
 | `standard` (default) | Normal operation. Managed cloud routing, BYO providers and local models are all available. |
-| `local_only` | No inference leaves the device. Every external chat provider is refused when it is built: the managed cloud, BYO cloud keys, even CLI delegates like Claude Code. Network tools, web search, integrations and cloud embeddings are refused at their egress points. Only local runtimes pass: Ollama, LM Studio, MLX and local OpenAI-compatible endpoints. Voice is the one exception, because no local speech-to-text engine exists. |
+| `local_only` | No inference leaves the device. Every external chat provider is refused when it is built: the managed cloud, BYO cloud keys, even CLI delegates like Claude Code. Network tools, web search, integrations and cloud embeddings are refused at their egress points. Only local runtimes pass: Ollama, LM Studio, MLX and local OpenAI-compatible endpoints. Speech-to-text follows the same rule: a transcription server on this computer passes, anything else is refused. |
 | `sensitive` | The base for an upcoming PII-aware tier (detection, redaction, destination disclosure). Today it behaves like `standard`. |
 
 ## Why enforcement matters
@@ -33,11 +33,12 @@ That makes the guarantee independent of prompts, agents, tools or upstream bugs.
 | Web search (Exa, Tavily) | Refused the same way                                      |
 | Composio tool calls and integration requests | Refused with an error                                     |
 | Cloud embeddings | Refused with an error                                     |
+| Speech-to-text (hosted proxy, third-party or LAN STT provider) | Refused when the provider is built, before any audio is recorded |
 | Local runtimes (Ollama, LM Studio, MLX, local OpenAI-compatible) | Always permitted, nothing leaves the device               |
 
 One deliberate exemption: backend control-plane round-trips keep flowing. These are sign-in, session, team, billing, and integration connection management and catalog reads. Blocking them breaks the app for no privacy gain. They carry auth tokens, ids and routing metadata, never user content.
 
-Speech-to-text is not covered by `local_only`. There is no local speech-to-text engine, so dictation and transcription leave the device through the hosted OpenHuman STT proxy or the third-party STT provider you configured. Disable the voice component if your threat model requires all speech processing to stay local.
+Speech-to-text is covered when it runs on this computer. No speech-to-text engine ships with OpenHuman, but a voice provider is an OpenAI-style transcription endpoint, so a server you run yourself (faster-whisper, whisper.cpp, or anything speaking that API) works under `local_only` when its endpoint is `localhost`, `127.0.0.1` or `::1`. The hosted OpenHuman STT proxy, a third-party STT provider, and a server elsewhere on your network are refused, and nothing falls back to the cloud. A machine on your LAN counts as another machine: the promise is that audio does not leave this one.
 
 Privacy mode governs data egress. It is separate from the [autonomy tiers](approval-gate.md) (readonly, supervised, full), which govern what the agent may do. You can run a fully autonomous agent that never sends a byte of inference off-device.
 
