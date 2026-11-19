@@ -143,6 +143,11 @@ pub(super) async fn create_stt_provider_by_slug(
         !api_key.is_empty()
     );
 
+    // A user-run transcription server on this device keeps audio on it; any
+    // other endpoint does not, and under LocalOnly that is refused here rather
+    // than discovered when the first recording is already in flight (#6870).
+    super::privacy::enforce_local_only_stt(slug, Some(&entry.endpoint))?;
+
     Ok(Box::new(ExternalSttProvider::new(
         slug,
         effective_model,

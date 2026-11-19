@@ -44,6 +44,7 @@
 
 mod entry;
 mod helpers;
+mod privacy;
 pub mod registry;
 mod stt_providers;
 mod traits;
