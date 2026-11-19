@@ -4,9 +4,9 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 
-use openhuman_core::core::envelope::ApiEnvelope;
 use openhuman_core::core::runtime::CoreContext;
 use openhuman_core::profiles::Profile;
+use openhuman_core::threads::envelope::ApiEnvelope;
 use openhuman_core::threads::{
     AppendConversationMessageRequest, ConversationMessagesRequest, ConversationMessagesResponse,
     ConversationThreadsListResponse,

@@ -31,7 +31,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
+import { crc32, inflateRawSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 import { parseAllList, parseRecords } from "../lib/module-pins.mjs";
@@ -507,11 +508,88 @@ export function extractWindowsZip(archive, dir) {
   );
 }
 
+/**
+ * Extract a ZIP into `dir` with Node alone, so staging a `.zip` on Linux or
+ * macOS needs no `unzip` binary (the CI image does not ship one). Handles the
+ * stored and deflate methods, verifies each entry's CRC-32, and refuses
+ * encrypted or ZIP64 archives, symlink entries, and any entry that would land
+ * outside `dir` (absolute paths, `..` segments, backslash separators).
+ */
+export function extractZip(archive, dir) {
+  const zip = readFileSync(archive);
+  let eocd = -1;
+  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 22 - 0xffff); i--) {
+    if (zip.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error(`${archive}: not a ZIP archive (no end-of-central-directory)`);
+  const count = zip.readUInt16LE(eocd + 10);
+  let cursor = zip.readUInt32LE(eocd + 16);
+  if (count === 0xffff || cursor === 0xffffffff) {
+    throw new Error(`${archive}: ZIP64 archives are not supported`);
+  }
+  const root = resolve(dir);
+  for (let n = 0; n < count; n++) {
+    if (zip.readUInt32LE(cursor) !== 0x02014b50) {
+      throw new Error(`${archive}: corrupt central directory`);
+    }
+    const flags = zip.readUInt16LE(cursor + 8);
+    const method = zip.readUInt16LE(cursor + 10);
+    const crc = zip.readUInt32LE(cursor + 16);
+    const compressedSize = zip.readUInt32LE(cursor + 20);
+    const size = zip.readUInt32LE(cursor + 24);
+    const nameLength = zip.readUInt16LE(cursor + 28);
+    const extraLength = zip.readUInt16LE(cursor + 30);
+    const commentLength = zip.readUInt16LE(cursor + 32);
+    const mode = zip.readUInt32LE(cursor + 38) >>> 16;
+    const localOffset = zip.readUInt32LE(cursor + 42);
+    const name = zip.toString("utf8", cursor + 46, cursor + 46 + nameLength);
+    cursor += 46 + nameLength + extraLength + commentLength;
+
+    const segments = name.split("/");
+    if (
+      name.includes("\\") ||
+      name.startsWith("/") ||
+      /^[A-Za-z]:/.test(name) ||
+      segments.includes("..")
+    ) {
+      throw new Error(`${archive}: refusing entry outside the destination: ${name}`);
+    }
+    const target = resolve(root, name);
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new Error(`${archive}: refusing entry outside the destination: ${name}`);
+    }
+    if (name.endsWith("/")) {
+      mkdirSync(target, { recursive: true });
+      continue;
+    }
+    if (flags & 1) throw new Error(`${archive}: encrypted entry ${name}`);
+    if ((mode & 0o170000) === 0o120000) throw new Error(`${archive}: symlink entry ${name}`);
+    if (zip.readUInt32LE(localOffset) !== 0x04034b50) {
+      throw new Error(`${archive}: corrupt local header for ${name}`);
+    }
+    const dataStart =
+      localOffset + 30 + zip.readUInt16LE(localOffset + 26) + zip.readUInt16LE(localOffset + 28);
+    const raw = zip.subarray(dataStart, dataStart + compressedSize);
+    let bytes;
+    if (method === 0) bytes = raw;
+    else if (method === 8) bytes = inflateRawSync(raw);
+    else throw new Error(`${archive}: unsupported compression method ${method} for ${name}`);
+    if (bytes.length !== size || crc32(bytes) !== crc) {
+      throw new Error(`${archive}: checksum mismatch for ${name}`);
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, bytes);
+  }
+}
+
 /** Extract `archive` into `dir`; GNU and BSD tar both refuse `..` entries. */
 export function extractArchive(archive, dir) {
   if (archive.endsWith(".zip")) {
     if (process.platform === "win32") return extractWindowsZip(archive, dir);
-    execFileSync("unzip", ["-q", "-o", archive, "-d", dir], { stdio: "pipe" });
+    extractZip(archive, dir);
     return;
   }
   execFileSync("tar", ["-xzf", archive, "-C", dir], { stdio: "pipe" });

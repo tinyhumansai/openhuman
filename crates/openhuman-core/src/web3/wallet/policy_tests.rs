@@ -23,6 +23,7 @@ fn policy() -> WalletPolicyConfig {
         automation_enabled: true,
         apply_to_interactive: false,
         assets: vec![usdc_cap()],
+        ..WalletPolicyConfig::default()
     }
 }
 
@@ -228,6 +229,10 @@ fn turn_origins_map_to_interactive_automation_or_refused() {
         ExecutionOrigin::Automation { .. }
     ));
     assert!(matches!(
+        ExecutionOrigin::for_turn(Some(&trusted(TrustedAutomationSource::CronActions))),
+        ExecutionOrigin::Automation { .. }
+    ));
+    assert!(matches!(
         ExecutionOrigin::for_turn(Some(&trusted(TrustedAutomationSource::Workflow {
             require_approval: true
         }))),
@@ -420,5 +425,78 @@ fn an_agent_execute_in_a_chat_is_always_capped_even_without_automation_enabled()
             NOW
         )),
         RefusalKind::AssetNotAllowed
+    );
+}
+
+#[test]
+fn a_scheduled_actions_cron_turn_is_automation_capped_by_the_policy() {
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    let origin = ExecutionOrigin::for_turn(Some(&AgentTurnOrigin::TrustedAutomation {
+        job_id: "j".into(),
+        source: TrustedAutomationSource::CronActions,
+    }));
+    assert!(matches!(origin, ExecutionOrigin::Automation { .. }));
+    let under = quote("q", "USDC", 1_000_000, RECIPIENT);
+    assert_eq!(evaluate(&policy(), &origin, &under, &[], NOW), Ok(true));
+    let over = quote("q2", "USDC", 60_000_000, RECIPIENT);
+    assert_eq!(
+        kind(evaluate(&policy(), &origin, &over, &[], NOW)),
+        RefusalKind::PerTransaction
+    );
+    let mut disabled = policy();
+    disabled.automation_enabled = false;
+    assert_eq!(
+        kind(evaluate(&disabled, &origin, &under, &[], NOW)),
+        RefusalKind::AutomationDisabled
+    );
+}
+
+#[test]
+fn a_plain_cron_turn_is_refused_by_the_spend_policy() {
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    let origin = ExecutionOrigin::for_turn(Some(&AgentTurnOrigin::TrustedAutomation {
+        job_id: "j".into(),
+        source: TrustedAutomationSource::Cron,
+    }));
+    assert!(matches!(origin, ExecutionOrigin::Refused { .. }));
+    let q = quote("q", "USDC", 1, RECIPIENT);
+    assert_eq!(
+        kind(evaluate(&policy(), &origin, &q, &[], NOW)),
+        RefusalKind::Origin
+    );
+}
+
+#[test]
+fn program_records_never_count_against_the_primary_accounts_caps() {
+    // A program execute of the same mint and amount, from either account,
+    // leaves the index-0 transfer caps exactly as they were.
+    let mut program = spent(100_000_000, RECIPIENT, NOW - 1_000, LedgerStatus::Broadcast);
+    program.kind = LedgerKind::Program;
+    let mut secondary = program.clone();
+    secondary.account_index = 1;
+    let q = quote("q", "USDC", 50_000_000, RECIPIENT);
+    assert_eq!(
+        evaluate(&policy(), &automation(), &q, &[program, secondary], NOW),
+        Ok(true)
+    );
+    // The same record as a transfer is counted, as before.
+    let transfer = spent(100_000_000, RECIPIENT, NOW - 1_000, LedgerStatus::Broadcast);
+    assert_eq!(
+        kind(evaluate(&policy(), &automation(), &q, &[transfer], NOW)),
+        RefusalKind::Daily
+    );
+}
+
+#[test]
+fn an_account_section_does_not_change_the_primary_asset_policy() {
+    let mut with_section = policy();
+    with_section.accounts.insert(
+        "solana_1".into(),
+        crate::config::schema::WalletAccountPolicy::default(),
+    );
+    let q = quote("q", "USDC", 60_000_000, RECIPIENT);
+    assert_eq!(
+        evaluate(&with_section, &automation(), &q, &[], NOW),
+        evaluate(&policy(), &automation(), &q, &[], NOW)
     );
 }

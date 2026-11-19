@@ -31,8 +31,8 @@ pub enum PlannedExecutor {
     Docker,
     /// The tenant's long-lived OpenShell box: no host mounts, no egress.
     OpenShell,
-    /// A box per command on the hosted agent37 service: no host mounts, no
-    /// egress, reached over HTTP through the TinyBox module.
+    /// The tenant's retained box on the hosted agent37 service: no host
+    /// mounts, no egress, reached over HTTP through the TinyBox module.
     Agent37,
     /// No jail: the operator disabled the sandbox and the module planned a run on the
     /// host. Only a `host_run` artifact maps here.

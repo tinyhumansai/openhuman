@@ -3,16 +3,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
-pub struct SecurityConfig {
-    #[serde(default)]
-    pub sandbox: SandboxConfig,
-    #[serde(default)]
-    pub resources: ResourceLimitsConfig,
-    #[serde(default)]
-    pub audit: AuditConfig,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SandboxConfig {
@@ -47,16 +37,13 @@ pub enum SandboxBackend {
     /// the TinyBox module (`[runtime.openshell]`).
     #[serde(rename = "openshell")]
     OpenShell,
-    /// A box per command on the hosted agent37 HTTP sandbox service, through
-    /// the TinyBox module (`[runtime.agent37]`).
+    /// The tenant's retained box on the hosted agent37 HTTP sandbox service,
+    /// through the TinyBox module (`[runtime.agent37]`): it sleeps when idle
+    /// and keeps its files across commands and restarts.
     #[serde(rename = "agent37")]
     Agent37,
     None,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
-#[serde(default)]
-pub struct ResourceLimitsConfig {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]

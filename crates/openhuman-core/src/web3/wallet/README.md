@@ -32,8 +32,8 @@ changing the facade.
   callbacks; it redacts endpoint details in logs.
 - `schemas.rs` preserves the `openhuman.wallet_*` RPC names and response
   shapes.
-- `tools.rs` adapts the static tool declarations from `tinywallet-bus` to
-  OpenHuman's `tinytools::Tool` interface.
+- `../tools.rs` adapts the static tool declarations from `tinywallet-bus` to
+  OpenHuman's `tinytools::Tool` interface (shared with the `web3_*` tools).
 - `modules::wallet_service` manages the native wallet service handle and
   closes it on replacement, sign-out, and shutdown.
 
@@ -42,11 +42,13 @@ changing the facade.
 | Function | Purpose |
 | --- | --- |
 | `status`, `setup`, `reveal_recovery_phrase` | Onboarding, public account metadata, encrypted phrase custody, and explicit reveal. |
-| `balances`, `chain_status`, `network_defaults`, `supported_assets` | Read module-owned provider and network data. |
+| `balances`, `token_balances`, `chain_status`, `network_defaults`, `supported_assets` | Read module-owned provider and network data (`token_balances`: catalogued SPL tokens such as USDC, contract 1.15). |
 | `encode_erc20_transfer` | Request standard EVM transfer calldata from the module. |
 | `prepare_transfer`, `execute_prepared` | Prepare a module-owned quote, then explicitly confirm and execute it (through the spend policy, as an interactive execute). |
 | `policy_get`, `policy_update` | Read and persist the `[wallet_policy]` spend policy. |
 | `ledger_list` | Recent execute records from the persistent spend ledger (`{limit}`, default 50, max 500). |
+| `account` | One account by `{chain, accountIndex}`; derives and stores a known secondary account (Solana index 1, `giveaway`) that the stored state predates. |
+| `prepare_program`, `execute_prepared_program` | Check a host-built unsigned Solana transaction against `[wallet_policy.accounts.solana_<index>]`, then sign it in the module with that account's key and send it (`program.rs`). |
 | `tx_status`, `tx_receipt`, `lookup_tx` | Read transaction lifecycle and raw transaction data through the module. |
 
 The four chain families are EVM, Bitcoin, Solana, and Tron. EVM network
@@ -58,10 +60,12 @@ approval policy.
 ## Agent tools
 
 The six established wallet tools are declared in `tinywallet-bus` and adapted
-in `tools.rs`: `wallet_status`, `wallet_chain_status`,
+in [`../tools.rs`](../tools.rs): `wallet_status`, `wallet_chain_status`,
 `wallet_prepare_transfer`, `wallet_tx_status`, `wallet_tx_receipt`, and
 `wallet_lookup_tx`. `automation_tools.rs` adds two policy-bound tools:
-`wallet_balances` (the module's native balances) and `wallet_execute_prepared`
+`wallet_balances` (the module's native and token balances as `{native, tokens}`,
+with `tokensError` beside the native rows when only the token read fails) and
+`wallet_execute_prepared`
 (an execute through the spend policy below).
 
 ## Spend policy and ledger
@@ -72,9 +76,10 @@ Every execute, from the RPC or the agent tool, runs through
 - `policy.rs` classifies the caller (`ExecutionOrigin`): the wallet UI's RPC is
   *interactive* and stays uncapped unless `apply_to_interactive`; the agent
   tool in a chat-type turn is *agent* and is always held to the allowlist and
-  caps; a background job or approval-free workflow is *automation* and also
-  needs `automation_enabled`; an external channel or unlabelled turn is
-  refused. Caps per asset (atomic units): per transaction, rolling 24 hours,
+  caps; a background job, an approval-free workflow, or a cron job whose agent
+  opted into `scheduled_actions` (`CronActions`) is *automation* and also
+  needs `automation_enabled`; an external channel, an unlabelled turn or a
+  plain cron turn is refused. Caps per asset (atomic units): per transaction, rolling 24 hours,
   and rolling 7 days per recipient (`config/schema/wallet_policy.rs`).
 - `ledger.rs` records the attempt as `pending` before the module signs and
   updates it to `broadcast` or `in_doubt` afterwards; refusals are recorded
@@ -85,8 +90,43 @@ Every execute, from the RPC or the agent tool, runs through
 - `policy_ops.rs` serves `policy_get`, `policy_update` and `ledger_list`.
 
 The policy is host approval policy over the module's exact quote; it never
-builds or alters a transfer. Scheduled cron turns stay read-only at the
-harness gate, so they cannot reach the execute tool.
+builds or alters a transfer. A plain cron turn stays read-only at the
+harness gate and is refused by the policy; a cron job whose agent opted into
+`scheduled_actions` runs as `CronActions`, whose root run may call
+`wallet_balances` and `wallet_execute_prepared` within the caps (its
+sub-agents stay read-only). x402 payments from the same origin are approved
+within the per-request budget.
+
+## Secondary accounts and program transactions
+
+Each chain has one primary account (index 0), the only one the module's
+transfers, swaps and x402 payments use. `ops::SECONDARY_ACCOUNTS` lists the
+extra accounts derived from the same phrase: today Solana index 1 at
+`m/44'/501'/1'/0'`, labelled `giveaway`. Recovery derives it with the others;
+`setup` stores it; `status` reports it under `additionalAccounts` so callers
+that expect one account per chain (and the module's `WalletAccounts`
+callback) see only the primaries. A wallet set up before an entry existed
+signs with its canonical path anyway, and `ensure_account` (`wallet.account`)
+derives and stores its address on first use.
+
+`program.rs` lets such an account sign a transaction the caller built,
+under its own `[wallet_policy.accounts.<chain>_<index>]` section
+(`allowed_programs`, `mints` with `per_tx_max_raw` and `daily_max_raw`). The
+host decodes the transaction and refuses it unless the account is the fee
+payer, every other required signer has already signed validly, every program is listed, token instructions (SPL
+Token or Token-2022) are `TransferChecked`, ATA instructions are creates, and
+there is no System instruction or lookup table. The caller declares what the
+transaction debits from the account's token balances (`expectedDebits`); the
+caps apply to that, it must cover every visible transfer, and
+`simulateTransaction` must lower the account's token balances by exactly that
+much (`program/simulate.rs`), which is what pins a program that moves tokens
+by CPI. The quote holds the exact bytes for 60 seconds; execute simulates
+again, re-checks and reserves in the ledger
+(`kind = program`, `accountIndex`), signs the message bytes with a
+confidential `SignMessage`, and sends the transaction to the Solana RPC (the
+host override, else the module's default for the cluster). Program records
+never count against the primary account's caps, and transfer records never
+count against a program account's.
 
 ## Persistence and lifecycle
 

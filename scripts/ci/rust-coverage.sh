@@ -10,6 +10,39 @@ OUT="${OUT:-lcov-core.info}"
 PRODUCT_FEATURES="$(bash scripts/ci/product-features.sh)"
 CORE_PRODUCT_FEATURES="$(bash scripts/ci/product-features.sh --core)"
 
+# OH_COV_SHARD splits this one complete suite across hosted jobs. Every suite
+# below belongs to exactly one section, and each section runs whole:
+#   core     the core crate's own unit tests (lib + bins), product features
+#   product  embed, tinyhumans and the cli integration targets, product features
+#   facades  rpc, and embed and tinyhumans on default features
+#   tui      the terminal frontend
+# Each is its own cold build of the core: cargo resolves the core's features
+# differently for each selected package set (core alone, embed/tinyhumans, the
+# tui, rpc), so sections that share no build run in separate jobs.
+# `full` (the default, and what the private EX63 profile runs) is all four in
+# one job. A shard writes only its own part of the tree to ${OUT}; the hosted
+# gate merges every shard's lcov and runs the whole-tree presence check
+# (scripts/ci/self-hosted/merge-coverage-shards.mjs), so a shard that did not
+# report fails the gate instead of silently dropping its files.
+COV_SHARD="${OH_COV_SHARD:-full}"
+case "${COV_SHARD}" in
+  full | core | product | facades | tui) ;;
+  *)
+    echo "[ci][rust-cov] unknown OH_COV_SHARD '${COV_SHARD}' (expected full, core, product, facades or tui)" >&2
+    exit 2
+    ;;
+esac
+if [ "${COV_SHARD}" != full ] && [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
+  # The cargo runner puts the whole core test run in one process; its process
+  # globals fail ~15% of the unit tests there (hosted runs 42201519720,
+  # 42192164527, 42187475358) and nothing bounds a hung test.
+  echo "[ci][rust-cov] OH_COV_SHARD=${COV_SHARD} needs OH_COV_RUNNER=nextest" >&2
+  exit 2
+fi
+has_cov_section() {
+  [ "${COV_SHARD}" = full ] || [ "${COV_SHARD}" = "$1" ]
+}
+
 # Sandboxed acting-tool tests deliberately do not forward RUSTUP_HOME. The
 # container installs Rust outside HOME, so its rustup proxy otherwise tries
 # to create ~/.rustup inside the write-confined jail. Put the already selected
@@ -275,7 +308,7 @@ fi
 # the test builds answer for them (keyring_consent/test_responder.rs).
 export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 
-log "running complete instrumented Rust suite (runner: ${OH_COV_RUNNER:-cargo})"
+log "running instrumented Rust suite (runner: ${OH_COV_RUNNER:-cargo}, shard: ${COV_SHARD})"
 llvm_cov clean --workspace
 
 # The storage-host cdylib tests load a real fixture module. Left to the tests,
@@ -315,7 +348,17 @@ trap preserve_coverage EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
+# The product graph, as one nextest build. `full` runs core, embed, tinyhumans
+# and cli together; the `product` shard drops the core's own unit tests (the
+# `core` shard owns them) and with them `-p openhuman`, which does not change
+# how the core's features resolve (cargo tree -e features is identical with and
+# without it) but saves compiling the core a second time as a test harness.
+if [ "${COV_SHARD}" = product ]; then
+  UNIFIED_PRODUCT_ARGS=(-p openhuman-embed -p openhuman-tinyhumans -p openhuman-cli --all-targets)
+  FILTER_PRODUCT="${FILTER_EMBED} | ${FILTER_TINYHUMANS} | (${FILTER_CLI_TESTS})"
+fi
+
+if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ] && { [ "${COV_SHARD}" = full ] || [ "${COV_SHARD}" = product ]; }; then
   # The core, embed, tinyhumans and cli suites are one nextest run: one build
   # of the product graph and one test run over the union of their filters.
   # Run as four invocations with the same arguments, Cargo still rebuilt most
@@ -355,6 +398,11 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   NEXTEST_EXPECTED_INVENTORY="${expected_inventory}" \
   suite "openhuman product suites (nextest)" llvm_cov --no-report --no-fail-fast \
     "${UNIFIED_PRODUCT_ARGS[@]}" -E "${FILTER_PRODUCT}"
+elif [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
+  # Shards other than `product`: the core's unit tests, one process per test.
+  if has_cov_section core; then
+    suite "openhuman lib+bins (nextest)" llvm_cov --no-report --no-fail-fast -p openhuman --lib --bins
+  fi
 else
   # Keep the aggregate unit-test process aligned with the canonical Rust runner.
   # The isolated reaper test installs one-shot process globals, so it cannot run
@@ -370,6 +418,7 @@ fi
 # Run every root-workspace Rust support crate rather than only crates named by
 # changed paths. Product features are forwarded to the embedding facade; the
 # remaining crates do not expose that feature vocabulary.
+if has_cov_section facades; then
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
 fi
@@ -389,10 +438,14 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   suite "openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets \
     --features storage-sqlite
 fi
+fi # facades
+
 # The terminal frontend builds the core a third time (default features, not the
 # product set). It is on by default and on in the PR lane; OH_COV_TUI=0 is an
 # opt-out for local runs.
-if [ "${OH_COV_TUI:-1}" = "1" ]; then
+if ! has_cov_section tui; then
+  :
+elif [ "${OH_COV_TUI:-1}" = "1" ]; then
   suite "openhuman-tui" llvm_cov_package --no-report --no-fail-fast -p openhuman-tui --all-targets
 else
   log "skipping openhuman-tui (OH_COV_TUI=${OH_COV_TUI})"
@@ -411,7 +464,9 @@ fi
 # complete Rust test suite and must run whenever the Rust-core area changes.
 # They compile their own uninstrumented core, so a caller that runs them in a
 # parallel lane instead (CI Fast on the EX63) sets OH_COV_DOCTESTS=0.
-if [ "${OH_COV_DOCTESTS:-1}" = "1" ]; then
+if ! has_cov_section core; then
+  log "doctests belong to the core shard; not running them in the ${COV_SHARD} shard"
+elif [ "${OH_COV_DOCTESTS:-1}" = "1" ]; then
   suite "openhuman doctests" bash scripts/ci-cancel-aware.sh cargo test -p openhuman \
     --doc --features "${CORE_PRODUCT_FEATURES}"
 else
@@ -428,8 +483,14 @@ COVERAGE_REPORTED=1
 presence_skip=""
 [ "${OH_COV_TUI:-1}" = "1" ] || presence_skip="crates/openhuman-tui/src/"
 [ -z "${presence_skip}" ] || log "coverage presence: not checking ${presence_skip} (suite skipped)"
-suite "coverage presence" env COVERAGE_PRESENCE_SKIP_PREFIXES="${presence_skip}" \
-  bash scripts/ci/assert-coverage-presence.sh "${OUT}" --all
+if [ "${COV_SHARD}" = full ]; then
+  suite "coverage presence" env COVERAGE_PRESENCE_SKIP_PREFIXES="${presence_skip}" \
+    bash scripts/ci/assert-coverage-presence.sh "${OUT}" --all
+else
+  # A shard measures only its own part of the tree. The hosted gate merges all
+  # of the shards' lcov files and runs this same --all check on the union.
+  log "coverage presence: deferred to the hosted gate (shard ${COV_SHARD} measures part of the tree)"
+fi
 
 if [ "${#FAILED_SUITES[@]}" -gt 0 ]; then
   log "${#FAILED_SUITES[@]} suite(s) failed:"

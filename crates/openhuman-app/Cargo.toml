@@ -201,7 +201,7 @@ anyhow = "1.0"
 # read-only. Declared in the general table rather than under the macOS target so
 # `cargo check` on Linux/Windows resolves the same graph. Pinned to match the
 # core crate so a single bundled SQLite is linked.
-rusqlite = { version = "=0.40.2", features = ["bundled"] }
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
 parking_lot = "0.12"
 chrono = "0.4"
 async-trait = "0.1"

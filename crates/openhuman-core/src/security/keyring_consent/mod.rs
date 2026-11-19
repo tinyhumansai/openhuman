@@ -6,7 +6,7 @@ pub mod ops;
 pub mod policy;
 mod schemas;
 #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
-mod test_responder;
+pub(crate) mod test_responder;
 pub mod types;
 
 pub(crate) use schemas::all_keyring_consent_controller_entries;

@@ -1,6 +1,7 @@
 //! RPC controller schemas and handlers for the channels domain.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -392,10 +393,6 @@ fn connect_logs(channel: &str, mode: ChannelAuthMode, pending_auth: bool) -> Vec
 fn raw_or_typed<T: serde::Serialize>(raw: Option<Value>, typed: &T) -> Result<Value, String> {
     raw.map(Ok)
         .unwrap_or_else(|| serde_json::to_value(typed).map_err(|e| e.to_string()))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

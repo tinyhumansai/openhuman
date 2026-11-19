@@ -338,6 +338,57 @@ async fn opted_in_scheduled_actions_root_run_may_run_shell_through_tinysecurity(
     );
 }
 
+#[cfg(feature = "web3")]
+#[tokio::test]
+async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_plain_cron_may_not()
+{
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    use crate::web3::wallet::automation_tools::{WalletBalancesTool, WalletExecutePreparedTool};
+    let wallet_gate = || {
+        OpenHumanSecurityGate::new(
+            Arc::new(SecurityPolicy {
+                enabled: false,
+                ..SecurityPolicy::default()
+            }),
+            vec![Arc::new(vec![
+                Box::new(WalletBalancesTool) as Box<dyn Tool>,
+                Box::new(WalletExecutePreparedTool) as Box<dyn Tool>,
+            ])],
+        )
+        .with_scheduled_actions(true)
+    };
+    let args = json!({ "quoteId": "q", "confirmed": true });
+    for tool_name in ["wallet_balances", "wallet_execute_prepared"] {
+        let allowed = scheduled_decision(
+            wallet_gate(),
+            TrustedAutomationSource::CronActions,
+            Some(0),
+            tool_name,
+            args.clone(),
+        )
+        .await;
+        assert_eq!(allowed, GateDecision::Allow, "{tool_name} for CronActions");
+    }
+    let denied = scheduled_decision(
+        wallet_gate(),
+        TrustedAutomationSource::Cron,
+        Some(0),
+        "wallet_execute_prepared",
+        args.clone(),
+    )
+    .await;
+    assert!(!denied.is_allowed(), "plain Cron must stay refused");
+    let sub = scheduled_decision(
+        wallet_gate(),
+        TrustedAutomationSource::CronActions,
+        Some(1),
+        "wallet_execute_prepared",
+        args,
+    )
+    .await;
+    assert!(!sub.is_allowed(), "a sub-agent must stay read-only");
+}
+
 #[tokio::test]
 async fn cron_job_without_the_scheduled_actions_opt_in_still_denies_shell_and_writes() {
     use crate::core::runtime::turn_origin::TrustedAutomationSource;

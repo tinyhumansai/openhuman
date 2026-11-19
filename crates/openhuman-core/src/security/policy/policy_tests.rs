@@ -215,6 +215,8 @@ async fn security_configured_off_allows_every_policy_gate() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn an_enforcing_policy_without_the_module_still_refuses() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("notes.md"), "notes").unwrap();
     let policy = SecurityPolicy {
@@ -279,6 +281,8 @@ fn an_unchecked_host_action_is_classed_from_its_permission_level() {
 #[cfg(feature = "security-module")]
 #[test]
 fn a_policy_adopts_the_answers_another_instance_was_given() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let governing = default_policy();
     *governing.budget_snapshot.lock().unwrap() = Some(tinysecurity_bus::BudgetDecision2::Allow);
     governing

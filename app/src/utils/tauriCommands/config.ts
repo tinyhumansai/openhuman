@@ -762,14 +762,14 @@ export interface SearchSettingsUpdate {
   allow_all?: boolean;
 }
 
-export interface DiagramViewerSettings {
-  enabled: boolean;
-  source_url: string;
-  refresh_interval_seconds: number;
-}
-
 export interface DashboardSettings {
-  diagram_viewer: DiagramViewerSettings;
+  event_stream: { enabled: boolean; max_entries: number; new_entries: string };
+  model_health: {
+    enabled: boolean;
+    hallucination_threshold: number;
+    min_tasks_for_rating: number;
+    evaluation_window_tasks: number;
+  };
 }
 
 export async function openhumanGetDashboardSettings(): Promise<CommandResponse<DashboardSettings>> {

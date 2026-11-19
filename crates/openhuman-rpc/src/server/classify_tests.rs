@@ -49,6 +49,9 @@ fn classify_failure_expected_user_state_flag_wins() {
 
 #[test]
 fn classify_failure_routes_each_boundary_class() {
+    // The backend's 401 shape is classified by the predicate the TinyHumans
+    // layer installs at boot.
+    openhuman_tinyhumans::observability::register();
     assert_eq!(
         classify_failure(
             crate::core_host::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE,

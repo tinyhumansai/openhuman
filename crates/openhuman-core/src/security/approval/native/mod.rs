@@ -13,6 +13,7 @@
 //! | File | Role |
 //! | --- | --- |
 //! | `engine.rs` | `NativeEngine`, the module calls |
+//! | `engine_orphans.rs` | denying a pending orphan an earlier launch left |
 //! | `scopes.rs` | subject registration, posture and grants |
 //! | `audit_stream.rs` | a subject's audit stream, leased by the sandbox planner |
 //! | `rows.rs` | the document-port store behind `Load`, `Cas` and `Append` |
@@ -131,8 +132,18 @@ impl SecretScope {
         .map(|_| ())
     }
 
-    /// Register through the callback-bound TinySecurity client used for this
-    /// module instance.
+    /// Forget the module's registration of this scope once it was retired.
+    pub(crate) async fn forget_registration(&self) {
+        self.entry.forget_registration().await;
+        permission_ledgers()
+            .tenants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(self.scope_id());
+    }
+
+    /// Register this runtime scope (with its audit stream) through the
+    /// callback-bound TinySecurity client used for this module instance.
     pub(crate) async fn ensure_registered_with_callback(
         &self,
         config: &crate::config::Config,
@@ -140,7 +151,7 @@ impl SecretScope {
         generation: u64,
     ) -> Result<(), String> {
         let proxy = crate::modules::security::SecurityProxy::callback(proxy.clone());
-        let entry = scopes::ensure_preconfigured(
+        let entry = scopes::ensure(
             config,
             &proxy,
             self.entry.subject.clone(),
@@ -167,6 +178,118 @@ pub(crate) async fn prepare_secret_scope(
 ) -> Result<SecretScope, String> {
     let entry = scopes::audit_entry(config, subject).await?;
     Ok(SecretScope { entry })
+}
+
+/// One tenant's ledger of audited permissions (path, command and egress checks).
+///
+/// TinySecurity appends every audited permission on its one init audit stream,
+/// numbering each event from the correlation the host hands out. The host
+/// keeps a ledger of that stream in each tenant's own store, under the tenant's
+/// own tail, and routes every batch back to the tenant whose correlation it
+/// carries ([`route_permission_batch`]). No tenant's checks are written into
+/// another's store, and a batch the host never correlated is refused.
+#[derive(Clone)]
+pub(crate) struct PermissionAudit {
+    entry: std::sync::Arc<scopes::ScopeEntry>,
+}
+
+impl PermissionAudit {
+    /// Lease the tenant's ledger while preparing and submitting one call.
+    pub(crate) async fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.entry.stream.lock().await
+    }
+
+    /// Allocate the next event's correlation, routed to this tenant's ledger
+    /// until [`Self::settle`].
+    pub(crate) async fn correlation(
+        &self,
+        generation: u64,
+    ) -> Result<tinysecurity_bus::AuditCorrelation2, String> {
+        let expected_tail = self.entry.rows.tail(&self.entry.stream_id).await?;
+        let event_id = uuid::Uuid::new_v4().simple().to_string();
+        permission_ledgers()
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(event_id.clone(), std::sync::Arc::clone(&self.entry));
+        Ok(tinysecurity_bus::AuditCorrelation2 {
+            event_id,
+            expected_tail,
+            generation,
+        })
+    }
+
+    /// Stop routing `event_id` once its call returned.
+    pub(crate) fn settle(&self, event_id: &str) {
+        permission_ledgers()
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(event_id);
+    }
+}
+
+/// The tenant ledgers of the init audit stream, and the correlations in flight.
+#[derive(Default)]
+struct PermissionLedgers {
+    /// By the tenant's approval scope id; dropped when the tenant retires.
+    tenants:
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<scopes::ScopeEntry>>>,
+    /// By the event id of a correlation handed out and not yet settled.
+    events: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<scopes::ScopeEntry>>>,
+}
+
+fn permission_ledgers() -> &'static PermissionLedgers {
+    static LEDGERS: std::sync::OnceLock<PermissionLedgers> = std::sync::OnceLock::new();
+    LEDGERS.get_or_init(PermissionLedgers::default)
+}
+
+/// `tenant`'s permission ledger on the init audit stream (`subject`,
+/// `stream_id`), kept in the tenant's own store.
+pub(crate) fn permission_audit(
+    tenant: &SecretScope,
+    subject: tinysecurity_bus::SubjectScope,
+    stream_id: &str,
+) -> PermissionAudit {
+    let mut tenants = permission_ledgers()
+        .tenants
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let entry = tenants
+        .entry(tenant.scope_id().to_owned())
+        .or_insert_with(|| {
+            tracing::debug!("[security][audit] tenant permission ledger opened");
+            std::sync::Arc::new(scopes::ScopeEntry::new(
+                subject,
+                stream_id.to_owned(),
+                tenant.entry.rows.clone(),
+            ))
+        });
+    PermissionAudit {
+        entry: std::sync::Arc::clone(entry),
+    }
+}
+
+/// The tenant ledger a batch on the init audit stream belongs to: the one every
+/// event's correlation was handed out for. Anything else is refused.
+fn route_permission_batch(
+    request: &tinysecurity_bus::AuditSinkRequest2,
+) -> Option<std::sync::Arc<scopes::ScopeEntry>> {
+    let events = permission_ledgers()
+        .events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut owner: Option<&std::sync::Arc<scopes::ScopeEntry>> = None;
+    for event in &request.events {
+        let entry = events.get(&event.event_id)?;
+        if owner.is_some_and(|owner| !std::sync::Arc::ptr_eq(owner, entry)) {
+            return None;
+        }
+        owner = Some(entry);
+    }
+    owner
+        .filter(|entry| entry.stream_id == request.stream_id)
+        .cloned()
 }
 
 /// Take the exact native master operation after the shared approval gate returns.

@@ -117,9 +117,14 @@ async fn the_direct_path_logs_and_drops_a_deferral_and_a_terminal_outcome() {
         .into(),
     ]);
     for uuid in ["uuid-d1", "uuid-d2"] {
-        triage_directly(DispatchCtx::host_default(), trigger(uuid), triage.clone())
-            .await
-            .unwrap();
+        triage_directly(
+            DispatchCtx::host_default(),
+            trigger(uuid),
+            triage.clone(),
+            None,
+        )
+        .await
+        .unwrap();
     }
     assert_eq!(triage.runs(), 2);
     assert!(triage.applied().is_empty());

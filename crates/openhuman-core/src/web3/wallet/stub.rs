@@ -84,7 +84,10 @@ pub async fn status() -> Result<Outcome<WalletStatus>, String> {
 
 /// Always errors: secret material cannot be produced with the wallet compiled
 /// out. Callers `?`-propagate (wallet-signed writes surface the disabled error).
-pub(crate) async fn secret_material(_chain: WalletChain) -> Result<WalletSecretMaterial, String> {
+pub(crate) async fn secret_material(
+    _chain: WalletChain,
+    _index: u32,
+) -> Result<WalletSecretMaterial, String> {
     log::debug!(
         "[wallet-stub] secret_material requested (web3 disabled) — returning disabled error"
     );
@@ -184,10 +187,6 @@ impl SolanaCluster {
 pub fn solana_cluster() -> SolanaCluster {
     SolanaCluster::Mainnet
 }
-
-// ---------------------------------------------------------------------------
-// Agent-tool facade (mirrors `pub mod tools`, re-exported via tools/mod.rs)
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Controller registration (mirrors `schemas::{all_wallet_registered_controllers,

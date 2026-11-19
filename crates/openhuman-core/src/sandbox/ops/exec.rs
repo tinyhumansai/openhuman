@@ -164,7 +164,15 @@ pub(crate) async fn resolve_sandbox(
                 stdin: None,
                 preserve_pipeline_status: false,
             };
-            let source = SpawnSource::from_origin(ctx.turn_origin_or_scoped().as_ref());
+            let origin = ctx.turn_origin_or_scoped();
+            // A unit test calls the tool directly, with no turn to label it. It
+            // stands for the operator's agent; an unlabelled production call
+            // stays untrusted.
+            #[cfg(test)]
+            let origin = origin.or(Some(
+                crate::core::runtime::turn_origin::AgentTurnOrigin::Cli,
+            ));
+            let source = SpawnSource::from_origin(origin.as_ref());
             let host_run = operator_off && !crate::core::runtime::is_saas();
             crate::sandbox::spawn_plan::plan(SpawnRequest {
                 config: &config,
@@ -316,7 +324,7 @@ pub(crate) async fn execute_resolved(
                     .await
                     .map(ShellRunOutcome::Finished)
             }
-            // The box has its own workspace (`/sandbox`); no host path or host
+            // The box has its own workspace (its work folder); no host path or host
             // variable is sent, only the request's own environment. A box cannot
             // hand back a running command, so the caller bounded `timeout`.
             SandboxBackendKind::OpenShell => {
@@ -325,9 +333,16 @@ pub(crate) async fn execute_resolved(
                     .map_err(|error| {
                         anyhow::anyhow!("Sandbox plan could not be consumed: {error}")
                     })?;
-                crate::sandbox::openshell::execute(ctx, &config, command, &extra_env, timeout)
-                    .await
-                    .map(ShellRunOutcome::Finished)
+                crate::sandbox::boxes::execute(
+                    ctx,
+                    &config,
+                    crate::sandbox::boxes::BoxBackend::OpenShell,
+                    command,
+                    &extra_env,
+                    timeout,
+                )
+                .await
+                .map(ShellRunOutcome::Finished)
             }
             SandboxBackendKind::Agent37 => {
                 crate::sandbox::spawn_plan::consume(&planned)
@@ -373,11 +388,16 @@ async fn execute_unchecked(
                 .await
                 .map(ShellRunOutcome::Finished)
         }
-        SandboxBackendKind::OpenShell => {
-            crate::sandbox::openshell::execute(ctx, &config, command, &extra_env, timeout)
-                .await
-                .map(ShellRunOutcome::Finished)
-        }
+        SandboxBackendKind::OpenShell => crate::sandbox::boxes::execute(
+            ctx,
+            &config,
+            crate::sandbox::boxes::BoxBackend::OpenShell,
+            command,
+            &extra_env,
+            timeout,
+        )
+        .await
+        .map(ShellRunOutcome::Finished),
         SandboxBackendKind::Agent37 => {
             crate::sandbox::agent37::execute(ctx, &config, command, &extra_env, timeout)
                 .await

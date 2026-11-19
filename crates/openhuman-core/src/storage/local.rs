@@ -318,6 +318,20 @@ pub fn release_all() {
         .clear();
 }
 
+/// Whether a store for `workspace_dir` already exists: an installed backend,
+/// a default already opened in this process, or a default on disk. Never
+/// opens or creates anything, so a read-only path can treat a missing store
+/// as absent.
+pub fn store_exists(workspace_dir: &Path) -> bool {
+    installed().is_some()
+        || WORKSPACES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(workspace_dir)
+            .is_some_and(|cell| cell.get().is_some())
+        || super::config::default_store_exists(workspace_dir)
+}
+
 /// Forgets the default opened for `workspace_dir`, so the next call opens it
 /// afresh; also how a test models a restart.
 pub fn forget(workspace_dir: &Path) {

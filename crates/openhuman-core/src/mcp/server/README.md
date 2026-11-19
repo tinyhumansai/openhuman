@@ -100,7 +100,6 @@ No `store.rs`. The only durable side effect is the **MCP write-audit log**, writ
 - `tinyagents_harness::tool::prompt_tool_instructions`: render the markdown tool-use instructions block for `core.tool_instructions`.
 - `crate::search::providers`: which search tools the config can serve (`tool_specs_for_config`).
 - `crate::mcp::audit` (`record_write`, `NewMcpWriteRecord`, list/query helpers in tests): durable write-audit log.
-- `crate::mcp::http_client::McpHttpClient`: round-trip test harness for the HTTP transport (test-only).
 - `tinymcp_bus` (typed server declarations, callback and replay vocabulary, HTTP metadata); TinyMCP owns protocol validation and transport/session behavior.
 - External crates: `serde_json`, `uuid`, `sha2`/`hex` (slug fallback hash), `chrono` (audit timestamps), `futures-util` (`BoxFuture`).
 
@@ -109,7 +108,7 @@ No `store.rs`. The only durable side effect is the **MCP write-audit log**, writ
 - `crates/openhuman-core/src/core/cli.rs`: dispatches `mcp` / `mcp-server` subcommands to `run_stdio_from_cli`; the only production entry point for the stdio/HTTP transports. [`crates/openhuman-core/src/platform/about_app/catalog_conversation_intelligence.rs`](../../platform/about_app/catalog_conversation_intelligence.rs) lists it as `intelligence.mcp_server`.
 - `crates/openhuman-core/src/inference/provider/claude_code/driver.rs`: calls `ensure_local_http` on each Claude Code turn to hand the sandboxed `claude` subprocess a loopback MCP endpoint.
 - `crates/openhuman-core/src/tools/registry/ops.rs`: reads `McpToolSpec`/`tool_specs()` (via `crate::mcp::server::McpToolSpec`) to fold this server's advertised tools into the agent tool registry catalog.
-- The other `mcp/` members (`mcp::host`, `mcp::registry`, `mcp::audit`) are siblings in the broader MCP feature set, not consumers of this server's code paths. `mcp::http_client` is a re-export module of `tinymcp`, used here only by the test-only `McpHttpClient` HTTP round-trip.
+- The other `mcp/` members (`mcp::host`, `mcp::registry`, `mcp::audit`) are siblings in the broader MCP feature set, not consumers of this server's code paths.
 
 ## Notes / gotchas
 

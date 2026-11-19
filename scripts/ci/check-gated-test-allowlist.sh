@@ -18,6 +18,7 @@ cd "$(dirname "$0")/../.."
 EXPECTED=$(cat <<'EOF'
 agent_registry/host_definition_tests.rs
 agent/session_host/mod.rs
+agent/tinyagents/host/security_gate_tests.rs
 integrations/prelude_integrations.rs
 agent/session_host/runtime_session_tool_surface.rs
 agent/session_host/runtime_session_tests.rs
@@ -42,7 +43,7 @@ core/runtime/services.rs
 core/schema_test_support_tests.rs
 core/runtime/subscribers.rs
 mcp/server/resources.rs
-mcp/ui/tools.rs
+tools/impl/ui/show_ui.rs
 mcp/server/tools/mod.rs
 modules/mod.rs
 modules/ops_components_tests.rs
@@ -56,6 +57,7 @@ threads/store/mod.rs
 agent/session_host/transcript_compat_tests.rs
 channels/mod.rs
 mcp/host.rs
+mcp/registry/mod.rs
 modules/registry_contract_tests.rs
 modules/registry.rs
 credentials/core.rs
@@ -66,8 +68,8 @@ storage/schema.rs
 skills/bundled/mod.rs
 skills/mod.rs
 skills/search.rs
-tools/impl/network/host.rs
-tools/impl/network/host_tests.rs
+tools/impl/network.rs
+tools/impl/network_tests.rs
 tools/ops.rs
 tools/ops_tests.rs
 tools/ops_tests_capability_gating_tests.rs
@@ -97,13 +99,14 @@ agent/session_host/runtime_session_flow_prompt_tests.rs
 agent/subagent_host/ops/runner_flow_prompt_tests.rs
 agent_registry/agents/fleet_prompt_tests.rs
 agent_registry/agents/mod.rs
-core/agent_cli/debug/mod.rs
-core/agent_cli/debug/mod_tests.rs
+agent/cli/debug/mod.rs
+agent/cli/debug/mod_tests.rs
 core/runtime/services_tests.rs
 integrations/composio/ops/mod.rs
 integrations/composio/client.rs
 mcp/server/resources_tests.rs
 modules/tinyflows.rs
+modules/storage_grant_schemas_tests.rs
 doctor/checks/channels.rs
 doctor/checks/inference_tests.rs
 doctor/checks/mcp.rs
@@ -124,7 +127,6 @@ agent/queued_turn_tests.rs
 cron/ops_tests.rs
 cron/scheduler_tests.rs
 web_chat/web_tests_turn_lifecycle_tests.rs
-web_chat/run_task.rs
 channels/host/voice_tests.rs
 EOF
 )

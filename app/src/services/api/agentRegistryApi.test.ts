@@ -87,4 +87,55 @@ describe('agentRegistryApi', () => {
       params: { id: 'finance' },
     });
   });
+  describe('availableTools', () => {
+    it('calls agent_registry_available_tools and returns the tools', async () => {
+      mockCall.mockResolvedValueOnce({
+        tools: [
+          { name: 'web_search', description: 'Search the web.' },
+          { name: 'file_read', description: 'Read a file.' },
+        ],
+      });
+      const res = await agentRegistryApi.availableTools();
+      expect(mockCall).toHaveBeenCalledWith({
+        method: 'openhuman.agent_registry_available_tools',
+        params: {},
+      });
+      expect(res).toEqual([
+        { name: 'web_search', description: 'Search the web.' },
+        { name: 'file_read', description: 'Read a file.' },
+      ]);
+    });
+
+    it('peels a { result, logs } CLI envelope', async () => {
+      mockCall.mockResolvedValueOnce({
+        result: { tools: [{ name: 'web_search', description: 'Search.' }] },
+        logs: ['listed'],
+      });
+      expect(await agentRegistryApi.availableTools()).toEqual([
+        { name: 'web_search', description: 'Search.' },
+      ]);
+    });
+
+    it.each([[null], [undefined], [{}], [{ tools: null }], [{ tools: 'nope' }], [[]]])(
+      'returns [] for an empty or malformed payload (%j)',
+      async payload => {
+        mockCall.mockResolvedValueOnce(payload);
+        expect(await agentRegistryApi.availableTools()).toEqual([]);
+      }
+    );
+
+    it('drops entries without a usable name and defaults a missing description', async () => {
+      mockCall.mockResolvedValueOnce({
+        tools: [
+          null,
+          'web_search',
+          { description: 'no name' },
+          { name: '   ', description: 'blank name' },
+          { name: 42 },
+          { name: ' shell ', description: 7 },
+        ],
+      });
+      expect(await agentRegistryApi.availableTools()).toEqual([{ name: 'shell', description: '' }]);
+    });
+  });
 });

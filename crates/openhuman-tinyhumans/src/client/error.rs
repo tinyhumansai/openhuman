@@ -1,12 +1,12 @@
 //! [`HostedApiError`]: the typed, expected backend states `authed_json`
 //! surfaces for callers to recover from in-flow, and
 //! [`flatten_authed_error`], the chokepoint that turns them into the
-//! sentinel strings `core::observability` classifies.
+//! sentinel strings `core::observability` and `crate::errors` classify.
 
-use openhuman_embed::__host::core::observability::{
-    API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, INSUFFICIENT_CREDITS_PREFIX,
-    PAID_PLAN_REQUIRED_PREFIX,
+use crate::errors::{
+    API_KEY_REJECTED_PREFIX, INSUFFICIENT_CREDITS_PREFIX, PAID_PLAN_REQUIRED_PREFIX,
 };
+use openhuman_embed::__host::core::observability::BACKEND_UNAVAILABLE_PREFIX;
 
 /// Typed errors surfaced by `BackendClient::authed_json` for expected backend
 /// states that callers should recover from rather than funnel into Sentry.

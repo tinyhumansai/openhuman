@@ -4,12 +4,12 @@
 //! global registry consumed by `crates/openhuman-core/src/core/all.rs`.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{to_json, type_name};
 use serde_json::{Map, Value};
 
 use crate::core::all::{
     BoundRegisteredController, ControllerEntry, ControllerFuture, RegisteredController,
 };
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::rpc as approval_rpc;
@@ -475,21 +475,6 @@ fn read_required_string(params: &Map<String, Value>, key: &str) -> Result<String
             type_name(other)
         )),
         None => Err(format!("missing required param '{key}'")),
-    }
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
     }
 }
 

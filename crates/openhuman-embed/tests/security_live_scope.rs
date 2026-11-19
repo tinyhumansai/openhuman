@@ -1,8 +1,10 @@
-//! TinySecurity is admitted with one secret scope per process. While the
-//! runtime that admitted it is live, a config that derives a different secret
-//! scope (another config directory) is refused the module, so one live scope
-//! is never handed another's master key, and the refusal leaves the live
-//! runtime's own screening working.
+//! TinySecurity boots with a neutral secret authority, and each secret scope
+//! (config directory) registers its own approval scope and secret
+//! registration on it at runtime, with its own cipher, consumer and audit
+//! subject. While the first runtime is live, a config that derives a
+//! different secret scope gets a registration of its own instead of being
+//! refused (and never the first one's master key), and the first runtime's
+//! own screening keeps working.
 //!
 //! Needs the TinySecurity release on `OPENHUMAN_MODULE_PATH` (or in the module
 //! release cache), so it is ignored by default and run by
@@ -21,7 +23,7 @@ const BENIGN: &str = "What is the capital of France?";
 
 #[test]
 #[ignore = "needs the TinySecurity release; run by scripts/ci/security-native-fixture.sh"]
-fn a_different_secret_scope_is_refused_while_the_admitting_runtime_is_live() {
+fn a_different_secret_scope_gets_its_own_registration_while_the_first_runtime_is_live() {
     runtime().block_on(async {
         tokio::spawn(async {
             let backend = stub_backend().await;
@@ -49,15 +51,9 @@ fn a_different_secret_scope_is_refused_while_the_admitting_runtime_is_live() {
             let mut other = offline_config();
             other.config_path = elsewhere.path().join("config.toml");
             other.workspace_dir = elsewhere.path().join("workspace");
-            let refused = openhuman_core::modules::security::ensure_loaded(&other)
+            openhuman_core::modules::security::ensure_loaded(&other)
                 .await
-                .expect_err("another secret scope is refused the admitted module");
-            assert!(
-                refused
-                    .to_string()
-                    .contains("security secret scope changed after module admission"),
-                "{refused}"
-            );
+                .expect("another secret scope registers its own runtime registration");
 
             let second = agent
                 .turn(BENIGN)

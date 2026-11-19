@@ -30,6 +30,10 @@ impl ProgressiveReplySink for RecordingReply {
 #[tokio::test(start_paused = true)]
 async fn backend_channel_wait_does_not_cut_off_a_live_turn_after_180_seconds() {
     let _serial = crate::web_chat::RUN_CHAT_TASK_TEST_LOCK.lock().await;
+    // The subject is the channel wait, not the input screen. A module-bus scan
+    // would leave this paused runtime idle, so its clock would jump past the
+    // startup window before TinySecurity answered.
+    let _scan = crate::security::prompt_injection::install_allowing_prompt_scan();
     let workspace = tempfile::tempdir().expect("temporary workspace");
     let block = crate::web_chat::TestRunChatTaskBlock {
         started: Default::default(),

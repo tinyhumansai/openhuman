@@ -138,3 +138,116 @@ async fn a_keyring_owned_record_cannot_supply_a_document_secret_as_fallback() {
     .await;
     assert_eq!(result.unwrap_err(), ReadOnlyAuthProfileError::InvalidStore);
 }
+
+fn file_tree(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fn visit(root: &std::path::Path, at: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(at).expect("read fixture tree") {
+            let path = entry.expect("read fixture entry").path();
+            out.push(
+                path.strip_prefix(root)
+                    .expect("relative path")
+                    .to_path_buf(),
+            );
+            if path.is_dir() {
+                visit(root, &path, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(root, root, &mut out);
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn read_only_lookup_of_a_plaintext_session_creates_no_storage() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.workspace_dir = tmp.path().join("workspace");
+    config.action_dir = config.workspace_dir.clone();
+    // Production opens an on-disk default store; the unit-test default is
+    // in-memory and would hide one being created.
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
+    let doc = serde_json::json!({
+        "schema_version": 1,
+        "active_profiles": {},
+        "profiles": {
+            "app-session:default": {
+                "provider": "app-session",
+                "profile_name": "default",
+                "kind": "token",
+                "token": "plaintext-session",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "metadata": {},
+            }
+        }
+    });
+    std::fs::write(
+        tmp.path().join(PROFILES_FILENAME),
+        serde_json::to_vec(&doc).unwrap(),
+    )
+    .unwrap();
+    let before = file_tree(tmp.path());
+
+    let profile = load_profile(&config, "app-session", None)
+        .await
+        .expect("a plaintext legacy session is readable without a store")
+        .expect("profile present");
+
+    assert_eq!(profile.token.as_deref(), Some("plaintext-session"));
+    assert!(
+        !config.workspace_dir.join("storage").exists(),
+        "a read-only profile lookup must not create the workspace store"
+    );
+    assert_eq!(
+        file_tree(tmp.path()),
+        before,
+        "a read-only lookup must not write"
+    );
+}
+
+#[tokio::test]
+async fn read_only_lookup_without_a_store_fails_closed_for_a_secret_only_in_the_keyring() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.workspace_dir = tmp.path().join("workspace");
+    config.action_dir = config.workspace_dir.clone();
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
+    // A legacy record with no document secret: its token can only be in the
+    // keyring, so an unreachable keyring must not read as "no token".
+    let doc = serde_json::json!({
+        "schema_version": 1,
+        "active_profiles": {},
+        "profiles": {
+            "app-session:default": {
+                "provider": "app-session",
+                "profile_name": "default",
+                "kind": "token",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "metadata": {},
+            }
+        }
+    });
+    std::fs::write(
+        tmp.path().join(PROFILES_FILENAME),
+        serde_json::to_vec(&doc).unwrap(),
+    )
+    .unwrap();
+    let before = file_tree(tmp.path());
+
+    let result = load_profile(&config, "app-session", None).await;
+
+    assert!(
+        matches!(result, Err(ReadOnlyAuthProfileError::Unavailable)),
+        "an unreachable keyring must be reported unavailable, got {result:?}"
+    );
+    assert_eq!(
+        file_tree(tmp.path()),
+        before,
+        "a read-only lookup must not write"
+    );
+}

@@ -102,3 +102,40 @@ fn the_working_agent_tools_are_not_marked_unavailable() {
         .description()
         .contains("UNAVAILABLE"));
 }
+
+// ── the fetch gate (senamakel/openhuman#324) ────────────────────────────────
+
+/// With no fetch-capable provider the domain offers the model no tool at all:
+/// a source added through one would never ingest anything.
+#[test]
+fn no_tool_is_registered_while_no_provider_can_fetch() {
+    assert!(!crate::integrations::task_sources::types::any_provider_can_fetch());
+    let names: Vec<String> = registered_tools(cfg())
+        .iter()
+        .map(|t| t.name().to_string())
+        .collect();
+    assert!(names.is_empty(), "registered with no fetch path: {names:?}");
+}
+
+/// Flipping the gate brings all nine tools back unchanged.
+#[test]
+fn every_tool_returns_once_a_provider_can_fetch() {
+    let names: Vec<String> = registered_tools_when(cfg(), true)
+        .iter()
+        .map(|t| t.name().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "task_source_list",
+            "task_source_get",
+            "task_source_fetch",
+            "task_source_list_tasks",
+            "task_source_preview_filter",
+            "task_source_status",
+            "task_source_add",
+            "task_source_update",
+            "task_source_remove",
+        ]
+    );
+}

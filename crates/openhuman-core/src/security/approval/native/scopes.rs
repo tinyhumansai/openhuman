@@ -135,6 +135,7 @@ impl ScopeEntry {
         posture: &Posture,
         generation: u64,
         preconfigured: bool,
+        keep_existing: bool,
     ) -> Result<(), String> {
         let grants = grants();
         let fingerprint = serde_json::to_string(&(
@@ -144,7 +145,7 @@ impl ScopeEntry {
         ))
         .map_err(|error| error.to_string())?;
         let mut registered = self.registered.lock().await;
-        if registered.as_deref() == Some(fingerprint.as_str()) {
+        if !needs_registration(registered.as_deref(), &fingerprint, keep_existing) {
             return Ok(());
         }
         let first = registered.is_none();
@@ -190,6 +191,12 @@ impl ScopeEntry {
         );
         *registered = Some(fingerprint);
         Ok(())
+    }
+
+    /// Forget the module's registration of this subject after it was retired,
+    /// so the next registration starts from `RegisterApprovalScope2`.
+    pub(super) async fn forget_registration(&self) {
+        *self.registered.lock().await = None;
     }
 
     /// Register through the exact callback binding used to initialize the
@@ -271,20 +278,36 @@ pub(super) async fn ensure(
     posture: &Posture,
     generation: u64,
 ) -> Result<Arc<ScopeEntry>, String> {
-    ensure_with_registration(config, proxy, subject, posture, generation, false).await
+    ensure_with_registration(config, proxy, subject, posture, generation, false, false).await
 }
 
-/// Register a scope that TinySecurity already created from module init config.
-/// Its init-time scope has no audit stream, so attach the persisted stream with
-/// `ReplaceApprovalScope2` on first use.
-pub(super) async fn ensure_preconfigured(
+/// [`ensure`] for a caller that needs the subject's scope registered but has
+/// no posture of its own to impose, such as the legacy import or dismissing
+/// an orphan. `fallback` is registered only when the module holds nothing for
+/// the subject yet; a scope a live check already registered keeps its posture,
+/// so this caller never makes an unrelated call prompt or pass differently.
+pub(super) async fn ensure_keeping_posture(
     config: &Config,
     proxy: &SecurityProxy,
     subject: SubjectScope,
-    posture: &Posture,
+    fallback: &Posture,
     generation: u64,
 ) -> Result<Arc<ScopeEntry>, String> {
-    ensure_with_registration(config, proxy, subject, posture, generation, true).await
+    ensure_with_registration(config, proxy, subject, fallback, generation, false, true).await
+}
+
+/// Whether `posture_fingerprint` must be registered over what the module holds
+/// (`registered`). `keep_existing` accepts any registration already in place.
+fn needs_registration(
+    registered: Option<&str>,
+    posture_fingerprint: &str,
+    keep_existing: bool,
+) -> bool {
+    match registered {
+        None => true,
+        Some(_) if keep_existing => false,
+        Some(current) => current != posture_fingerprint,
+    }
 }
 
 async fn ensure_with_registration(
@@ -294,6 +317,7 @@ async fn ensure_with_registration(
     posture: &Posture,
     generation: u64,
     preconfigured: bool,
+    keep_existing: bool,
 ) -> Result<Arc<ScopeEntry>, String> {
     let key = subject_key(&subject);
     let entry = {
@@ -312,7 +336,7 @@ async fn ensure_with_registration(
         }
     };
     entry
-        .register(proxy, posture, generation, preconfigured)
+        .register(proxy, posture, generation, preconfigured, keep_existing)
         .await?;
     Ok(entry)
 }

@@ -66,4 +66,17 @@ fn integration_egress_descriptors_classify_control_plane_and_user_content() {
     assert_eq!(data_class(&pricing), PrivacyClass::ControlPlane);
     let execute = backend_egress_descriptor("/agent-integrations/composio/execute");
     assert_eq!(data_class(&execute), PrivacyClass::UserContent);
+    // Every non-control-plane route ships user content, whichever namespace it is in:
+    // `Metadata` would let it through `Sensitive` privacy mode unassessed.
+    for path in [
+        "/agent-integrations/composio/triggers",
+        "/agent-integrations/research/search",
+        "/agent-integrations/file-storage/upload",
+    ] {
+        assert_eq!(
+            data_class(&backend_egress_descriptor(path)),
+            PrivacyClass::UserContent,
+            "{path} carries user content"
+        );
+    }
 }

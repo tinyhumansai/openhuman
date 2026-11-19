@@ -185,3 +185,37 @@ fn an_imported_legacy_request_reads_by_the_state_it_ended_in() {
         assert_eq!(shown.tool_name, "earlier approval");
     }
 }
+
+#[test]
+fn an_imported_legacy_request_keeps_the_request_id_it_had_in_the_earlier_version() {
+    let mut imported = row(ApprovalLifecycle2::Denied);
+    imported.tool_name = "imported-history".into();
+    imported.choice = None;
+    imported.legacy_history_json =
+        Some(r#"{"request_id":"already-approved","state":"allowed"}"#.into());
+    let shown = entry(&stored(imported.clone()), None).unwrap();
+    assert_eq!(shown.request_id, "already-approved");
+
+    // A record without one keeps the module's row id.
+    imported.legacy_history_json = Some(r#"{"state":"allowed"}"#.into());
+    let shown = entry(&stored(imported.clone()), None).unwrap();
+    assert_eq!(shown.request_id, imported.request_id);
+}
+
+#[test]
+fn only_an_imported_pending_row_no_live_request_owns_is_an_orphan() {
+    let mut imported = row(ApprovalLifecycle2::Pending);
+    imported.legacy_history_json = Some(r#"{"state":"pending"}"#.into());
+    let listed = orphan(&imported, |_| false).expect("an imported pending row is an orphan");
+    assert_eq!(listed.request_id, imported.request_id);
+    assert_eq!(listed.tool_name, "gmail_send");
+
+    // A request this launch parked carries no legacy record: it is never
+    // listed as an orphan, even while the host does not hold it.
+    assert!(orphan(&row(ApprovalLifecycle2::Pending), |_| false).is_none());
+    // One the host is waiting on is its own, imported or not.
+    assert!(orphan(&imported, |_| true).is_none());
+    // A decided row is history, not pending.
+    imported.state = ApprovalLifecycle2::Denied;
+    assert!(orphan(&imported, |_| false).is_none());
+}

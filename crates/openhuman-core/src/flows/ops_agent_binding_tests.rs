@@ -108,6 +108,7 @@ async fn proposal_includes_inference_status_for_agent_graph() {
     .expect("proposal must succeed for a well-formed agent graph");
 
     assert_eq!(payload["inference_status"], json!("ready"));
+    assert!(payload["proposal_id"].as_str().is_some());
     assert!(
         payload.get("inference_message").is_none(),
         "a ready status must omit inference_message: {payload:?}"

@@ -48,6 +48,10 @@ mod ops;
 pub mod policy;
 #[cfg(feature = "web3")]
 pub mod policy_ops;
+/// Host-built program transactions signed by one account under its own
+/// policy (`prepare_program` / `execute_prepared_program`).
+#[cfg(feature = "web3")]
+pub mod program;
 #[cfg(feature = "web3")]
 pub(crate) mod rpc;
 
@@ -58,9 +62,6 @@ pub mod automation_tools;
 mod schemas;
 #[cfg(all(test, feature = "web3"))]
 pub(crate) mod test_support;
-/// Wallet agent tool adapters over the declarations in `tinywallet-bus`.
-#[cfg(feature = "web3")]
-pub mod tools;
 
 #[cfg(feature = "web3")]
 pub use endpoints::solana_cluster;
@@ -68,14 +69,15 @@ pub use endpoints::solana_cluster;
 pub use execution::{
     balances, chain_status, execute_prepared, execute_prepared_as, lookup_tx,
     network_defaults as wallet_network_defaults, prepare_transfer, prepared_quotes_for_test,
-    supported_assets, tx_receipt, tx_status, BalanceInfo, ChainStatus, ExecutePreparedParams,
-    ExecutionResult, PrepareTransferParams, PreparedKind, PreparedStatus, PreparedTransaction,
-    ProviderStatus, SupportedAsset, TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
+    supported_assets, token_balances, tx_receipt, tx_status, BalanceInfo, ChainStatus,
+    ExecutePreparedParams, ExecutionResult, PrepareTransferParams, PreparedKind, PreparedStatus,
+    PreparedTransaction, ProviderStatus, SupportedAsset, TokenBalanceInfo, TxLookupInfo,
+    TxReceiptInfo, TxState, TxStatusInfo,
 };
 #[cfg(feature = "web3")]
 pub use ops::{
-    derive_recovery_material, generate_recovery_phrase, reveal_recovery_phrase, setup, status,
-    validate_recovery_phrase, GeneratedRecoveryPhrase, RecoveryPhraseValidation,
+    derive_recovery_material, ensure_account, generate_recovery_phrase, reveal_recovery_phrase,
+    setup, status, validate_recovery_phrase, GeneratedRecoveryPhrase, RecoveryPhraseValidation,
     RevealRecoveryPhraseResult, WalletAccount, WalletChain, WalletRecoveryMaterial,
     WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
 };

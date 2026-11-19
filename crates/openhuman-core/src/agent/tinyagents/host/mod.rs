@@ -50,4 +50,6 @@ pub use run_context::{
 };
 pub(crate) use run_context::{direct_subagent_child, HarnessHostPolicy};
 pub use security_gate::OpenHumanSecurityGate;
+#[cfg(test)]
+pub(crate) mod security_gate_test_support;
 pub use tool_outcome_classifier::OpenHumanToolOutcomeClassifier;

@@ -164,6 +164,8 @@ async fn a_queueable_message_with_nothing_in_flight_is_also_admitted_as_running(
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_guardrail_uses_the_request_context_when_another_context_is_scoped() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     use crate::core::runtime::{CoreContext, DomainSet};
     let temp = tempfile::tempdir().unwrap();
     let config = crate::credentials::test_support::plaintext_fixture_config(temp.path());

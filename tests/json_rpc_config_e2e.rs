@@ -3,7 +3,7 @@
 #[path = "support/rpc_e2e_harness.rs"]
 mod harness;
 use harness::*;
-use openhuman_core::platform::connectivity::rpc::{pick_listen_port_for_host_with, OccupiedByCore};
+use openhuman_rpc::server::listen_port::{pick_listen_port_for_host_with, OccupiedByCore};
 
 #[tokio::test]
 async fn json_rpc_legacy_provider_type_preserves_default_endpoint() {

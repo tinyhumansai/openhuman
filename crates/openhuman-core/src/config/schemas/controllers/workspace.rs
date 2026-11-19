@@ -1,15 +1,16 @@
 //! Handlers for workspace state: onboarding flags, analytics, dashboard, data and agent paths, and local-data reset.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 
 use super::super::helpers::{
-    deserialize_params, to_json, AgentPathsUpdate, AnalyticsSettingsUpdate,
-    OnboardingCompletedSetParams, UserTimezoneUpdate, WorkspaceOnboardingFlagParams,
-    WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
+    deserialize_params, AgentPathsUpdate, AnalyticsSettingsUpdate, OnboardingCompletedSetParams,
+    UserTimezoneUpdate, WorkspaceOnboardingFlagParams, WorkspaceOnboardingFlagSetParams,
+    DEFAULT_ONBOARDING_FLAG_NAME,
 };
 
 pub(super) fn handle_workspace_onboarding_flag_exists(

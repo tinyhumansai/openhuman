@@ -48,3 +48,34 @@ fn defers_tinysecurity_artifacts_until_host_callback_admission() {
         "/modules/libtinydocs.so"
     )));
 }
+
+/// A module that takes a host callback must not be admitted by the generic
+/// search-path loader: it would be initialized with no binding and every later
+/// callback-bound load would be refused as "already loaded without a callback
+/// binding" (the `todo_list_*`, `thread_goal_*` and background-subagent
+/// failures, which all reach `tinychannels`).
+#[test]
+fn defers_every_callback_bound_module_artifact_to_the_callback_load() {
+    // The released library names (each module's `modules.toml` / archive).
+    // Named here rather than derived from `CALLBACK_BOUND_MODULES`, so a
+    // module dropped from that list fails this test.
+    for lib in [
+        "tinysecurity_module",
+        "tinymcp",
+        "tinyeventqueues",
+        "tinychannels_module",
+    ] {
+        for artifact in [
+            format!("/modules/lib{lib}.so"),
+            format!("/modules/lib{lib}.dylib"),
+            format!("/modules/{lib}.dll"),
+        ] {
+            let path = PathBuf::from(&artifact);
+            assert!(
+                should_defer_to_host_callback(&path),
+                "{artifact} must wait for its host callback binding"
+            );
+            assert!(is_skipped(&path, &configured_module_lib_stems()));
+        }
+    }
+}

@@ -1,4 +1,5 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::required_string;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -85,14 +86,18 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
         wallet_schemas("generate_mnemonic"),
         wallet_schemas("validate_mnemonic"),
         wallet_schemas("derive_recovery_material"),
+        wallet_schemas("token_balances"),
         wallet_schemas("policy_get"),
         wallet_schemas("policy_update"),
         wallet_schemas("ledger_list"),
+        wallet_schemas("account"),
+        wallet_schemas("prepare_program"),
+        wallet_schemas("execute_prepared_program"),
     ]
 }
 
 pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
-    vec![
+    let mut controllers = vec![
         RegisteredController {
             schema: wallet_schemas("status"),
             handler: handle_status,
@@ -158,6 +163,10 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_derive_recovery_material,
         },
         RegisteredController {
+            schema: wallet_schemas("token_balances"),
+            handler: handle_token_balances,
+        },
+        RegisteredController {
             schema: wallet_schemas("policy_get"),
             handler: handle_policy_get,
         },
@@ -169,7 +178,9 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
             schema: wallet_schemas("ledger_list"),
             handler: handle_ledger_list,
         },
-    ]
+    ];
+    controllers.extend(super::program::schemas::registered());
+    controllers
 }
 
 pub fn wallet_schemas(function: &str) -> ControllerSchema {
@@ -428,6 +439,18 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "token_balances" => ControllerSchema {
+            namespace: "wallet",
+            function: "token_balances",
+            description: "List catalogued token balances for the wallet accounts: today the configured Solana cluster's USDC SPL mint, summed over the owner's token accounts. A row whose providerStatus is missing could not be read and shows zero.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of {chain, evmNetwork?, address, assetSymbol, tokenAddress, decimals, raw, formatted, providerStatus}.",
+                required: true,
+            }],
+        },
         "policy_get" => ControllerSchema {
             namespace: "wallet",
             function: "policy_get",
@@ -468,6 +491,9 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "account" | "prepare_program" | "execute_prepared_program" => {
+            super::program::schemas::schema(function)
+        }
         _ => ControllerSchema {
             namespace: "wallet",
             function: "unknown",
@@ -635,6 +661,14 @@ fn handle_derive_recovery_material(
     })
 }
 
+fn handle_token_balances(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        crate::web3::wallet::token_balances(&ctx)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
 fn handle_policy_get(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         super::policy_ops::policy_get(&ctx)
@@ -700,15 +734,6 @@ fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
         comment,
         required: false,
-    }
-}
-
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
     }
 }
 

@@ -262,14 +262,14 @@ fn gateway_requests_run_under_the_named_users_profile() {
         "core.ping",
     );
     assert_eq!(status, 401, "{body}");
-    let forged = openhuman_core::profiles::gateway::sign(BEARER, "alice", now());
+    let forged = openhuman_rpc::server::saas_gateway::sign(BEARER, "alice", now());
     let (status, body) = user_rpc(&client, &base, BEARER, "bob", Some(&forged), "core.ping");
     assert_eq!(status, 401, "alice's signature does not cover bob: {body}");
     let (status, body) = user_rpc(&client, &base, BEARER, "bob", None, "core.ping");
     assert_eq!(status, 403, "bob is not provisioned: {body}");
     // A repeated signature header is refused, not resolved to the first value.
     {
-        use openhuman_core::profiles::gateway::{sign, USER_HEADER, USER_SIG_HEADER};
+        use openhuman_rpc::server::saas_gateway::{sign, USER_HEADER, USER_SIG_HEADER};
         let response = client
             .post(format!("{base}/rpc"))
             .bearer_auth(BEARER)
@@ -597,7 +597,7 @@ fn a_users_turn_reaches_inference_with_their_own_credential() {
 
 #[test]
 fn a_duplicate_or_unreadable_user_header_is_refused() {
-    use openhuman_core::profiles::gateway::USER_HEADER;
+    use openhuman_rpc::server::saas_gateway::USER_HEADER;
     let d = deployment(true);
     let (server, base, client) = start(&d);
     let body =

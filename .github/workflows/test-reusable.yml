@@ -246,6 +246,10 @@ jobs:
             inbound::ops::tests::the_operations_reach_the_module
             inbound::ops::tests::three_offers_within_the_window_run_one_turn_with_one_result_and_one_event
             inbound::route::tests::an_accepted_event_is_queued_and_a_redelivery_ends_at_ingress
+            inbound::route::tests::a_timed_out_ingest_that_landed_is_triaged_once
+            inbound::route::tests::an_event_delivered_while_its_offer_waited_is_not_run_directly
+            inbound::route::tests::an_ingest_that_landed_still_runs_once_when_the_direct_path_fails
+            inbound::route::tests::a_second_ambiguous_offer_of_an_event_does_not_run_it_directly_again
             integrations::composio::bus::trigger_subscriber::tests::a_deferred_composio_trigger_is_retried_at_its_defer_time_instead_of_dropped
             integrations::composio::bus::trigger_subscriber::tests::a_redelivered_composio_trigger_produces_one_turn
             integrations::composio::bus::trigger_subscriber::tests::without_a_config_a_trigger_is_triaged_directly
@@ -258,7 +262,7 @@ jobs:
             inference::tokenjuice::repl_module_tests::a_large_result_becomes_a_handle_the_repl_tools_can_query
             inference::tokenjuice::tests::the_module_defers_a_summary_until_requested
             inference::tokenjuice::tests::released_queries_keep_cached_originals_in_the_module_and_accept_artifact_content
-            tools::implementations::network::host::tests::tinyjuice_detects_and_converts_html
+            tools::implementations::network::tests::tinyjuice_detects_and_converts_html
             cron::bus_host::tests::execute_runs_the_registered_handler_and_reports_a_retryable_failure
             cron::bus_host::tests::a_permanent_handler_outcome_stops_the_retry_loop
             cron::bus_host::tests::an_agent_only_scheduler_refuses_shell_jobs_before_running_anything
@@ -272,6 +276,7 @@ jobs:
             cron::documents_port::tests::a_collection_outside_the_schedule_port_is_refused
             cron::documents_port::tests::an_unknown_operation_is_refused_not_guessed
             cron::documents_port::tests::one_object_is_served_per_scope_and_reused
+            mcp::registry::scan_tests::a_host_without_an_embedder_config_scans_with_its_loaded_config
           )
           MODULE_TEST_SKIP_ARGS=()
           for module_test in "${MODULE_TESTS[@]}"; do

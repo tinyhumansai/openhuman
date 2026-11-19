@@ -3,7 +3,7 @@
 use super::defaults;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -125,14 +125,10 @@ impl Default for RuntimeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ReliabilityConfig {
-    #[serde(default = "default_provider_retries")]
-    pub provider_retries: u32,
     #[serde(default = "default_provider_backoff_ms")]
     pub provider_backoff_ms: u64,
     #[serde(default)]
     pub fallback_providers: Vec<String>,
-    #[serde(default)]
-    pub model_fallbacks: HashMap<String, Vec<String>>,
     #[serde(default = "default_channel_backoff_secs")]
     pub channel_initial_backoff_secs: u64,
     #[serde(default = "default_channel_backoff_max_secs")]
@@ -141,10 +137,6 @@ pub struct ReliabilityConfig {
     pub scheduler_poll_secs: u64,
     #[serde(default = "default_scheduler_retries")]
     pub scheduler_retries: u32,
-}
-
-fn default_provider_retries() -> u32 {
-    2
 }
 
 fn default_provider_backoff_ms() -> u64 {
@@ -170,10 +162,8 @@ fn default_scheduler_retries() -> u32 {
 impl Default for ReliabilityConfig {
     fn default() -> Self {
         Self {
-            provider_retries: default_provider_retries(),
             provider_backoff_ms: default_provider_backoff_ms(),
             fallback_providers: Vec::new(),
-            model_fallbacks: HashMap::new(),
             channel_initial_backoff_secs: default_channel_backoff_secs(),
             channel_max_backoff_secs: default_channel_backoff_max_secs(),
             scheduler_poll_secs: default_scheduler_poll_secs(),

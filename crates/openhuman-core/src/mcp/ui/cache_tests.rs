@@ -1,5 +1,5 @@
 use super::*;
-use crate::mcp::ui::types::UiCsp;
+use tinymcp_bus::ui::UiCsp;
 
 fn resource(html: &str) -> UiResource {
     UiResource {

@@ -96,6 +96,9 @@ pub(super) struct Host {
     secret_grants: Mutex<HashMap<String, SecretGrantEntry>>,
     requests: Mutex<HashMap<String, RequestEntry>>,
     tickets: Mutex<HashMap<String, Ticket>>,
+    /// Pending orphans a person is dismissing, by request id: the row as listed,
+    /// which the module's human verification must match byte for byte.
+    orphan_reviews: Mutex<HashMap<String, ApprovalRow2>>,
 }
 
 /// One in-flight native master grant whose module-side keyed call correlation is
@@ -122,6 +125,7 @@ pub(super) fn host() -> &'static Host {
         secret_grants: Mutex::new(HashMap::new()),
         requests: Mutex::new(HashMap::new()),
         tickets: Mutex::new(HashMap::new()),
+        orphan_reviews: Mutex::new(HashMap::new()),
     })
 }
 
@@ -273,6 +277,25 @@ impl Host {
 
     pub(super) fn revoke(&self, ticket: &str) {
         lock(&self.tickets).remove(ticket);
+    }
+
+    /// Hold the orphan row a person is dismissing until the module has verified
+    /// the denial. `false` when it is already under review or too many are.
+    pub(super) fn begin_orphan_review(&self, row: ApprovalRow2) -> bool {
+        let mut reviews = lock(&self.orphan_reviews);
+        if reviews.contains_key(&row.request_id) || reviews.len() >= CAPACITY {
+            return false;
+        }
+        reviews.insert(row.request_id.clone(), row);
+        true
+    }
+
+    pub(super) fn orphan_review(&self, request_id: &str) -> Option<ApprovalRow2> {
+        lock(&self.orphan_reviews).get(request_id).cloned()
+    }
+
+    pub(super) fn end_orphan_review(&self, request_id: &str) {
+        lock(&self.orphan_reviews).remove(request_id);
     }
 }
 

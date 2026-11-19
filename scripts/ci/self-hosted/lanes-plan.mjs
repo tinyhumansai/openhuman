@@ -26,6 +26,7 @@ export const AREA_ENV = {
   toolchainImage: "CI_AREA_TOOLCHAIN_IMAGE",
   installPs1: "CI_AREA_INSTALL_PS1",
   storage: "CI_AREA_STORAGE",
+  inbound: "CI_AREA_INBOUND",
 };
 
 /** Read the area flags from an environment object. Missing means false. */
@@ -37,6 +38,15 @@ export function areasFromEnv(env) {
   return areas;
 }
 
+/**
+ * The parts of the `rust-cov` lane that hosted CI runs as separate jobs, each
+ * a whole section of the suite (see OH_COV_SHARD in scripts/ci/rust-coverage.sh).
+ * One job ran all of them in turn and never finished inside its 100 minutes
+ * (46 hosted runs: 0 passed). The union is the complete suite; the gate
+ * (merge-coverage-shards.mjs) requires every shard to have reported.
+ */
+export const RUST_COV_SHARDS = ["core", "product", "facades", "tui"];
+
 /** Hosted-runner job groups: lanes that share one GitHub-hosted job. */
 export const HOSTED_GROUPS = [
   // Quick checks and the frontend suite fit one 4-core runner side by side.
@@ -46,22 +56,54 @@ export const HOSTED_GROUPS = [
     maxParallel: 3,
     container: true,
   },
-  // Lint and gates-off share one `target/` on a ~14 GB disk, so run in turn.
+  // Lint, the embed build and gates-off each take a runner and a Rust cache
+  // of their own (`ci-fast-<group>`). In one job, in turn, they were the
+  // slowest job of the run (~66 min); apart, each is ~10-21 min of checks.
+  { group: "rust-lint", lanes: ["rust-lint"], maxParallel: 1, container: true },
   {
-    group: "rust-lint",
-    lanes: ["rust-lint", "rust-gates-off"],
+    group: "rust-embed",
+    lanes: ["rust-embed"],
     maxParallel: 1,
     container: true,
   },
-  { group: "rust-cov", lanes: ["rust-cov"], maxParallel: 1, container: true },
+  {
+    group: "rust-gates-off",
+    lanes: ["rust-gates-off"],
+    maxParallel: 1,
+    container: true,
+  },
+  // Each shard is the same lane with OH_COV_SHARD set from the matrix, so it
+  // has a runner and a Rust cache of its own (`ci-fast-<group>`).
+  ...RUST_COV_SHARDS.map((shard) => ({
+    group: `rust-cov-${shard}`,
+    shard,
+    lanes: ["rust-cov"],
+    maxParallel: 1,
+    container: true,
+  })),
   { group: "tauri", lanes: ["tauri"], maxParallel: 1, container: true },
+  // One integration target with a feature set of its own: a runner and a
+  // Rust cache of its own, armed only by the `inbound` area.
+  {
+    group: "inbound-e2e",
+    lanes: ["inbound-e2e"],
+    maxParallel: 1,
+    container: true,
+  },
 
   // pwsh ships on the bare ubuntu-latest image, not in the CI container.
   { group: "pester", lanes: ["pester"], maxParallel: 1, container: false },
 ];
 
-const CORE_PRODUCT = '"$(bash scripts/ci/product-features.sh --core)"';
+/**
+ * The inbound module E2E, with the gates its target requires
+ * (crates/openhuman-cli/Cargo.toml), against the staged release modules.
+ */
+export const INBOUND_MODULE_E2E =
+  "bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli" +
+  " --features modules,inbound-queues,e2e-test-support --test inbound_module_e2e";
 
+const CORE_PRODUCT = '"$(bash scripts/ci/product-features.sh --core)"';
 
 /**
  * Build the lane plan.
@@ -116,7 +158,10 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
     // Nextest forks per test. LLVM merges counters losslessly into eight
     // files per binary instead of retaining a separate file per process.
     ...(ex63 ? { LLVM_PROFILE_FILE_NAME: "openhuman-%8m.profraw" } : {}),
-    ...(!ex63 ? { CARGO_BUILD_JOBS: "1" } : {}),
+    // hosted: two rustc processes on the 4-core, 16 GB runner. One left three
+    // cores idle and made each cold core build ~20 min; more than two risks
+    // running out of memory while instrumented crates compile side by side.
+    ...(!ex63 ? { CARGO_BUILD_JOBS: "2" } : {}),
   };
   const modulesDir = ex63
     ? `${scratch}/test-modules`
@@ -419,13 +464,20 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           ],
           // Doctests run on pushes to main instead (see above); the tui suite
           // runs here (OH_COV_TUI=1).
-          // ex63: the core's unit tests run under cargo-nextest, one process
-          // per test and in parallel (the guest image ships cargo-nextest).
+          // The core's unit tests run under cargo-nextest on every profile, one
+          // process per test. They rely on that isolation: TinySecurity keeps
+          // the secret scope it was admitted with for the life of the process,
+          // so tests sharing one cargo-test process fail with "security secret
+          // scope changed after module admission" or "AlreadyRunning". (ex63's
+          // guest image ships cargo-nextest; hosted installs it in ci-lanes.)
           env: {
             OUT: "ci-out/lcov/lcov-core.info",
             OH_COV_DOCTESTS: "0",
             OH_COV_TUI: "1",
-            ...(ex63 ? { OH_COV_RUNNER: "nextest" } : {}),
+            // Both profiles run the core's tests one process per test. In a
+            // single libtest process ~15% of the core's unit tests fail on
+            // shared process globals and nothing bounds a hung test.
+            OH_COV_RUNNER: "nextest",
           },
           run: withModules("bash scripts/ci/rust-coverage.sh"),
         },
@@ -482,15 +534,32 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "bash scripts/ci-cancel-aware.sh cargo check -p openhuman-embed --no-default-features --features langfuse",
         },
         {
-          name: "embed-doctests",
-          when: core,
-          run: "bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed --doc",
-        },
-        {
           name: "embed-rustdoc",
           when: core,
           env: { RUSTDOCFLAGS: "-D warnings" },
           run: "bash scripts/ci-cancel-aware.sh cargo doc -p openhuman-embed --no-deps",
+        },
+        {
+          name: "tinyhumans-clippy",
+          when: core,
+          run: "cargo clippy -p openhuman-tinyhumans --all-targets -- -D warnings",
+        },
+      ],
+    },
+    {
+      // The embed checks that build and run code, where rust-lint only checks
+      // it. Hosted runs it in a job of its own; ex63 shares rust-lint's target.
+      name: "rust-embed",
+      // Compiles the core crate; hosted runners can cap heavy-compile slots
+      // (lanes.mjs). Lower number = served first.
+      heavy: 1,
+      targetDir: targetDir("lint"),
+      env: { ...rustEnv },
+      checks: [
+        {
+          name: "embed-doctests",
+          when: core,
+          run: "bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed --doc",
         },
         {
           name: "install-test-modules",
@@ -506,11 +575,6 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           // shares the plain dev build instead of a thin-LTO one nothing else
           // can reuse (and that would need cleaning afterwards).
           run: withModules("node scripts/run-embed-examples.mjs --profile dev"),
-        },
-        {
-          name: "tinyhumans-clippy",
-          when: core,
-          run: "cargo clippy -p openhuman-tinyhumans --all-targets -- -D warnings",
         },
       ],
     },
@@ -531,6 +595,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " core::all:: core::cli:: core::invoke:: core::session_expiry:: core::legacy_aliases:: core::runtime::" +
             " agent_registry::agents::loader:: commands::ops::tests:: memory::people::contacts_gate_tests::" +
             " memory::layout_migration::" +
+            " mcp::registry::tests::" +
             " doctor::checks::" +
             " core::schema_test_support::" +
             " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
@@ -569,6 +634,32 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       ],
     },
     {
+      // tests/inbound_module_e2e.rs: the Composio admission path into the
+      // digest-verified TinyEventQueues release and back through the host's
+      // production `Deliver` (#8155). Its `e2e-test-support` gate is not in
+      // the product set, so rust-coverage.sh skips the target; it runs here,
+      // for changes to the inbound host, the module host or the module pin.
+      name: "inbound-e2e",
+      // Compiles the core crate; hosted runners can cap heavy-compile slots
+      // (lanes.mjs). Lower number = served first.
+      heavy: 2,
+      targetDir: targetDir("build"),
+      env: { ...rustEnv },
+      checks: [
+        {
+          name: "install-test-modules",
+          when: areas.inbound,
+          run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
+        },
+        {
+          name: "inbound-module-e2e",
+          when: areas.inbound,
+          needs: ["install-test-modules"],
+          run: withModules(INBOUND_MODULE_E2E),
+        },
+      ],
+    },
+    {
       name: "tauri",
       // Compiles the core crate; hosted runners can cap heavy-compile slots
       // (lanes.mjs). Lower number = served first.
@@ -583,21 +674,38 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "cargo clippy --manifest-path crates/openhuman-app/Cargo.toml -- -D warnings",
         },
         {
-          // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation.
+          // The shell's artifact commands ask TinySecurity whether a file is in
+          // a protected location, and the module fails closed when it cannot
+          // answer ("file is in a protected location"). The lane has to stage
+          // the registry-installed test modules as rust-cov and rust-lint do,
+          // on every profile: both tauri-coverage runs source their env.
+          name: "install-test-modules",
+          when: areas.rustTauri,
+          run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
+        },
+        {
+          // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation (nextest).
           // The private plan below uses the Cargo target linker and nextest.
           name: "tauri-coverage",
           when: areas.rustTauri,
+          needs: ["install-test-modules"],
           env: { ...covEnv },
-          run:
+          run: withModules(
             "unset RUSTFLAGS RUSTC_WRAPPER" +
-            " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
-            " && cargo llvm-cov --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
-            " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+              " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
+              // No repo nextest config: the app is its own workspace, so the root
+              // `.config/nextest.toml` has no `ci` profile for it and its binary
+              // filters do not parse here; the built-in default applies.
+              // One process per test (nextest): the app tests reach the
+              // TinySecurity module, which keeps its first secret scope for the
+              // life of a process, so tests sharing one process fail closed.
+              " && cargo llvm-cov nextest --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
+              " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+          ),
         },
       ],
     },
     {
-
       name: "pester",
       checks: [
         {
@@ -693,12 +801,13 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       ...covEnv,
       CARGO_BUILD_TARGET_DIR: "target/ci-private-coverage",
     };
-    tauri.run =
+    tauri.run = withModules(
       "unset RUSTFLAGS; " +
-      coverageSuite(
-        "--manifest-path crates/openhuman-app/Cargo.toml",
-        "tauri", // the nextest report name this suite always had
-      );
+        coverageSuite(
+          "--manifest-path crates/openhuman-app/Cargo.toml",
+          "tauri", // the nextest report name this suite always had
+        ),
+    );
     // The app is a separate workspace, so its report is a second merge.
     tauriLane.checks.push(
       coverageReport(
@@ -741,6 +850,7 @@ export function hostedMatrix(plan) {
     (g) => ({
       group: g.group,
       lanes: g.lanes.join(","),
+      shard: g.shard ?? "",
       "max-parallel": g.maxParallel,
       container: g.container ? "ghcr.io/tinyhumansai/openhuman_ci:latest" : "",
     }),

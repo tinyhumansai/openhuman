@@ -97,7 +97,10 @@ fn typed_configuration_groups_apply_on_top_of_supplied_config() {
         .privacy(PrivacyConfig {
             mode: PrivacyMode::Sensitive,
         })
-        .secrets(SecretsConfig { encrypt: false })
+        .secrets(SecretsConfig {
+            encrypt: false,
+            unattended_unlock: false,
+        })
         .cron(CronConfig {
             enabled: false,
             ..Default::default()

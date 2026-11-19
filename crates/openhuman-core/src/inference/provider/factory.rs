@@ -40,7 +40,7 @@ pub(crate) use inspection::{
 pub(crate) use local_runtime::create_local_chat_model_from_string;
 pub(crate) use routing::fallback_diagnostics_for_role;
 pub use routing::{provider_for_role, role_bypasses_managed_credits};
-pub(crate) use routing::{workload_router, ConfigRouteSource};
+pub(crate) use routing::{route_for_turn_model, workload_router, ConfigRouteSource};
 
 // Factory-internal helpers shared across the implementation modules.
 use access_gates::enforce_local_only_inference;

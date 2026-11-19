@@ -30,7 +30,8 @@ pub use registry::{all_voice_controller_schemas, all_voice_registered_controller
 
 #[cfg(test)]
 use helpers::{
-    deserialize_params, generate_silent_wav, validate_stt_provider, validate_tts_provider,
+    deserialize_params, validate_stt_provider, validate_tts_provider, SILENT_CLIP_SAMPLES,
+    SILENT_CLIP_SAMPLE_RATE,
 };
 #[cfg(test)]
 use params::{

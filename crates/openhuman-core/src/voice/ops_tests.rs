@@ -1,6 +1,20 @@
 use super::*;
 use crate::config::test_env::EnvVarGuard;
 
+#[tokio::test]
+async fn hallucination_screen_timeout_fails_open() {
+    let result = screen_with_timeout(
+        std::future::pending::<Result<bool, &'static str>>(),
+        std::time::Duration::from_millis(1),
+    )
+    .await;
+
+    assert!(
+        !result,
+        "a timed-out screen must pass the transcript through"
+    );
+}
+
 #[test]
 fn normalize_extension_defaults_to_webm() {
     assert_eq!(normalize_extension(None).unwrap(), "webm");
@@ -195,4 +209,111 @@ async fn voice_tts_errors_when_local_ai_disabled() {
         .await
         .expect_err("disabled local ai should fail");
     assert!(err.contains("local ai is disabled"));
+}
+
+/// Status must name the provider synthesis actually uses. The top-level
+/// `tts_provider` override wins over the legacy `local_ai.tts_provider`
+/// (see `effective_tts_provider`), so status must not report the legacy
+/// value while synthesis goes elsewhere.
+#[tokio::test]
+async fn voice_status_reports_the_effective_tts_provider() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.workspace_dir = tmp.path().join("workspace");
+    config.config_path = tmp.path().join("config.toml");
+    config.tts_provider = Some("piper".to_string());
+    config.local_ai.tts_provider = "cloud".to_string();
+
+    let result = voice_status(&config).await.unwrap();
+    assert_eq!(result.value.tts_provider, "piper");
+}
+
+/// STT provider that always returns a stock hallucination phrase.
+struct StockPhraseSttProvider;
+
+#[async_trait::async_trait]
+impl crate::voice::SttProvider for StockPhraseSttProvider {
+    fn name(&self) -> &'static str {
+        "stock-phrase-stt"
+    }
+
+    async fn transcribe(
+        &self,
+        _config: &Config,
+        _audio_base64: &str,
+        _mime_type: Option<&str>,
+        _file_name: Option<&str>,
+        _language: Option<&str>,
+    ) -> Result<Outcome<crate::voice::SttResult>, String> {
+        Ok(Outcome::new(
+            crate::voice::SttResult {
+                text: "Thanks for watching!".into(),
+                provider: "stock-phrase-stt".into(),
+            },
+            Vec::new(),
+        ))
+    }
+}
+
+fn always_hallucinated<'a>(
+    _config: &'a Config,
+    _text: &'a str,
+) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+    Box::pin(async { true })
+}
+
+/// A config whose STT routes to [`StockPhraseSttProvider`] under `slug`.
+fn stock_phrase_config(slug: &str) -> Config {
+    crate::voice::factory::registry::register_stt_provider(slug, |_, _| {
+        Ok(Box::new(StockPhraseSttProvider) as Box<dyn crate::voice::SttProvider>)
+    });
+    let mut config = Config::default();
+    config.stt_provider = Some(slug.to_string());
+    config
+}
+
+/// The file entry point must apply the same hallucination gate as the bytes
+/// entry point: a flagged transcript comes back empty, with the raw text kept.
+#[tokio::test]
+async fn transcribe_path_drops_hallucinated_transcripts() {
+    let slug = "stock-phrase-stt-path-test";
+    let config = stock_phrase_config(slug);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio = tmp.path().join("clip.wav");
+    std::fs::write(&audio, b"audio").expect("write audio");
+
+    let result = transcribe_path_with(
+        &config,
+        &audio.display().to_string(),
+        None,
+        true,
+        always_hallucinated,
+    )
+    .await;
+    crate::voice::factory::registry::unregister_stt_provider(slug);
+
+    let speech = result.expect("transcription succeeds").value;
+    assert_eq!(speech.raw_text, "Thanks for watching!");
+    assert_eq!(speech.text, "", "a hallucinated transcript must be dropped");
+}
+
+#[tokio::test]
+async fn transcribe_bytes_drops_hallucinated_transcripts() {
+    let slug = "stock-phrase-stt-bytes-test";
+    let config = stock_phrase_config(slug);
+
+    let result = transcribe_bytes_with(
+        &config,
+        b"audio",
+        Some("wav".to_string()),
+        None,
+        true,
+        always_hallucinated,
+    )
+    .await;
+    crate::voice::factory::registry::unregister_stt_provider(slug);
+
+    let speech = result.expect("transcription succeeds").value;
+    assert_eq!(speech.raw_text, "Thanks for watching!");
+    assert_eq!(speech.text, "", "a hallucinated transcript must be dropped");
 }

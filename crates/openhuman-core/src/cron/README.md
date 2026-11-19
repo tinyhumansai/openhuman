@@ -182,6 +182,14 @@ run spawns inherits the origin but not the mark, so it stays read-only. The
 approval engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so
 the root's tools run without a person's approval.
 
+`CronActions` also counts as trusted automation for the wallet: its root run
+may call `wallet_balances` and `wallet_execute_prepared` (executes only when
+`[wallet_policy] automation_enabled` is set and the transfer fits the asset's
+caps), and x402 payments from `x402_request` / `http_request` are approved
+without a prompt within the per-request budget. A plain `Cron` turn is refused
+by both (it stays read-only, so `wallet_balances` still works).
+A job created from a channel conversation stays an `ExternalChannel` turn, so `wallet_execute_prepared` and x402 are refused for it too.
+
 Nothing else is lifted: the channel boundary, the autonomy tier
 (`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
 analysis and protected-path floor, the agent's `sandbox_mode`, the browser's
@@ -216,6 +224,47 @@ publishes `DomainEvent::CronSystemJobDue` and awaits the registered handler;
 otherwise the command is a flow id and the sink calls
 `flows::bus::FlowTriggerSubscriber::dispatch_schedule_tick` directly, with no
 event in between.
+
+### Scheduled workspace
+
+A cron agent run works in the process-wide `action_dir` unless its agent
+definition names a root of its own:
+
+```toml
+scheduled_actions = true
+sandbox_mode = "sandboxed"
+# Relative to action_dir; resolved (symlinks followed) at every run.
+scheduled_workspace = "state/workbench"
+```
+
+`build_cron_agent` resolves it with `scheduler/workspace_root.rs` and sets it as
+the run's workspace descriptor (`set_workspace_descriptor`, the mechanism
+`agent.chat`'s `cwd` and sub-agent worktrees use). The shell and file tools then
+resolve relative paths there and grant it read-write
+(`FsGate::scoped_to_workspace`), and a sandboxed shell asks TinySecurity for that
+root instead of `action_dir`. This is what lets a deployment whose action dir
+holds the core workspace (a checkout with the brain inside it) run a sandboxed
+shell from cron at all: TinySecurity refuses any grant that overlaps
+`workspace_dir`, and then the plan fails with
+`PlanError::RootOverlapsWorkspace`, which names both paths.
+
+The run refuses to start, with an error naming the agent, when the root does
+not exist, is not a directory, overlaps the core workspace, or holds one of the
+core's credential stores (`credentials::credential_files`, or the
+`OPENHUMAN_KEYRING_MASTER_KEY_FILE`). It is authored in the definition, never
+taken from a job's prompt.
+
+**A files-only jail.** Where the host has no kernel jail (a container without
+user namespaces leaves only Landlock), TinySecurity refuses every sandboxed
+plan: Landlock enforces the file grants but no network rule and no process
+isolation. A definition whose shell already gets the host network may set
+`sandbox_filesystem_only = true`. Its shell then asks for a files-only plan
+(`SandboxPlanOptions2::filesystem_only`, TinySecurity contract 2.2;
+`sandbox::spawn_plan::files_only`): files jailed to the run's root, the host's
+network. The host sends it only for the operator's own agent spawn with the
+host network, and the module admits it only for a trusted operator source
+outside SaaS. Sub-agents, channel turns, and text the host did not author keep
+the full requirements. Off unless the definition names it.
 
 ### After the run
 

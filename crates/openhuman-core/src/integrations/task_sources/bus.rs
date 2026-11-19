@@ -136,7 +136,21 @@ async fn fire_for_connection(
 /// Register the connection subscriber. Idempotent — the handle is held
 /// in a process-global `OnceLock` so it is never dropped (which would
 /// cancel the subscription).
+///
+/// Skipped while no provider can fetch
+/// ([`super::types::any_provider_can_fetch`]): every fetch it fired would fail.
 pub fn register_task_sources_subscriber() {
+    register_subscriber_when(super::types::any_provider_can_fetch());
+}
+
+/// [`register_task_sources_subscriber`] with the fetch gate as a parameter.
+fn register_subscriber_when(fetchable: bool) {
+    if !fetchable {
+        tracing::debug!(
+            "[task_sources:bus] no provider can fetch tasks; subscriber not registered"
+        );
+        return;
+    }
     if CONNECTION_HANDLE.get().is_some() {
         return;
     }

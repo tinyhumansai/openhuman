@@ -136,8 +136,12 @@ pub(crate) async fn release_all(host: &ProfileHost, grants: Vec<(ProfileId, Leas
 /// open constructs stores against the profile's new lease epoch.
 pub(crate) fn release_profile_stores(host: &ProfileHost, id: &ProfileId) {
     crate::storage::sessions::release_profile(id.as_str());
-    let workspace = host.layout_of(id).workspace_dir;
-    crate::storage::sessions::release_workspace(&workspace);
+    let layout = host.layout_of(id);
+    crate::storage::sessions::release_workspace(&layout.workspace_dir);
+    // A closed profile gives its TinySecurity secret registration back.
+    if let Some(config_dir) = layout.config_path.parent() {
+        crate::security::retire_secret_scope(config_dir);
+    }
 }
 
 /// What one renewal pass did.

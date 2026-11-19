@@ -14,6 +14,7 @@ pub mod encrypted_file_backend;
 pub mod encrypted_store;
 pub mod error;
 pub mod file_store;
+mod file_store_repair;
 mod install;
 mod memory_backend;
 pub mod ops;

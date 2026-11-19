@@ -2,8 +2,10 @@
 //!
 //! The gateway hands the core each user's TinyHumans credential — a session
 //! JWT or an API key — through the operator plane. It is stored where every
-//! backend caller already looks: the auth-profile store beside the profile's
-//! `config_path` (`<root>/users/<id>/`). Work running under that profile's
+//! backend caller already looks: the auth-profile store of the profile's
+//! `config_path` (`<root>/users/<id>/`), which with a storage backend keeps
+//! its document in the profile's storage scope, not beside the profile
+//! (`credentials/profiles/backend.rs`). Work running under that profile's
 //! context loads the profile's config, so `resolve_backend_credential` finds
 //! that user's credential and no other.
 //!

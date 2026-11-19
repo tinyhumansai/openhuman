@@ -58,12 +58,11 @@ export interface StartLoopbackOptions {
 }
 
 /**
- * The JS-side `listen()` handler from a previous call. We unsubscribe it
- * before starting a new listener so a single Rust emit can't fan out to
- * multiple stale handlers (happens when the user re-clicks before the
- * previous OAuth round-trip completes).
+ * Clean up the previous attempt before starting a new listener, including
+ * its callback timeout so it cannot stop a newer listener after a retry.
  */
-let activeUnlisten: UnlistenFn | null = null;
+let activeTeardown: ((reason?: Error) => void) | null = null;
+let listenerGeneration = 0;
 
 /**
  * Start a one-shot loopback listener. Returns `null` if not running inside
@@ -73,10 +72,11 @@ let activeUnlisten: UnlistenFn | null = null;
 export const startLoopbackOauthListener = async (
   options: StartLoopbackOptions = {}
 ): Promise<LoopbackHandle | null> => {
-  if (activeUnlisten) {
-    const prev = activeUnlisten;
-    activeUnlisten = null;
-    prev();
+  const generation = ++listenerGeneration;
+  if (activeTeardown) {
+    const prev = activeTeardown;
+    activeTeardown = null;
+    prev(new Error('Loopback OAuth listener superseded by a new attempt'));
   }
   if (!isTauri()) {
     return null;
@@ -96,6 +96,7 @@ export const startLoopbackOauthListener = async (
   const redirectUriWithState = appendState(result.redirectUri, result.state);
 
   const stop = async () => {
+    if (generation !== listenerGeneration) return;
     try {
       await invoke('stop_loopback_oauth_listener');
     } catch (err) {
@@ -109,18 +110,29 @@ export const startLoopbackOauthListener = async (
   let done = false;
   let timer: number | undefined;
   let unlisten: UnlistenFn | null = null;
-  const teardown = () => {
+  let supersededError: Error | null = null;
+  let rejectCallback: ((error: Error) => void) | null = null;
+  const teardown = (reason?: Error) => {
+    if (reason) supersededError = reason;
     done = true;
     window.clearTimeout(timer);
+    if (activeTeardown === teardown) activeTeardown = null;
     if (unlisten) {
       unlisten();
-      if (activeUnlisten === unlisten) activeUnlisten = null;
       unlisten = null;
     }
+    if (reason) rejectCallback?.(reason);
+    rejectCallback = null;
   };
+  activeTeardown = teardown;
 
   const awaitCallback = (): Promise<string> =>
     new Promise<string>((resolve, reject) => {
+      if (supersededError) {
+        reject(supersededError);
+        return;
+      }
+      rejectCallback = reject;
       timer = window.setTimeout(() => {
         teardown();
         void stop();
@@ -138,7 +150,6 @@ export const startLoopbackOauthListener = async (
             return;
           }
           unlisten = fn;
-          activeUnlisten = fn;
         })
         .catch(err => {
           if (done) return;

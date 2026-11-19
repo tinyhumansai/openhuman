@@ -90,7 +90,6 @@ impl Default for Config {
             multimodal_files: MultimodalFileConfig::default(),
             seltz: SeltzConfig::default(),
             searxng: SearxngConfig::default(),
-            web_search: WebSearchConfig::default(),
             search: SearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),

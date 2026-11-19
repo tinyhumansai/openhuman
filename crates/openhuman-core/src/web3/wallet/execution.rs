@@ -11,7 +11,7 @@ use tinywallet_bus::wire::{NativeWalletServiceRequest, NativeWalletTransactionRe
 pub use tinywallet_bus::wire::{
     BalanceInfo, ChainStatus, ExecutePreparedParams, ExecutionResult, PrepareTransferParams,
     PreparedKind, PreparedStatus, PreparedTransaction, ProviderStatus, SupportedAsset,
-    TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
+    TokenBalanceInfo, TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
 };
 
 use tinywallet_bus::wire::{EvmNetwork, WalletNetworkDefaults};
@@ -93,6 +93,26 @@ pub async fn balances(ctx: &DispatchCtx) -> Result<Outcome<Vec<BalanceInfo>>, St
     Ok(Outcome::new(
         result,
         vec!["wallet balances listed".to_string()],
+    ))
+}
+
+/// Live balances of the catalogued tokens (the cluster's USDC SPL mint on
+/// Solana), read by the module (`NativeWalletTokenBalances`, contract 1.15).
+pub async fn token_balances(ctx: &DispatchCtx) -> Result<Outcome<Vec<TokenBalanceInfo>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
+        wallet_module::call(
+            &config,
+            methods::NATIVE_WALLET_TOKEN_BALANCES,
+            NativeWalletServiceRequest { service },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(Outcome::new(
+        result,
+        vec!["wallet token balances listed".to_string()],
     ))
 }
 

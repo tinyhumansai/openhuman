@@ -347,6 +347,18 @@ impl Rows {
         page.items.iter().map(decode_row).collect()
     }
 
+    /// Pending rows whose window is still open, oldest first.
+    pub(super) async fn open(&self, now: u64, limit: usize) -> Result<Vec<StoredRow>, String> {
+        self.ready().await?;
+        let cutoff = i64::try_from(now).unwrap_or(i64::MAX);
+        let query =
+            Query::filter(Filter::eq("pending", true).and(Filter::gt("expires_ts", cutoff)))
+                .sort(Sort::asc("expires_ts"))
+                .limit(limit);
+        let page = self.docs.query(ROWS, &query).await.map_err(storage)?;
+        page.items.iter().map(decode_row).collect()
+    }
+
     /// Pending rows whose window elapsed, oldest first.
     pub(super) async fn stale(&self, now: u64, limit: usize) -> Result<Vec<StoredRow>, String> {
         self.ready().await?;

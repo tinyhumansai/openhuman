@@ -18,11 +18,11 @@
 //!   allowlist and caps always apply: with no asset listed, an agent cannot
 //!   execute and the user completes the transfer in the wallet UI as before.
 //! - **Automation** — a trusted-automation turn (internal background job,
-//!   approval-free workflow; cron turns are read-only at the harness gate and
-//!   never reach the tool). Refused unless `automation_enabled`, then limited
+//!   approval-free workflow, or a cron job whose agent opted into
+//!   `scheduled_actions`). Refused unless `automation_enabled`, then limited
 //!   to the listed assets and their caps.
-//! - **Refused** — an external-channel turn or an unlabelled one. Never
-//!   executes.
+//! - **Refused** — an external-channel turn, an unlabelled one, or a plain
+//!   (read-only) cron turn. Never executes.
 //!
 //! Caps (`config::schema::WalletAssetCap`): per transaction, per rolling 24
 //! hours for the asset, and per rolling 7 days for one recipient. Only records
@@ -37,7 +37,7 @@ use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource
 use crate::modules::wallet::WalletCallError;
 use tinywallet_bus::wire::{ExecutionResult, PreparedTransaction};
 
-use super::ledger::{LedgerRecord, LedgerStatus, SpendLedger};
+use super::ledger::{LedgerKind, LedgerRecord, LedgerStatus, SpendLedger};
 
 /// Prefix of every policy refusal, so callers and logs can tell a refusal from
 /// a failure.
@@ -81,6 +81,12 @@ impl ExecutionOrigin {
             AgentTurnOrigin::TrustedAutomation { source, .. } if is_policy_automation(source) => {
                 Self::Automation { class }
             }
+            // A plain scheduled job is read-only: its prompt is data, and only
+            // the scheduled-actions opt-in (`CronActions`) may act.
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::Cron,
+                ..
+            } => Self::Refused { class },
             AgentTurnOrigin::WebChat { .. }
             | AgentTurnOrigin::DirectChat
             | AgentTurnOrigin::Cli
@@ -91,7 +97,7 @@ impl ExecutionOrigin {
         }
     }
 
-    fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Interactive { .. } => "interactive",
             Self::Agent { .. } => "agent",
@@ -100,7 +106,7 @@ impl ExecutionOrigin {
         }
     }
 
-    fn class(&self) -> &str {
+    pub(crate) fn class(&self) -> &str {
         match self {
             Self::Interactive { class }
             | Self::Agent { class }
@@ -112,15 +118,16 @@ impl ExecutionOrigin {
 
 /// Whether a trusted-automation source executes under the spend policy instead
 /// of a per-call human approval. A workflow that requires approval is reviewed
-/// by a person at the gate, so it is not automation here.
+/// by a person at the gate, so it is not automation here. A plain `Cron` job is
+/// read-only and never automation; a cron job whose agent opted into scheduled
+/// actions (`CronActions`) is.
 #[must_use]
 pub fn is_policy_automation(source: &TrustedAutomationSource) -> bool {
-    !matches!(
-        source,
-        TrustedAutomationSource::Workflow {
-            require_approval: true
-        }
-    )
+    match source {
+        TrustedAutomationSource::Background | TrustedAutomationSource::CronActions => true,
+        TrustedAutomationSource::Workflow { require_approval } => !require_approval,
+        TrustedAutomationSource::Cron => false,
+    }
 }
 
 /// Whether the current turn's wallet execute is governed by the spend policy
@@ -143,6 +150,23 @@ pub enum RefusalKind {
     Daily,
     RecipientWeekly,
     AlreadyAttempted,
+    /// The account has no `[wallet_policy.accounts]` section.
+    AccountNotAllowed,
+    /// An instruction invokes a program the account's section does not list.
+    ProgramNotAllowed,
+    /// An instruction the host refuses to sign whatever the policy says (a
+    /// token approval, a System transfer, an unverifiable token transfer).
+    InstructionNotAllowed,
+    /// A token movement of a mint the account's section does not list.
+    MintNotAllowed,
+    /// The transaction itself cannot be signed by this account (wrong fee
+    /// payer, extra signers, address lookup tables, malformed bytes).
+    TransactionNotAllowed,
+    /// The declared token debits disagree with what the transaction moves
+    /// (its visible transfers, or its simulation), or the simulation failed.
+    SimulationMismatch,
+    /// The prepared quote reached its expiry before it could be signed.
+    QuoteExpired,
 }
 
 /// A refused execute.
@@ -158,7 +182,7 @@ impl std::fmt::Display for PolicyRefusal {
     }
 }
 
-fn refusal(kind: RefusalKind, message: impl Into<String>) -> PolicyRefusal {
+pub(crate) fn refusal(kind: RefusalKind, message: impl Into<String>) -> PolicyRefusal {
     PolicyRefusal {
         kind,
         message: message.into(),
@@ -277,6 +301,8 @@ pub fn evaluate(
 
     let counted = records.iter().filter(|record| {
         record.policy_applied
+            && record.kind == LedgerKind::Transfer
+            && record.account_index == 0
             && record.status.counts_against_caps()
             && cap_matches(cap, &record_facts(record))
     });
@@ -338,6 +364,8 @@ fn new_record(
         status,
         transaction_hash: None,
         error: None,
+        kind: LedgerKind::Transfer,
+        account_index: 0,
     }
 }
 

@@ -383,12 +383,12 @@ impl CoreProcessHandle {
                             }
                             Ok(Err(err)) => {
                                 if let Some(
-                                    openhuman_rpc::embed::PickListenPortError::WouldTakeOver {
+                                    openhuman_rpc::server::listen_port::PickListenPortError::WouldTakeOver {
                                         preferred,
                                         ..
                                     },
                                 ) =
-                                    err.downcast_ref::<openhuman_rpc::embed::PickListenPortError>()
+                                    err.downcast_ref::<openhuman_rpc::server::listen_port::PickListenPortError>()
                                 {
                                     if startup_attempt == 0 {
                                         log::warn!(

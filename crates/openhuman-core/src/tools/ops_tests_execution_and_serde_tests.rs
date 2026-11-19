@@ -112,7 +112,6 @@ async fn all_tools_registers_no_hosted_integration_families_without_a_tool_sourc
     let mut cfg = test_config(&tmp);
     cfg.api_url = Some("https://backend.example.test".to_string());
     cfg.integrations.google_places.enabled = true;
-    cfg.integrations.parallel.enabled = true;
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     store_test_session_token(&cfg).await;

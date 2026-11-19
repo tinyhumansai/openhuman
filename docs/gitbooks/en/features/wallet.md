@@ -83,7 +83,7 @@ The agent reaches the wallet through eight tools:
 | --- | --- |
 | `wallet_status` | Onboarding status and account addresses. |
 | `wallet_chain_status` | Per-chain readiness and active RPC. |
-| `wallet_balances` | Live balances per account and network. |
+| `wallet_balances` | Live native and token (USDC on Solana) balances, as `{native, tokens}`. If the token read fails, `tokens` is empty and `tokensError` says why; the native rows are still returned. |
 | `wallet_prepare_transfer` | Build a validated, fee-estimated quote. |
 | `wallet_execute_prepared` | Execute a prepared quote, only within the spend policy. |
 | `wallet_tx_status` | Transaction lifecycle state by hash. |
@@ -126,6 +126,28 @@ recipient_weekly_max_raw = 333333333
 The caps of one asset are counted separately from the other's. `OPENHUMAN_WALLET_POLICY_AUTOMATION_ENABLED`, `OPENHUMAN_WALLET_POLICY_APPLY_TO_INTERACTIVE` and `OPENHUMAN_WALLET_POLICY_ASSETS` (a JSON array of the same asset entries) override the file. The `wallet.policy_get`, `wallet.policy_update` and `wallet.ledger_list` RPCs read, change and audit it.
 
 Every execute is written to a ledger before it is signed and updated afterwards. A failed execute is marked *in doubt*: it still counts against the caps and is never retried, so check its status before preparing a new transfer. Scheduled (cron) agent turns are read-only and cannot pay. x402 payments from automation are limited by the x402 budget instead.
+
+### Secondary accounts and program transactions
+
+Besides the one account per chain, the same recovery phrase gives a second Solana account at `m/44'/501'/1'/0'` (index 1, labelled `giveaway`). New and imported wallets derive it at setup; a wallet set up earlier derives it the first time `wallet.account` asks for it. It is listed under `additionalAccounts` in `wallet.status`, never moves funds through transfers, and is not covered by `[wallet_policy.assets]`.
+
+It can sign one thing: a Solana transaction another program built, through `wallet.prepare_program` and then `wallet.execute_prepared_program`. Each account that may do this needs its own section, and an account without one is refused:
+
+```toml
+[wallet_policy.accounts.solana_1]
+allowed_programs = [
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",   # Token-2022 (or the classic SPL Token program)
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",  # Associated Token Account
+  "<program id>",
+]
+
+[[wallet_policy.accounts.solana_1.mints]]
+mint = "<mint address>"
+per_tx_max_raw = 1000000000
+daily_max_raw = 2000000000
+```
+
+The caller states what the transaction will take from the account's token balances. The transaction is refused if it calls a program not on the list, moves a mint not on the list, moves more than either cap, needs another signer that has not already signed it, or, when simulated, takes a different amount than stated. Token movements must be `TransferChecked` instructions, and System program instructions are not signed this way. Executes are written to the same ledger, but they are counted separately from the primary account's caps.
 
 ## See also
 

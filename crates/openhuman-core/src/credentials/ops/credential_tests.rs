@@ -1,8 +1,7 @@
 use super::*;
+use crate::credentials::api_key as current_api_key;
 use crate::security::credentials::api_key;
-use crate::security::credentials::ops::clear_credential_with;
 use crate::security::credentials::ops::restore_api_key;
-use crate::security::credentials::session_support::CredentialKind;
 use serde_json::json;
 
 #[test]
@@ -49,8 +48,13 @@ async fn restore_api_key_puts_the_key_back_and_tolerates_a_failed_store() {
 }
 
 /// Signs `user-42` in on file-backed profiles under a temp HOME and stores
-/// `sk-keep` beside the user-scoped config it activates; returns that config.
-async fn signed_in_with_key() -> Config {
+/// `sk-keep` beside the user-scoped config it activates; returns the pre-login
+/// and the user-scoped config.
+///
+/// Everything here goes through this tree's operations and `crate::credentials::api_key`,
+/// the store production reads. The legacy `security::credentials` copy keeps
+/// its keys in another document, so mixing the two read back `None`.
+async fn signed_in_with_key() -> (Config, Config) {
     let pre_login = crate::config::load_config_with_timeout().await.unwrap();
     store_session(
         &DispatchCtx::process_default(),
@@ -74,16 +78,20 @@ async fn signed_in_with_key() -> Config {
     .await
     .unwrap();
     assert_eq!(
-        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
+        current_api_key::get_api_key(&user_scoped)
+            .await
+            .unwrap()
+            .as_deref(),
         Some("sk-keep"),
         "control"
     );
-    user_scoped
+    (pre_login, user_scoped)
 }
 
 // The carry into the signed-out workspace failing returns the error with the
-// API key back at its source. With file-backed profiles the source stays
-// reachable after the teardown, so it is put back.
+// API key still at its source: the source copy is cleared only after the carry
+// is stored. With file-backed profiles the source stays reachable after the
+// teardown.
 #[tokio::test]
 #[allow(clippy::await_holding_lock)] // Serializes the process-wide storage slot.
 async fn a_failed_carry_during_sign_out_puts_the_api_key_back() {
@@ -96,20 +104,34 @@ async fn a_failed_carry_during_sign_out_puts_the_api_key_back() {
     );
     let tmp = tempfile::TempDir::new().unwrap();
     let _home = crate::config::test_env::EnvVarGuard::set("HOME", tmp.path());
-    let user_scoped = signed_in_with_key().await;
+    let (pre_login, user_scoped) = signed_in_with_key().await;
 
-    let error = clear_credential_with(
+    // The signed-out workspace's credential document cannot be written.
+    let destination = crate::credentials::profiles::profiles_file(
+        &crate::credentials::state_dir_from_config(&pre_login),
+    );
+    let _ = std::fs::remove_file(&destination);
+    std::fs::create_dir_all(&destination).unwrap();
+    assert!(
+        current_api_key::store_api_key(&pre_login, "cannot-write")
+            .await
+            .is_err(),
+        "positive control: the destination credential document cannot be written"
+    );
+
+    let error = clear_credential(
         &DispatchCtx::process_default(),
         &user_scoped,
-        Some(CredentialKind::Session),
-        |_, _| async { Err(anyhow::anyhow!("injected carry failure")) },
+        Some(crate::credentials::session_state::CredentialKind::Session),
     )
     .await
     .unwrap_err();
-    assert!(error.contains("injected carry failure"), "{error}");
     assert!(!error.contains("must be entered again"), "{error}");
     assert_eq!(
-        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
+        current_api_key::get_api_key(&user_scoped)
+            .await
+            .unwrap()
+            .as_deref(),
         Some("sk-keep"),
         "a failed carry must put the API key back where it was"
     );

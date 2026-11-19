@@ -6,11 +6,11 @@ use crate::core::Outcome;
 // Imports used only by the `documents`-gated presentation regeneration helper
 // below; when the feature is off the PresentationTool is compiled out.
 #[cfg(feature = "documents")]
+use super::tools::PresentationTool;
+#[cfg(feature = "documents")]
 use crate::security::approval::ApprovalChatContext;
 #[cfg(feature = "documents")]
 use crate::security::SecurityPolicy;
-#[cfg(feature = "documents")]
-use crate::tools::PresentationTool;
 
 use super::store;
 use super::types::ArtifactKind;

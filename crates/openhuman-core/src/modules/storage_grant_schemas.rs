@@ -166,6 +166,8 @@ pub(super) fn grant_for(module_id: &str) -> Option<StorageGrant> {
 fn read_collections(owner: &str) -> Vec<String> {
     match owner {
         "connectors" => tinyconnectors_bus::storage::storage_needs().collections,
+        // TinyWallet's x402 ledger migrates its v1 budget holds on first open.
+        "wallet" => vec![tinywallet::LEGACY_BUDGET_COLLECTION.to_owned()],
         _ => Vec::new(),
     }
 }
@@ -175,8 +177,12 @@ fn stream_prefixes(owner: &str) -> Vec<String> {
         "mcp" => vec![tinymcp_bus::storage::AUDIT_STREAM.to_owned()],
         "connectors" => tinyconnectors_bus::storage::storage_needs().stream_prefixes,
         // TinyWallet's module still reads and appends this released ledger
-        // stream while its bus contract currently declares collections only.
-        "wallet" => vec!["wallet.payments".to_owned()],
+        // stream while its bus contract currently declares collections only,
+        // and its x402 ledger migration reads the v1 stream the importer fills.
+        "wallet" => vec![
+            "wallet.payments".to_owned(),
+            tinywallet::PAYMENTS_STREAM.to_owned(),
+        ],
         _ => Vec::new(),
     }
 }
@@ -210,6 +216,8 @@ pub(super) mod tinywallet {
     pub(crate) const MODULE_ID: &str = "tinywallet";
     /// The v1 payments stream the importer writes.
     pub(crate) const PAYMENTS_STREAM: &str = "x402.payments";
+    /// The v1 budget-hold collection the module's x402 ledger migration reads.
+    pub(crate) const LEGACY_BUDGET_COLLECTION: &str = "x402_budget";
 }
 
 pub(super) mod tinybox {

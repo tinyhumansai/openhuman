@@ -743,7 +743,7 @@ async fn cron_update_applies_a_partial_patch_without_clobbering_unset_fields() {
 /// `subsystems.status` must name every kernel slot, not just the cut-over one.
 ///
 /// `subsystems_status()` returns a hardcoded one-element vector today
-/// (`core/subsystem/schemas.rs`), while `SubsystemSlot::ALL` has seven entries.
+/// (`memory/status.rs`), while `SubsystemSlot::ALL` has seven entries.
 /// That gap is deliberate and documented — only `Memory` is cut over — but it is
 /// also exactly the kind of thing that silently stays wrong after a second slot
 /// lands. Asserting the slot NAMES rather than the count means this test starts

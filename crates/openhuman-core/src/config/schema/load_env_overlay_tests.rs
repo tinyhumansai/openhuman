@@ -197,38 +197,6 @@ fn env_overlay_reasoning_enabled_recognises_truthy_falsy_and_ignores_garbage() {
 }
 
 #[test]
-fn env_overlay_web_search_limits_validated() {
-    let mut cfg = Config::default();
-    cfg.web_search.max_results = 3;
-    cfg.web_search.timeout_secs = 10;
-
-    // Valid values apply.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new()
-            .with("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "7")
-            .with("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "25"),
-    );
-    assert_eq!(cfg.web_search.max_results, 7);
-    assert_eq!(cfg.web_search.timeout_secs, 25);
-
-    // Out-of-range — ignored.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new()
-            .with("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "0")
-            .with("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "0"),
-    );
-    assert_eq!(cfg.web_search.max_results, 7);
-    assert_eq!(cfg.web_search.timeout_secs, 25);
-
-    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "11"));
-    assert_eq!(cfg.web_search.max_results, 7);
-
-    // Bare aliases also accepted when the OPENHUMAN-prefixed variant is absent.
-    cfg.apply_env_overlay_with(&HashMapEnv::new().with("WEB_SEARCH_MAX_RESULTS", "4"));
-    assert_eq!(cfg.web_search.max_results, 4);
-}
-
-#[test]
 fn env_overlay_tavily_api_key_supports_alias_precedence_and_ignores_blank_values() {
     let mut cfg = Config::default();
 
@@ -568,6 +536,7 @@ tts_config_download_url = "https://example.invalid/voice.onnx.json"
     assert_eq!(cfg.local_ai.embedding_model_id, "bge-m3");
     let saved = toml::to_string(&cfg).expect("updated config serializes");
     for retired in [
+        "selected_tier",
         "quantization",
         "preload_vision_model",
         "preload_embedding_model",

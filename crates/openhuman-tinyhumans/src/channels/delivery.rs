@@ -83,6 +83,38 @@ pub(super) async fn execute(
     }
 }
 
+/// The body of a typed send.
+///
+/// The `tinychannels-bus` `SendTyped` contract skips every absent context field
+/// (`skip_serializing_if = "Option::is_none"`), so the wire body does too: a
+/// `null` key is not "absent" to a backend that validates the field, and a
+/// text-only turn carries an empty `parts` list rather than none.
+#[allow(clippy::too_many_arguments)]
+fn typed_send_body(
+    text: String,
+    parts: Vec<tinychannels_bus::channel::OutboundContentPart>,
+    turn_id: Option<String>,
+    channel_ref: Option<tinychannels_bus::channel::ChannelRef>,
+    conversation: Option<tinychannels_bus::channel::ConversationRef>,
+    sequence: Option<u64>,
+    segment_index: Option<u32>,
+    idempotency_key: Option<String>,
+) -> serde_json::Value {
+    let mut context = serde_json::Map::new();
+    let mut put = |key: &str, value: Option<serde_json::Value>| {
+        if let Some(value) = value {
+            context.insert(key.to_owned(), value);
+        }
+    };
+    put("turnId", turn_id.map(Into::into));
+    put("channelRef", channel_ref.map(|v| json!(v)));
+    put("conversation", conversation.map(|v| json!(v)));
+    put("sequence", sequence.map(Into::into));
+    put("segmentIndex", segment_index.map(Into::into));
+    put("idempotencyKey", idempotency_key.map(Into::into));
+    json!({"text": text, "parts": parts, "transportContext": context})
+}
+
 async fn send(
     client: &BackendClient,
     credential: &BackendCredential,
@@ -111,18 +143,16 @@ async fn send(
                 .send_channel_message(
                     &channel,
                     credential.clone(),
-                    json!({
-                        "text": text,
-                        "parts": parts,
-                        "transportContext": {
-                            "turnId": turn_id,
-                            "channelRef": channel_ref,
-                            "conversation": conversation,
-                            "sequence": sequence,
-                            "segmentIndex": segment_index,
-                            "idempotencyKey": idempotency_key,
-                        }
-                    }),
+                    typed_send_body(
+                        text,
+                        parts,
+                        turn_id,
+                        channel_ref,
+                        conversation,
+                        sequence,
+                        segment_index,
+                        idempotency_key,
+                    ),
                 )
                 .await
         }

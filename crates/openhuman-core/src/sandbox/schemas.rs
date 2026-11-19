@@ -1,6 +1,7 @@
 //! Sandbox domain controller schemas and RPC handlers.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
@@ -298,10 +299,6 @@ fn handle_validate_policy(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
         let result = serde_json::json!({ "valid": issues.is_empty(), "issues": issues });
         to_json(Outcome::new(result, vec![]))
     })
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

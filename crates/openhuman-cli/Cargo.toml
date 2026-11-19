@@ -364,6 +364,10 @@ name = "security_keyring_fixture"
 path = "../../tests/security_keyring_fixture.rs"
 
 [[test]]
+name = "prompt_screen_live_scope_e2e"
+path = "../../tests/prompt_screen_live_scope_e2e.rs"
+
+[[test]]
 name = "raw_coverage_all"
 path = "../../tests/raw_coverage_all.rs"
 # The merged raw-coverage target spans ~76 former files, so it reaches the

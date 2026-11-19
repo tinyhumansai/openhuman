@@ -9,6 +9,7 @@ Host-installable secret storage with an in-memory default. Cipher operations for
 - Probe and cache backend availability (`is_available`) so callers (wallet guards, snapshot loops) can fall back to file storage without re-triggering OS keychain prompts.
 - Migrate a secret from a plaintext file into a persistent backend (`migrate_from_file`), verifying the write before deleting the source. Volatile providers reject migration and retain the source.
 - Route config-field secret encryption, decryption, and legacy migration via `SecretStore` to TinySecurity (`enc2:` and legacy `enc:` formats).
+- Pass the config to the master resolution so `[secrets] unattended_unlock` (`OPENHUMAN_SECRETS_UNATTENDED_UNLOCK`) can let a headless host with an operator-supplied keyring key answer the one-time master grant itself (`modules/security/unattended_unlock.rs`); everywhere else a person approves it.
 - Load and cache a single app-scoped master encryption key at startup (`init_master_key`) for the `encrypted_file` backend: from `OPENHUMAN_KEYRING_MASTER_KEY` / `OPENHUMAN_KEYRING_MASTER_KEY_FILE` when an operator supplies one (headless deployments with no keychain, #6926), otherwise from a host-installed `MasterKeySource`, then a private workspace key file.
 - Migrate the legacy plaintext `dev-keychain.json` into the encrypted `secrets.enc` file on first use.
 

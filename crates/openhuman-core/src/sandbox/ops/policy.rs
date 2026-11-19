@@ -55,6 +55,18 @@ pub(crate) fn sandbox_keeps_boxes(ctx: &DispatchCtx, config: &crate::config::Con
     !crate::core::runtime::is_saas() && !sandbox_disabled_by_host(ctx) && config_keeps_boxes(config)
 }
 
+/// The work folder of the box a command on this call runs in, when
+/// [`sandbox_keeps_boxes`]: `/sandbox` on OpenShell, `/home/node` on agent37.
+pub(crate) fn sandbox_box_workdir(
+    ctx: &DispatchCtx,
+    config: &crate::config::Config,
+) -> Option<&'static str> {
+    if !sandbox_keeps_boxes(ctx, config) {
+        return None;
+    }
+    crate::sandbox::boxes::BoxBackend::configured(config).map(|backend| backend.workdir())
+}
+
 /// [`sandbox_keeps_boxes`] for what the config alone says.
 pub(crate) fn config_keeps_boxes(config: &crate::config::Config) -> bool {
     !config_disables_sandbox(config)

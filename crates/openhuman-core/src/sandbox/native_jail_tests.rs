@@ -60,6 +60,7 @@ async fn disabled_tinybox_module_never_falls_back_to_host_execution() -> anyhow:
     let state = tempfile::tempdir()?;
     let marker = workspace.path().join("must-not-run");
     let policy = SandboxPolicy {
+        filesystem_only: false,
         backend: super::super::types::SandboxBackendKind::Local,
         workspace_root: workspace.path().to_path_buf(),
         state_dir: state.path().to_path_buf(),
@@ -179,6 +180,7 @@ async fn released_tinybox_runs_a_native_jail_through_the_pinned_loader() -> anyh
     let workspace = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let policy = SandboxPolicy {
+        filesystem_only: false,
         backend: super::super::types::SandboxBackendKind::Local,
         workspace_root: workspace.path().to_path_buf(),
         state_dir: state.path().to_path_buf(),

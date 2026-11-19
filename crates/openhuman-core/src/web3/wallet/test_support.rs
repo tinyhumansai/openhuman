@@ -49,6 +49,8 @@ pub(crate) fn sample_account(chain: WalletChain) -> WalletAccount {
             WalletChain::Solana => "m/44'/501'/0'/0'".to_string(),
             WalletChain::Tron => "m/44'/195'/0'/0/0".to_string(),
         },
+        index: 0,
+        label: None,
     }
 }
 
@@ -124,7 +126,7 @@ pub(crate) async fn setup_wallet_in(
     // parallel tests after this test's TempDir has been dropped.
     let workspace_guard = set_workspace_env_for_test(temp).await;
     let config = ctx.load_config().await?;
-    let encrypted = crate::security::encryption::rpc::encrypt_secret(&config, TEST_MNEMONIC)
+    let encrypted = crate::credentials::ops::encrypt_secret(&config, TEST_MNEMONIC)
         .await?
         .value;
     setup(

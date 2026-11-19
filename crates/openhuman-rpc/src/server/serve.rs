@@ -102,9 +102,7 @@ pub async fn serve(
     // and reachable from the network. See issue #1919. The self-generated
     // {workspace}/core.token does NOT count — remote clients cannot read it,
     // so treating it as "explicit" would be fail-open.
-    if crate::core_host::security::pairing::is_public_bind(&resolved_host)
-        && !runtime.has_operator_token()
-    {
+    if super::public_bind::is_public_bind(&resolved_host) && !runtime.has_operator_token() {
         log::error!(
             "[core] SECURITY: refusing to bind on public address {resolved_host} without an \
                  explicit operator-supplied RPC token. Set {} in your environment (or hand the \
@@ -133,11 +131,11 @@ pub async fn serve(
     // nothing to take over: another live core on the port (the desktop
     // app's, another checkout's) is a neighbour, so move to a free port.
     let occupied_by_core = if ready_tx.is_some() {
-        crate::core_host::platform::connectivity::rpc::OccupiedByCore::Takeover
+        super::listen_port::OccupiedByCore::Takeover
     } else {
-        crate::core_host::platform::connectivity::rpc::OccupiedByCore::Fallback
+        super::listen_port::OccupiedByCore::Fallback
     };
-    let pick = crate::core_host::platform::connectivity::rpc::pick_listen_port_for_host_with(
+    let pick = super::listen_port::pick_listen_port_for_host_with(
         host.as_str(),
         preferred_port,
         occupied_by_core,

@@ -106,6 +106,7 @@ RUN touch crates/openhuman-cli/src/main.rs crates/openhuman-core/src/lib.rs \
 FROM node:24-bookworm-slim AS modules
 WORKDIR /repo
 COPY scripts/lib/module-pins.mjs scripts/lib/module-pins.mjs
+COPY scripts/lib/git-env.mjs scripts/lib/git-env.mjs
 COPY scripts/ci/self-hosted/test-module-assets.mjs scripts/ci/self-hosted/test-module-assets.mjs
 COPY scripts/release/stage-modules.mjs scripts/release/stage-modules.mjs
 COPY crates/openhuman-core/src/modules/registry.rs crates/openhuman-core/src/modules/registry.rs

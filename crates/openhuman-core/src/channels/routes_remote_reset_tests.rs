@@ -117,8 +117,7 @@ async fn tenant_runtime(
     // Store a standing credential in the tenant's own scope so a storage-backed
     // secret store records it where the host agent later reads it.
     CoreContext::scope(Arc::clone(&core), async {
-        crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
-            .await
+        crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key").await
     })
     .await
     .expect("store reset test credential");

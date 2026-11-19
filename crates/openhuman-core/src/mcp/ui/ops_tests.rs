@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::mcp::ui::cache::{put_inline, InlineEntry};
-use crate::mcp::ui::types::{UiCsp, UiToolDescriptor};
+use crate::mcp::ui::port::UiToolDescriptor;
 use crate::security::AutonomyLevel;
+use tinymcp_bus::ui::UiCsp;
 
 #[derive(Default)]
 struct FakePort {
@@ -58,7 +59,7 @@ async fn resource_read_rejects_non_ui_and_unconnected() {
 async fn resource_read_rejects_oversize_and_caches() {
     let port = FakePort {
         contents: vec![
-            json!({"uri": "ui://big", "mimeType": "text/html", "text": "x".repeat(crate::mcp::ui::resolve::MAX_RESOURCE_BYTES + 1)}),
+            json!({"uri": "ui://big", "mimeType": "text/html", "text": "x".repeat(tinymcp_bus::ui::MAX_WIDGET_BYTES + 1)}),
         ],
         ..FakePort::default()
     };

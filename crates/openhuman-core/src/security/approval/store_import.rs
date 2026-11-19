@@ -29,6 +29,11 @@ pub(crate) struct LegacyApproval {
     pub(crate) decided_at: Option<DateTime<Utc>>,
     pub(crate) decision: Option<String>,
     pub(crate) executed: bool,
+    /// The redacted summary the legacy store kept; read only for an undecided
+    /// row, which TinySecurity imports as a pending orphan a person can see.
+    pub(crate) summary: Option<String>,
+    /// The redacted argument JSON the legacy store kept; undecided rows only.
+    pub(crate) args_redacted: Option<String>,
 }
 
 /// One persisted legacy flow-and-tool grant.
@@ -65,8 +70,13 @@ pub(crate) fn read_legacy(config: &Config) -> Result<Option<LegacyHistory>> {
             decided_at: Some(row.decided_at),
             decision: Some(row.decision.as_str().to_owned()),
             executed: false,
+            summary: None,
+            args_redacted: None,
         })
         .collect();
+    // Requests an earlier launch left undecided; the module keeps an unexpired
+    // one as a pending orphan and an expired one as inert history.
+    history.approvals.extend(docs.list_undecided(500)?);
     history.trust = docs
         .list_all_flow_trust()?
         .into_iter()

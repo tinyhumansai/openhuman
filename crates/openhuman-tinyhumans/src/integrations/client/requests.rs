@@ -15,13 +15,23 @@ pub(super) fn managed_budget_applies_to_path(path: &str) -> bool {
 /// any data carried in the query.
 ///
 /// The descriptor is classified here ([`is_control_plane_path`]); the core only
-/// honours the flag.
+/// honours the flag. A route that is not control plane ships user content
+/// (tool arguments, files, prompts), so the descriptor says so: the bare
+/// `integration` constructor declares only `Metadata`, which TinySecurity lets
+/// through `Sensitive` privacy mode without a risk assessment. Fail closed
+/// instead of describing user content as ids and counts.
 pub(crate) fn backend_egress_descriptor(
     path: &str,
 ) -> openhuman_embed::__host::egress::EgressDescriptor {
+    use openhuman_embed::__host::egress::{DataKind, EgressDescriptor};
     let endpoint = path.split('?').next().unwrap_or(path);
-    openhuman_embed::__host::egress::EgressDescriptor::integration(endpoint)
-        .with_control_plane(is_control_plane_path(endpoint))
+    let control_plane = is_control_plane_path(endpoint);
+    let descriptor = EgressDescriptor::integration(endpoint).with_control_plane(control_plane);
+    if control_plane {
+        descriptor
+    } else {
+        descriptor.with_data_kind(DataKind::ToolArguments)
+    }
 }
 
 /// Is `path` a backend **control-plane** round-trip that must keep flowing

@@ -14,7 +14,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client;
 
-use crate::config::{build_runtime_proxy_client_with_timeouts, MultimodalConfig};
+use crate::config::MultimodalConfig;
 use tinyagents_session::transcript::{TranscriptMessage, TranscriptPart};
 
 use tinyagents_harness::multimodal::{
@@ -57,7 +57,7 @@ fn image_limits(config: &MultimodalConfig) -> ImageLimits {
 /// can change under a running core, and a stale client would keep dialling the
 /// old one.
 fn remote_client() -> Client {
-    build_runtime_proxy_client_with_timeouts("provider.ollama", 30, 10)
+    crate::attachments::fetch_client()
 }
 
 // ── Text extraction ──────────────────────────────────────────────────────

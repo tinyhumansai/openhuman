@@ -14,9 +14,7 @@ pub use stock_prices::{
 /// gated by its own `[integrations.*]` switch.
 ///
 /// Web search providers (Exa, Gemini, TinyFish, ...) register through the
-/// TinySearch module, so `[search] enabled = false` suppresses them too;
-/// `integrations.parallel` is parsed for old config files and no longer does
-/// anything.
+/// TinySearch module, so `[search] enabled = false` suppresses them too.
 pub async fn build_integration_tools(
     root_config: &openhuman_embed::__host::config::Config,
 ) -> Vec<Box<dyn tinytools::Tool>> {

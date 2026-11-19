@@ -74,7 +74,6 @@ impl Clone for Config {
             multimodal_files: self.multimodal_files.clone(),
             seltz: self.seltz.clone(),
             searxng: self.searxng.clone(),
-            web_search: self.web_search.clone(),
             search: self.search.clone(),
             proxy: self.proxy.clone(),
             cost: self.cost.clone(),

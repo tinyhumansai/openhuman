@@ -11,7 +11,9 @@ fn the_web3_skill_keeps_the_crypto_safety_contract() {
     for tool in [
         "wallet_status",
         "wallet_chain_status",
+        "wallet_balances",
         "wallet_prepare_transfer",
+        "wallet_execute_prepared",
         "web3_swap_quote",
         "web3_swap_execute",
         "web3_bridge_execute",
@@ -22,9 +24,12 @@ fn the_web3_skill_keeps_the_crypto_safety_contract() {
     }
     for rule in [
         "read → quote → confirm → execute",
-        "no balance tool",
-        "`quote_id`",
-        "Never auto-retry a write",
+        "Never state a balance no tool returned",
+        "quote id",
+        "within the owner's spend policy",
+        "never split a payment",
+        "Never retry a write",
+        "Never echo keys, seed phrases",
     ] {
         assert!(
             web3.guide.contains(rule),

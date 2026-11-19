@@ -2,15 +2,34 @@
 //! workspace, injecting on-disk or inline content into a prompt under a
 //! `###` heading with a character cap, and the shared AGENTS.md block writer.
 
+use crate::agent::harness::artifact_offload::READ_TOOL;
 use crate::agent::prompts::types::*;
 use std::fmt::Write;
-use std::hash::{Hash, Hasher};
 use std::path::Path;
+
+/// Hash recorded in the `.{filename}.builtin-hash` sidecar: lowercase hex
+/// SHA-256, whose output is fixed forever — unlike `DefaultHasher`, which a
+/// toolchain bump may change and so make an edited file look untouched (#322).
+fn builtin_hash(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(content.as_bytes()))
+}
+
+/// Whether the on-disk `disk` content still matches the built-in recorded in
+/// the `stored` sidecar.
+///
+/// Only a SHA-256 sidecar may authorize an overwrite. Legacy 16-hex sidecars
+/// are migrated by the caller, but are never trusted to classify disk content
+/// as unedited: a collision or changed `DefaultHasher` implementation could
+/// otherwise overwrite a user's file.
+fn matches_stored_builtin(disk: &str, stored: &str) -> bool {
+    stored.len() == 64 && builtin_hash(disk) == stored
+}
 
 /// Ensure the workspace file is up-to-date with the compiled-in default.
 ///
 /// On first install the file doesn't exist → write it. On subsequent runs
-/// we store a hash of the compiled-in content in a sidecar file
+/// we store a SHA-256 of the compiled-in content in a sidecar file
 /// (`.{filename}.builtin-hash`). If the hash changes (code was updated),
 /// the disk file is overwritten so prompt improvements ship automatically.
 /// User edits between code releases are preserved — we only overwrite when
@@ -44,12 +63,7 @@ pub fn sync_workspace_file(workspace_dir: &Path, filename: &str) {
     let path = workspace_dir.join(filename);
     let hash_path = workspace_dir.join(format!(".{filename}.builtin-hash"));
 
-    // Compute a simple hash of the current compiled-in content.
-    let current_hash = {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        default_content.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
-    };
+    let current_hash = builtin_hash(default_content);
 
     // Read the last-written hash (if any).
     let stored_hash = std::fs::read_to_string(&hash_path).unwrap_or_default();
@@ -71,12 +85,7 @@ pub fn sync_workspace_file(workspace_dir: &Path, filename: &str) {
     let file_exists = path.exists();
     let user_unmodified = if file_exists {
         match std::fs::read_to_string(&path) {
-            Ok(disk) => {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                disk.hash(&mut hasher);
-                let disk_hash = format!("{:016x}", hasher.finish());
-                disk_hash == stored_hash
-            }
+            Ok(disk) => matches_stored_builtin(&disk, stored_hash),
             Err(_) => false,
         }
     } else {
@@ -135,7 +144,7 @@ pub fn inject_inline_content(prompt: &mut String, label: &str, content: &str, ma
     if truncated.len() < trimmed.len() {
         let _ = writeln!(
             prompt,
-            "\n\n[... truncated at {max_chars} chars — use `read` for full file]\n"
+            "\n\n[... truncated at {max_chars} chars — use `{READ_TOOL}` for full file]\n"
         );
     } else {
         prompt.push_str("\n\n");
@@ -223,7 +232,7 @@ pub fn inject_workspace_file_capped(
             if truncated.len() < trimmed.len() {
                 let _ = writeln!(
                     prompt,
-                    "\n\n[... truncated at {max_chars} chars — use `read` for full file]\n"
+                    "\n\n[... truncated at {max_chars} chars — use `{READ_TOOL}` for full file]\n"
                 );
             } else {
                 prompt.push_str("\n\n");

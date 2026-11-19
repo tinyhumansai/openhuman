@@ -108,6 +108,8 @@ async fn hosted_orchestrator_allows_deferred_browser_discovery() {
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn factory_screens_with_its_supplied_configuration() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     use crate::core::runtime::{CoreContext, DomainSet};
     use tinyagents_harness::host::security_gate::ContentOrigin;
     let root = tempfile::tempdir().unwrap();
