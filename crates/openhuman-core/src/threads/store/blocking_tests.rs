@@ -449,3 +449,56 @@ async fn run_acts_under_the_handed_context_not_the_active_one() {
     .unwrap();
     assert_eq!(seen.as_deref(), Some("u-asha"));
 }
+
+/// Channel persistence re-ensures its thread on every inbound message with
+/// a derived title and the default labels. When the user has renamed the
+/// thread or re-labelled it, that re-ensure must not revert their change:
+/// `ensure_thread` is create-or-return, not an upsert.
+#[tokio::test]
+async fn re_ensure_keeps_the_users_title_and_labels() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+
+    let mut initial = create("channel:telegram:42");
+    initial.title = "telegram · alice · 42".to_string();
+    initial.labels = Some(vec!["general".to_string()]);
+    ensure_thread(ctx.clone(), dir.clone(), initial)
+        .await
+        .expect("ensure_thread");
+
+    update_thread_title(
+        ctx.clone(),
+        dir.clone(),
+        "channel:telegram:42".to_string(),
+        "Trip planning".to_string(),
+        "2026-07-30T00:01:00Z".to_string(),
+    )
+    .await
+    .expect("update_thread_title");
+    update_thread_labels(
+        ctx.clone(),
+        dir.clone(),
+        "channel:telegram:42".to_string(),
+        vec!["pinned".to_string()],
+        "2026-07-30T00:01:00Z".to_string(),
+    )
+    .await
+    .expect("update_thread_labels");
+
+    // The next inbound message re-ensures with the derived title and the
+    // default labels, exactly as the channel paths do.
+    let mut again = create("channel:telegram:42");
+    again.title = "telegram · alice · 42".to_string();
+    again.labels = Some(vec!["general".to_string()]);
+    let thread = ensure_thread(ctx.clone(), dir.clone(), again)
+        .await
+        .expect("re-ensure");
+    assert_eq!(thread.title, "Trip planning");
+    assert_eq!(thread.labels, vec!["pinned".to_string()]);
+
+    let threads = list_threads(ctx, dir).await.expect("list_threads");
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].title, "Trip planning");
+    assert_eq!(threads[0].labels, vec!["pinned".to_string()]);
+}
