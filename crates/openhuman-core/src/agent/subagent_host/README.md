@@ -3,8 +3,10 @@
 OpenHuman adapters over the neutral TinyAgents sub-agent lifecycle. Given an
 `AgentDefinition` and a task prompt, the runner reads the parent's task-local
 `ParentExecutionContext`, resolves the child's model, filters the parent's
-tool registry per the definition's `tools`, `disallowed_tools`, and
-`skill_filter` (or inherits the parent's tools verbatim in fork mode), builds
+tool registry per the definition's `tools` and `skill_filter` (or inherits
+the parent's tools verbatim in fork mode; `disallowed_tools` is a deny rule in
+the child's rule policy, enforced by the harness on the catalogue,
+`tool_search` and every call), builds
 a narrowed system prompt, runs the child turn on the TinyAgents harness, and
 mirrors its transcript and progress back to the parent as one compact tool
 result.

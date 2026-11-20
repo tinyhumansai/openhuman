@@ -22,7 +22,7 @@ fn child_tool_surface_never_contains_any_spawn_or_continuation_tool() {
         .map(|name| Box::new(NamedTool(name)) as Box<dyn Tool>)
         .collect();
 
-    let indices = filter_tool_indices(&tools, &ToolScope::Wildcard, &[], None);
+    let indices = filter_tool_indices(&tools, &ToolScope::Wildcard, None);
 
     assert!(
         indices.is_empty(),
@@ -39,21 +39,37 @@ fn explicitly_scoped_nested_spawn_is_retained_only_with_host_grant() {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(NamedTool("spawn_subagent"))];
     let scope = ToolScope::Named(vec!["spawn_subagent".to_owned()]);
 
-    assert!(filter_tool_indices_with_nested_spawn(&tools, &scope, &[], None, false).is_empty());
+    assert!(filter_tool_indices_with_nested_spawn(&tools, &scope, None, false).is_empty());
     assert_eq!(
-        filter_tool_indices_with_nested_spawn(&tools, &scope, &[], None, true),
+        filter_tool_indices_with_nested_spawn(&tools, &scope, None, true),
         vec![0],
         "an explicit host grant should preserve the definition's named spawn tool"
     );
+    // The definition denylist still wins over the grant: the index filter
+    // keeps the granted tool, and the child's rule policy refuses it.
+    let mut def = crate::agent_registry::agents::load_builtins()
+        .expect("built-ins load")
+        .into_iter()
+        .next()
+        .expect("a built-in definition");
+    def.tools = scope;
+    def.tool_rules = None;
+    def.disallowed_tools = vec!["spawn_subagent".to_owned()];
+    let rules = crate::tools::rules::child_rule_policy(None, None, &def).expect("child rules");
     assert!(
-        filter_tool_indices_with_nested_spawn(
-            &tools,
-            &scope,
-            &["spawn_subagent".to_owned()],
-            None,
-            true,
-        )
-        .is_empty(),
+        rule_listed_indices(&[0], &tools, Some(&rules)).is_empty(),
+        "a denied spawn tool is not listed"
+    );
+    assert!(
+        !rules
+            .rules
+            .evaluate(
+                &tinytools::ToolSubject::named("spawn_subagent"),
+                &rules.context,
+                tinytools::Surface::Call,
+                None,
+            )
+            .callable,
         "the definition denylist must still win over the grant"
     );
 }

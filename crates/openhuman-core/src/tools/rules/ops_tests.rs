@@ -27,26 +27,6 @@ fn visible(set: &ToolRuleSet, name: &str, context: &tinytools::RuleContext) -> b
 }
 
 #[test]
-fn glob_list_keeps_the_legacy_exact_and_prefix_forms() {
-    let patterns = vec!["shell".to_string(), "spawn_*".to_string()];
-    assert!(glob_list_matches(&patterns, "shell"));
-    assert!(glob_list_matches(&patterns, "spawn_subagent"));
-    assert!(!glob_list_matches(&patterns, "shell_exec"));
-    assert!(!glob_list_matches(&patterns, "file_read"));
-    assert!(!glob_list_matches(&[], "shell"));
-}
-
-#[test]
-fn glob_list_now_also_takes_inner_wildcards_and_any_case() {
-    let patterns = vec!["mcp_*_delete_*".to_string(), "gmail_*".to_string()];
-    assert!(glob_list_matches(
-        &patterns,
-        "mcp_github_delete_repo_abc123"
-    ));
-    assert!(glob_list_matches(&patterns, "GMAIL_SEND_EMAIL"));
-}
-
-#[test]
 fn an_unrestricted_definition_contributes_no_layer() {
     assert!(agent_rule_layer(&definition("plain")).is_none());
 }
@@ -235,4 +215,211 @@ fn a_child_keeps_the_parents_ceiling_when_no_rules_restrict_it() {
         .expect("the parent's ceiling still restricts the child");
     assert_eq!(child.permission_ceiling, Some(PermissionLevel::ReadOnly));
     assert_eq!(child.context.get("agent"), Some("worker"));
+}
+
+// ── Enforcement: the rule layer is the only `disallowed_tools` gate ─────────
+//
+// The session builder, sub-agent tool preparation and the hosted definition
+// projection no longer drop a definition's `disallowed_tools` from their
+// belts. These drive a real harness turn with no allowlist at all, so the
+// only thing between the model and a denied tool is the rule layer composed
+// here — exactly as a session or sub-agent turn installs it.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use tinyagents_harness::runtime::{AgentHarness, RunPolicy};
+use tinyagents_harness::testkit::ScriptedModel;
+use tinyagents_harness::tool::ToolRulePolicy;
+use tinyinference_llm::message::Message;
+use tinyinference_llm::model::ModelResponse;
+use tinyinference_llm::tool::ToolCall;
+use tinytools::{Tool, ToolExposure, ToolResult};
+
+struct CountingTool {
+    name: &'static str,
+    exposure: ToolExposure,
+    calls: AtomicUsize,
+}
+
+impl CountingTool {
+    fn direct(name: &'static str) -> Arc<Self> {
+        Self::new(name, ToolExposure::Direct)
+    }
+
+    fn deferred(name: &'static str) -> Arc<Self> {
+        Self::new(name, ToolExposure::Deferred)
+    }
+
+    fn new(name: &'static str, exposure: ToolExposure) -> Arc<Self> {
+        Arc::new(Self {
+            name,
+            exposure,
+            calls: AtomicUsize::new(0),
+        })
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for CountingTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "a lookup tool for the disallowed_tools enforcement tests"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+    fn exposure(&self) -> ToolExposure {
+        self.exposure
+    }
+    async fn execute(&self, _arguments: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolResult::success(format!("{} ran", self.name)))
+    }
+}
+
+fn calling(calls: &[(&str, &str, serde_json::Value)]) -> ModelResponse {
+    let mut response = ModelResponse::assistant("");
+    for (id, name, args) in calls {
+        response
+            .message
+            .tool_calls
+            .push(ToolCall::new(*id, *name, args.clone()));
+    }
+    response
+}
+
+/// Runs `script` on a harness carrying `rules` the way a turn installs them
+/// (`install_turn_rules`), with `tools` registered and no allowlist.
+async fn run_under(
+    rules: Arc<ToolRulePolicy>,
+    script: Vec<ModelResponse>,
+    tools: &[Arc<CountingTool>],
+) -> (Arc<ScriptedModel>, Vec<Message>) {
+    let model = Arc::new(ScriptedModel::new(script));
+    let mut harness: AgentHarness<()> = AgentHarness::new();
+    harness.with_model(model.clone());
+    let mut policy = RunPolicy::default();
+    install_turn_rules(&mut policy, Some(rules));
+    harness.with_policy(policy);
+    for tool in tools {
+        harness.register_tool(tool.clone());
+    }
+    let run = harness
+        .invoke_default(&(), vec![Message::user("go")])
+        .await
+        .expect("run completes");
+    (model, run.messages)
+}
+
+fn tool_text(messages: &[Message], call_id: &str) -> String {
+    messages
+        .iter()
+        .find_map(|message| match message {
+            Message::Tool(tool) if tool.tool_call_id == call_id => Some(message.text()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no result for {call_id}"))
+}
+
+/// A definition that disallows an exact name and a prefix glob.
+fn restricted() -> AgentDefinition {
+    let mut def = definition("researcher");
+    def.disallowed_tools = vec!["shell".into(), "vendor_*".into()];
+    def
+}
+
+fn session_rules(def: &AgentDefinition) -> Arc<ToolRulePolicy> {
+    Arc::new(turn_rule_policy(
+        Arc::new(session_rule_set(None, Some(def))),
+        rule_context(Some("web"), Some(&def.id), None),
+    ))
+}
+
+/// Asserts the rules refuse a disallowed tool called by name — direct and
+/// deferred, exact and globbed — keep it off the catalogue, and keep it out
+/// of `tool_search` results, while the allowed tools still work.
+async fn assert_disallowed_tools_are_refused(rules: Arc<ToolRulePolicy>) {
+    let shell = CountingTool::direct("shell");
+    let file_read = CountingTool::direct("file_read");
+    let secret = CountingTool::deferred("vendor_secret_lookup");
+    let weather = CountingTool::deferred("weather_lookup");
+    let tools = [
+        shell.clone(),
+        file_read.clone(),
+        secret.clone(),
+        weather.clone(),
+    ];
+    let script = vec![
+        calling(&[(
+            "search",
+            "tool_search",
+            serde_json::json!({ "query": "lookup" }),
+        )]),
+        calling(&[
+            ("by-name", "shell", serde_json::json!({})),
+            ("guessed", "vendor_secret_lookup", serde_json::json!({})),
+            ("allowed", "file_read", serde_json::json!({})),
+        ]),
+        ModelResponse::assistant("done"),
+    ];
+
+    let (model, messages) = run_under(rules, script, &tools).await;
+
+    let catalogue: Vec<String> = model.requests()[0]
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect();
+    assert!(
+        catalogue.contains(&"file_read".to_string()),
+        "{catalogue:?}"
+    );
+    assert!(!catalogue.contains(&"shell".to_string()), "{catalogue:?}");
+
+    let found = tool_text(&messages, "search");
+    assert!(found.contains("weather_lookup"), "{found}");
+    assert!(
+        !found.contains("vendor_secret_lookup"),
+        "tool_search must not surface a disallowed tool: {found}"
+    );
+
+    for call in ["by-name", "guessed"] {
+        let refusal = tool_text(&messages, call);
+        assert!(
+            refusal.contains("disallowed_tools"),
+            "{call} must be refused by the disallowed_tools rule: {refusal}"
+        );
+    }
+    assert_eq!(shell.calls(), 0, "a disallowed tool never runs");
+    assert_eq!(secret.calls(), 0, "a disallowed deferred tool never runs");
+    assert_eq!(file_read.calls(), 1, "an allowed tool still runs");
+}
+
+#[tokio::test]
+async fn a_session_refuses_disallowed_tools_by_name_and_in_tool_search() {
+    assert_disallowed_tools_are_refused(session_rules(&restricted())).await;
+}
+
+#[tokio::test]
+async fn a_sub_agent_refuses_its_disallowed_tools_by_name_and_in_tool_search() {
+    let child = child_rule_policy(None, None, &restricted()).expect("child rules");
+    assert_disallowed_tools_are_refused(child).await;
+}
+
+#[tokio::test]
+async fn a_sub_agent_refuses_its_own_disallowed_tools_under_a_restricted_parent() {
+    let mut parent = definition("orchestrator");
+    parent.disallowed_tools = vec!["file_write".into()];
+    let parent = turn_rule_policy(
+        Arc::new(session_rule_set(None, Some(&parent))),
+        rule_context(Some("web"), Some("orchestrator"), None),
+    );
+    let child = child_rule_policy(Some(&parent), None, &restricted()).expect("child rules");
+    assert_disallowed_tools_are_refused(child).await;
 }

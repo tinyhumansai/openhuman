@@ -236,21 +236,32 @@ fn skills_wildcard_entries_are_not_agent_ids() {
     assert_eq!(def.allowed_subagent_ids(), vec!["a_worker".to_string()]);
 }
 
+/// Whether `projected`'s own rule layer admits a call to `name` — the gate a
+/// hosted run applies to it.
+fn projected_callable(projected: &AgentDefinition, name: &str) -> bool {
+    match &projected.tool_rules {
+        None => true,
+        Some(layer) => {
+            tinytools::ToolRuleSet::single(layer.clone())
+                .evaluate(
+                    &tinytools::ToolSubject::named(name),
+                    &tinytools::RuleContext::new(),
+                    tinytools::Surface::Call,
+                    None,
+                )
+                .callable
+        }
+    }
+}
+
 #[test]
 fn denylist_supports_exact_and_prefix_forms() {
-    let denied = vec!["file_write".to_string(), "storage_*".to_string()];
-    assert!(crate::tools::rules::glob_list_matches(
-        &denied,
-        "file_write"
-    ));
-    assert!(crate::tools::rules::glob_list_matches(
-        &denied,
-        "storage_delete_file"
-    ));
-    assert!(!crate::tools::rules::glob_list_matches(
-        &denied,
-        "file_read"
-    ));
+    let mut def = synthetic("denier", AgentTier::Worker, &[]);
+    def.disallowed_tools = vec!["file_write".to_string(), "storage_*".to_string()];
+    let projected = registry_of(vec![def.clone()]).project(&def);
+    assert!(!projected_callable(&projected, "file_write"));
+    assert!(!projected_callable(&projected, "storage_delete_file"));
+    assert!(projected_callable(&projected, "file_read"));
 }
 
 /// A wildcard scope materializes the session's registered tool surface.
@@ -309,10 +320,9 @@ fn named_discovery_scope_authorizes_only_registered_deferred_tools() {
         .tools
         .named_tools()
         .contains(&"browser".to_string()));
-    assert!(!projected
-        .tools
-        .named_tools()
-        .contains(&"blocked_secret".to_string()));
+    // The denied deferred tool stays in the projected scope; the projected
+    // rule layer is what keeps it out of `tool_search` and refuses a call.
+    assert!(!projected_callable(&projected, "blocked_secret"));
 
     def.tools = ToolScope::Named(vec!["file_read".into()]);
     let without_discovery = registry_of(vec![def.clone()])
@@ -324,9 +334,9 @@ fn named_discovery_scope_authorizes_only_registered_deferred_tools() {
         .contains(&"browser_open".to_string()));
 }
 
-/// A wildcard scope carrying a denylist must be materialised against the
-/// registered tool list, not projected as the unrestricted marker — which
-/// would hand every denied tool straight back.
+/// A wildcard scope carrying a denylist is materialised against the
+/// registered tool list like any wildcard, and its denied tools are refused
+/// by the projected rule layer rather than dropped from the scope.
 ///
 /// Written against a synthetic definition rather than a shipped one on
 /// purpose: the shipped denylists are product data and come and go (the
@@ -345,14 +355,14 @@ fn a_wildcard_denylist_is_materialized_against_the_registered_tools() {
         ]))
         .project(&def);
 
-    assert_eq!(projected.tools.named_tools(), vec!["file_read".to_string()]);
+    assert_eq!(
+        projected.tools.named_tools(),
+        vec!["file_read".to_string(), "secret_read".to_string()]
+    );
+    assert!(projected_callable(&projected, "file_read"));
     assert!(
-        !projected
-            .tools
-            .named_tools()
-            .iter()
-            .any(|t| t == "secret_read"),
-        "a denied tool must not survive the wildcard projection"
+        !projected_callable(&projected, "secret_read"),
+        "a denied tool must be refused by the projected rule layer"
     );
 }
 
@@ -390,35 +400,42 @@ fn an_explicitly_tool_less_named_scope_projects_the_no_tools_sentinel() {
     );
 }
 
-/// Same requirement when the denylist is what emptied the scope.
+/// A denylist that covers the whole scope leaves no callable tool: the
+/// projected rule layer refuses every name the scope keeps.
 #[test]
-fn a_named_scope_emptied_by_its_denylist_projects_the_no_tools_sentinel() {
+fn a_named_scope_covered_by_its_denylist_leaves_no_callable_tool() {
     let mut def = synthetic("denied", AgentTier::Worker, &[]);
     def.tools = ToolScope::Named(vec!["example_tool".to_string()]);
     def.extra_tools = Vec::new();
     def.disallowed_tools = vec!["example_tool".to_string()];
 
-    assert_eq!(
-        registry_of(vec![def.clone()])
-            .project(&def)
-            .tools
-            .named_tools(),
-        vec![NO_TOOLS_SENTINEL.to_string()]
-    );
+    let projected = registry_of(vec![def.clone()]).project(&def);
+    assert!(projected
+        .tools
+        .named_tools()
+        .iter()
+        .all(|name| !projected_callable(&projected, name)));
 }
 
 #[test]
-fn named_scope_drops_denied_tools_and_keeps_extras() {
+fn named_scope_denies_denied_tools_and_keeps_extras() {
     let mut def = synthetic("worker", AgentTier::Worker, &[]);
     def.tools = ToolScope::Named(vec!["file_read".into(), "file_write".into()]);
     def.extra_tools = vec!["grep".into(), "file_read".into()];
     def.disallowed_tools = vec!["file_write".into()];
 
-    let registry = registry_of(vec![def.clone()]);
+    let projected = registry_of(vec![def.clone()]).project(&def);
     assert_eq!(
-        registry.project(&def).tools.named_tools(),
-        vec!["file_read".to_string(), "grep".to_string()]
+        projected.tools.named_tools(),
+        vec![
+            "file_read".to_string(),
+            "file_write".to_string(),
+            "grep".to_string()
+        ]
     );
+    assert!(projected_callable(&projected, "file_read"));
+    assert!(projected_callable(&projected, "grep"));
+    assert!(!projected_callable(&projected, "file_write"));
 }
 
 #[test]

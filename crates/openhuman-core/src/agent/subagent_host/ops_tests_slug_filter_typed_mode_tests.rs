@@ -5,36 +5,23 @@ use tinyagents_harness::context::{current_run_depth, with_run_depth, RunDepth};
 fn filter_named_scope_keeps_only_named() {
     let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
     let def = make_def_named_tools(&["alpha", "gamma"]);
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
+    let idx = filter_tool_indices(&parent, &def.tools, None);
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
     assert_eq!(names, vec!["alpha", "gamma"]);
 }
 
+/// The index filter leaves `disallowed_tools` to the child's rule policy, so
+/// a wildcard child keeps every parent tool here; the rules refuse the denied
+/// ones (`typed_mode_refuses_disallowed_tools_called_by_name`).
 #[test]
-fn filter_wildcard_includes_all_minus_disallowed() {
+fn filter_wildcard_leaves_disallowed_tools_to_the_rules() {
     let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
     let mut def = make_def_named_tools(&[]);
     def.tools = ToolScope::Wildcard;
     def.disallowed_tools = vec!["beta".into()];
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
+    let idx = filter_tool_indices(&parent, &def.tools, None);
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-    assert_eq!(names, vec!["alpha", "gamma"]);
-}
-
-#[test]
-fn filter_wildcard_honours_disallowed_prefix_entries() {
-    let parent: Vec<Box<dyn Tool>> = vec![
-        stub("alpha"),
-        stub("vendor_registry_register"),
-        stub("vendor_marketplace_buy_identity"),
-        stub("gamma"),
-    ];
-    let mut def = make_def_named_tools(&[]);
-    def.tools = ToolScope::Wildcard;
-    def.disallowed_tools = vec!["vendor_*".into()];
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
-    let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-    assert_eq!(names, vec!["alpha", "gamma"]);
+    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
 }
 
 #[test]
@@ -47,7 +34,7 @@ fn filter_skill_filter_restricts_to_prefix() {
     ];
     let mut def = make_def_named_tools(&[]);
     def.tools = ToolScope::Wildcard;
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
+    let idx = filter_tool_indices(&parent, &def.tools, Some("notion"));
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
     assert_eq!(names, vec!["notion__search", "notion__read"]);
 }
@@ -62,7 +49,7 @@ fn filter_skill_filter_combined_with_named_scope() {
         stub("gmail__send"),
     ];
     let def = make_def_named_tools(&["notion__search", "gmail__send"]);
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
+    let idx = filter_tool_indices(&parent, &def.tools, Some("notion"));
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
     assert_eq!(names, vec!["notion__search"]);
 }
@@ -571,6 +558,57 @@ async fn typed_mode_blocks_unallowed_tool_calls() {
         "blocked tool should produce a recoverable unknown-tool error naming it: {:?}",
         tool_msg.content
     );
+}
+
+/// A disallowed tool the child still holds (the index filter no longer drops
+/// it) stays off the child's catalogue and is refused by the child's rule
+/// policy when called by name — an exact entry and a prefix glob alike. The
+/// refusal is a permission failure, so the child stops on it rather than
+/// running the tool (the stub would have answered `ok`).
+#[tokio::test]
+async fn typed_mode_refuses_disallowed_tools_called_by_name() {
+    for name in ["beta", "vendor_registry_register"] {
+        let provider =
+            ScriptedProvider::new(vec![tool_response(name, "{}"), text_response("done")]);
+        let parent = make_parent(
+            provider.clone(),
+            vec![
+                stub("alpha"),
+                stub("beta"),
+                stub("vendor_registry_register"),
+            ],
+        );
+        let mut def = make_def_named_tools(&[]);
+        def.tools = ToolScope::Wildcard;
+        def.disallowed_tools = vec!["beta".into(), "vendor_*".into()];
+
+        let outcome = run_host_from_test_options(
+            &def,
+            "do thing",
+            with_parent(parent, SubagentRunOptions::default()),
+        )
+        .await
+        .expect("runner should succeed");
+
+        let captured = provider.captured.lock();
+        assert_eq!(
+            captured[0].tool_count, 1,
+            "only the allowed tool reaches the child's catalogue"
+        );
+        assert!(
+            outcome.output.contains("permission") && outcome.output.contains(name),
+            "{name} must be refused, not run: {:?}",
+            outcome.output
+        );
+        assert!(
+            matches!(
+                outcome.status,
+                crate::agent::subagent_host::types::SubagentRunStatus::Incomplete { .. }
+            ),
+            "the child stops on the refusal: {:?}",
+            outcome.status
+        );
+    }
 }
 
 #[tokio::test]

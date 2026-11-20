@@ -3,23 +3,10 @@
 use std::sync::Arc;
 
 use tinyagents_harness::tool::ToolRulePolicy;
-use tinytools::{glob_matches, RuleContext, RuleEffect, ToolRule, ToolRuleSet, ToolRules};
+use tinytools::{RuleContext, RuleEffect, ToolRule, ToolRuleSet, ToolRules};
 
 use crate::agent_registry::host_definition::AgentDefinition;
 use crate::config::Config;
-
-/// Whether any entry of a definition tool list matches `name`.
-///
-/// This is the grammar of every name list on an agent definition
-/// (`disallowed_tools`) and the registry's denylist: `*` and `?` globs,
-/// ASCII case-insensitive, so the historical exact names and trailing-`*`
-/// prefixes keep matching what they did. It is the one implementation; the
-/// session builder, sub-agent tool preparation, parallel staging and the
-/// hosted definition projection all call it.
-#[must_use]
-pub fn glob_list_matches(patterns: &[String], name: &str) -> bool {
-    patterns.iter().any(|pattern| glob_matches(pattern, name))
-}
 
 /// Name prefix of every layer an agent definition contributes.
 const AGENT_LAYER_PREFIX: &str = "agent:";
@@ -31,9 +18,13 @@ const OPERATOR_LAYER: &str = "config";
 
 /// The rule layer an agent definition contributes: its `tool_rules`, plus a
 /// `deny` for its `disallowed_tools`, so a denied tool is refused on every
-/// surface — including `tool_search` and a call by a guessed name — not only
-/// removed from the visible belt. `None` when the definition restricts
-/// nothing.
+/// surface — the catalogue, `tool_search` and a call by a guessed name.
+/// This is the one place `disallowed_tools` is enforced: the session builder,
+/// sub-agent tool preparation and the hosted definition projection leave the
+/// denied names in their belts and let this rule refuse them. The patterns
+/// are `tinytools` name globs (`*`, `?`, ASCII case-insensitive), so exact
+/// names and trailing-`*` prefixes match what they always did. `None` when
+/// the definition restricts nothing.
 #[must_use]
 pub fn agent_rule_layer(def: &AgentDefinition) -> Option<ToolRules> {
     let mut layer = def.tool_rules.clone().unwrap_or_default();

@@ -18,12 +18,7 @@ fn names(idx: &[usize], tools: &[Box<dyn tinytools::Tool>]) -> Vec<String> {
 fn named_scope_still_includes_recovery_tool() {
     let t = tools();
     // Named scope allow-lists only current_time — recovery tool not listed.
-    let idx = filter_tool_indices(
-        &t,
-        &ToolScope::Named(vec!["current_time".into()]),
-        &[],
-        None,
-    );
+    let idx = filter_tool_indices(&t, &ToolScope::Named(vec!["current_time".into()]), None);
     let got = names(&idx, &t);
     assert!(got.contains(&"current_time".to_string()));
     assert!(
@@ -38,7 +33,7 @@ fn tool_less_agent_stays_tool_less() {
     // ToolScope::Named([])) runs no tools and produces no compacted output,
     // so it must NOT be handed the recovery tool — it stays empty.
     let t = tools();
-    let idx = filter_tool_indices(&t, &ToolScope::Named(vec![]), &[], None);
+    let idx = filter_tool_indices(&t, &ToolScope::Named(vec![]), None);
     assert!(idx.is_empty(), "empty scope must yield zero tools: {idx:?}");
 }
 
@@ -46,26 +41,42 @@ fn tool_less_agent_stays_tool_less() {
 fn skill_filter_still_includes_recovery_tool() {
     let t = tools();
     // A skill-restricted subagent (only `foo__*` tools) must still get it.
-    let idx = filter_tool_indices(&t, &ToolScope::Wildcard, &[], Some("foo"));
+    let idx = filter_tool_indices(&t, &ToolScope::Wildcard, Some("foo"));
     assert!(names(&idx, &t).contains(&RECOVERY_TOOL_NAME.to_string()));
 }
 
+/// The recovery exception never re-admits a disallowed recovery tool: the
+/// child's rule policy denies it, so it leaves the prompt listing and a call
+/// to it is refused, though the index filter no longer drops it itself.
 #[test]
 fn explicit_disallow_still_wins() {
     let t = tools();
-    let idx = filter_tool_indices(
-        &t,
-        &ToolScope::Wildcard,
-        &[RECOVERY_TOOL_NAME.to_string()],
+    let mut def = crate::agent_registry::agents::load_builtins()
+        .expect("built-ins load")
+        .into_iter()
+        .next()
+        .expect("a built-in definition");
+    def.tools = ToolScope::Wildcard;
+    def.tool_rules = None;
+    def.disallowed_tools = vec![RECOVERY_TOOL_NAME.to_string()];
+    let idx = filter_tool_indices(&t, &def.tools, None);
+    let rules = crate::tools::rules::child_rule_policy(None, None, &def).expect("child rules");
+
+    let listed = rule_listed_indices(&idx, &t, Some(&rules));
+    assert!(!names(&listed, &t).contains(&RECOVERY_TOOL_NAME.to_string()));
+    let call = rules.rules.evaluate(
+        &tinytools::ToolSubject::named(RECOVERY_TOOL_NAME),
+        &rules.context,
+        tinytools::Surface::Call,
         None,
     );
-    assert!(!names(&idx, &t).contains(&RECOVERY_TOOL_NAME.to_string()));
+    assert!(!call.callable, "a disallowed recovery tool is refused");
 }
 
 #[test]
 fn parent_visibility_caps_wildcard_child_scope() {
     let t = tools();
-    let mut idx = filter_tool_indices(&t, &ToolScope::Wildcard, &[], None);
+    let mut idx = filter_tool_indices(&t, &ToolScope::Wildcard, None);
     let parent_visible = ["current_time".to_string()].into_iter().collect();
 
     retain_parent_visible_tool_indices(&mut idx, &t, &parent_visible, false);

@@ -39,8 +39,12 @@
 //! the trait's note that an authorized id may still fail to resolve.
 //!
 //! **3. Tool scopes remain host-materialized.** The portable definition
-//! carries an explicit named scope, after the host applies discovery,
-//! companion-tool and denylist policy. Wildcards are materialized against
+//! carries an explicit named scope, after the host applies discovery and
+//! companion-tool policy. A definition's `disallowed_tools` is not filtered
+//! out of that scope: it travels as a deny rule in the projected
+//! `tool_rules` (`tools::rules::agent_rule_layer`), which the harness gate
+//! applies to the catalogue, `tool_search` and every call. Wildcards are
+//! materialized against
 //! [`Self::with_registered_tools`] and fail closed when no catalogue exists.
 //! Empty scopes retain [`NO_TOOLS_SENTINEL`] for compatibility with the host's
 //! existing tool visibility contract; they never become portable wildcards.
@@ -118,13 +122,11 @@ pub struct OpenHumanDefinitionRegistry {
     /// honest miss, never an error.
     config: Option<Arc<Config>>,
     /// Every tool name registered for this session, used to materialize a
-    /// [`ToolScope::Wildcard`] definition that also carries a denylist.
+    /// [`ToolScope::Wildcard`] definition.
     ///
-    /// The host projects named scopes after applying its denylist against a
-    /// concrete catalogue. When
-    /// this is absent, a wildcard definition whose `disallowed_tools` is
-    /// non-empty cannot be projected faithfully and [`Self::tools_for`] fails
-    /// closed rather than re-granting the denied tools.
+    /// The hosted API treats an empty list as deny-all, so a wildcard scope is
+    /// projected as this concrete catalogue. When it is absent,
+    /// [`Self::tools_for`] fails closed to no tools.
     registered_tools: Option<Arc<Vec<String>>>,
     /// Registered deferred tools. A named belt that lists the intrinsic
     /// `tool_search` bridge grants these names to the hosted harness too.
@@ -155,10 +157,10 @@ pub struct OpenHumanDefinitionRegistry {
 
 /// Outcome of resolving a definition's own scope.
 ///
-/// Modelled explicitly so a denylist-emptied scope, an explicitly tool-less
-/// scope and a true wildcard never collapse onto the same host allowlist.
+/// Modelled explicitly so an explicitly tool-less scope and a true wildcard
+/// never collapse onto the same host allowlist.
 enum ResolvedScope {
-    /// Every registered tool, with no denylist to apply.
+    /// Every registered tool.
     Wildcard,
     /// A concrete list. May legitimately be empty, meaning *no* tools.
     Named(Vec<String>),
@@ -191,10 +193,10 @@ impl OpenHumanDefinitionRegistry {
 
     /// Attaches the session's registered tool names.
     ///
-    /// Required to project a [`ToolScope::Wildcard`] definition that also
-    /// carries a `disallowed_tools` denylist: the host materializes the allowed
-    /// names before passing the scope to the harness. Without it such a
-    /// definition fails closed — see [`Self::tools_for`].
+    /// Required to project a [`ToolScope::Wildcard`] definition: the host
+    /// materializes the registered names before passing the scope to the
+    /// harness. Without it such a definition fails closed — see
+    /// [`Self::tools_for`].
     pub fn with_registered_tools(mut self, tools: Arc<Vec<String>>) -> Self {
         self.registered_tools = Some(tools);
         self
@@ -302,13 +304,13 @@ impl OpenHumanDefinitionRegistry {
         }
     }
 
-    /// Tool names for `def`, after the definition's own denylist.
+    /// Tool names for `def`. Its `disallowed_tools` stay in the list; the
+    /// projected rule layer denies them (see [`Self::project`]).
     fn tools_for(&self, def: &HostAgentDefinition) -> Vec<String> {
         Self::emit(self.resolved_scope(def))
     }
 
-    /// Resolves the definition's own scope, applying `extra_tools` and the
-    /// denylist.
+    /// Resolves the definition's own scope, applying `extra_tools`.
     fn resolved_scope(&self, def: &HostAgentDefinition) -> ResolvedScope {
         match &def.tools {
             ToolScope::Named(named) => {
@@ -343,27 +345,18 @@ impl OpenHumanDefinitionRegistry {
                 // named scope. Under `Wildcard` it is meaningless — everything
                 // is already in scope.
                 names.extend(def.extra_tools.iter().cloned());
-                names.retain(|name| {
-                    !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
-                });
                 dedupe_preserving_order(&mut names);
                 // Deliberately *not* collapsed to `Wildcard` when empty: an
-                // agent configured with no tools, or one whose whole scope was
-                // denied, must project as no tools rather than as everything.
+                // agent configured with no tools must project as no tools
+                // rather than as everything.
                 ResolvedScope::Named(names)
             }
             ToolScope::Wildcard => match self.registered_tools.as_deref() {
                 // The hosted API treats an empty list as deny-all, so materialize
                 // every wildcard scope rather than serializing it as an empty
-                // vector. Apply the denylist while doing so.
+                // vector.
                 Some(registered) => {
-                    let mut names: Vec<String> = registered
-                        .iter()
-                        .filter(|name| {
-                            !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
-                        })
-                        .cloned()
-                        .collect();
+                    let mut names: Vec<String> = registered.to_vec();
                     dedupe_preserving_order(&mut names);
                     ResolvedScope::Named(names)
                 }
