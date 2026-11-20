@@ -60,7 +60,7 @@ test("hosted rust-cov is one group per shard, each running the rust-cov lane", (
   // No other group is a shard.
   assert.deepEqual(
     matrix.filter((g) => g.lanes !== "rust-cov").map((g) => g.shard),
-    ["", ""],
+    ["", "", "", ""],
   );
 });
 

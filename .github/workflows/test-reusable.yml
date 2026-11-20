@@ -262,7 +262,7 @@ jobs:
             inference::tokenjuice::repl_module_tests::a_large_result_becomes_a_handle_the_repl_tools_can_query
             inference::tokenjuice::tests::the_module_defers_a_summary_until_requested
             inference::tokenjuice::tests::released_queries_keep_cached_originals_in_the_module_and_accept_artifact_content
-            tools::implementations::network::host::tests::tinyjuice_detects_and_converts_html
+            tools::implementations::network::tests::tinyjuice_detects_and_converts_html
             cron::bus_host::tests::execute_runs_the_registered_handler_and_reports_a_retryable_failure
             cron::bus_host::tests::a_permanent_handler_outcome_stops_the_retry_loop
             cron::bus_host::tests::an_agent_only_scheduler_refuses_shell_jobs_before_running_anything

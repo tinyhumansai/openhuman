@@ -1,9 +1,14 @@
-//! Host wiring for the network tools that live in `tinyagents_harness_tools::net::network`.
+//! Host wiring for the network tools that live in
+//! `tinyagents_harness_tools::net::network` (`http_request`, `web_fetch`,
+//! `curl`, and with `web3` the dedicated `x402_request`).
 //!
-//! The tools take their limits' fallbacks, their HTML engine and their 402
-//! handler from the host. This file is where OpenHuman supplies them: the
-//! `[http_request]` defaults, TinyJuice for page extraction, and (with the
-//! `web3` feature) the x402 payment flow.
+//! The tools take their gate, their limits' fallbacks, their HTML engine and
+//! their 402 handler from the host. This file is where OpenHuman supplies them:
+//! `SecurityPolicy` as `NetGate` (`security/tool_gates/net.rs`, routed per chat
+//! turn by `RoutedGate`), the `[http_request]` defaults, TinyJuice for page
+//! extraction, and (with the `web3` feature) the x402 payment flow.
+//! `url_guard` (in `tinyagents_harness`) is the shared SSRF/allowlist
+//! validator. Registration gates are documented in `tools/impl/README.md`.
 
 use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
@@ -15,9 +20,9 @@ use tinytools::Tool;
 #[cfg(feature = "web3")]
 use tinytools::{PermissionLevel, ToolResult};
 
-use super::gate::RoutedGate;
 use crate::config::HttpRequestConfig;
 use crate::security::approval::ApprovalChatContext;
+use crate::security::tool_gates::RoutedGate;
 use crate::security::SecurityPolicy;
 #[cfg(feature = "web3")]
 use crate::tools::per_call::PerCallContext;
@@ -387,5 +392,5 @@ mod x402 {
 }
 
 #[cfg(test)]
-#[path = "host_tests.rs"]
+#[path = "network_tests.rs"]
 mod tests;

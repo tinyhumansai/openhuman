@@ -29,6 +29,13 @@ workspace state, workspace/action boundaries, and symlink-aware resolution.
 The host keeps only lexical input checks and OS-specific existence,
 canonicalization, and symlink checks where the surrounding API requires them.
 
+`workspace_scope.rs::scoped_to_workspace` scopes a per-call clone of the policy
+to a run's workspace descriptor root: the root becomes the `action_dir` and a
+`ReadWrite` trusted root. The grant is additive and never mutates shared state;
+the protected-path floor and internal-state reservations are evaluated before
+any trusted-root shortcut. `FsGate::scoped_to_workspace`
+(`security/tool_gates/fs.rs`) is its production caller.
+
 Async artifact and media operations ask TinySecurity before using a resolved
 path. Sync-only compatibility traits must be preceded by an async authorization
 at their host call site; their callbacks do not implement a second copy of the
@@ -51,6 +58,7 @@ controls whether OpenHuman asks the module to apply the enabled tier policy.
 | [`native_paths.rs`](./native_paths.rs) | Host path context translated to TinySecurity's path-policy contract |
 | [`module_gate.rs`](./module_gate.rs) | Batched path checks and cached module answers for sync-only host traits |
 | [`enforcement.rs`](./enforcement.rs) | Host tool admission, budget snapshots, and scratch-directory mechanics |
+| [`workspace_scope.rs`](./workspace_scope.rs) | `scoped_to_workspace`: the per-call workspace-descriptor grant (`action_dir` + `ReadWrite` trusted root) |
 
 See the [security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)
 for the wider host/module boundary.

@@ -6,17 +6,16 @@
 //! escapes, the action budget, the approval flag, and the per-call workspace
 //! grant.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use super::*;
 
 use serde_json::json;
 use tinyagents_harness_tools::fs::filesystem::{
-    ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, FsGate,
-    GitOperationsTool, GlobTool, GrepTool, ListFilesTool,
+    ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, GitOperationsTool,
+    GlobTool, GrepTool, ListFilesTool,
 };
 use tinytools::{Tool, ToolCallOptions, ToolRunContext, WorkspaceDescriptor};
 
-use crate::security::{AutonomyLevel, SecurityPolicy};
+use crate::security::AutonomyLevel;
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 fn policy(dir: &Path, autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPolicy> {
