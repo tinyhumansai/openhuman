@@ -503,7 +503,7 @@ pub async fn build_with_profile_capabilities(
     // Whoever initialised first won; refuse to serve users from a registry
     // that holds anything but the built-ins.
     verify_builtin_definitions(
-        crate::agent_registry::host_definition::AgentDefinitionRegistry::global(),
+        crate::agent_registry::host_definition::AgentDefinitionRegistry::global().as_deref(),
     )?;
     // A relayed platform message (`channel_relay_inbound`) runs through the
     // channel dispatch pipeline, which asks the native bus for an
