@@ -53,6 +53,8 @@ const STRINGS: Record<string, string> = {
   'flows.nodeSummary.memory.recall': 'Recalls memory',
   'flows.nodeSummary.dedup.withKey': 'Skips items already seen by {key}',
   'flows.nodeSummary.dedup.default': 'Skips items already processed',
+  'flows.nodeSummary.loop.upTo': 'Repeats up to {max} times',
+  'flows.nodeSummary.loop.whileCondition': 'Repeats up to {max} times while {condition}',
   'flows.cron.customSchedule': 'Custom schedule ({expr})',
   'flows.cron.noScheduleSet': 'No schedule set',
   'flows.cron.weekdays': 'weekdays',
@@ -129,6 +131,37 @@ describe('describeNode', () => {
     const prompt = `${'a'.repeat(38)}😀 more text`;
     const summary = describeNode('agent', { prompt }, [], t, locale);
     expect(summary).toBe(`“${'a'.repeat(38)}…” · default model`);
+  });
+
+  it('shows config text with `$` patterns and `{…}` placeholders as typed', () => {
+    expect(
+      describeNode('agent', { prompt: 'Solve $$x^2$$ for {model}', model: 'gpt-4o' }, [], t, locale)
+    ).toBe('“Solve $$x^2$$ for {model}” · gpt-4o');
+    expect(describeNode('http_request', { url: "https://x.com/?a=$'&b=$&" }, [], t, locale)).toBe(
+      "GET https://x.com/?a=$'&b=$&"
+    );
+    expect(describeNode('switch', { expression: 'a {count} $$' }, ['x'], t, locale)).toBe(
+      'Routes by a {count} $$ (1 routes)'
+    );
+  });
+
+  it('fills the placeholder of every other configured kind', () => {
+    const cases: [string, Record<string, unknown>, string][] = [
+      ['trigger', { trigger_kind: 'app_event', toolkit: 'gmail' }, 'On gmail'],
+      ['trigger', { trigger_kind: 'poll' }, 'Trigger: poll'],
+      ['tool_call', { slug: 'oh:web_search' }, 'Runs web_search'],
+      ['tool_call', { slug: 'GMAIL_SEND' }, 'Runs GMAIL_SEND'],
+      ['code', { language: 'python' }, 'Runs python code'],
+      ['split_out', { path: 'items' }, 'Splits each items'],
+      ['transform', { set: { a: '=1' } }, 'Sets 1 field on each item'],
+      ['memory', { operation: 'flavour', flavour: 'notes' }, 'Reads the "notes" flavour'],
+      ['memory', { scope: 'work' }, 'Recalls memory (work)'],
+      ['loop', { max_iterations: 3 }, 'Repeats up to 3 times'],
+      ['loop', { condition: 'more' }, 'Repeats up to 25 times while more'],
+    ];
+    for (const [kind, config, expected] of cases) {
+      expect(describeNode(kind, config, [], t, locale)).toBe(expected);
+    }
   });
 
   it('describes branch nodes and reflects output routes', () => {
