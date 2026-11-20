@@ -8,13 +8,6 @@
   },
   {
     "rule": "openhuman-task-local",
-    "path": "crates/openhuman-core/src/agent_runs/schemas.rs",
-    "line": 400,
-    "text": "crate::core::runtime::turn_origin::with_origin(",
-    "occurrence": 1
-  },
-  {
-    "rule": "openhuman-task-local",
     "path": "crates/openhuman-core/src/agent/bus.rs",
     "line": 307,
     "text": "let outcome = turn_origin::with_origin(",
@@ -172,6 +165,13 @@
     "path": "crates/openhuman-core/src/skills/schemas/handlers.rs",
     "line": 171,
     "text": "let started = match crate::core::runtime::turn_origin::with_origin(",
+    "occurrence": 1
+  },
+  {
+    "rule": "openhuman-task-local",
+    "path": "crates/openhuman-core/src/triage/rpc.rs",
+    "line": 137,
+    "text": "crate::core::runtime::turn_origin::with_origin(",
     "occurrence": 1
   },
   {

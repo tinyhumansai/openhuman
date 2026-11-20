@@ -15,7 +15,7 @@
 //! `inbound` (feature `inbound-queues`), `inbound_debounce`, `inference`,
 //! `integrations`, `mcp`, `media` (feature `media`), `memory`, `modules`,
 //! `plan_review`, `platform`, `profiles`, `progress`, `prompts`, `sandbox`,
-//! `search`, `security`, `sessions`, `skills`, `storage`, `test_support`
+//! `search`, `security`, `skills`, `storage`, `test_support`
 //! (feature `e2e-test-support`), `threads`, `tools`, `triage`, `util`,
 //! `voice`, `web3`, `web_chat`. `channels`, `mcp`, `modules`, `skills`,
 //! `voice` and `web3` are always declared but gate most of their contents
@@ -99,7 +99,6 @@ pub mod prompts;
 pub mod sandbox;
 pub mod search;
 pub mod security;
-pub mod sessions;
 pub mod skills;
 pub mod storage;
 #[cfg(feature = "e2e-test-support")]

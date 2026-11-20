@@ -263,7 +263,11 @@ fn build_registry_entries(source: McpSource<'_>) -> Vec<ToolRegistryEntry> {
         insert_registry_entry(&mut entries, entry, "mcp_stdio");
     }
 
-    for schema in crate::tools::all_tools_controller_schemas() {
+    let tools_controller_schemas =
+        crate::integrations::composio::all_composio_tools_controller_schemas()
+            .into_iter()
+            .chain(crate::search::all_search_controller_schemas());
+    for schema in tools_controller_schemas {
         let entry = controller_tool_entry(&schema);
         insert_registry_entry(&mut entries, entry, "controller");
     }

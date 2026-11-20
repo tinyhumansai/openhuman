@@ -99,7 +99,8 @@ fn every_dispatch_site_scopes_an_origin() {
             "crates/openhuman-core/src/desktop/notifications/rpc.rs",
             "local",
         ),
-        ("crates/openhuman-core/src/agent_runs/schemas.rs", "local"),
+        // `agent.triage_evaluate`, the desktop's own RPC surface.
+        ("crates/openhuman-core/src/triage/rpc.rs", "local"),
     ];
 
     let root = std::path::Path::new(env!("OPENHUMAN_REPOSITORY_ROOT"));
@@ -124,9 +125,12 @@ fn every_dispatch_site_scopes_an_origin() {
                 .to_string_lossy()
                 .replace('\\', "/");
             // The triage module defines and tests `apply_decision`; it is the
-            // callee, not a call site. Test files model callers rather than
-            // being them.
-            if rel.starts_with("crates/openhuman-core/src/triage/") || rel.ends_with("_tests.rs") {
+            // callee, not a call site — except its RPC controller, which is a
+            // caller that happens to live beside it. Test files model callers
+            // rather than being them.
+            let triage_callee = rel.starts_with("crates/openhuman-core/src/triage/")
+                && rel != "crates/openhuman-core/src/triage/rpc.rs";
+            if triage_callee || rel.ends_with("_tests.rs") {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {

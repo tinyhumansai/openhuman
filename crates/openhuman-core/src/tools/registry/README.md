@@ -4,7 +4,7 @@ Unified, read-only tool registry for OpenHuman. It builds a single discovery vie
 
 ## Responsibilities
 
-- Build a sorted, de-duplicated registry snapshot from three sources: `mcp::server` stdio tool specs, `tools` controller schemas (`crate::tools::all_tools_controller_schemas()`), and `mcp::registry::connections` connected-client tools.
+- Build a sorted, de-duplicated registry snapshot from three sources: `mcp::server` stdio tool specs, `tools.*` controller schemas (`integrations::composio::all_composio_tools_controller_schemas()` then `search::all_search_controller_schemas()`), and `mcp::registry::connections` connected-client tools.
 - Normalize controller `ControllerSchema` inputs/outputs into JSON Schema; attach transport (`json_rpc` / `mcp_stdio`), route metadata, tags, `allowed_agents` (`*` in this MVP), `enabled`, and `health`.
 - Serve `list` / `get` (by `tool_id`) RPC lookups over the registry.
 - Produce redacted `diagnostics`: tool counts by transport, heuristic write-capable surfaces, policy surfaces, autonomy posture, MCP allowlist summaries, MCP write-audit row counts (last 24h), the 25 most recent denials, and capability-provider counts.
@@ -47,7 +47,7 @@ No owned persistence. `diagnostics()` reads the MCP write-audit log through `cra
 
 ## Dependencies
 
-- `crate::core::all`: `rpc_method_name()` for controller route metadata and `all_controller_schemas()` for the `security.` / `approval.` policy-surface scan. Registry *entries* for controllers come from `crate::tools::all_tools_controller_schemas()`, not the whole controller set.
+- `crate::core::all`: `rpc_method_name()` for controller route metadata and `all_controller_schemas()` for the `security.` / `approval.` policy-surface scan. Registry *entries* for controllers come from the `tools.*` lists the Composio and search domains own (`all_composio_tools_controller_schemas()`, `all_search_controller_schemas()`), not the whole controller set.
 - `crate::core::{ControllerSchema, FieldSchema, TypeSchema}` and `core::all::{ControllerFuture, RegisteredController}`: schema model and controller registration contract.
 - `crate::config` (`Config`, `config::schema::CapabilityProviderTrustState`): autonomy posture, MCP client allowlists, capability-provider config.
 - `crate::mcp::server` (`McpToolSpec`, `tool_specs()`): MCP stdio tool source for registry entries.

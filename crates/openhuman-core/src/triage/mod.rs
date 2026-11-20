@@ -39,6 +39,7 @@ pub mod events;
 pub mod origin;
 pub(crate) mod parent_context;
 pub mod routing;
+pub(crate) mod rpc;
 pub mod runner;
 pub mod trigger_reactor_prompt;
 pub mod trigger_triage_prompt;

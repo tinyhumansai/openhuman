@@ -12,6 +12,7 @@ pub mod library;
 mod ops;
 mod rpc;
 mod schemas;
+pub(crate) mod snapshot;
 pub mod types;
 
 pub use defaults::{default_agents, definition_from_registry_entry};

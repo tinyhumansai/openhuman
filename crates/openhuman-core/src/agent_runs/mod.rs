@@ -3,6 +3,7 @@
 pub mod agent_chat;
 pub(crate) mod context_breakdown;
 pub(crate) mod replay;
+mod run_ledger_schemas;
 mod schemas;
 pub(crate) mod subagent_control;
 mod subagent_finalize;
@@ -16,6 +17,7 @@ pub(crate) use agent_chat::all_inference_agent_chat_registered_controllers;
 /// spelling the string out, so a rename upstream cannot silently drift an
 /// embedder's dispatch string away from the registered controller.
 pub const INFERENCE_AGENT_CHAT: &str = "openhuman.inference_agent_chat";
+pub(crate) use run_ledger_schemas::all_registered_controllers as all_run_ledger_registered_controllers;
 pub(crate) use schemas::all_registered_controllers as all_agent_registered_controllers;
 pub(crate) use subagent_control::{
     all_controller_schemas as all_subagent_control_controller_schemas,
