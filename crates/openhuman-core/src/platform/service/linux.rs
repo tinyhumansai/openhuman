@@ -89,6 +89,10 @@ pub(crate) fn status(config: &Config) -> Result<ServiceStatus> {
 
 pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
     let file = linux_service_file(config)?;
+    // Drop the `default.target.wants` link `install` enabled before the unit
+    // file goes, or it dangles and re-enables a unit written there later.
+    log::info!("[service] Disabling systemd service");
+    let _ = run_checked(Command::new("systemctl").args(["--user", "disable", "openhuman.service"]));
     if file.exists() {
         fs::remove_file(&file).with_context(|| format!("Failed to remove {}", file.display()))?;
     }
