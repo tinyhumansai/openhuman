@@ -30,7 +30,7 @@ export function assertExampleOutput(name, result) {
     throw new Error(`${name}: successful exit without behavioral assertion marker\n${result.stdout}`);
   }
 }
-export function runExamples({ run = spawnSync, examples = discoverExamples(), environment = process.env, profile = null } = {}) {
+export function runExamples({ run = spawnSync, examples = discoverExamples(), environment = process.env, profile = null, platform = process.platform } = {}) {
   // `profile` forces every example into one Cargo profile (PR CI passes "dev"
   // so a release-declared measurement shares the plain dev build instead of
   // paying a thin-LTO build nothing else can reuse). Without it each example
@@ -47,6 +47,17 @@ export function runExamples({ run = spawnSync, examples = discoverExamples(), en
     for (const feature of example.features) features.add(feature);
     featureGroups.set(key, features);
   }
+  // Windows cannot spawn a .sh file directly: spawnSync fails with ENOENT.
+  // Prefer bash so the CI cancellation wrapper still runs; without bash,
+  // invoke cargo directly and skip the wrapper.
+  const wrapper = resolve(root, "scripts/ci-cancel-aware.sh");
+  const bash = platform === "win32" ? bashAvailable(run) : null;
+  const launch = platform === "win32"
+    ? (bash.available
+      ? (args) => ["bash", [wrapper, "cargo", ...args]]
+      : (args) => ["cargo", args])
+    : (args) => [wrapper, ["cargo", ...args]];
+  console.debug(`method=runExamples platform=${platform} command=${platform === "win32" ? (bash.available ? "bash" : "cargo") : wrapper} bashStatus=${bash?.status ?? "n/a"} bashError=${bash?.error ?? ""}`);
   for (const example of examples) {
     const args = ["run", "--quiet", "-p", "openhuman-embed", "--example", example.name];
     const effective = profileOf(example);
@@ -55,11 +66,24 @@ export function runExamples({ run = spawnSync, examples = discoverExamples(), en
     if (example.defaultFeatures === false) args.push("--no-default-features");
     const features = [...featureGroups.get(configuration(example))].sort();
     if (features.length) args.push("--features", features.join(","));
-    const result = run(resolve(root, "scripts/ci-cancel-aware.sh"), ["cargo", ...args], {
+    const [command, commandArgs] = launch(args);
+    const result = run(command, commandArgs, {
       cwd: root, encoding: "utf8", env: offlineEnvironment(environment), timeout: 1800000, maxBuffer: 16 * 1024 * 1024,
     });
     assertExampleOutput(example.name, result);
     console.log(`PASS ${example.name}`);
+  }
+}
+
+// Probe once per run: a missing bash reports { error } from spawnSync rather
+// than throwing, and a nonzero exit means it is not usable as a shell.
+// The probe result is returned so the launch selection can be logged.
+function bashAvailable(run) {
+  try {
+    const probe = run("bash", ["--version"], { encoding: "utf8", timeout: 10000 });
+    return { available: !probe.error && probe.status === 0, status: probe.status, error: probe.error?.message ?? "" };
+  } catch (error) {
+    return { available: false, status: null, error: error.message };
   }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
