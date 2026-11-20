@@ -390,6 +390,11 @@ impl Config {
                 );
             }
         }
+        if let Some(key) = env.get_any(&["OPENHUMAN_KEENABLE_API_KEY", "KEENABLE_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.keenable.api_key = Some(key);
+            }
+        }
         if let Some(max) = env.get_any(&["OPENHUMAN_SEARCH_MAX_RESULTS", "SEARCH_MAX_RESULTS"]) {
             if let Ok(n) = max.parse::<usize>() {
                 if (1..=20).contains(&n) {
