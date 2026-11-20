@@ -51,11 +51,13 @@ export function runExamples({ run = spawnSync, examples = discoverExamples(), en
   // Prefer bash so the CI cancellation wrapper still runs; without bash,
   // invoke cargo directly and skip the wrapper.
   const wrapper = resolve(root, "scripts/ci-cancel-aware.sh");
+  const bash = platform === "win32" ? bashAvailable(run) : null;
   const launch = platform === "win32"
-    ? (bashAvailable(run)
+    ? (bash.available
       ? (args) => ["bash", [wrapper, "cargo", ...args]]
       : (args) => ["cargo", args])
     : (args) => [wrapper, ["cargo", ...args]];
+  console.debug(`method=runExamples platform=${platform} command=${platform === "win32" ? (bash.available ? "bash" : "cargo") : wrapper} bashStatus=${bash?.status ?? "n/a"} bashError=${bash?.error ?? ""}`);
   for (const example of examples) {
     const args = ["run", "--quiet", "-p", "openhuman-embed", "--example", example.name];
     const effective = profileOf(example);
@@ -75,12 +77,13 @@ export function runExamples({ run = spawnSync, examples = discoverExamples(), en
 
 // Probe once per run: a missing bash reports { error } from spawnSync rather
 // than throwing, and a nonzero exit means it is not usable as a shell.
+// The probe result is returned so the launch selection can be logged.
 function bashAvailable(run) {
   try {
     const probe = run("bash", ["--version"], { encoding: "utf8", timeout: 10000 });
-    return !probe.error && probe.status === 0;
-  } catch {
-    return false;
+    return { available: !probe.error && probe.status === 0, status: probe.status, error: probe.error?.message ?? "" };
+  } catch (error) {
+    return { available: false, status: null, error: error.message };
   }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -12,7 +12,7 @@ test("zero exit without the example's behavioral marker is a failure", () => {
 });
 test("runner executes feature gated examples and checks stdout", () => {
   const calls = [];
-  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{OPENHUMAN_EXAMPLE_LIVE:"1"}, run(command,args,options) {
+  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{OPENHUMAN_EXAMPLE_LIVE:"1"},platform:"linux", run(command,args,options) {
     calls.push({command,args,options});
     return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
   }});
@@ -73,6 +73,7 @@ test("all example runs share the same required feature graph", () => {
   runExamples({
     examples: [{name:"skills",features:["skills"]},{name:"mcp",features:["mcp"]}],
     environment: {},
+    platform: "linux",
     run(_command,args) {
       featureArguments.push(args[args.indexOf("--features") + 1]);
       const name = args[args.indexOf("--example") + 1];
@@ -91,7 +92,7 @@ test("fleet measurements retain their declared release and minimal-feature invoc
   assert.equal(fleet.profile, "release");
   assert.equal(fleet.defaultFeatures, false);
   const calls = new Map();
-  runExamples({examples, environment: {}, run(_command, args) {
+  runExamples({examples, environment: {}, platform: "linux", run(_command, args) {
     const name = args[args.indexOf("--example") + 1];
     calls.set(name, args);
     return {status: 0, stdout: `EXAMPLE_OK ${name}\n`, stderr: ""};
@@ -107,7 +108,7 @@ test("fleet measurements retain their declared release and minimal-feature invoc
 test("a forced dev profile builds release-declared measurements in the dev profile and keeps their feature graph", () => {
   const examples = discoverExamples().filter(({name}) => name === "linux_fleet" || name === "mcp");
   const calls = new Map();
-  runExamples({examples, environment: {}, profile: "dev", run(_command, args) {
+  runExamples({examples, environment: {}, profile: "dev", platform: "linux", run(_command, args) {
     const name = args[args.indexOf("--example") + 1];
     calls.set(name, args);
     return {status: 0, stdout: `EXAMPLE_OK ${name}\n`, stderr: ""};
