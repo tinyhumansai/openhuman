@@ -118,8 +118,8 @@ pub(crate) fn skip_push(environment: &str) -> bool {
 }
 
 /// Whether a journal push would actually send for `config`: the URL gate, the
-/// environment gate and a live session credential. Callers must read a journal
-/// and build observations first, so without a live session (unit tests, a
+/// environment gate and a live backend credential (session or API key). Callers must read a journal
+/// and build observations first, so without a live credential (unit tests, a
 /// signed-out or embedder host) or on a skipped environment that work is
 /// discarded anyway, and reading a whole child journal is not free.
 pub(crate) async fn journal_push_ready(config: &Config) -> bool {
@@ -128,7 +128,7 @@ pub(crate) async fn journal_push_ready(config: &Config) -> bool {
         && url.starts_with("http")
         && matches!(
             direct_backend_credential(config, "langfuse journal push").await,
-            Some(BackendCredential::Session(_))
+            Some(BackendCredential::Session(_)) | Some(BackendCredential::ApiKey(_))
         )
 }
 
