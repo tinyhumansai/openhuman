@@ -8,8 +8,8 @@ mod status;
 #[cfg(test)]
 use models::is_unknown_provider_user_config;
 pub use models::{
-    inference_get_client_config, inference_list_models, inference_update_local_settings,
-    inference_update_model_settings,
+    inference_get_client_config, inference_list_models, inference_rollback_local_settings,
+    inference_update_local_settings, inference_update_model_settings,
 };
 pub use oauth::inference_provider_auth_errors;
 pub use sentiment::inference_analyze_sentiment;
