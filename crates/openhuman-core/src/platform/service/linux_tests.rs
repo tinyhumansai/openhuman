@@ -7,7 +7,7 @@ fn linux_service_file_is_in_systemd_user_unit_dir() {
     let path = linux_service_file(&config).unwrap();
     let expected = common::systemd_user_unit_dir(
         std::env::var_os("XDG_CONFIG_HOME").as_deref(),
-        dirs::home_dir().as_deref(),
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
     )
     .unwrap()
     .join("openhuman.service");

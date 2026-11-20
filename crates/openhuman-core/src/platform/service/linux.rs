@@ -105,15 +105,17 @@ pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
 /// Path of the systemd user unit, in the directory systemd actually loads user
 /// units from (`$XDG_CONFIG_HOME/systemd/user` or `~/.config/systemd/user`).
 ///
-/// Shared by `install`, `status` and `uninstall` so they always agree.
+/// Shared by `install`, `status` and `uninstall` so they always agree. Reads
+/// `$HOME` the way systemd does, as the macOS backend does for
+/// `~/Library/LaunchAgents`.
 pub(crate) fn linux_service_file(_config: &Config) -> Result<PathBuf> {
     let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
-    let home = dirs::home_dir();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     let dir = common::systemd_user_unit_dir(xdg_config_home.as_deref(), home.as_deref())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Cannot resolve the systemd user unit directory: XDG_CONFIG_HOME is unset, \
-                 empty or relative and no home directory is available"
+                 empty or relative and HOME is unset or empty"
             )
         })?;
     Ok(dir.join(common::SYSTEMD_USER_UNIT_NAME))

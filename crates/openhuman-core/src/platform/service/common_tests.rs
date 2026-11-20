@@ -12,11 +12,15 @@ fn xml_escape_replaces_entities() {
 
 #[test]
 fn systemd_user_unit_dir_prefers_absolute_xdg_config_home() {
+    // `/xdg/config` is not absolute on Windows (no drive), so build the fixture
+    // from a path that is absolute on every OS.
+    let xdg = std::env::temp_dir().join("xdg-config");
+    assert!(xdg.is_absolute());
     let dir = systemd_user_unit_dir(
-        Some(std::ffi::OsStr::new("/xdg/config")),
+        Some(xdg.as_os_str()),
         Some(std::path::Path::new("/home/alice")),
     );
-    assert_eq!(dir, Some(PathBuf::from("/xdg/config/systemd/user")));
+    assert_eq!(dir, Some(xdg.join("systemd").join("user")));
 }
 
 #[test]
