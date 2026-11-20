@@ -495,7 +495,8 @@ pub mod voice_registry {
         SttProviderFactory, TtsProviderFactory,
     };
     pub use openhuman_core::voice::factory::{
-        create_stt_provider, create_tts_provider, SttProvider, SttResult, TtsProvider,
+        create_stt_provider, create_tts_provider, enforce_local_only_stt, SttProvider, SttResult,
+        TtsProvider,
     };
     pub use openhuman_core::voice::live::ops::live_providers;
     pub use openhuman_core::voice::live::registry::{
