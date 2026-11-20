@@ -162,6 +162,45 @@ fn no_managed_catalog() -> crate::core::Outcome<serde_json::Value> {
     )
 }
 
+/// The Claude model IDs the local CLI accepts (`claude -p --model <id>`),
+/// for the `claude-code` provider, which runs as a local CLI and has no
+/// remote `/models` listing. Verified against Claude Code CLI 2.1.325; see
+/// #8717.
+const CLAUDE_CODE_BUILTIN_MODEL_IDS: &[&str] = &[
+    "claude-fable-5-2",
+    "claude-fable-5-1",
+    "claude-fable-5",
+    "claude-opus-5-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5-5",
+    "claude-sonnet-4-6",
+    "claude-haiku-5-5",
+    "claude-haiku-4-5",
+];
+
+/// The catalog a `cli://` provider answers with: the built-in Claude list
+/// for `claude-code`, an empty list for any other CLI placeholder (whose
+/// models are unknown).
+fn builtin_cli_models(slug: &str) -> Vec<ModelInfo> {
+    if slug != "claude-code" {
+        return Vec::new();
+    }
+    CLAUDE_CODE_BUILTIN_MODEL_IDS
+        .iter()
+        .map(|id| ModelInfo {
+            id: (*id).to_string(),
+            owned_by: None,
+            input_modalities: None,
+            context_window: None,
+            display_name: None,
+            input_per_1m: None,
+            output_per_1m: None,
+        })
+        .collect()
+}
+
 pub async fn list_configured_models_from_config(
     provider_id: &str,
     config: &crate::config::Config,
@@ -226,18 +265,29 @@ pub async fn list_configured_models_from_config(
     // endpoint `cli://claude-code`. It runs as a local CLI and has no `/models`
     // listing, and reqwest cannot build a request for a non-http(s) URL, so the
     // probe failed with "builder error" on every picker open. Such a provider
-    // has no remote catalog: answer with an empty one.
+    // has no remote catalog: answer with the built-in Claude list for
+    // `claude-code` (#8717), or an empty one for any other `cli://` provider.
     if !endpoint_hosts_models_listing(&entry.slug, &entry.endpoint) {
-        log::debug!(
-            "[providers][list_models] slug={} has no http(s) /models listing; returning an empty list",
-            entry.slug
-        );
-        return Ok(crate::core::Outcome::new(
-            serde_json::json!({ "models": Vec::<ModelInfo>::new() }),
-            vec![format!(
-                "provider '{}' has no remote model catalog",
+        let models = builtin_cli_models(&entry.slug);
+        if models.is_empty() {
+            log::debug!(
+                "[providers][list_models] slug={} has no http(s) /models listing; returning an empty list",
                 entry.slug
-            )],
+            );
+        } else {
+            log::info!(
+                "[providers][list_models] slug={} has no http(s) /models listing; returning {} built-in models",
+                entry.slug,
+                models.len()
+            );
+        }
+        return Ok(crate::core::Outcome::new(
+            serde_json::json!({ "models": models }),
+            vec![if models.is_empty() {
+                format!("provider '{}' has no remote model catalog", entry.slug)
+            } else {
+                format!("built-in catalog: {} models", models.len())
+            }],
         ));
     }
 
