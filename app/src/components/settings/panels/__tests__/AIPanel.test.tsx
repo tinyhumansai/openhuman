@@ -1299,7 +1299,7 @@ describe('AIPanel', () => {
     const trigger = await screen.findByTestId('add-provider-select-cloud');
     trigger.focus();
     fireEvent.keyDown(trigger, { key: 'Enter' });
-    for (const slug of ['groq', 'deepseek', 'minimax', 'sumopod']) {
+    for (const slug of ['groq', 'deepseek', 'minimax', 'sumopod', 'llmtr']) {
       expect(await screen.findByTestId(`add-provider-option-${slug}`)).toBeInTheDocument();
     }
   });
@@ -1329,6 +1329,38 @@ describe('AIPanel', () => {
           slug: 'sumopod',
           label: 'SumoPod',
           endpoint: 'https://ai.sumopod.com/v1',
+          auth_style: 'bearer',
+          has_api_key: true,
+        }),
+      ])
+    );
+  });
+
+  it('connects LLMTR with the native endpoint and provider:llmtr key', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+
+    await openProviderConnectDialog('llmtr');
+    const dialog = await screen.findByRole('dialog', { name: /Connect LLMTR/i });
+    fireEvent.change(within(dialog).getByLabelText(/API key/i), {
+      target: { value: 'sk-llmtr-test' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(setCloudProviderKey)).toHaveBeenCalledWith('llmtr', 'sk-llmtr-test')
+    );
+    await waitFor(() => expect(vi.mocked(listProviderModels)).toHaveBeenCalledWith('llmtr'));
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'llmtr',
+          label: 'LLMTR',
+          endpoint: 'https://llmtr.com/v1',
           auth_style: 'bearer',
           has_api_key: true,
         }),
