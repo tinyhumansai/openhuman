@@ -68,8 +68,8 @@ storage/schema.rs
 skills/bundled/mod.rs
 skills/mod.rs
 skills/search.rs
-tools/impl/network/host.rs
-tools/impl/network/host_tests.rs
+tools/impl/network.rs
+tools/impl/network_tests.rs
 tools/ops.rs
 tools/ops_tests.rs
 tools/ops_tests_capability_gating_tests.rs

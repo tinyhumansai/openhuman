@@ -65,8 +65,8 @@ Both `enforce_egress` and `local_only_tool_block` read the live mode via
 - `memory/guard/policy.rs` (`HostGuardPolicy`): memory-write egress guard.
 - `integrations/client/requests.rs`, `integrations/composio/client/execute.rs`,
   `integrations/composio/execute_dispatch.rs`: backend and Composio calls.
-- `tools/impl/network/{curl,http_request,web_fetch}.rs`: agent network-fetch
-  tools.
+- `security/tool_gates/net.rs` (`NetGate` for `SecurityPolicy`): the
+  `curl`, `http_request` and `web_fetch` agent network-fetch tools.
 - `search/tools/{tavily/client,exa}.rs`, `inference/provider/factory.rs` and
   its `factory/` submodules, and the TinyHumans managed embedding provider:
   search and hosted inference/embedding calls.

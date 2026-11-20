@@ -33,7 +33,7 @@ product enables `web3` through `scripts/ci/product-features.txt`.
 | [`fetch.rs`](./fetch.rs) | `x402_fetch`: parameter validation, guarded HTTPS request, capped payment, retry, settlement report, response projection. |
 | [`fetch_tests.rs`](./fetch_tests.rs) | Pins `x402_fetch` parameter refusals, the destination guard, body truncation, the refusal prefix, and the response shape. |
 | [`../../modules/x402_service.rs`](../../modules/x402_service.rs) | User-scoped module configuration, confidential payment calls, history and budget calls, and close/reconfigure cleanup. |
-| [`../../tools/impl/network/host.rs`](../../tools/impl/network/host.rs) | Generic HTTP payment hook; sends the challenge and returns the module-produced payment header. |
+| [`../../tools/impl/network.rs`](../../tools/impl/network.rs) | Generic HTTP payment hook; sends the challenge and returns the module-produced payment header. |
 
 ## RPC surface
 

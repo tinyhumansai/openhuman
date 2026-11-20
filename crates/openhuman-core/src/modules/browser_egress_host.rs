@@ -61,11 +61,56 @@ pub(crate) fn browser_dial_alias(config: &crate::config::Config) -> Value {
     alias
 }
 
+/// The `browser.egress` section TinyComputer's callback-bound load admitted.
+/// TinyBus refuses that module any later config with different bytes
+/// ("scoped callback configuration is immutable"), so an edited or rotated
+/// `[browser] upstream_proxies` must not reach a refresh: it would fail every
+/// browser call until restart. Refreshes reuse what was admitted instead, and
+/// the edit takes effect at the next load.
+fn admitted_alias() -> &'static parking_lot::Mutex<Option<Value>> {
+    static ADMITTED: std::sync::OnceLock<parking_lot::Mutex<Option<Value>>> =
+        std::sync::OnceLock::new();
+    ADMITTED.get_or_init(|| parking_lot::Mutex::new(None))
+}
+
+/// Build the alias for a callback-bound load and record it as admitted.
+pub(crate) fn admit_browser_dial_alias(config: &crate::config::Config) -> Value {
+    admit_in(admitted_alias(), config)
+}
+
+fn admit_in(slot: &parking_lot::Mutex<Option<Value>>, config: &crate::config::Config) -> Value {
+    let alias = browser_dial_alias(config);
+    *slot.lock() = Some(alias.clone());
+    alias
+}
+
+/// The alias a refresh pushes: the admitted one when a load recorded it, so a
+/// changed proxy list never makes TinyBus refuse the refresh.
+fn refresh_alias_in(
+    slot: &parking_lot::Mutex<Option<Value>>,
+    config: &crate::config::Config,
+) -> Value {
+    let current = browser_dial_alias(config);
+    match slot.lock().as_ref() {
+        Some(admitted) => {
+            if *admitted != current {
+                // Never the URLs: they carry credentials.
+                tracing::warn!(
+                    "[computer] [browser] upstream_proxies changed since TinyComputer loaded; \
+                     the change takes effect at the next core start"
+                );
+            }
+            admitted.clone()
+        }
+        None => current,
+    }
+}
+
 /// Make sure the browser's destination-only policy is registered for this
 /// host context, then return the stable alias for TinyComputer config.
 pub(crate) async fn browser_dial_config(config: &crate::config::Config) -> Result<Value, String> {
     current_browser_policy(config).await?;
-    Ok(browser_dial_alias(config))
+    Ok(refresh_alias_in(admitted_alias(), config))
 }
 
 /// The id and generation of the current browser policy, registering a new one
