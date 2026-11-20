@@ -20,7 +20,10 @@ import type { ThreadMessage } from '../../types/thread';
 import WorkflowCopilotPanel from './WorkflowCopilotPanel';
 
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
-vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+vi.mock('../../services/coreRpcClient', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../services/coreRpcClient')>()),
+  callCoreRpc: vi.fn(),
+}));
 
 const hookState = vi.hoisted(() => ({
   threadId: 'builder-1' as string | null,

@@ -1,6 +1,19 @@
 import type { TranslationMap } from './types';
 
 const en: TranslationMap = {
+  // Editable composer dictation.
+  'composer.dictationUnavailable':
+    'Dictation is unavailable. Check your speech provider in Settings > Voice.',
+  'composer.dictationStatusFailed':
+    'Could not check dictation availability. Return to this window to try again.',
+  'composer.dictate': 'Dictate',
+  'composer.finishDictation': 'Finish dictation',
+  'composer.discardDictation': 'Discard dictation',
+  'composer.dictationStarting': 'Starting microphone...',
+  'composer.dictationRecording': 'Recording. Finish to add text, or discard.',
+  'composer.dictationFailed': 'Transcription failed. Please try again.',
+  'composer.dictationTimedOut': 'Dictation timed out. Please try again.',
+
   // Navigation
   'nav.home': 'Home',
   'nav.chat': 'Chat',

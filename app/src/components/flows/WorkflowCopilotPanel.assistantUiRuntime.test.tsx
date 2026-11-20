@@ -33,7 +33,10 @@ import type { ThreadMessage } from '../../types/thread';
 import WorkflowCopilotPanel from './WorkflowCopilotPanel';
 
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
-vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+vi.mock('../../services/coreRpcClient', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../services/coreRpcClient')>()),
+  callCoreRpc: vi.fn(),
+}));
 
 // Stand-in for the transcript, written the way the real `Thread` reads: from
 // the runtime in context rather than from a thread id. Whatever runtime the

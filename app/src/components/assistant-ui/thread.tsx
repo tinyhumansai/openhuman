@@ -6,6 +6,10 @@ import {
   ComposerAttachments,
   UserMessageAttachments,
 } from '@/components/assistant-ui/attachment';
+import {
+  ComposerDictationControls,
+  ComposerDictationStatus,
+} from '@/components/assistant-ui/composer-dictation';
 import { ComposerTriggerPopover } from '@/components/assistant-ui/composer-trigger-popover';
 import { DirectiveText } from '@/components/assistant-ui/directive-text';
 import { ErrorState } from '@/components/assistant-ui/elements/error-state';
@@ -36,6 +40,7 @@ import { McpWidgetStrip } from '@/features/conversations/tools/mcpUi/McpWidgetSt
 import { collectMessageWidgets } from '@/features/conversations/tools/mcpUi/messageWidgets';
 import { MessageVoiceNote, useMessageVoiceNote } from '@/features/voiceNotes/MessageVoiceNote';
 import { useT } from '@/lib/i18n/I18nContext';
+import { useComposerDictationState } from '@/providers/ComposerDictationContext';
 import { CHAT_ERROR_METADATA_KEY } from '@/store/threadSlice';
 import { fullTimestamp, relativeTime } from '@/utils/relativeTime';
 import { useActionBarReload, useMessageError } from '@assistant-ui/core/react';
@@ -63,12 +68,12 @@ import debugFactory from 'debug';
 import {
   AlertTriangleIcon,
   ArrowUpIcon,
+  AudioLinesIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
-  MicIcon,
   MoreHorizontalIcon,
   PencilIcon,
   RefreshCwIcon,
@@ -724,6 +729,9 @@ const Composer: FC<{
   isDraggingFiles: boolean;
 }> = ({ model, onModelChange, onEscape, onRecallLastPrompt, placeholder, isDraggingFiles }) => {
   const { t } = useT();
+  const dictation = useComposerDictationState();
+  const cancelDictation = dictation?.cancel;
+  useEffect(() => cancelDictation, [cancelDictation]);
   const messageInputLabel = t('assistantUi.thread.messageInputLabel', 'Message input');
   const aui = useAui();
   const commands = useContext(SlashCommandsContext);
@@ -805,7 +813,19 @@ const Composer: FC<{
     <ComposerPrimitive.Unstable_TriggerPopoverRoot>
       <ComposerPrimitive.Root
         className="aui-composer-root relative flex w-full flex-col"
-        data-walkthrough="chat-agent-panel">
+        data-walkthrough="chat-agent-panel"
+        onKeyDownCapture={event => {
+          if (
+            event.key === 'Escape' &&
+            !isComposingTextRef.current &&
+            dictation &&
+            ['starting', 'recording', 'transcribing'].includes(dictation.status)
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            dictation.cancel();
+          }
+        }}>
         {ComposerHeader ? <ComposerHeader /> : null}
         {/*
          * Neutered whenever the host owns file ingest: every handler in the
@@ -907,6 +927,7 @@ const Composer: FC<{
               className="aui-composer-input caret-primary [&_.aui-lexical-placeholder]:text-muted-foreground/60 relative max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1"
               aria-label={messageInputLabel}
             />
+            <ComposerDictationStatus />
             <ComposerAction model={model} onModelChange={onModelChange} />
           </div>
         </ComposerPrimitive.AttachmentDropzone>
@@ -935,6 +956,7 @@ const ComposerAction: FC<{
   const { t } = useT();
   const aui = useAui();
   const composerText = useAuiState(state => state.composer.text);
+  const dictation = useComposerDictationState();
   const {
     ComposerAddAttachment: HostComposerAddAttachment,
     hasComposerAttachments,
@@ -969,50 +991,14 @@ const ComposerAction: FC<{
             className="aui-composer-voice-mode text-muted-foreground hover:text-foreground size-7 rounded-full"
             aria-label={t('composer.voiceMode', 'Voice mode')}
             disabled={isRunning}
-            onClick={onSwitchToMicCloud}>
-            <MicIcon className="aui-composer-dictate-icon size-4" />
+            onClick={() => {
+              dictation?.cancel();
+              onSwitchToMicCloud();
+            }}>
+            <AudioLinesIcon className="size-4" />
           </TooltipIconButton>
         )}
-        {/*
-          Permanently false, deliberately: `useOpenHumanExternalStore` supplies
-          no `adapters.dictation`, and the reasoning for keeping it that way
-          lives there. Short version — Web Speech's constructor exists in our
-          WKWebView but `start()` never succeeds, and with the speech usage
-          strings present it hangs silently rather than erroring, which would
-          strand the composer in `dictation != null`. Working dictation already
-          ships as the `mic-cloud` composer, whose "Voice mode" button is the
-          one directly above this block.
-        */}
-        <AuiIf condition={s => s.thread.capabilities.dictation}>
-          <AuiIf condition={s => s.composer.dictation == null}>
-            <ComposerPrimitive.Dictate asChild>
-              <TooltipIconButton
-                tooltip={t('assistantUi.thread.voiceInput', 'Voice input')}
-                side="bottom"
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="aui-composer-dictate size-7 rounded-full"
-                aria-label={t('assistantUi.thread.startVoiceInput', 'Start voice input')}>
-                <MicIcon className="aui-composer-dictate-icon size-4" />
-              </TooltipIconButton>
-            </ComposerPrimitive.Dictate>
-          </AuiIf>
-          <AuiIf condition={s => s.composer.dictation != null}>
-            <ComposerPrimitive.StopDictation asChild>
-              <TooltipIconButton
-                tooltip={t('assistantUi.thread.stopDictation', 'Stop dictation')}
-                side="bottom"
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="aui-composer-stop-dictation text-destructive size-7 rounded-full"
-                aria-label={t('assistantUi.thread.stopVoiceInput', 'Stop voice input')}>
-                <SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current" />
-              </TooltipIconButton>
-            </ComposerPrimitive.StopDictation>
-          </AuiIf>
-        </AuiIf>
+        <ComposerDictationControls />
         <AuiIf condition={s => !s.thread.isRunning}>
           {showIdleAction ? (
             <ComposerIdleAction />
@@ -1041,6 +1027,7 @@ const ComposerAction: FC<{
               data-testid="send-message-button"
               aria-label={t('chat.send', 'Send message')}
               onClick={() => {
+                dictation?.cancel();
                 onComposerAttachmentSend?.();
                 aui.composer.setText('');
               }}>

@@ -4053,6 +4053,18 @@ const messages: TranslationMap = {
   'composer.settings.temperature': '温度',
   'composer.settings.loadingModels': 'モデルを読み込み中…',
   'composer.voiceMode': '音声モード',
+  'composer.dictate': '音声入力',
+  'composer.finishDictation': '文字起こしを終了',
+  'composer.discardDictation': '録音を破棄',
+  'composer.dictationStarting': 'マイクを起動中…',
+  'composer.dictationRecording':
+    '録音中。終了するとテキストを追加できます。録音を破棄することもできます。',
+  'composer.dictationFailed': '文字起こしに失敗しました。もう一度お試しください。',
+  'composer.dictationTimedOut': '音声入力がタイムアウトしました。もう一度お試しください。',
+  'composer.dictationUnavailable':
+    '音声入力を利用できません。設定の「音声」で音声認識プロバイダーを確認してください。',
+  'composer.dictationStatusFailed':
+    '音声入力を利用できるか確認できませんでした。このウィンドウに戻ると再試行します。',
   'composer.humanMode': 'ヒューマンモード',
   'voiceNote.record': 'ボイスメモを録音',
   'voiceNote.stop': '録音を停止',
