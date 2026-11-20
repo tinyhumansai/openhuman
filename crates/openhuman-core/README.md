@@ -122,7 +122,8 @@ and bumping `EVENTS_VERSION`.
 
 ### Runtime composition
 
-`CoreBuilder` ([`core/runtime/builder.rs`](./src/core/runtime/builder.rs)) builds a `CoreRuntime`. Three knobs
+A host builds a `CoreRuntime` with `openhuman_embed::RuntimeBuilder`, which hands its inputs to the
+doc-hidden `CoreBuilder` seam ([`core/runtime/builder.rs`](./src/core/runtime/builder.rs)). Three knobs
 narrow what runs, and they can only narrow:
 
 | Knob | Selects | Presets |

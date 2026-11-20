@@ -41,7 +41,6 @@
     "ControllerSchema",
     "CoreAgent",
     "CoreBootMode",
-    "CoreBuilder",
     "CoreError",
     "CoreRuntime",
     "Cron",

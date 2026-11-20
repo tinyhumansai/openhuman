@@ -32,8 +32,8 @@
 //! [`RuntimeBuilder`] is the configuration path: it hands the embed builder
 //! the SDK transport, the hosted controllers and the Jev ranker through
 //! embed's seam options, and forwards the embed presets and knobs. Hosts that
-//! still boot the core themselves (a bare `run_core_from_args`, a
-//! `CoreBuilder`, a test fixture) call [`install`] once before the first backend-touching
+//! still boot the core themselves (a bare `run_core_from_args`, a test
+//! fixture) call [`install`] once before the first backend-touching
 //! dispatch instead; it resolves the same wiring and applies it to the
 //! process globals.
 //!

@@ -33,8 +33,9 @@ in order:
    |- effective_host_kind          Library on an inherited install without
    |                               a host credential becomes Cli
    |- install the session store provider (before boot: recovery runs)
-   |- CoreBuilder::new(host_kind).domains.tool_groups.services
-   |      .token(EnvOrFile).config(..).build()
+   |- CoreBuilder::new(host_kind).boot_mode.domains.tool_groups.services
+   |      .extensions.token(..).config(..).host/port(..).build()
+   |      (the core's doc-hidden seam; this builder is its public front)
    |- store the Session through auth, if given
    v
  Runtime { guard: Arc<CoreGuard>, base_config, domains, tool_groups, ... }
@@ -116,7 +117,10 @@ crate README's "Still process-owned" list names what agents share, and its
 ## Boundaries
 
 - Booting the core (`CoreBuilder`, `CoreContext`, service startup) belongs to
-  `openhuman_core::core::runtime`. See its
+  `openhuman_core::core::runtime`. `CoreBuilder` is a doc-hidden seam, not a
+  second public builder: `RuntimeBuilder` (with its host presets for
+  `HostKind`, `ServiceSet` and `TokenSource`) is the only builder this crate
+  exports. See its
   [README](../../../openhuman-core/src/core/runtime/README.md).
 - No backend transport is installed here. `openhuman-tinyhumans`'s
   `RuntimeBuilder` ([`crates/openhuman-tinyhumans/src/runtime.rs`](../../../openhuman-tinyhumans/src/runtime.rs)) wraps this

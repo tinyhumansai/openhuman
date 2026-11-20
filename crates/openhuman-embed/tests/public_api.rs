@@ -2,17 +2,16 @@ use std::sync::Arc;
 
 use openhuman_embed::{
     Access, Agent, AgentDefinitionSpec, AgentError, AgentSpec, AgentTurnOrigin, ApiKey,
-    ApprovalDecision, Approvals, ApprovalsError, Core, CoreBuilder, CoreError, CoreRuntime, Cron,
-    CronError, DomainSet, GroupMode, Harness, HostKind, JobRun, JobRunRecord, JobSchedule, JobSpec,
-    JobTarget, PendingApproval, Provider, RemoveAgent, Runtime, RuntimeBuilder, RuntimeConfig,
-    SandboxModeSpec, ScheduledJob, ServiceSet, SystemJobContext, ToolGroups, ToolScopeSpec,
-    TrustedAccess, TrustedAutomationSource, Workspace, DEFAULT_MAX_AGENTS,
+    ApprovalDecision, Approvals, ApprovalsError, Core, CoreError, CoreRuntime, Cron, CronError,
+    DomainSet, GroupMode, Harness, HostKind, JobRun, JobRunRecord, JobSchedule, JobSpec, JobTarget,
+    PendingApproval, Provider, RemoveAgent, Runtime, RuntimeBuilder, RuntimeConfig,
+    SandboxModeSpec, ScheduledJob, ServiceSet, SystemJobContext, TokenSource, ToolGroups,
+    ToolScopeSpec, TrustedAccess, TrustedAutomationSource, Workspace, DEFAULT_MAX_AGENTS,
 };
 
 #[test]
 fn exposes_the_host_facing_embedding_contract() {
     fn accepts_core(_: Core) {}
-    fn accepts_builder(_: CoreBuilder) {}
     fn accepts_runtime(_: Arc<CoreRuntime>) {}
     fn accepts_harness(_: Harness) {}
     fn accepts_access(_: Access) {}
@@ -67,7 +66,6 @@ fn exposes_the_host_facing_embedding_contract() {
     let _ = accepts_core;
     let _ = steers_a_turn;
     let _ = hands_back_steers;
-    let _ = accepts_builder;
     let _ = accepts_runtime;
     let _ = accepts_harness;
     let _ = accepts_access;
@@ -110,7 +108,13 @@ fn exposes_the_host_facing_embedding_contract() {
     let _ = ServiceSet::none;
     let _ = HostKind::Library;
     let runtime_config = RuntimeConfig::default();
-    let _ = CoreBuilder::new(HostKind::Library).config(runtime_config.clone());
+    // `RuntimeBuilder` is the one public builder: it takes the host kind,
+    // bearer source and services a host boots with.
+    let _ = RuntimeBuilder::new()
+        .host_kind(HostKind::Library)
+        .token(TokenSource::EnvOrFile)
+        .services(ServiceSet::none())
+        .config(runtime_config.clone());
     let _ = Harness::builder().config(runtime_config);
     let _ = ToolGroups::none().with("documents", GroupMode::Advertised);
     let automation = AgentTurnOrigin::TrustedAutomation {

@@ -140,7 +140,7 @@ async fn handle_status_honors_loaded_docker_runtime() {
 /// #6081 (F2) — `sandbox_resolve_policy` must use the loaded config's
 /// already-resolved `action_dir`, not recompute it from `action_dir_override`
 /// alone. An embedder sets `Config.action_dir` directly via
-/// `CoreBuilder::action_dir(..)` and leaves `action_dir_override` at `None`;
+/// `RuntimeBuilder::action_dir(..)` and leaves `action_dir_override` at `None`;
 /// `resolve_action_dir(&None)` would have ignored that and returned the default
 /// projects dir, so the resolved policy would have pointed the sandbox at the
 /// wrong root. This pins that the handler honors the embedder's programmatic

@@ -1,7 +1,12 @@
-//! `CoreBuilder` → `CoreRuntime`: the embeddable composition surface.
+//! `CoreBuilder` → `CoreRuntime`: the core's initializer and the runtime it
+//! produces.
 //!
-//! This is the first-class library API for hosting the OpenHuman core. It
-//! splits the monolithic `run_server_inner` into two phases:
+//! The embedding API is `openhuman_embed::RuntimeBuilder`: its host presets
+//! (`library`, `desktop`, `cli`, `tui`) carry each host's [`ServiceSet`],
+//! [`TokenSource`] and [`HostKind`], and its `build` resolves the config,
+//! installs the host seams and then hands the result to [`CoreBuilder`]. The
+//! builder here is that hand-off point (a doc-hidden host seam), not a second
+//! public builder. Booting splits into two phases:
 //!
 //! 1. [`CoreBuilder::build`] — *initialization only*: register controllers, load
 //!    the master key, seed the RPC bearer, initialize workspace-bound stores,
@@ -15,9 +20,6 @@
 //!    [`CoreRuntime::start_services`], and serves until shutdown. A runtime
 //!    with no transport calls `start_services` itself.
 //!
-//! The host boot in `openhuman-rpc` (`host::{cli, desktop}`) and its
-//! `run_server*` entry points build on this builder, so the desktop shell, the
-//! standalone CLI, and any new embedder share one path.
 //! See the pluggable-core work (`core::runtime`) for how this fits with
 //! [`context`](crate::core::runtime::context) and `services`.
 
@@ -187,8 +189,19 @@ pub enum CoreBootMode {
     Inspection,
 }
 
-/// Builder for a [`CoreRuntime`]. Construct with [`CoreBuilder::new`], then
-/// [`CoreBuilder::build`] to initialize the core.
+/// The core's initializer: the host seam behind `openhuman_embed::RuntimeBuilder`.
+///
+/// Not an embedding API. Hosts and embedders build through
+/// `openhuman_embed::RuntimeBuilder` (its host presets carry the
+/// [`ServiceSet`], [`TokenSource`] and [`HostKind`] each host boots with),
+/// which funnels into this type once it has resolved the config, installed
+/// the host seams and settled the effective host kind. It stays `pub` only
+/// because that builder lives in another crate; besides it, the SaaS boot
+/// ([`saas::build`](super::saas::build)) and test fixtures construct it.
+///
+/// Construct with [`CoreBuilder::new`], then [`CoreBuilder::build`] to
+/// initialize the core.
+#[doc(hidden)]
 pub struct CoreBuilder {
     host_kind: HostKind,
     boot_mode: CoreBootMode,
@@ -316,55 +329,6 @@ impl CoreBuilder {
     /// [`apply_env_overrides`](crate::config::Config::apply_env_overrides)
     /// yourself first if you want the environment to participate.
     pub fn config(mut self, config: crate::config::Config) -> Self {
-        self.config = Some(config);
-        self
-    }
-
-    /// Root the core's state at `dir` — sessions, memory, attachments, skills.
-    ///
-    /// Sugar over [`config`](Self::config) for the common case of "same
-    /// configuration, different workspace"; starts from the config already
-    /// supplied, or [`Config::default`](Default::default) when none is.
-    pub fn workspace(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
-        let dir = dir.into();
-        let mut config = self.config.take().unwrap_or_default();
-        config.workspace_dir = dir.clone();
-        // Credential profiles and the file-backed keyring resolve from
-        // `config_path`'s parent, not from `workspace_dir`. Rooting only the
-        // workspace while leaving the default config path would keep sessions
-        // and credentials in the previous config root even though this method
-        // documents `dir` as rooting "core state" — so set a deterministic
-        // config path beside the workspace, mirroring the harness's `Dir`
-        // layout (`<root>/config.toml` next to `<root>/workspace`).
-        config.config_path = dir.join("config.toml");
-        self.config = Some(config);
-        self
-    }
-
-    /// Set the agent's read/write root for acting tools (`action_dir`).
-    ///
-    /// Sugar over [`config`](Self::config), like [`workspace`](Self::workspace).
-    /// Distinct from the workspace on purpose: the workspace holds internal
-    /// state the agent must never write to, reserved by TinySecurity's path policy,
-    /// enforces that separation fail-closed.
-    pub fn action_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
-        let mut config = self.config.take().unwrap_or_default();
-        config.action_dir = dir.into();
-        self.config = Some(config);
-        self
-    }
-
-    /// Point the core's backend calls at `url` (`Config::api_url`).
-    ///
-    /// Sugar over [`config`](Self::config), like [`workspace`](Self::workspace).
-    /// Worth having as its own method because the value reaches more than the
-    /// obvious client: `/auth/me` session validation, the hosted-backend
-    /// surfaces all resolve through it. A host that sets only one of
-    /// those has the other two pointing at a different deployment, which fails
-    /// as "backend rejected session token" rather than as a mismatch.
-    pub fn backend_url(mut self, url: impl Into<String>) -> Self {
-        let mut config = self.config.take().unwrap_or_default();
-        config.api_url = Some(url.into());
         self.config = Some(config);
         self
     }

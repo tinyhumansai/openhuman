@@ -7,25 +7,30 @@
 //!   any number of independently configured agents on it, each with its own
 //!   MCP servers, skills, working directory, access tier, provider and
 //!   prompt. [`Harness`] is the one-agent shorthand over the same two types.
-//! * **[`Core`]** — the typed facade over a [`CoreRuntime`] the host built
-//!   itself with [`CoreBuilder`].
+//! * **[`Core`]** — the typed facade over the [`CoreRuntime`] a
+//!   [`RuntimeBuilder`] built ([`Runtime::core_runtime`]).
 //!   [`CoreRuntime::invoke`] gives it JSON; this facade gives it real Rust
 //!   types, so a host never writes `serde_json::json!` or matches on an
 //!   error string.
+//!
+//! [`RuntimeBuilder`] is the one builder: its host presets carry the
+//! [`HostKind`], [`ServiceSet`] and [`TokenSource`] each host boots with,
+//! and every knob stays overridable after the preset.
 //!
 //! ```no_run
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 //! use std::sync::Arc;
 //! use openhuman_embed::Core;
-//! use openhuman_embed::{CoreBuilder, DomainSet, HostKind, ServiceSet};
+//! use openhuman_embed::{DomainSet, HostKind, RuntimeBuilder, ServiceSet};
 //!
-//! let runtime = CoreBuilder::new(HostKind::detect_standalone())
+//! let runtime = RuntimeBuilder::new()
+//!     .host_kind(HostKind::detect_standalone())
 //!     .domains(DomainSet::full())
 //!     .services(ServiceSet::none())
 //!     .build()
 //!     .await?;
 //!
-//! let core = Core::from_runtime(Arc::new(runtime));
+//! let core = Core::from_runtime(Arc::clone(runtime.core_runtime()));
 //! let flags = core.config().runtime_flags().await?;
 //! println!("log_prompts={}", flags.log_prompts);
 //! # Ok(())
@@ -92,9 +97,7 @@ pub use tinyinference_llm::model::ReasoningEffort;
 // would build tools of a different, incompatible type.
 pub use openhuman_core::agent::tinyagents::host::LastTurnUsage;
 pub use openhuman_core::agent::{HostAttachment, HostTools, HostTurnTools, TurnContext};
-pub use openhuman_core::{
-    CoreBootMode, CoreBuilder, CoreRuntime, DomainSet, HostKind, ServiceSet, TokenSource,
-};
+pub use openhuman_core::{CoreBootMode, CoreRuntime, DomainSet, HostKind, ServiceSet, TokenSource};
 /// Declarative execution requirements for host-owned tools, from the core's vendored contract.
 pub use tinytools::ToolPolicy;
 pub use tinytools::{PermissionLevel, Tool, ToolExposure, ToolResult};
@@ -303,10 +306,9 @@ pub struct Core {
 impl Core {
     /// Wrap an already-built [`CoreRuntime`].
     ///
-    /// The runtime must come from
-    /// [`CoreBuilder::build`](openhuman_core::core::runtime::CoreBuilder::build). The
-    /// facade neither starts nor stops background services; lifecycle stays
-    /// with the embedder.
+    /// The runtime comes from a built [`Runtime`]
+    /// ([`Runtime::core_runtime`]). The facade neither starts nor stops
+    /// background services; lifecycle stays with the embedder.
     pub fn from_runtime(rt: Arc<CoreRuntime>) -> Self {
         log::debug!("[embed] core_facade_attached services={:?}", rt.services());
         Self { rt }
