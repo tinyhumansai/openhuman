@@ -93,6 +93,19 @@ describe('parseWebSearchResult', () => {
     });
   });
 
+  it('does not cut an emoji in half when clipping a title or answer', () => {
+    const parsed = parseWebSearchResult('ignored', {
+      kind: 'web_search',
+      query: 'q',
+      provider: 'Exa',
+      role: 'answer',
+      answer: `${'a'.repeat(3998)}😀 more`,
+      results: [{ title: `${'a'.repeat(158)}😀 more`, url: 'https://a.dev/x' }],
+    });
+    expect(parsed?.results[0]?.title).toBe(`${'a'.repeat(158)}…`);
+    expect(parsed?.answer).toBe(`${'a'.repeat(3998)}…`);
+  });
+
   it('reads the answer, citations and fallback from the structured payload', () => {
     const parsed = parseWebSearchResult('ignored', {
       kind: 'web_search',

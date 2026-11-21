@@ -6,6 +6,7 @@
  * untrusted display text: trimmed, whitespace-collapsed and length-capped.
  * Nothing in this file produces a link.
  */
+import { truncateText } from '../../../utils/truncateText';
 
 export type ToolArgs = Record<string, unknown>;
 export type ChipRule = (args: ToolArgs) => string | undefined;
@@ -14,8 +15,7 @@ const MAX_CHIP_LENGTH = 80;
 
 export function truncateChip(value: string, max = MAX_CHIP_LENGTH): string {
   const cleaned = value.trim().replace(/\s+/g, ' ');
-  if (cleaned.length <= max) return cleaned;
-  return `${cleaned.slice(0, max - 1)}…`;
+  return truncateText(cleaned, max);
 }
 
 function stringArg(args: ToolArgs, key: string): string | undefined {
