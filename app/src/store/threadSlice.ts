@@ -1,5 +1,9 @@
 import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
+import {
+  GENERAL_TAB_VALUE,
+  isThreadVisibleInTab,
+} from '../features/conversations/utils/threadFilter';
 import { extractWorkflowProposalFromMessages } from '../lib/workflows/workflowProposal';
 import { threadApi } from '../services/api/threadApi';
 import type { ChatChannelEventEvent, ContentPart } from '../services/chatWire';
@@ -180,15 +184,33 @@ export const deleteThread = createAsyncThunk(
       await threadApi.deleteThread(threadId);
       const state = getState() as { thread: ThreadState };
       if (state.thread.selectedThreadId === threadId) {
-        const remaining = state.thread.threads.filter(t => t.id !== threadId);
-        if (remaining.length > 0) {
-          dispatch(setSelectedThread(remaining[0].id));
+        const next = state.thread.threads
+          .filter(
+            thread => thread.id !== threadId && isThreadVisibleInTab(thread, GENERAL_TAB_VALUE)
+          )
+          .sort(
+            (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+          )[0];
+        if (next) {
+          dispatch(setSelectedThread(next.id));
         } else {
           dispatch(clearSelectedThread());
         }
       }
-      await dispatch(loadThreads()).unwrap();
-      return { threadId };
+      const selectionIntentAfterDelete =
+        (getState() as { thread: ThreadState }).thread.selectionIntentVersion ?? 0;
+      try {
+        await dispatch(loadThreads()).unwrap();
+      } catch (refreshError) {
+        if (IS_DEV) {
+          console.debug('[threadSlice] delete-thread list refresh failed', {
+            threadId,
+            error: refreshError,
+          });
+        }
+        dispatch(clearStaleThread(threadId));
+      }
+      return { threadId, selectionIntentAfterDelete };
     } catch (error) {
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to delete thread');
     }
