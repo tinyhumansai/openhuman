@@ -229,6 +229,16 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     tone: TONE.indigo,
     keyPlaceholder: 'ms-...',
   },
+  {
+    slug: 'llmtr',
+    label: 'LLMTR',
+    // OpenAI-compatible gateway (`/v1/chat/completions`, `/v1/models`).
+    // Keep in sync with the hosted Rust preset in
+    // crates/openhuman-tinyhumans/src/hosted_config.rs.
+    endpoint: 'https://llmtr.com/v1',
+    authStyle: 'bearer',
+    tone: TONE.teal,
+  },
 ];
 
 // NOTE: Claude Code CLI is intentionally NOT a builtin chip. It is a
