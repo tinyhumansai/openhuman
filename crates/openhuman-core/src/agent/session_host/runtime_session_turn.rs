@@ -118,6 +118,9 @@ impl OpenHumanSessionHost {
         context.hosted_base = self.hosted_base.clone();
         context.headless_descendant_settlement = headless;
         context.scheduled_actions = self.scheduled_actions;
+        // Descendants inherit this; it lets the sub-agent runner consider a
+        // direct child for the scheduled-actions grant.
+        context.scheduled_actions_root = self.scheduled_actions;
         let headless_owner = headless.then(|| {
             crate::agent::tinyagents::tool_registration::subagent_owner_key(
                 &self.workspace_dir,
