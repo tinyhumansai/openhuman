@@ -124,6 +124,23 @@ pub(super) fn grant_scheduled_actions_to_child(
     }
 }
 
+impl OpenHumanRunContext {
+    /// The runner's step after `for_subagent`: `child()` left this child
+    /// read-only, and a qualifying direct child of a scheduled-actions cron
+    /// root gets the lift back ([`grant_scheduled_actions_to_child`]).
+    /// `spawn_workspace` is the descriptor the child run will use
+    /// (`run_subagent_via_graph` puts it on the run context in place of the
+    /// inherited root workspace).
+    pub(super) fn with_scheduled_actions_grant(
+        mut self,
+        definition: &AgentDefinition,
+        spawn_workspace: Option<&tinytools::WorkspaceDescriptor>,
+    ) -> Self {
+        grant_scheduled_actions_to_child(&mut self, definition, spawn_workspace);
+        self
+    }
+}
+
 #[cfg(test)]
 #[path = "scheduled_actions_grant_tests.rs"]
 mod tests;

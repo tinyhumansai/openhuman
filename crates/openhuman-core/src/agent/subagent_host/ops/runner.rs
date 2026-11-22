@@ -734,20 +734,11 @@ async fn run_typed_mode(
             "[subagent_host] prepared workspace descriptor for tinyagents run"
         );
     }
-
     let mut child_run_context = options
         .run_context
-        .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref));
+        .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref))
+        .with_scheduled_actions_grant(definition, workspace_descriptor.as_ref());
     child_run_context.parent = Some(parent.clone());
-    // `child()` left this child read-only; a qualifying direct child of a
-    // scheduled-actions cron root gets the lift back. The descriptor compared
-    // is the one the child run will use (`run_subagent_via_graph` puts it on
-    // the run context in place of the inherited root workspace).
-    super::scheduled_actions_grant::grant_scheduled_actions_to_child(
-        &mut child_run_context,
-        definition,
-        workspace_descriptor.as_ref(),
-    );
     let dynamic_tools = nested_spawn_tool
         .map(|tool| vec![Box::new(tool) as Box<dyn Tool>])
         .unwrap_or_default();
