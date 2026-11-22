@@ -93,7 +93,11 @@ pub struct AgentExt {
     /// (`[tools] named = [...]`, never the wildcard) and the job names this
     /// agent in `agent_id`; the run then executes under
     /// `TrustedAutomationSource::CronActions`. Sub-agents the run spawns stay
-    /// read-only, and the autonomy tier, TinySecurity's command analysis and
+    /// read-only, except a direct child (depth 1) whose own definition also
+    /// sets this flag, names its tools, is `sandbox_mode = "sandboxed"` and
+    /// runs in the root's workspace
+    /// (`agent::subagent_host::ops::scheduled_actions_grant`); a grandchild
+    /// never acts. The autonomy tier, TinySecurity's command analysis and
     /// protected-path floor, the agent's sandbox, the browser's allowed
     /// websites and its forced checkpoint before payment all still apply.
     /// Ignored in SaaS mode. See `cron::origin::scheduled_actions_enabled`.
