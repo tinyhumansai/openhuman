@@ -62,6 +62,29 @@ fn scheduled_agent_fixture(
     crate::core::runtime::DispatchCtx,
     tinyflows_bus::schedule::types::CronJob,
 ) {
+    scheduled_agent_fixture_with(
+        timeout_secs,
+        None,
+        crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only(),
+    )
+}
+
+/// A due, isolated scheduled agent job run by `agent_id` (the default
+/// orchestrator when `None`) against the given agent `definitions`.
+#[cfg(feature = "storage-sqlite")]
+pub(super) fn scheduled_agent_fixture_with(
+    timeout_secs: u64,
+    agent_id: Option<&str>,
+    definitions: crate::agent_registry::host_definition::AgentDefinitionRegistry,
+) -> (
+    TempDir,
+    crate::storage::test_support::SqliteBackend,
+    crate::storage::test_support::InstalledBackendGuard,
+    Config,
+    std::sync::Arc<crate::core::runtime::CoreContext>,
+    crate::core::runtime::DispatchCtx,
+    tinyflows_bus::schedule::types::CronJob,
+) {
     let temp = TempDir::new().expect("cron workspace");
     let mut config = Config::default();
     config.workspace_dir = temp.path().join("workspace");
