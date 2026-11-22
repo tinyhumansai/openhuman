@@ -123,6 +123,7 @@ pub(super) fn scheduled_agent_fixture_with(
     spec.name = Some("headless child test".into());
     spec.session_target = SessionTarget::Isolated;
     spec.model = Some("test-model".into());
+    spec.agent_id = agent_id.map(str::to_string);
     spec.enabled = true;
     let job =
         crate::cron::add_agent_job_from_spec(&config, spec).expect("persist scheduled agent job");
