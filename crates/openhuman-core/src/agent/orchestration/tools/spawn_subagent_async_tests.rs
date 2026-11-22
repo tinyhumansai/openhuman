@@ -242,6 +242,13 @@ fn attach_workflow_proposal_persists_thread_message_and_extends_summary() {
 
 /// A thread holding one delivered proposal (task `sub-propose`), named `name`.
 fn thread_with_delivered_proposal(name: &str) -> tempfile::TempDir {
+    thread_with_delivered_proposal_extra(name, "")
+}
+
+/// Deliver a proposal whose payload carries extra fields (e.g.
+/// `,"draft_id":"draft-old"`), for hand-offs that identify the proposal by
+/// id rather than by name.
+fn thread_with_delivered_proposal_extra(name: &str, extra: &str) -> tempfile::TempDir {
     use crate::threads::store::CreateConversationThread;
     let temp = tempfile::tempdir().expect("tempdir");
     conversations::ensure_thread(
@@ -265,7 +272,7 @@ fn thread_with_delivered_proposal(name: &str) -> tempfile::TempDir {
         "sub-propose",
         "workflow_builder",
         &[TranscriptMessage::tool(format!(
-            r#"{{"type":"workflow_proposal","persisted":false,"name":"{name}","graph":{{"nodes":[],"edges":[]}}}}"#
+            r#"{{"type":"workflow_proposal","persisted":false,"name":"{name}","graph":{{"nodes":[],"edges":[]}}{extra}}}"#
         ))],
         "proposal".to_string(),
     );

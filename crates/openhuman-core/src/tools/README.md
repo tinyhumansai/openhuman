@@ -124,7 +124,7 @@ step.
 | [`user_filter.rs`](./user_filter.rs) | `filter_tools_by_user_preference` and the UI toggle to tool-name map. |
 | [`host_extensions.rs`](./host_extensions.rs) | Readers over `tinytools`' erased host-extension slots: `pack_registry_handle`, `tool_call_id`. |
 | [`schemas.rs`](./schemas.rs), [`schemas/`](./schemas/) | The `tools.*` controllers: `registry.rs` (schemas and dispatch), `composio.rs`, `web_search.rs`. |
-| [`impl/`](impl/README.md) | Cross-cutting built-in tool families: `filesystem/` (the `FsGate` adapter only; the tools are `tinyagents_harness_tools::fs::filesystem`), `browser/`, `system/`, `network/`, and `meta/`. |
+| [`impl/`](impl/README.md) | Cross-cutting built-in tool families: `browser/`, `system/`, `ui/`, and `network.rs` (host wiring for the `tinyagents_harness_tools::net::network` tools). The `FsGate`/`NetGate` adapters live in [`security/tool_gates/`](../security/tool_gates/). |
 | [`toolpacks/`](toolpacks/README.md) | On-demand tool disclosure (`use_skill`, pack catalog, guides) and `ToolGroups` / `GroupMode`. |
 | [`agent_policy/`](agent_policy/README.md) | Per-session tool boundary against a channel's permission ceiling. |
 | [`registry/`](registry/README.md) | Read-only discovery registry across MCP stdio, controller and connected MCP tools, plus policy diagnostics. |
@@ -135,13 +135,13 @@ Where the built-in tools come from:
 
 | Tools | Source |
 | --- | --- |
-| `file_read`, `file_write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `read_diff`, `csv_export`, `git_operations`, `run_linter`, `run_tests`, `image_info`, `read_workspace_state` | `tinyagents_harness_tools::fs::filesystem`, gated by [`impl/filesystem/gate.rs`](./impl/filesystem/gate.rs) |
+| `file_read`, `file_write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `read_diff`, `csv_export`, `git_operations`, `run_linter`, `run_tests`, `image_info`, `read_workspace_state` | `tinyagents_harness_tools::fs::filesystem`, gated by [`security/tool_gates/fs.rs`](../security/tool_gates/fs.rs) |
 | `detect_tools`, `curl`, `pushover` | `tinyagents_harness_tools` |
-| `http_request`, `web_fetch` | `tinyagents_harness_tools::net::network`, wired with host limits, TinyJuice extraction and the x402 handler in [`impl/network/host.rs`](./impl/network/host.rs) |
+| `http_request`, `web_fetch` | `tinyagents_harness_tools::net::network`, wired with host limits, TinyJuice extraction and the x402 handler in [`impl/network.rs`](./impl/network.rs), gated by [`security/tool_gates/net.rs`](../security/tool_gates/net.rs) |
 | `current_time`, `resolve_time`, `ask_user_clarification` | `tinyagents_harness_tools` |
 | `shell`, `install_tool`, `schedule`, `proxy_config`, `retrieve_tool_output` | [`impl/system/`](./impl/system/) |
 | `update_check`, `update_apply` | [`platform/update/tools.rs`](../platform/update/tools.rs) |
-| `gitbooks_search`, `gitbooks_get_page`, `mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`, `mcp_<server>_<tool>` | [`impl/network/`](./impl/network/) (MCP tools behind `mcp`) |
+| `gitbooks_search`, `gitbooks_get_page`, `mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`, `mcp_<server>_<tool>` | [`mcp/gitbooks_tools.rs`](../mcp/gitbooks_tools.rs), [`mcp/tools/`](../mcp/tools/) (MCP tools behind `mcp`) |
 | `gmail_unsubscribe` | [`integrations/gmail/`](../integrations/gmail/) |
 | `browser`, `browser_open` | [`impl/browser/`](./impl/browser/) (behind `modules`) |
 | `generate_document`, `generate_presentation` | [`artifacts/tools/`](../artifacts/tools/) (behind `documents`) |

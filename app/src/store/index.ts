@@ -159,7 +159,8 @@ const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer
 
 // Two-pane layout geometry (sidebar visibility + dragged widths), keyed by
 // panel id. Persisted per user so the chat sidebar layout survives reloads.
-const layoutPersistConfig = { key: 'layout', storage, whitelist: ['panels'] };
+// `welcomeSeen` records which pages' Welcome landing the user has seen.
+const layoutPersistConfig = { key: 'layout', storage, whitelist: ['panels', 'welcomeSeen'] };
 const persistedLayoutReducer = persistReducer(layoutPersistConfig, layoutReducer);
 
 // Persist the mascot appearance fields, the custom GIF override, the selected

@@ -7,6 +7,15 @@ use tinyagents_harness_tools::net::network::{
 };
 use tinytools::{PermissionLevel, Tool};
 
+/// A thread-scoped `LocalOnly` privacy override (privacy epic S7, #4441): the
+/// egress gate (which reads `live_policy::current_privacy_mode`) observes
+/// `LocalOnly` on this thread only, so the test never mutates the
+/// process-global policy that sibling tests read on other threads. Hold the
+/// returned guard for the duration of the tool call.
+fn local_only_scope() -> crate::security::live_policy::TestPrivacyGuard {
+    crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::LocalOnly)
+}
+
 fn policy(autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPolicy> {
     let policy = SecurityPolicy {
         autonomy,
@@ -34,7 +43,7 @@ fn policy(autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPol
 }
 
 fn http(security: Arc<SecurityPolicy>) -> HttpRequestTool {
-    super::super::host::http_request_tool(
+    crate::tools::implementations::network::http_request_tool(
         &crate::core::runtime::DispatchCtx::ambient(),
         security,
         vec!["example.com".into()],
@@ -80,7 +89,7 @@ fn supervised_network_asks_for_approval_and_read_only_does_not() {
 
 #[test]
 fn network_gate_refuses_when_the_privacy_module_cannot_answer() {
-    let _mode = super::super::local_only_scope();
+    let _mode = local_only_scope();
     #[cfg(feature = "security-module")]
     let _port = crate::modules::security::gap::install_unavailable_privacy_port();
     let msg = NetGate::local_only_block(&SecurityPolicy::default(), "example.com")
@@ -126,7 +135,7 @@ async fn http_request_blocks_when_rate_limited() {
 async fn http_request_is_blocked_under_local_only_privacy_mode() {
     // Privacy epic S7 (#4441): under LocalOnly the request is refused with a
     // `[policy-blocked]` result before URL validation / network.
-    let _mode = super::super::local_only_scope();
+    let _mode = local_only_scope();
     let result = http(Arc::new(SecurityPolicy::default()))
         .execute(json!({"url": "https://example.com"}))
         .await
@@ -146,9 +155,9 @@ async fn http_request_is_blocked_under_local_only_privacy_mode() {
 
 #[tokio::test]
 async fn web_fetch_and_curl_are_blocked_under_local_only_privacy_mode() {
-    let _mode = super::super::local_only_scope();
+    let _mode = local_only_scope();
     let security = Arc::new(SecurityPolicy::default());
-    let fetch = super::super::host::web_fetch_tool(
+    let fetch = crate::tools::implementations::network::web_fetch_tool(
         &crate::core::runtime::DispatchCtx::ambient(),
         security.clone(),
         vec!["example.com".into()],
@@ -225,7 +234,7 @@ fn readonly_http_request_is_not_external_effect_because_execute_blocks() {
 
 #[test]
 fn web_fetch_is_read_only_and_never_prompts() {
-    let tool: WebFetchTool = super::super::host::web_fetch_tool(
+    let tool: WebFetchTool = crate::tools::implementations::network::web_fetch_tool(
         &crate::core::runtime::DispatchCtx::ambient(),
         policy(AutonomyLevel::Supervised, 100),
         vec![],

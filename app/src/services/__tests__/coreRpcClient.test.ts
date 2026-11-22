@@ -433,6 +433,42 @@ describe('coreRpcClient', () => {
     }
   });
 
+  test.each([200, 503])('bounds body consumption after HTTP %s headers arrive', async status => {
+    vi.useFakeTimers();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let signal: AbortSignal | undefined;
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementationOnce(async (_url, init) => {
+      signal = init?.signal as AbortSignal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+          signal!.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return new Response(body, { status });
+    });
+    const pending = callCoreRpc({ method: 'openhuman.cost_get_dashboard' }).catch(error => error);
+
+    try {
+      await vi.advanceTimersByTimeAsync(CORE_RPC_TIMEOUT_MS + 1);
+
+      expect(signal?.aborted).toBe(true);
+      const error = (await pending) as CoreRpcError;
+      expect(error).toBeInstanceOf(CoreRpcError);
+      expect(error.kind).toBe('timeout');
+      expect(error.message).toContain(`timed out after ${CORE_RPC_TIMEOUT_MS}ms`);
+    } finally {
+      bodyController?.error(new Error('test cleanup'));
+      await pending;
+      vi.useRealTimers();
+    }
+  });
+
   test('does not trigger the timeout path when fetch resolves promptly', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({

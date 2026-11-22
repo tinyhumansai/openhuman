@@ -27,6 +27,7 @@ use super::super::types::OpenHumanSessionHost;
 use crate::agent::session_host::OpenHumanTranscriptCodec;
 use crate::agent::tinyagents::context_wiring::{compact_history, CompactionSummarizer, IdleFold};
 use crate::agent::tinyagents::host::OpenHumanRunContext;
+use crate::attachments::AttachmentAccessScope;
 
 /// How [`OpenHumanSessionHost::compact_bound_history`] decides and sizes a
 /// compaction.
@@ -121,12 +122,15 @@ impl OpenHumanSessionHost {
             tracing::info!(thread_id = %thread_id, outcome = "empty", "[compact_thread] no conversation");
             return Ok(CompactOutcome::Empty);
         }
-        let tokens = tinyagents_harness::token_estimation::estimate_slice_tokens(&history);
+        let measured = tinyagents_harness::token_estimation::estimate_slice_tokens(&history);
+        let documents = self.document_readout_tokens(&history).await;
+        let tokens = measured.saturating_add(documents);
         if tokens < options.min_tokens {
             tracing::info!(
                 thread_id = %thread_id,
                 outcome = "skipped",
                 tokens,
+                document_tokens = documents,
                 min_tokens = options.min_tokens,
                 "[compact_thread] below the threshold"
             );
@@ -152,7 +156,7 @@ impl OpenHumanSessionHost {
             settings: models.summarizer_settings,
         };
         let fold = IdleFold {
-            min_tokens: options.min_tokens,
+            min_tokens: documents::fold_threshold(options.min_tokens, documents, measured),
             keep_recent_tokens: options.keep_recent_tokens,
             strategy: self.context_config.compaction_strategy,
             context_window,
@@ -179,7 +183,8 @@ impl OpenHumanSessionHost {
             .prefix_message_count
             .unwrap_or(leading_system);
         let (compacted, prefix_len) = self.with_fresh_memory_block(compacted, prefix_len).await;
-        let tokens_after = tinyagents_harness::token_estimation::estimate_slice_tokens(&compacted);
+        let tokens_after = tinyagents_harness::token_estimation::estimate_slice_tokens(&compacted)
+            .saturating_add(self.document_readout_tokens(&compacted).await);
 
         // Unchanged positions keep their stored rows, so the system prompt
         // and the kept tail are written back exactly as they were read.
@@ -265,4 +270,43 @@ impl OpenHumanSessionHost {
         );
         (messages, refreshed_len)
     }
+
+    /// Tokens the documents the next request would replay from `history`
+    /// add beyond the flat weight the estimator charges each one. See
+    /// [`documents::extra_tokens`].
+    async fn document_readout_tokens(&self, history: &[Message]) -> u64 {
+        if !documents::has_documents(history) {
+            return 0;
+        }
+        let ctx = self.dispatch_ctx();
+        let config = match Box::pin(ctx.load_config()).await {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::debug!(%error, "[compact_thread] documents sized at their flat weight: no config");
+                return 0;
+            }
+        };
+        // Where this thread's turns stage uploads: the session's own root,
+        // else the thread's bound working folder, else `action_dir`.
+        let workspace = match self.workspace_descriptor.as_ref() {
+            Some(workspace) => Some(workspace.root.clone()),
+            None => crate::attachments::thread_action_dir(
+                &ctx,
+                &config,
+                &config.workspace_dir,
+                self.thread_id.as_deref(),
+            )
+            .await
+            .ok(),
+        };
+        let scope = AttachmentAccessScope {
+            workspace,
+            thread_id: self.thread_id.clone(),
+            ..AttachmentAccessScope::default()
+        };
+        documents::extra_tokens(&ctx, &config, &scope, history).await
+    }
 }
+
+#[path = "compact_documents.rs"]
+mod documents;

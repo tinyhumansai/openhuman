@@ -116,7 +116,7 @@ struct AttachmentModel {
     controls: Option<HostControlSlot>,
 }
 
-const MAX_HISTORICAL_MEDIA_BLOCKS: usize = 8;
+pub(crate) const MAX_HISTORICAL_MEDIA_BLOCKS: usize = 8;
 
 impl AttachmentModel {
     /// The dispatch context of the turn this model serves.
@@ -231,6 +231,7 @@ use crate::attachments::secure_open::secure_open;
 
 #[path = "provider_cache.rs"]
 mod cache;
+pub(crate) use cache::cached_readout_chars;
 #[path = "provider_fallback.rs"]
 mod fallback;
 #[cfg(test)]
@@ -253,6 +254,10 @@ mod history_tests;
 #[cfg(test)]
 #[path = "provider_routing_tests.rs"]
 mod routing_tests;
+
+#[cfg(test)]
+#[path = "provider_cache_tests.rs"]
+mod cache_tests;
 
 #[cfg(test)]
 #[path = "provider_security_tests.rs"]

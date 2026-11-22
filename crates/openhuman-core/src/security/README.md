@@ -27,6 +27,11 @@ decisions:
   encrypted secret store, the keychain and device pairing still need the
   module. Enabled security is unchanged: it fails closed. The core logs one line
   at boot when security is disabled, and why.
+- `tool_gates/` is `SecurityPolicy` as the harness tools' gates: `fs.rs`
+  implements `FsGate` and `net.rs` implements `NetGate` (plus the per-turn
+  `RoutedGate`) for the filesystem and network tools that live in
+  `tinyagents_harness_tools`. Each method forwards one question to the policy,
+  the egress gate or the runtime proxy config; no policy is decided there.
 - `approval/` parks the live tool future, publishes the existing approval
   events, serves the UI and chat callbacks, and applies user choices to host
   configuration.
