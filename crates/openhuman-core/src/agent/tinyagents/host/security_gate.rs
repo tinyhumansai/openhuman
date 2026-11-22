@@ -184,7 +184,8 @@ impl OpenHumanSecurityGate {
     }
 
     /// Marks the gate as the root session of an opted-in scheduled-actions
-    /// cron run (`cron::origin::scheduled_actions_enabled`).
+    /// cron run (`cron::origin::scheduled_actions_enabled`), or as a direct
+    /// child granted it (`agent::subagent_host::ops::scheduled_actions_grant`).
     pub(crate) fn with_scheduled_actions(mut self, enabled: bool) -> Self {
         self.scheduled_actions = enabled;
         self
