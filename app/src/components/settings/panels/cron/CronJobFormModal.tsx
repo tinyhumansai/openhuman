@@ -51,11 +51,17 @@ function buildSchedule(
   kind: ScheduleKind,
   cronExpr: string,
   atValue: string,
-  everyMs: string
+  everyMs: string,
+  stored?: CoreCronSchedule
 ): CoreCronSchedule | null {
   if (kind === 'cron') {
     const expr = cronExpr.trim();
     if (!expr) return null;
+    // The form has no zone or active-hours inputs, so an edited cron job keeps
+    // the ones it was stored with (the core replaces the schedule wholesale).
+    if (stored?.kind === 'cron') {
+      return { ...stored, kind: 'cron', expr, tz: stored.tz ?? null };
+    }
     return { kind: 'cron', expr, tz: null };
   }
   if (kind === 'at') {
@@ -199,7 +205,7 @@ const CronJobFormModal = ({
   };
 
   // ── Validation ──────────────────────────────────────────────────────
-  const schedule = buildSchedule(scheduleKind, cronExpr, atValue, everyMs);
+  const schedule = buildSchedule(scheduleKind, cronExpr, atValue, everyMs, job?.schedule);
   const isScheduleValid = schedule !== null;
   const isPromptValid = jobType !== 'agent' || prompt.trim().length > 0;
   const isCommandValid = jobType !== 'shell' || command.trim().length > 0;
@@ -243,15 +249,23 @@ const CronJobFormModal = ({
         await onCreate(params);
       } else {
         if (!job) return;
+        // The selects only offer isolated/main and none/proactive, so a job
+        // created from a chat (session_target `current`, delivery `origin` or
+        // `announce` with a channel/recipient) is shown with a fallback value.
+        // Send those fields only when the user actually changed them; the core
+        // replaces `delivery` wholesale, so re-sending the fallback would
+        // detach the job from the conversation it reports back to.
+        const sessionTargetChanged = sessionTarget !== initialState.sessionTarget;
+        const deliveryChanged = delivery !== initialState.delivery;
         const patch: Record<string, unknown> = {
           name: name.trim() || null,
           schedule,
           ...(jobType === 'agent' ? { prompt: prompt.trim() } : {}),
           ...(jobType === 'shell' ? { command: command.trim() } : {}),
-          ...(jobType === 'agent' ? { session_target: sessionTarget } : {}),
-          ...(jobType === 'agent'
+          ...(jobType === 'agent' && sessionTargetChanged ? { session_target: sessionTarget } : {}),
+          ...(jobType === 'agent' && deliveryChanged
             ? { delivery: { mode: delivery, best_effort: true } }
-            : { delivery: { mode: 'none', best_effort: false } }),
+            : {}),
           delete_after_run: deleteAfterRun,
         };
         const patchSchedule = patch.schedule as { kind?: string } | undefined;

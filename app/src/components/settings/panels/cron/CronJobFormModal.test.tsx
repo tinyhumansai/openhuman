@@ -1,0 +1,147 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { CoreCronJob } from '../../../../utils/tauriCommands/cron';
+import CronJobFormModal from './CronJobFormModal';
+
+/**
+ * Edit mode must change only what the user changed. Jobs created from a chat
+ * turn carry routing the form cannot represent (`delivery.mode: origin` /
+ * `announce` with `channel`/`to`, `session_target: current`, a cron `tz` and
+ * `active_hours`). The core replaces `schedule` and `delivery` wholesale on
+ * update, so a patch that rebuilds them from the form's narrower state silently
+ * detaches the job from its conversation and moves it to the machine's zone.
+ */
+
+vi.mock('../../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
+
+function job(over: Partial<CoreCronJob> = {}): CoreCronJob {
+  return {
+    id: 'job-1',
+    expression: '0 9 * * 1-5',
+    schedule: {
+      kind: 'cron',
+      expr: '0 9 * * 1-5',
+      tz: 'Asia/Tokyo',
+      active_hours: { start: '08:00', end: '18:00' },
+    },
+    command: '',
+    name: 'Standup reminder',
+    job_type: 'agent',
+    session_target: 'current',
+    enabled: true,
+    delivery: { mode: 'origin', channel: null, to: null, best_effort: true },
+    delete_after_run: false,
+    created_at: '2026-11-01T00:00:00.000Z',
+    next_run: '2026-11-24T00:00:00.000Z',
+    prompt: 'Remind me about standup',
+    ...over,
+  };
+}
+
+function renderEdit(stored: CoreCronJob) {
+  const onUpdate = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CronJobFormModal
+      mode="edit"
+      job={stored}
+      open
+      onClose={vi.fn()}
+      onCreate={vi.fn()}
+      onUpdate={onUpdate}
+    />
+  );
+  return onUpdate;
+}
+
+async function submittedPatch(onUpdate: ReturnType<typeof vi.fn>) {
+  fireEvent.click(screen.getByTestId('cron-form-submit'));
+  await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+  return onUpdate.mock.calls[0][1] as Record<string, unknown>;
+}
+
+describe('CronJobFormModal edit mode', () => {
+  it('keeps origin delivery, current session target, tz and active hours on a rename', async () => {
+    const onUpdate = renderEdit(job());
+    fireEvent.change(screen.getByTestId('cron-form-name'), { target: { value: 'Standup' } });
+
+    const patch = await submittedPatch(onUpdate);
+
+    expect(onUpdate.mock.calls[0][0]).toBe('job-1');
+    expect(patch.name).toBe('Standup');
+    expect(patch).not.toHaveProperty('delivery');
+    expect(patch).not.toHaveProperty('session_target');
+    expect(patch.schedule).toEqual({
+      kind: 'cron',
+      expr: '0 9 * * 1-5',
+      tz: 'Asia/Tokyo',
+      active_hours: { start: '08:00', end: '18:00' },
+    });
+  });
+
+  it('keeps an announce route and the stored zone when only the cron expression changes', async () => {
+    const onUpdate = renderEdit(
+      job({
+        session_target: 'isolated',
+        delivery: { mode: 'announce', channel: 'telegram', to: '12345', best_effort: true },
+      })
+    );
+    fireEvent.change(screen.getByTestId('cron-form-cron-custom'), {
+      target: { value: '30 9 * * 1-5' },
+    });
+
+    const patch = await submittedPatch(onUpdate);
+
+    expect(patch).not.toHaveProperty('delivery');
+    expect(patch).not.toHaveProperty('session_target');
+    expect(patch.schedule).toEqual({
+      kind: 'cron',
+      expr: '30 9 * * 1-5',
+      tz: 'Asia/Tokyo',
+      active_hours: { start: '08:00', end: '18:00' },
+    });
+  });
+
+  it('sends delivery and session target when the user changes them', async () => {
+    const onUpdate = renderEdit(job());
+    fireEvent.change(screen.getByTestId('cron-form-delivery'), { target: { value: 'proactive' } });
+    fireEvent.change(screen.getByTestId('cron-form-session-target'), { target: { value: 'main' } });
+
+    const patch = await submittedPatch(onUpdate);
+
+    expect(patch.delivery).toEqual({ mode: 'proactive', best_effort: true });
+    expect(patch.session_target).toBe('main');
+  });
+
+  it('drops tz and active hours when the schedule switches away from cron', async () => {
+    const onUpdate = renderEdit(job());
+    fireEvent.click(screen.getByTestId('cron-form-schedule-every'));
+    fireEvent.change(screen.getByTestId('cron-form-every'), { target: { value: '3600000' } });
+
+    const patch = await submittedPatch(onUpdate);
+
+    expect(patch.schedule).toEqual({ kind: 'every', every_ms: 3600000 });
+  });
+
+  it('still builds a zone-less cron schedule with explicit delivery in create mode', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    render(
+      <CronJobFormModal
+        mode="create"
+        open
+        onClose={vi.fn()}
+        onCreate={onCreate}
+        onUpdate={vi.fn()}
+      />
+    );
+    fireEvent.change(screen.getByTestId('cron-form-prompt'), { target: { value: 'Summarise' } });
+    fireEvent.click(screen.getByTestId('cron-form-submit'));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    const params = onCreate.mock.calls[0][0] as Record<string, unknown>;
+    expect(params.schedule).toMatchObject({ kind: 'cron', tz: null });
+    expect(params.schedule).not.toHaveProperty('active_hours');
+    expect(params.delivery).toEqual({ mode: 'proactive', best_effort: true });
+    expect(params.session_target).toBe('isolated');
+  });
+});
