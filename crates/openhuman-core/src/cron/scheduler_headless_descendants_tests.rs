@@ -100,8 +100,7 @@ pub(super) fn scheduled_agent_fixture_with(
     config.reliability.scheduler_retries = 0;
     std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
 
-    let definitions =
-        Arc::new(crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only());
+    let definitions = Arc::new(definitions);
     let core = crate::core::runtime::CoreContext::for_test_with_config(
         crate::core::runtime::DomainSet::full(),
         config.clone(),
