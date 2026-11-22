@@ -114,14 +114,22 @@ impl ChatModel<()> for ActionTreeModel {
 }
 
 /// The builtin registry with the orchestrator opted into scheduled actions
-/// (it already names its tools and is sandboxed) and `customize` applied.
+/// (it already names its tools and is sandboxed) and rooted at `workbench`,
+/// with `customize` applied.
+///
+/// The root needs a workspace of its own: a root on the bare action dir has
+/// no workspace descriptor, and the spawn tool then hands its child one for
+/// the core's `workspace_dir`, which is a different directory, so no child
+/// would be granted.
 fn scheduled_actions_registry(
+    workbench: &std::path::Path,
     customize: impl FnOnce(&mut crate::agent_registry::host_definition::AgentDefinitionRegistry),
 ) -> crate::agent_registry::host_definition::AgentDefinitionRegistry {
     let mut registry =
         crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only();
     let mut root = registry.get("orchestrator").expect("orchestrator").clone();
     root.extensions.scheduled_actions = true;
+    root.extensions.scheduled_workspace = Some(workbench.display().to_string());
     assert!(matches!(root.tools, ToolScope::Named(_)));
     registry.insert(root);
     customize(&mut registry);
@@ -206,10 +214,11 @@ async fn run_and_collect_acting_tool_errors(
 #[tokio::test(flavor = "multi_thread")]
 async fn scheduled_actions_child_that_opts_in_and_is_sandboxed_runs_its_acting_tool() {
     let _inference = crate::inference::inference_test_guard_async().await;
+    let workbench = tempfile::TempDir::new().expect("scheduled workbench");
     let model = std::sync::Arc::new(ActionTreeModel::new("task_manager_agent", None));
     let errors = run_and_collect_acting_tool_errors(
         model.clone(),
-        scheduled_actions_registry(opt_in_task_manager),
+        scheduled_actions_registry(workbench.path(), opt_in_task_manager),
     )
     .await;
     assert!(
@@ -232,11 +241,12 @@ async fn scheduled_actions_child_that_opts_in_and_is_sandboxed_runs_its_acting_t
 #[tokio::test(flavor = "multi_thread")]
 async fn scheduled_actions_child_that_does_not_opt_in_stays_read_only() {
     let _inference = crate::inference::inference_test_guard_async().await;
+    let workbench = tempfile::TempDir::new().expect("scheduled workbench");
     let model = std::sync::Arc::new(ActionTreeModel::new("task_manager_agent", None));
     // Sandboxed, but its definition does not set `scheduled_actions`.
     let errors = run_and_collect_acting_tool_errors(
         model,
-        scheduled_actions_registry(|registry| {
+        scheduled_actions_registry(workbench.path(), |registry| {
             opt_in_task_manager(registry);
             let mut child = registry.get("task_manager_agent").unwrap().clone();
             child.extensions.scheduled_actions = false;
@@ -256,10 +266,11 @@ const LEAF_AGENT: &str = "scheduled_actions_leaf";
 #[tokio::test(flavor = "multi_thread")]
 async fn scheduled_actions_grandchild_stays_read_only_even_when_it_opts_in() {
     let _inference = crate::inference::inference_test_guard_async().await;
+    let workbench = tempfile::TempDir::new().expect("scheduled workbench");
     let model = std::sync::Arc::new(ActionTreeModel::new(RELAY_AGENT, Some(LEAF_AGENT)));
     let errors = run_and_collect_acting_tool_errors(
         model.clone(),
-        scheduled_actions_registry(|registry| {
+        scheduled_actions_registry(workbench.path(), |registry| {
             let mut root = registry.get("orchestrator").unwrap().clone();
             root.subagents
                 .push(SubagentEntry::AgentId(RELAY_AGENT.into()));
