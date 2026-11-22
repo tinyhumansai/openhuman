@@ -88,6 +88,17 @@ pub(super) fn grant_scheduled_actions_to_child(
     definition: &AgentDefinition,
     spawn_workspace: Option<&tinytools::WorkspaceDescriptor>,
 ) -> bool {
+    eprintln!(
+        "TEMP-DIAG grant: agent={} root_mark={} depth={} def_flag={} sandbox={:?} tools_named={} child_ws={:?} spawn_ws={:?}",
+        definition.id,
+        child.scheduled_actions_root,
+        child.spawn_depth,
+        definition.extensions.scheduled_actions,
+        definition.sandbox_mode,
+        matches!(definition.tools, tinyagents_definition::ToolScope::Named(_)),
+        child.workspace,
+        spawn_workspace
+    );
     if !child.scheduled_actions_root {
         return false;
     }
