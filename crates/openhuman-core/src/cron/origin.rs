@@ -79,27 +79,62 @@ pub(crate) fn scheduled_actions_enabled(
     job: &CronJob,
     definition: &crate::agent_registry::host_definition::AgentDefinition,
 ) -> bool {
-    if job.agent_id.is_none() || !definition.extensions.scheduled_actions {
+    if job.agent_id.is_none() {
         return false;
+    }
+    match scheduled_actions_definition_refusal(definition, crate::core::runtime::is_saas()) {
+        None => true,
+        Some(ScheduledActionsRefusal::NotOptedIn) => false,
+        Some(ScheduledActionsRefusal::WildcardTools) => {
+            tracing::warn!(
+                job_id = %job.id,
+                agent_id = %definition.id,
+                "[cron] agent sets scheduled_actions but its tool scope is the wildcard; \
+                 the run stays read-only (name the tools explicitly to enable it)"
+            );
+            false
+        }
+        Some(ScheduledActionsRefusal::Saas) => {
+            tracing::warn!(
+                job_id = %job.id,
+                agent_id = %definition.id,
+                "[cron] scheduled_actions is ignored in SaaS mode; the run stays read-only"
+            );
+            false
+        }
+    }
+}
+
+/// Why an agent definition's scheduled-actions opt-in does not take effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScheduledActionsRefusal {
+    /// The definition does not set `scheduled_actions = true`.
+    NotOptedIn,
+    /// The definition's tool scope is the wildcard, not `ToolScope::Named`.
+    WildcardTools,
+    /// The process runs in SaaS mode, where the opt-in is ignored.
+    Saas,
+}
+
+/// The definition half of the scheduled-actions opt-in, shared by the cron root
+/// ([`scheduled_actions_enabled`]) and the sub-agent grant
+/// (`agent::subagent_host::ops::scheduled_actions_grant`): the definition sets
+/// `scheduled_actions = true`, names its tools, and the process is not SaaS.
+/// `None` means the definition qualifies.
+pub(crate) fn scheduled_actions_definition_refusal(
+    definition: &crate::agent_registry::host_definition::AgentDefinition,
+    saas: bool,
+) -> Option<ScheduledActionsRefusal> {
+    if !definition.extensions.scheduled_actions {
+        return Some(ScheduledActionsRefusal::NotOptedIn);
     }
     if !matches!(definition.tools, tinyagents_definition::ToolScope::Named(_)) {
-        tracing::warn!(
-            job_id = %job.id,
-            agent_id = %definition.id,
-            "[cron] agent sets scheduled_actions but its tool scope is the wildcard; \
-             the run stays read-only (name the tools explicitly to enable it)"
-        );
-        return false;
+        return Some(ScheduledActionsRefusal::WildcardTools);
     }
-    if crate::core::runtime::is_saas() {
-        tracing::warn!(
-            job_id = %job.id,
-            agent_id = %definition.id,
-            "[cron] scheduled_actions is ignored in SaaS mode; the run stays read-only"
-        );
-        return false;
+    if saas {
+        return Some(ScheduledActionsRefusal::Saas);
     }
-    true
+    None
 }
 
 /// The turn origin a run of `job` executes under.
