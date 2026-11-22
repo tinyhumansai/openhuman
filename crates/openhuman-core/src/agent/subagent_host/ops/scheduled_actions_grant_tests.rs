@@ -39,11 +39,22 @@ fn an_opted_in_sandboxed_direct_child_in_the_roots_workspace_is_granted() {
         scheduled_actions_child_grant(&facts(&definition, Some(&workspace), Some(&workspace))),
         Ok(())
     );
-    // A root on the process-wide action dir (no descriptor) and a child that
-    // stays there too share the workspace.
+}
+
+#[test]
+fn a_root_without_a_workspace_descriptor_grants_no_child() {
+    // `None == None` must not read as "same workspace": a root on the bare
+    // action dir has no descriptor, and a child resumed without one would
+    // otherwise be granted into a workspace nobody pinned.
+    let definition = acting_child();
     assert_eq!(
         scheduled_actions_child_grant(&facts(&definition, None, None)),
-        Ok(())
+        Err(ChildGrantRefusal::RootHasNoWorkspace)
+    );
+    let workspace = root_workspace();
+    assert_eq!(
+        scheduled_actions_child_grant(&facts(&definition, None, Some(&workspace))),
+        Err(ChildGrantRefusal::RootHasNoWorkspace)
     );
 }
 
