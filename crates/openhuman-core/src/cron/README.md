@@ -176,11 +176,41 @@ in `agent_id`, the definition sets `scheduled_actions = true`, its tools are
 SaaS mode. The run then executes as `TrustedAutomation { CronActions }`, and
 `run_agent_job_for_run` marks the session it built
 (`OpenHumanSessionHost::enable_scheduled_actions`). The gate skips the
-read-only cron stage only when all three hold: the `CronActions` origin, the
-marked session, and a root run (`current_run_depth() == 0`). A sub-agent the
-run spawns inherits the origin but not the mark, so it stays read-only. The
-approval engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so
-the root's tools run without a person's approval.
+read-only cron stage only when all three hold: the `CronActions` origin, a
+marked run, and a run depth of 0 or 1 (`current_run_depth()`). The approval
+engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so the
+root's tools run without a person's approval.
+
+A sub-agent the run spawns inherits the origin but not the mark, so it is
+read-only by default. The sub-agent runner re-marks one direct child
+(`agent/subagent_host/ops/scheduled_actions_grant.rs`) only when all of these
+hold:
+
+- its tree's root is the scheduled-actions run (`scheduled_actions_root` on the
+  run context) and the child is at depth 1;
+- the child's own definition passes the same definition checks as the root
+  (`scheduled_actions = true`, `named` tools, not SaaS);
+- the child's definition is `sandbox_mode = "sandboxed"`;
+- the child runs in the root's workspace: a spawn that hands it a different
+  workspace descriptor (a delegated worktree) is not granted.
+
+A granted child runs its shell files-only when the root's run or its own
+definition sets `sandbox_filesystem_only`. Every later gate stage (autonomy
+tier, approvals, wallet policy, action budget) runs for it exactly as for the
+root. A grandchild (depth 2 or deeper) stays read-only even if it was somehow
+marked.
+
+```toml
+# <workspace>/agents/builder_worker/agent.toml: a child the builder may hand
+# acting work to.
+id = "builder_worker"
+when_to_use = "Runs one build step for the scheduled builder"
+scheduled_actions = true
+sandbox_mode = "sandboxed"
+
+[tools]
+named = ["shell", "file_read", "file_write"]
+```
 
 `CronActions` also counts as trusted automation for the wallet: its root run
 may call `wallet_balances` and `wallet_execute_prepared` (executes only when
