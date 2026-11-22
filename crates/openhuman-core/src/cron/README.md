@@ -192,7 +192,11 @@ hold:
   (`scheduled_actions = true`, `named` tools, not SaaS);
 - the child's definition is `sandbox_mode = "sandboxed"`;
 - the child runs in the root's workspace: a spawn that hands it a different
-  workspace descriptor (a delegated worktree) is not granted.
+  workspace descriptor (a delegated worktree) is not granted. In practice the
+  root needs a `scheduled_workspace` (below). A root on the bare `action_dir`
+  carries no descriptor, and `spawn_subagent` then gives its child one for the
+  core's `workspace_dir`, which is not where the root works, so no child of
+  such a root is granted.
 
 A granted child runs its shell files-only when the root's run or its own
 definition sets `sandbox_filesystem_only`. Every later gate stage (autonomy
