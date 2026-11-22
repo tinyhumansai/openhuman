@@ -344,7 +344,7 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
 {
     use crate::core::runtime::turn_origin::TrustedAutomationSource;
     use crate::web3::wallet::automation_tools::{WalletBalancesTool, WalletExecutePreparedTool};
-    let wallet_gate = || {
+    let wallet_gate_marked = |marked: bool| {
         OpenHumanSecurityGate::new(
             Arc::new(SecurityPolicy {
                 enabled: false,
@@ -355,8 +355,9 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
                 Box::new(WalletExecutePreparedTool) as Box<dyn Tool>,
             ])],
         )
-        .with_scheduled_actions(true)
+        .with_scheduled_actions(marked)
     };
+    let wallet_gate = || wallet_gate_marked(true);
     let args = json!({ "quoteId": "q", "confirmed": true });
     for tool_name in ["wallet_balances", "wallet_execute_prepared"] {
         let allowed = scheduled_decision(
