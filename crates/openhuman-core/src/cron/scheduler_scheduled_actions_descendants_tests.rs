@@ -205,7 +205,6 @@ async fn run_and_collect_acting_tool_errors(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "storage-sqlite")]
 async fn scheduled_actions_child_that_opts_in_and_is_sandboxed_runs_its_acting_tool() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let model = std::sync::Arc::new(ActionTreeModel::new("task_manager_agent", None));
@@ -233,7 +232,6 @@ async fn scheduled_actions_child_that_opts_in_and_is_sandboxed_runs_its_acting_t
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "storage-sqlite")]
 async fn scheduled_actions_child_that_does_not_opt_in_stays_read_only() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let model = std::sync::Arc::new(ActionTreeModel::new("task_manager_agent", None));
@@ -258,7 +256,6 @@ const RELAY_AGENT: &str = "scheduled_actions_relay";
 const LEAF_AGENT: &str = "scheduled_actions_leaf";
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "storage-sqlite")]
 async fn scheduled_actions_grandchild_stays_read_only_even_when_it_opts_in() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let model = std::sync::Arc::new(ActionTreeModel::new(RELAY_AGENT, Some(LEAF_AGENT)));

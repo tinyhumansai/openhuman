@@ -157,6 +157,7 @@ mod halt_and_persist_tests;
 mod headless_descendants_tests;
 #[path = "scheduler_host_agent_tests.rs"]
 mod host_agent_tests;
+#[cfg(feature = "storage-sqlite")]
 #[path = "scheduler_scheduled_actions_descendants_tests.rs"]
 mod scheduled_actions_descendants_tests;
 #[path = "scheduler_transcript_isolation_tests.rs"]
