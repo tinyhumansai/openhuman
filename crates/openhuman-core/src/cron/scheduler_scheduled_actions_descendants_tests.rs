@@ -9,7 +9,6 @@
 use super::headless_descendants_tests::{
     dispatch_scheduled_agent, list_runs_off_runtime, scheduled_agent_fixture_with,
 };
-use super::*;
 use async_trait::async_trait;
 use tinyagents_definition::{SandboxMode, SubagentEntry, ToolScope};
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
