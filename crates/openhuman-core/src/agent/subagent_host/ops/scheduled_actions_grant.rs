@@ -24,7 +24,8 @@ pub(super) struct ChildGrantFacts<'a> {
     pub(super) child_depth: usize,
     /// The child's own agent definition.
     pub(super) definition: &'a AgentDefinition,
-    /// The workspace descriptor the root runs in (`None`: the action dir).
+    /// The workspace descriptor the root runs in (`None`: the bare action dir,
+    /// which grants no child).
     pub(super) root_workspace: Option<&'a tinytools::WorkspaceDescriptor>,
     /// The workspace descriptor the child will run in.
     pub(super) child_workspace: Option<&'a tinytools::WorkspaceDescriptor>,
@@ -43,6 +44,9 @@ pub(super) enum ChildGrantRefusal {
     Definition(ScheduledActionsRefusal),
     /// The child's definition is not `sandbox_mode = "sandboxed"`.
     NotSandboxed,
+    /// The root carries no workspace descriptor, so nothing pins the child's
+    /// workspace to the root's (two absent descriptors are not "the same").
+    RootHasNoWorkspace,
     /// The child would run in a workspace other than the root's.
     OtherWorkspace,
 }
@@ -52,7 +56,8 @@ pub(super) enum ChildGrantRefusal {
 /// Granted only when ALL hold: the tree's root is a scheduled-actions run, the
 /// child is at depth exactly 1, its own definition passes the root's
 /// definition checks (`scheduled_actions = true`, a named tool scope, not
-/// SaaS), it is sandboxed, and it runs in exactly the root's workspace.
+/// SaaS), it is sandboxed, and it runs in exactly the root's workspace (so the root
+/// must have a `scheduled_workspace`).
 pub(super) fn scheduled_actions_child_grant(
     facts: &ChildGrantFacts<'_>,
 ) -> Result<(), ChildGrantRefusal> {
@@ -67,6 +72,9 @@ pub(super) fn scheduled_actions_child_grant(
     }
     if facts.definition.sandbox_mode != SandboxMode::Sandboxed {
         return Err(ChildGrantRefusal::NotSandboxed);
+    }
+    if facts.root_workspace.is_none() {
+        return Err(ChildGrantRefusal::RootHasNoWorkspace);
     }
     if facts.child_workspace != facts.root_workspace {
         return Err(ChildGrantRefusal::OtherWorkspace);

@@ -302,8 +302,9 @@ host network, and the module admits it only for a trusted operator source
 outside SaaS. Channel turns and text the host did not author keep the full
 requirements. A sub-agent's run carries its parent's setting, not its own
 definition's (the run context copies it into every child); a child granted
-scheduled actions runs files-only when its parent's run or its own definition
-asks for it. Off unless the definition names it.
+scheduled actions runs files-only only when its parent's run does, so set the
+option on the root's definition; a child's own setting cannot enable it. Off
+unless the root's definition names it.
 
 ### After the run
 

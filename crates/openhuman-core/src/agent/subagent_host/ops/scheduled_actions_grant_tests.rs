@@ -129,11 +129,6 @@ fn a_child_given_another_workspace_is_not_granted() {
         scheduled_actions_child_grant(&facts(&definition, Some(&root), Some(&worktree))),
         Err(ChildGrantRefusal::OtherWorkspace)
     );
-    // Leaving the action dir for a descriptor of its own is another workspace too.
-    assert_eq!(
-        scheduled_actions_child_grant(&facts(&definition, None, Some(&worktree))),
-        Err(ChildGrantRefusal::OtherWorkspace)
-    );
     // Same root, wider trusted roots: not the root's workspace.
     let widened = root_workspace().with_trusted_root("/srv/elsewhere");
     assert_eq!(
@@ -160,7 +155,7 @@ fn direct_child_of_scheduled_actions_root(
     root.scheduled_actions = true;
     root.scheduled_actions_root = true;
     root.sandbox_filesystem_only = root_files_only;
-    let mut child = root.child();
+    let mut child = root.with_workspace(root_workspace()).child();
     child.spawn_depth = 1;
     child
 }
@@ -213,7 +208,7 @@ fn an_ungranted_child_keeps_its_inherited_context_unchanged() {
 #[test]
 fn a_child_spawned_into_another_workspace_is_not_granted_by_the_runner() {
     let definition = acting_child();
-    let mut child = direct_child_of_scheduled_actions_root(false).with_workspace(root_workspace());
+    let mut child = direct_child_of_scheduled_actions_root(false);
     let worktree = tinytools::WorkspaceDescriptor::new("/srv/worktrees/task-1");
     assert!(!grant_scheduled_actions_to_child(
         &mut child,
@@ -227,4 +222,22 @@ fn a_child_spawned_into_another_workspace_is_not_granted_by_the_runner() {
         &definition,
         Some(&root_workspace())
     ));
+}
+
+#[test]
+fn a_resumed_child_of_a_root_without_a_workspace_is_not_granted_by_the_runner() {
+    // The resume path hands the runner no descriptor; with no root descriptor
+    // either, nothing pins the workspace, so the child stays read-only.
+    let definition = acting_child();
+    let mut root = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    root.scheduled_actions = true;
+    root.scheduled_actions_root = true;
+    let mut child = root.child();
+    child.spawn_depth = 1;
+    assert!(!grant_scheduled_actions_to_child(
+        &mut child,
+        &definition,
+        None
+    ));
+    assert!(!child.scheduled_actions);
 }
