@@ -332,7 +332,12 @@ pub struct OpenHumanRunContext {
     /// Sandbox mode of the agent definition executing this turn.
     pub sandbox_mode: Option<SandboxMode>,
     /// The definition executing this turn opted its sandboxed shell into a
-    /// files-only jail (`AgentExt::sandbox_filesystem_only`). Root runs only.
+    /// files-only jail (`AgentExt::sandbox_filesystem_only`). Set from the
+    /// definition for a session's root run; `child()` copies the parent's value
+    /// and `for_subagent` keeps it, so a sub-agent runs with its parent's
+    /// setting, not its own definition's. A child granted scheduled actions
+    /// also gets it when its own definition asks
+    /// (`agent::subagent_host::ops::scheduled_actions_grant`).
     pub sandbox_filesystem_only: bool,
     /// Zero-based OpenHuman subagent depth (the root is zero).
     pub spawn_depth: usize,
