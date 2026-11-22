@@ -155,11 +155,13 @@ fn direct_child_of_scheduled_actions_root(
 }
 
 #[test]
-fn a_granted_child_acts_and_keeps_a_files_only_jail_the_root_or_its_definition_asks_for() {
+fn a_granted_child_acts_under_the_roots_files_only_setting_not_its_own() {
+    // Files-only gives the shell the host network, so a child's own
+    // definition must not turn it on under a root that runs without it.
     for (root_files_only, definition_files_only, expected) in [
         (false, false, false),
         (true, false, true),
-        (false, true, true),
+        (false, true, false),
         (true, true, true),
     ] {
         let mut definition = acting_child();

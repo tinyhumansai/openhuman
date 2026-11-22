@@ -335,8 +335,8 @@ pub struct OpenHumanRunContext {
     /// files-only jail (`AgentExt::sandbox_filesystem_only`). Set from the
     /// definition for a session's root run; `child()` copies the parent's value
     /// and `for_subagent` keeps it, so a sub-agent runs with its parent's
-    /// setting, not its own definition's. A child granted scheduled actions
-    /// also gets it when its own definition asks
+    /// setting, not its own definition's. That holds for a child granted
+    /// scheduled actions too
     /// (`agent::subagent_host::ops::scheduled_actions_grant`).
     pub sandbox_filesystem_only: bool,
     /// Zero-based OpenHuman subagent depth (the root is zero).

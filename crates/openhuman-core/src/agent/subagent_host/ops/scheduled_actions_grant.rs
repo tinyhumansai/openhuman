@@ -80,9 +80,10 @@ pub(super) fn scheduled_actions_child_grant(
 /// `child` is the context `for_subagent` built from the parent's `child()`, so
 /// its `workspace` is still the root's; `spawn_workspace` is the descriptor the
 /// runner hands the child run, which replaces it when present. A granted child
-/// runs its shell files-only when the root's run or its own definition asks for
-/// it, never less jailed on files than the root. An ungranted child is left
-/// exactly as built.
+/// keeps the root's `sandbox_filesystem_only` exactly as inherited: its own
+/// definition's value is not applied, because files-only also opens the host
+/// network to the shell and a child must not get more network than its root.
+/// An ungranted child is left exactly as built.
 pub(super) fn grant_scheduled_actions_to_child(
     child: &mut OpenHumanRunContext,
     definition: &AgentDefinition,
@@ -103,7 +104,6 @@ pub(super) fn grant_scheduled_actions_to_child(
     match decision {
         Ok(()) => {
             child.scheduled_actions = true;
-            child.sandbox_filesystem_only |= definition.extensions.sandbox_filesystem_only;
             tracing::info!(
                 agent_id = %definition.id,
                 spawn_depth = child.spawn_depth,

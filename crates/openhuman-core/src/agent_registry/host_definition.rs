@@ -130,10 +130,10 @@ pub struct AgentExt {
     /// it never reaches text the host did not author. It is read from the
     /// definition of a session's root run. A sub-agent's run keeps whatever its
     /// parent's run had (`OpenHumanRunContext::child` carries it), and the
-    /// sub-agent's own definition value is not applied, except for a child
-    /// granted scheduled actions, which runs files-only when its parent's run
-    /// or its own definition asks for it. Channel turns never get it. Off unless
-    /// the definition names it.
+    /// sub-agent's own definition value is not applied, not even for a child
+    /// granted scheduled actions: files-only also gives the shell the host
+    /// network, and a child must not get more of it than its root. Channel
+    /// turns never get it. Off unless the definition names it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandbox_filesystem_only: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.

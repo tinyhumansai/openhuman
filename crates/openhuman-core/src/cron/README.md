@@ -198,8 +198,10 @@ hold:
   core's `workspace_dir`, which is not where the root works, so no child of
   such a root is granted.
 
-A granted child runs its shell files-only when the root's run or its own
-definition sets `sandbox_filesystem_only`. Every later gate stage (autonomy
+A granted child runs its shell with the root's `sandbox_filesystem_only`
+setting, whatever its own definition says: files-only also gives the shell
+the host network, and a child must not get more of it than its root. Every
+later gate stage (autonomy
 tier, approvals, wallet policy, action budget) runs for it exactly as for the
 root. A grandchild (depth 2 or deeper) stays read-only even if it was somehow
 marked.
