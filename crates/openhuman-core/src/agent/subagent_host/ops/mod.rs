@@ -28,6 +28,7 @@ mod prompt;
 mod provider;
 mod runner;
 mod runner_artifacts;
+mod scheduled_actions_grant;
 mod worker_mirror;
 mod worker_thread;
 
