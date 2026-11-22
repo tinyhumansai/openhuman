@@ -519,7 +519,9 @@ install_linux_deb() {
 install_macos() {
   local apps_dir="${HOME}/Applications"
   local app_path="${apps_dir}/OpenHuman.app"
-  mkdir -p "${apps_dir}"
+  if [ "${DRY_RUN}" != true ]; then
+    mkdir -p "${apps_dir}"
+  fi
 
   if [[ "${ASSET_NAME}" =~ \.app\.tar\.gz$ ]]; then
     log_info "Installing OpenHuman.app into ${apps_dir}"
@@ -585,7 +587,9 @@ install_linux() {
     return 0
   fi
 
-  mkdir -p "${bin_dir}" "${desktop_dir}"
+  if [ "${DRY_RUN}" != true ]; then
+    mkdir -p "${bin_dir}" "${desktop_dir}"
+  fi
 
   if [[ ! "${ASSET_NAME}" =~ \.AppImage$ ]]; then
     log_err "Expected AppImage or .deb for Linux install, got: ${ASSET_NAME}"

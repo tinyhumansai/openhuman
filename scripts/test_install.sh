@@ -190,6 +190,53 @@ fi
   fi
 )
 
+# --dry-run promises "Print actions without mutating local files": neither the
+# AppImage nor the macOS install path may create directories under $HOME.
+(
+  HOME="$(mktemp -d)"
+  trap 'rm -rf "$HOME"' EXIT
+  OS=linux
+  ARCH=x86_64
+  ASSET_NAME="OpenHuman_0.0.0-test_amd64.AppImage"
+  DOWNLOAD_PATH="/tmp/OpenHuman_0.0.0-test_amd64.AppImage"
+  DRY_RUN=true
+  install_output="$(install_linux)"
+  if [[ "$install_output" != *"DRY RUN: install ${DOWNLOAD_PATH}"* ]]; then
+    echo "FAIL: AppImage dry-run should print the install action"
+    echo "$install_output"
+    exit 1
+  fi
+  leftovers="$(find "$HOME" -mindepth 1)"
+  if [[ -n "$leftovers" ]]; then
+    echo "FAIL: AppImage dry-run must not create anything under HOME, found:"
+    echo "$leftovers"
+    exit 1
+  fi
+)
+
+(
+  HOME="$(mktemp -d)"
+  trap 'rm -rf "$HOME"' EXIT
+  OS=darwin
+  ARCH=aarch64
+  ASSET_NAME="OpenHuman_0.0.0-test_aarch64.app.tar.gz"
+  DOWNLOAD_PATH="/tmp/OpenHuman_0.0.0-test_aarch64.app.tar.gz"
+  TMP_DIR="/tmp/openhuman-test-dry-run"
+  DRY_RUN=true
+  install_output="$(install_macos)"
+  if [[ "$install_output" != *"DRY RUN: replace ${HOME}/Applications/OpenHuman.app"* ]]; then
+    echo "FAIL: macOS dry-run should print the replace action"
+    echo "$install_output"
+    exit 1
+  fi
+  leftovers="$(find "$HOME" -mindepth 1)"
+  if [[ -n "$leftovers" ]]; then
+    echo "FAIL: macOS dry-run must not create anything under HOME, found:"
+    echo "$leftovers"
+    exit 1
+  fi
+)
+
 python3 - "$REPO_ROOT/crates/openhuman-app/tauri.conf.json" <<'PY'
 import json, sys
 
