@@ -187,6 +187,11 @@ const CronJobFormModal = ({
   const [command, setCommand] = useState(initialState.command);
   const [sessionTarget, setSessionTarget] = useState<SessionTarget>(initialState.sessionTarget);
   const [delivery, setDelivery] = useState<DeliveryMode>(initialState.delivery);
+  // Whether the user picked a value in these selects. Edit mode sends them
+  // only when touched, because their initial value can be a fallback for a
+  // stored value the selects cannot show (see the edit patch below).
+  const [sessionTargetTouched, setSessionTargetTouched] = useState(false);
+  const [deliveryTouched, setDeliveryTouched] = useState(false);
   const [deleteAfterRun, setDeleteAfterRun] = useState(initialState.deleteAfterRun);
 
   const [saving, setSaving] = useState(false);
@@ -252,18 +257,16 @@ const CronJobFormModal = ({
         // The selects only offer isolated/main and none/proactive, so a job
         // created from a chat (session_target `current`, delivery `origin` or
         // `announce` with a channel/recipient) is shown with a fallback value.
-        // Send those fields only when the user actually changed them; the core
-        // replaces `delivery` wholesale, so re-sending the fallback would
-        // detach the job from the conversation it reports back to.
-        const sessionTargetChanged = sessionTarget !== initialState.sessionTarget;
-        const deliveryChanged = delivery !== initialState.delivery;
+        // Send those fields only when the user picked a value; the core
+        // replaces `delivery` wholesale, so re-sending an untouched fallback
+        // would detach the job from the conversation it reports back to.
         const patch: Record<string, unknown> = {
           name: name.trim() || null,
           schedule,
           ...(jobType === 'agent' ? { prompt: prompt.trim() } : {}),
           ...(jobType === 'shell' ? { command: command.trim() } : {}),
-          ...(jobType === 'agent' && sessionTargetChanged ? { session_target: sessionTarget } : {}),
-          ...(jobType === 'agent' && deliveryChanged
+          ...(jobType === 'agent' && sessionTargetTouched ? { session_target: sessionTarget } : {}),
+          ...(jobType === 'agent' && deliveryTouched
             ? { delivery: { mode: delivery, best_effort: true } }
             : {}),
           delete_after_run: deleteAfterRun,
@@ -545,7 +548,10 @@ const CronJobFormModal = ({
             <NativeSelect
               data-testid="cron-form-session-target"
               value={sessionTarget}
-              onChange={e => setSessionTarget(e.target.value as SessionTarget)}
+              onChange={e => {
+                setSessionTarget(e.target.value as SessionTarget);
+                setSessionTargetTouched(true);
+              }}
               disabled={saving}
               className="w-full">
               <option value="isolated">{t('settings.cron.jobs.formSessionIsolated')}</option>
@@ -563,7 +569,10 @@ const CronJobFormModal = ({
             <NativeSelect
               data-testid="cron-form-delivery"
               value={delivery}
-              onChange={e => setDelivery(e.target.value as DeliveryMode)}
+              onChange={e => {
+                setDelivery(e.target.value as DeliveryMode);
+                setDeliveryTouched(true);
+              }}
               disabled={saving}
               className="w-full">
               <option value="proactive">{t('settings.cron.jobs.formDeliveryProactive')}</option>

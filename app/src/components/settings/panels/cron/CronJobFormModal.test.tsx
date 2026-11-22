@@ -113,6 +113,20 @@ describe('CronJobFormModal edit mode', () => {
     expect(patch.session_target).toBe('main');
   });
 
+  it('sends the fallback values when the user re-selects them to detach the job', async () => {
+    const onUpdate = renderEdit(job());
+    fireEvent.change(screen.getByTestId('cron-form-delivery'), { target: { value: 'proactive' } });
+    fireEvent.change(screen.getByTestId('cron-form-delivery'), { target: { value: 'none' } });
+    fireEvent.change(screen.getByTestId('cron-form-session-target'), {
+      target: { value: 'isolated' },
+    });
+
+    const patch = await submittedPatch(onUpdate);
+
+    expect(patch.delivery).toEqual({ mode: 'none', best_effort: true });
+    expect(patch.session_target).toBe('isolated');
+  });
+
   it('drops tz and active hours when the schedule switches away from cron', async () => {
     const onUpdate = renderEdit(job());
     fireEvent.click(screen.getByTestId('cron-form-schedule-every'));
