@@ -127,8 +127,13 @@ pub struct AgentExt {
     /// stay jailed to the run's root; the network is the host's. The option is
     /// sent only for the operator's own agent spawn with the host network, and
     /// the module admits it only for a trusted operator source outside SaaS, so
-    /// it never reaches text the host did not author. Sub-agents and channel
-    /// turns never inherit it. Off unless the definition names it.
+    /// it never reaches text the host did not author. It is read from the
+    /// definition of a session's root run. A sub-agent's run keeps whatever its
+    /// parent's run had (`OpenHumanRunContext::child` carries it), and the
+    /// sub-agent's own definition value is not applied, except for a child
+    /// granted scheduled actions, which runs files-only when its parent's run
+    /// or its own definition asks for it. Channel turns never get it. Off unless
+    /// the definition names it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandbox_filesystem_only: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
