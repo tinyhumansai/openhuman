@@ -428,9 +428,12 @@ async fn cron_job_without_the_scheduled_actions_opt_in_still_denies_shell_and_wr
 }
 
 #[tokio::test]
-async fn scheduled_actions_subagent_and_unscoped_runs_stay_read_only() {
+async fn scheduled_actions_grandchild_and_unscoped_runs_stay_read_only_even_when_marked() {
     use crate::core::runtime::turn_origin::TrustedAutomationSource;
-    for depth in [Some(1), None] {
+    // The depth check is a second belt behind the per-run grant: a run deeper
+    // than a direct child of the cron root, or one with no run depth at all,
+    // stays read-only even if its gate were somehow marked.
+    for depth in [Some(2), Some(3), None] {
         let decision = scheduled_decision(
             disabled_autonomy_gate().with_scheduled_actions(true),
             TrustedAutomationSource::CronActions,
@@ -444,6 +447,54 @@ async fn scheduled_actions_subagent_and_unscoped_runs_stay_read_only() {
             "depth {depth:?} must not inherit the lift"
         );
     }
+}
+
+#[tokio::test]
+async fn granted_direct_child_of_a_scheduled_actions_root_may_use_an_acting_tool() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let decision = scheduled_decision(
+        disabled_autonomy_gate().with_scheduled_actions(true),
+        TrustedAutomationSource::CronActions,
+        Some(1),
+        "write_file",
+        json!({ "path": "notes.md" }),
+    )
+    .await;
+    assert_eq!(decision, GateDecision::Allow);
+}
+
+#[tokio::test]
+async fn ungranted_direct_child_of_a_scheduled_actions_root_stays_read_only() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let decision = scheduled_decision(
+        disabled_autonomy_gate(),
+        TrustedAutomationSource::CronActions,
+        Some(1),
+        "write_file",
+        json!({ "path": "notes.md" }),
+    )
+    .await;
+    match decision {
+        GateDecision::Deny { reason } => assert!(
+            reason.contains("Scheduled agent turns may use read-only tools only"),
+            "{reason}"
+        ),
+        other => panic!("expected the cron denial, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn marked_direct_child_under_a_plain_cron_origin_stays_read_only() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let decision = scheduled_decision(
+        disabled_autonomy_gate().with_scheduled_actions(true),
+        TrustedAutomationSource::Cron,
+        Some(1),
+        "write_file",
+        json!({ "path": "notes.md" }),
+    )
+    .await;
+    assert!(!decision.is_allowed(), "plain Cron must stay read-only");
 }
 
 // Fails closed only while security is enforced: a build without the
