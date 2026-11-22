@@ -100,11 +100,13 @@ impl ChatModel<()> for ActionTreeModel {
             });
         }
         if user_text_contains(&request, CHILD_PROMPT) {
-            return Ok(match (self.child_calls.fetch_add(1, SeqCst), self.grandchild_agent) {
-                (0, Some(grandchild)) => spawn(grandchild, GRANDCHILD_PROMPT, "grandchild"),
-                (0, None) => acting_call("scheduled-actions-child-act"),
-                _ => ModelResponse::assistant("scheduled-actions-child-done"),
-            });
+            return Ok(
+                match (self.child_calls.fetch_add(1, SeqCst), self.grandchild_agent) {
+                    (0, Some(grandchild)) => spawn(grandchild, GRANDCHILD_PROMPT, "grandchild"),
+                    (0, None) => acting_call("scheduled-actions-child-act"),
+                    _ => ModelResponse::assistant("scheduled-actions-child-done"),
+                },
+            );
         }
         Ok(match self.root_calls.fetch_add(1, SeqCst) {
             0 => spawn(self.child_agent, CHILD_PROMPT, "child"),
@@ -171,7 +173,9 @@ async fn run_and_collect_acting_tool_errors(
             "scheduled run did not drain (root calls {}, child calls {}, grandchild calls {})",
             model.root_calls.load(std::sync::atomic::Ordering::SeqCst),
             model.child_calls.load(std::sync::atomic::Ordering::SeqCst),
-            model.grandchild_calls.load(std::sync::atomic::Ordering::SeqCst),
+            model
+                .grandchild_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
         ),
     }
     let runs = list_runs_off_runtime(&config, &job.id)
@@ -194,17 +198,21 @@ async fn run_and_collect_acting_tool_errors(
         let Some(run_id) = job.subagent_run_id.as_deref() else {
             continue;
         };
-        let events = crate::agent::tinyagents::journal::read_run_events(&inspect_dispatch, run_id, 0)
-            .await
-            .expect("read a descendant's durable tool events");
-        if let Some(error) = events.iter().find_map(|observation| match &observation.event {
-            tinyagents_harness::events::AgentEvent::ToolCompleted {
-                tool_name,
-                error: Some(error),
-                ..
-            } if tool_name == ACTING_TOOL => Some(error.clone()),
-            _ => None,
-        }) {
+        let events =
+            crate::agent::tinyagents::journal::read_run_events(&inspect_dispatch, run_id, 0)
+                .await
+                .expect("read a descendant's durable tool events");
+        if let Some(error) = events
+            .iter()
+            .find_map(|observation| match &observation.event {
+                tinyagents_harness::events::AgentEvent::ToolCompleted {
+                    tool_name,
+                    error: Some(error),
+                    ..
+                } if tool_name == ACTING_TOOL => Some(error.clone()),
+                _ => None,
+            })
+        {
             errors.insert(job.agent.clone(), error);
         }
     }

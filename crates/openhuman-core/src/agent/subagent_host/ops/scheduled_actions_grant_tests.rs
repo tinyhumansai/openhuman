@@ -166,9 +166,13 @@ fn a_granted_child_acts_under_the_roots_files_only_setting_not_its_own() {
     ] {
         let mut definition = acting_child();
         definition.extensions.sandbox_filesystem_only = definition_files_only;
-        let mut child = direct_child_of_scheduled_actions_root(root_files_only)
-            .for_subagent(&definition, None);
-        assert!(grant_scheduled_actions_to_child(&mut child, &definition, None));
+        let mut child =
+            direct_child_of_scheduled_actions_root(root_files_only).for_subagent(&definition, None);
+        assert!(grant_scheduled_actions_to_child(
+            &mut child,
+            &definition,
+            None
+        ));
         assert!(child.scheduled_actions);
         assert_eq!(
             child.sandbox_filesystem_only, expected,
@@ -183,9 +187,13 @@ fn an_ungranted_child_keeps_its_inherited_context_unchanged() {
         let mut definition = acting_child();
         definition.extensions.scheduled_actions = false;
         definition.extensions.sandbox_filesystem_only = true;
-        let mut child = direct_child_of_scheduled_actions_root(root_files_only)
-            .for_subagent(&definition, None);
-        assert!(!grant_scheduled_actions_to_child(&mut child, &definition, None));
+        let mut child =
+            direct_child_of_scheduled_actions_root(root_files_only).for_subagent(&definition, None);
+        assert!(!grant_scheduled_actions_to_child(
+            &mut child,
+            &definition,
+            None
+        ));
         assert!(!child.scheduled_actions);
         assert_eq!(child.sandbox_filesystem_only, root_files_only);
     }
@@ -194,8 +202,7 @@ fn an_ungranted_child_keeps_its_inherited_context_unchanged() {
 #[test]
 fn a_child_spawned_into_another_workspace_is_not_granted_by_the_runner() {
     let definition = acting_child();
-    let mut child =
-        direct_child_of_scheduled_actions_root(false).with_workspace(root_workspace());
+    let mut child = direct_child_of_scheduled_actions_root(false).with_workspace(root_workspace());
     let worktree = tinytools::WorkspaceDescriptor::new("/srv/worktrees/task-1");
     assert!(!grant_scheduled_actions_to_child(
         &mut child,

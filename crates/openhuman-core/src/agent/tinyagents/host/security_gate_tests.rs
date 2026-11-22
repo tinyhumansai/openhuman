@@ -388,7 +388,10 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
         args.clone(),
     )
     .await;
-    assert!(!sub.is_allowed(), "an ungranted sub-agent must stay read-only");
+    assert!(
+        !sub.is_allowed(),
+        "an ungranted sub-agent must stay read-only"
+    );
     // A granted direct child gets exactly the root's decision: the wallet's
     // own automation policy still runs inside the tool, as for the root.
     let granted = scheduled_decision(
@@ -399,7 +402,11 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
         args.clone(),
     )
     .await;
-    assert_eq!(granted, GateDecision::Allow, "granted child matches the root");
+    assert_eq!(
+        granted,
+        GateDecision::Allow,
+        "granted child matches the root"
+    );
     let grandchild = scheduled_decision(
         wallet_gate(),
         TrustedAutomationSource::CronActions,

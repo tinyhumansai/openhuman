@@ -244,7 +244,10 @@ fn a_subagent_inherits_the_parents_files_only_jail_not_its_own_definitions() {
     let mut parent = OpenHumanRunContext::new();
     parent.sandbox_filesystem_only = true;
     assert!(
-        parent.child().for_subagent(&plain, None).sandbox_filesystem_only,
+        parent
+            .child()
+            .for_subagent(&plain, None)
+            .sandbox_filesystem_only,
         "a child of a files-only parent keeps it although its definition does not ask"
     );
 
