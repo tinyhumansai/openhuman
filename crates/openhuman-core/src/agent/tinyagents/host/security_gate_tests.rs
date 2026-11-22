@@ -379,15 +379,36 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
     )
     .await;
     assert!(!denied.is_allowed(), "plain Cron must stay refused");
+    // A sub-agent the runner did not grant scheduled actions stays read-only.
     let sub = scheduled_decision(
+        wallet_gate_marked(false),
+        TrustedAutomationSource::CronActions,
+        Some(1),
+        "wallet_execute_prepared",
+        args.clone(),
+    )
+    .await;
+    assert!(!sub.is_allowed(), "an ungranted sub-agent must stay read-only");
+    // A granted direct child gets exactly the root's decision: the wallet's
+    // own automation policy still runs inside the tool, as for the root.
+    let granted = scheduled_decision(
         wallet_gate(),
         TrustedAutomationSource::CronActions,
         Some(1),
         "wallet_execute_prepared",
+        args.clone(),
+    )
+    .await;
+    assert_eq!(granted, GateDecision::Allow, "granted child matches the root");
+    let grandchild = scheduled_decision(
+        wallet_gate(),
+        TrustedAutomationSource::CronActions,
+        Some(2),
+        "wallet_execute_prepared",
         args,
     )
     .await;
-    assert!(!sub.is_allowed(), "a sub-agent must stay read-only");
+    assert!(!grandchild.is_allowed(), "a grandchild must stay read-only");
 }
 
 #[tokio::test]
