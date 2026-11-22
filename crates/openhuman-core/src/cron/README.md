@@ -293,8 +293,11 @@ isolation. A definition whose shell already gets the host network may set
 `sandbox::spawn_plan::files_only`): files jailed to the run's root, the host's
 network. The host sends it only for the operator's own agent spawn with the
 host network, and the module admits it only for a trusted operator source
-outside SaaS. Sub-agents, channel turns, and text the host did not author keep
-the full requirements. Off unless the definition names it.
+outside SaaS. Channel turns and text the host did not author keep the full
+requirements. A sub-agent's run carries its parent's setting, not its own
+definition's (the run context copies it into every child); a child granted
+scheduled actions runs files-only when its parent's run or its own definition
+asks for it. Off unless the definition names it.
 
 ### After the run
 
