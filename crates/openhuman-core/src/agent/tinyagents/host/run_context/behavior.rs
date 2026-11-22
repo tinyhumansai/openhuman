@@ -34,6 +34,7 @@ impl OpenHumanRunContext {
             tool_result_artifact_index: None,
             headless_descendant_settlement: false,
             scheduled_actions: false,
+            scheduled_actions_root: false,
             headless_descendant_owner: None,
             attachment_placeholders: Arc::new(Vec::new()),
             native_staged_parts: Vec::new(),
