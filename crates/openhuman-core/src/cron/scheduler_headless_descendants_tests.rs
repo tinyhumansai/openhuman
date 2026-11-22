@@ -142,7 +142,7 @@ pub(super) fn scheduled_agent_fixture_with(
 /// scheduler's own callbacks and timers, so no watchdog can fire and the
 /// runner's 5-minute kill is the first thing to notice. A plain thread keeps
 /// the runtime turning and the deadline real.
-async fn list_runs_off_runtime(
+pub(super) async fn list_runs_off_runtime(
     config: &Config,
     job_id: &str,
 ) -> anyhow::Result<Vec<tinyflows_bus::schedule::types::CronRun>> {
@@ -159,7 +159,7 @@ async fn list_runs_off_runtime(
     }
 }
 
-async fn dispatch_scheduled_agent(
+pub(super) async fn dispatch_scheduled_agent(
     core: std::sync::Arc<crate::core::runtime::CoreContext>,
     dispatch: crate::core::runtime::DispatchCtx,
     config: Config,
