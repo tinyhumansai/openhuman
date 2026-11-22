@@ -157,12 +157,13 @@ impl OpenHumanSecurityGate {
             cron_source,
             Some(crate::core::runtime::turn_origin::TrustedAutomationSource::CronActions)
         ) && self.scheduled_actions
-            && tinyagents_harness::context::current_run_depth().is_some_and(|run| run.depth == 0);
+            && tinyagents_harness::context::current_run_depth().is_some_and(|run| run.depth <= 1);
         if scheduled_actions_lifted {
             tracing::debug!(
                 target: "tinyagents",
                 tool = %call.tool_name,
-                "[tinyagents::host::security] scheduled-actions cron root: read-only cron stage lifted"
+                depth = tinyagents_harness::context::current_run_depth().map(|run| run.depth),
+                "[tinyagents::host::security] scheduled-actions run: read-only cron stage lifted"
             );
         }
         let is_cron_turn = cron_source.is_some() && !scheduled_actions_lifted;
