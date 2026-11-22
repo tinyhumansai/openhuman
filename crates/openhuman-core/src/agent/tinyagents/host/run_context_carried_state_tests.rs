@@ -202,3 +202,58 @@ fn empty_session_run_options_leave_a_config_that_carries_its_own_untouched() {
         .session_run_options
         .is_empty());
 }
+
+/// The scheduled-actions lift itself stays on the cron root: a child starts
+/// without it. What a child does carry is the fact that its tree's root was a
+/// scheduled-actions run, so the sub-agent runner can decide whether to
+/// re-grant it to one direct child.
+#[test]
+fn a_child_keeps_the_scheduled_actions_root_mark_but_not_the_lift() {
+    let mut root = OpenHumanRunContext::new();
+    root.scheduled_actions = true;
+    root.scheduled_actions_root = true;
+
+    let child = root.child();
+    assert!(!child.scheduled_actions, "the lift is never inherited");
+    assert!(child.scheduled_actions_root, "the root mark is inherited");
+    let grandchild = child.child();
+    assert!(!grandchild.scheduled_actions);
+    assert!(grandchild.scheduled_actions_root);
+    let detached = root.detached_child();
+    assert!(!detached.scheduled_actions);
+    assert!(detached.scheduled_actions_root);
+
+    assert!(!OpenHumanRunContext::new().child().scheduled_actions_root);
+}
+
+/// Pins what a sub-agent's run context carries for the files-only jail: the
+/// parent's value, whatever the child's own definition says. `child()` clones
+/// it and `for_subagent` does not reset it.
+#[test]
+fn a_subagent_inherits_the_parents_files_only_jail_not_its_own_definitions() {
+    let mut files_only = crate::agent_registry::host_definition::AgentDefinition {
+        id: "jailed".into(),
+        ..Default::default()
+    };
+    files_only.extensions.sandbox_filesystem_only = true;
+    let plain = crate::agent_registry::host_definition::AgentDefinition {
+        id: "plain".into(),
+        ..Default::default()
+    };
+
+    let mut parent = OpenHumanRunContext::new();
+    parent.sandbox_filesystem_only = true;
+    assert!(
+        parent.child().for_subagent(&plain, None).sandbox_filesystem_only,
+        "a child of a files-only parent keeps it although its definition does not ask"
+    );
+
+    parent.sandbox_filesystem_only = false;
+    assert!(
+        !parent
+            .child()
+            .for_subagent(&files_only, None)
+            .sandbox_filesystem_only,
+        "a child's own opt-in is not applied to its run"
+    );
+}
