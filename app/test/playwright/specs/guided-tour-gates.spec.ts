@@ -62,6 +62,15 @@ test.describe('Guided tour gates', () => {
       await expect(panel).toContainText(`${index + 1} of 7`);
       await expect.poll(() => page.evaluate(() => window.location.hash)).toMatch(step.hash);
       await expect(page.locator(`[data-walkthrough="${step.target}"]`)).toBeVisible();
+      if (index >= 3 && index <= 5) {
+        await expect(panel).toBeInViewport({ ratio: 1 });
+      }
+      if (index === 3) {
+        // The settings tooltip must also clear the desktop title-bar controls.
+        await expect
+          .poll(async () => (await panel.boundingBox())?.y ?? -1)
+          .toBeGreaterThanOrEqual(32);
+      }
       if (index < steps.length - 1) await clickTourNext(page, index);
     }
     const finalPanel = await tooltip(page);
