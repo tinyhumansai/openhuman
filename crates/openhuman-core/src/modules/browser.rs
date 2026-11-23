@@ -23,6 +23,8 @@ use crate::config::Config;
 pub(crate) mod never_open;
 #[path = "browser_output.rs"]
 mod output;
+#[path = "browser_profile.rs"]
+mod profile;
 use output::{append_output_chunk, check_output_size, finish_output, ReleaseOnDrop};
 
 pub const MODULE_ID: &str = super::desktop::MODULE_ID;
@@ -133,11 +135,33 @@ impl BrowserCallError {
 #[derive(Clone)]
 pub struct BrowserClient {
     config: Arc<Config>,
+    /// Sessions open on a fresh profile whatever `[browser] profile_mode` says.
+    fresh_profile: bool,
 }
 
 impl BrowserClient {
     pub fn new(config: Arc<Config>) -> Self {
-        Self { config }
+        Self {
+            config,
+            fresh_profile: false,
+        }
+    }
+
+    /// This client with every session it opens on a fresh, throwaway profile,
+    /// whatever `[browser] profile_mode` says: what a view-only run's browser
+    /// uses (`AgentExt::browser_view_only`). It never claims, waits for or
+    /// attaches to the persistent profile.
+    pub fn with_fresh_profile(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            fresh_profile: true,
+        }
+    }
+
+    /// The profile folder a session this client opens asks for; `None` is a
+    /// fresh, throwaway profile.
+    pub fn session_profile(&self) -> Option<String> {
+        profile::session_profile(&self.config.browser, self.fresh_profile)
     }
 
     pub fn config(&self) -> &Config {
@@ -188,7 +212,8 @@ impl BrowserClient {
             ));
         }
         let browser = &self.config.browser;
-        if browser.profile_mode == "persistent"
+        if !self.fresh_profile
+            && browser.profile_mode == "persistent"
             && !browser
                 .profile_path
                 .as_ref()
@@ -210,11 +235,7 @@ impl BrowserClient {
         options.headless = browser.headless;
         options.viewport = Viewport::desktop(browser.viewport_width, browser.viewport_height);
         options.executable = browser.chrome_path.clone();
-        options.user_data_dir = if browser.profile_mode == "persistent" {
-            browser.profile_path.clone()
-        } else {
-            None
-        };
+        options.user_data_dir = self.session_profile();
         let claimed = claim_profile(
             &self.config,
             &mut options,

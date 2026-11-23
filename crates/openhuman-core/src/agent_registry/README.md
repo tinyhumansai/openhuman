@@ -133,7 +133,8 @@ ranking works.
 fields an agent TOML may author beside the portable TinyAgents ones:
 `omit_identity`, `omit_memory_context`, `omit_safety_preamble`,
 `tokenjuice_compression`, `refresh_prompt_on_resume`, `memory_block`,
-`searches_connected_mcp`, `scheduled_actions`, and `scheduled_workspace`.
+`searches_connected_mcp`, `scheduled_actions`, `scheduled_workspace`,
+`sandbox_filesystem_only`, and `browser_view_only`.
 
 `scheduled_actions = true` lets a cron job that names this agent in `agent_id`
 use acting tools without a person's approval. It is honoured only with an
@@ -147,6 +148,22 @@ See [`cron/README.md`](../cron/README.md#scheduled-actions-opt-in).
 (relative paths resolve against `action_dir`), so its shell and file tools work
 there and a sandboxed shell asks for that root rather than the whole action
 dir. See [`cron/README.md`](../cron/README.md#scheduled-workspace).
+
+`browser_view_only = true` gives the agent a browser for reading the web, not
+for acting as whoever the host's browser profile is signed in as. The `browser`
+tool gives it only `open`, `snapshot`, `read_page`, `get_text`, `get_title`,
+`get_url`, `wait`, `hover`, `scroll`, `is_visible`, `list_downloads`, `close`
+and a `find` that reads text or hovers. Every other action is refused with a
+tool error, before the approval gate and `[browser] unattended_actions` (which
+cannot re-allow it): clicks, typing, key presses, tasks (starting, continuing
+or cancelling one), `confirm_pending`, downloads, and any action added to the
+tool later until it is listed in `browser_view_only.rs`. Its `browser` and `browser_open` sessions open on a fresh
+profile whatever `[browser] profile_mode` says, and pool under their own keys,
+so a view-only run never attaches to, waits for or reuses the persistent
+profile or a session opened on it. It only tightens: a run is view-only when its
+own definition sets the flag or its parent run is view-only, and a child cannot
+clear it (unlike `sandbox_filesystem_only`, a child's own `true` counts).
+Default `false`.
 
 ## Called by
 

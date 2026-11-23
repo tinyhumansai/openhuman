@@ -55,6 +55,8 @@ impl OpenHumanSessionHost {
                 .unwrap_or(tinyagents_definition::SandboxMode::None),
             self.resolved_definition()
                 .is_some_and(|definition| definition.extensions.sandbox_filesystem_only),
+            self.resolved_definition()
+                .is_some_and(|definition| definition.extensions.browser_view_only),
             self.hosted_base.clone(),
             self.agent_definition_id.clone(),
         ));

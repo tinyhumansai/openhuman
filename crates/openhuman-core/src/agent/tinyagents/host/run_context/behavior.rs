@@ -46,6 +46,7 @@ impl OpenHumanRunContext {
             autonomous_iter_cap: None,
             sandbox_mode: None,
             sandbox_filesystem_only: false,
+            browser_view_only: false,
             spawn_depth: 0,
             subagent_usage: Arc::new(Mutex::new(Vec::new())),
             parent_subagent_usage: None,
@@ -224,6 +225,18 @@ impl OpenHumanRunContext {
         self
     }
 
+    /// Makes this run's browser view-only when `definition` asks for it
+    /// (`AgentExt::browser_view_only`). Never clears it: a run already
+    /// view-only, such as the child of a view-only parent, stays so.
+    pub(crate) fn tighten_browser_view_only(
+        &mut self,
+        definition: Option<&crate::agent_registry::host_definition::AgentDefinition>,
+    ) {
+        if definition.is_some_and(|definition| definition.extensions.browser_view_only) {
+            self.browser_view_only = true;
+        }
+    }
+
     /// Builds a child context that inherits authority, cancellation and shared
     /// workspace policy while keeping route observation and usage isolated.
     pub fn child(&self) -> Self {
@@ -306,6 +319,7 @@ impl OpenHumanRunContext {
             approval: self.approval.clone(),
             sandbox_mode: self.sandbox_mode,
             sandbox_filesystem_only: self.sandbox_filesystem_only,
+            browser_view_only: self.browser_view_only,
             parent_agent_id: self
                 .parent
                 .as_ref()

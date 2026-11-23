@@ -99,6 +99,8 @@ pub(crate) struct HostOperationContext {
     pub(crate) sandbox_mode: Option<SandboxMode>,
     /// Whether the run's definition opted its sandboxed shell into a files-only jail.
     pub(crate) sandbox_filesystem_only: bool,
+    /// Whether the run's browser is view-only (`AgentExt::browser_view_only`).
+    pub(crate) browser_view_only: bool,
     /// The agent definition the run's parent execution context belongs to, for
     /// tools that act on behalf of the spawning agent when no memory identity
     /// is scoped (see `memory::tools::CallFacts::gather`).
@@ -217,6 +219,18 @@ pub(crate) fn sandbox_filesystem_only_for_tool(
         })
         .and_then(|context| context.state::<HostOperationContext>())
         .is_some_and(|host| host.sandbox_filesystem_only)
+}
+
+/// Whether the run's browser is view-only (`AgentExt::browser_view_only`),
+/// from the explicit tool carrier. Direct tool dispatch never is.
+pub(crate) fn browser_view_only_for_tool(context: Option<&dyn tinytools::ToolRunContext>) -> bool {
+    context
+        .and_then(tinytools::ToolRunContext::host_extension)
+        .and_then(|extension| {
+            extension.downcast_ref::<tinyagents_harness::tool::ToolExecutionContext>()
+        })
+        .and_then(|context| context.state::<HostOperationContext>())
+        .is_some_and(|host| host.browser_view_only)
 }
 
 /// Reads the run's approval context from the explicit tool carrier. Direct tool

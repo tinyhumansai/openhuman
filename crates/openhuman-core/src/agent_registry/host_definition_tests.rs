@@ -476,3 +476,32 @@ named = ["shell"]
         .expect("the opt-in parses");
     assert!(opted.extensions.sandbox_filesystem_only);
 }
+
+/// `browser_view_only` is authored in agent TOML, survives a round trip
+/// through serialisation, and is off (and not written back) when the
+/// definition does not name it, so an unchanged definition serialises as
+/// before.
+#[test]
+fn a_definition_makes_its_browser_view_only_only_by_naming_it() {
+    let base = r#"
+id = "reader_like"
+when_to_use = "Reads the web."
+
+[tools]
+named = ["browser"]
+"#;
+    let plain: AgentDefinition = toml::from_str(base).expect("a plain definition parses");
+    assert!(!plain.extensions.browser_view_only);
+    let plain_toml = toml::to_string(&plain).expect("serialises");
+    assert!(
+        !plain_toml.contains("browser_view_only"),
+        "an unset flag is not written: {plain_toml}"
+    );
+
+    let opted: AgentDefinition =
+        toml::from_str(&format!("browser_view_only = true\n{base}")).expect("the opt-in parses");
+    assert!(opted.extensions.browser_view_only);
+    let round_trip: AgentDefinition =
+        toml::from_str(&toml::to_string(&opted).expect("serialises")).expect("parses again");
+    assert!(round_trip.extensions.browser_view_only);
+}

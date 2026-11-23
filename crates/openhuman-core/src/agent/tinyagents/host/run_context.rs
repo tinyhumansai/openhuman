@@ -339,6 +339,12 @@ pub struct OpenHumanRunContext {
     /// scheduled actions too
     /// (`agent::subagent_host::ops::scheduled_actions_grant`).
     pub sandbox_filesystem_only: bool,
+    /// This run's browser is view-only (`AgentExt::browser_view_only`): the
+    /// `browser` tool refuses acting actions and opens on a fresh profile.
+    /// Only ever tightened: set from a session root's definition, kept by
+    /// `child()` and raised again by `for_subagent` when the child's own
+    /// definition asks for it ([`Self::tighten_browser_view_only`]).
+    pub browser_view_only: bool,
     /// Zero-based OpenHuman subagent depth (the root is zero).
     pub spawn_depth: usize,
     /// This run's subagent usage roll-up; intentionally isolated for children.
@@ -433,10 +439,10 @@ pub(crate) struct HarnessHostPolicy {
 
 pub use super::operation_context::{approval_for_tool, OpenHumanRunExt};
 pub(crate) use super::operation_context::{
-    command_environment_for_tool, dispatch_ctx_for_tool, memory_identity_for_tool,
-    memory_in_prompt_for_tool, parent_agent_id_for_tool, sandbox_filesystem_only_for_tool,
-    sandbox_mode_for_tool, shell_processes_for_tool, task_recency_window_for_tool,
-    turn_origin_for_tool, HostOperationContext,
+    browser_view_only_for_tool, command_environment_for_tool, dispatch_ctx_for_tool,
+    memory_identity_for_tool, memory_in_prompt_for_tool, parent_agent_id_for_tool,
+    sandbox_filesystem_only_for_tool, sandbox_mode_for_tool, shell_processes_for_tool,
+    task_recency_window_for_tool, turn_origin_for_tool, HostOperationContext,
 };
 #[cfg(test)]
 pub(crate) use super::operation_context::{test_turn_run, tool_context_with_approval};

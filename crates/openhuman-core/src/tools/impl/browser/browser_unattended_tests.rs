@@ -377,3 +377,83 @@ async fn allow_logs_the_canonical_kind_not_the_callers_string() {
         "{line}"
     );
 }
+
+/// Run one `click` through `BrowserTool::execute_with_context` inside a run
+/// whose origin is `origin` and whose agent's browser is (or is not)
+/// view-only. The conversation already holds a browser session under the
+/// key that run would use, so nothing before the approval decision needs the
+/// module.
+async fn dispatch_click_in_run(
+    origin: AgentTurnOrigin,
+    actions: &[&str],
+    browser_view_only: bool,
+) -> (tinytools::ToolResult, String) {
+    let (logs, _guard) = Logs::capture();
+    let client = Arc::new(offline_client(actions));
+    let thread = format!("unattended-run-{}", uuid::Uuid::new_v4());
+    let scope = crate::core::runtime::agent_scope_dir(client.config());
+    let key = super::super::view_only::pool_key(&scope, &thread, browser_view_only);
+    thread_sessions().lock().await.insert(
+        key.clone(),
+        ThreadSession {
+            id: SessionId::new("held-browser"),
+            config_fingerprint: browser_session_fingerprint(&client),
+            client: client.clone(),
+            last_used: Instant::now(),
+            bound_origin: None,
+            password_typed: false,
+        },
+    );
+    let tool = BrowserTool::new(client, 3);
+    let mut host = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    host.origin = Some(origin);
+    host.browser_view_only = browser_view_only;
+    let run = host.into_tinyagents(
+        tinyagents_harness::context::RunConfig::new("unattended-run").with_thread(&thread),
+    );
+    let call = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
+        &run,
+        tinyagents_harness::ids::CallId::new("unattended-run-call"),
+    );
+    let result = tool
+        .execute_with_context(
+            json!({"action": "click", "selector": "@e1"}),
+            tinytools::ToolCallOptions::default(),
+            Some(&call),
+        )
+        .await
+        .unwrap();
+    thread_sessions().lock().await.remove(&key);
+    (result, logs.text())
+}
+
+/// `[browser] unattended_actions` waves a listed click through for a
+/// scheduled-actions cron run, but never for a run whose agent's browser is
+/// view-only: that run is refused before the unattended pass is consulted.
+#[tokio::test]
+async fn unattended_actions_cannot_reallow_a_click_for_a_view_only_run() {
+    let _serial = ALLOW_PATH.lock().await;
+    let scheduled = || automation(TrustedAutomationSource::CronActions);
+
+    let (normal, logs) = dispatch_click_in_run(scheduled(), &["click"], false).await;
+    assert!(logs.contains(ALLOWED_LINE), "{logs}");
+    assert!(
+        !normal.output().contains("view-only"),
+        "{}",
+        normal.output()
+    );
+
+    let (view_only, logs) = dispatch_click_in_run(scheduled(), &["click"], true).await;
+    assert!(!logs.contains(ALLOWED_LINE), "{logs}");
+    assert!(view_only.is_error, "{}", view_only.output());
+    assert!(
+        view_only.output().contains("`click`"),
+        "{}",
+        view_only.output()
+    );
+    assert!(
+        view_only.output().contains("view-only"),
+        "{}",
+        view_only.output()
+    );
+}

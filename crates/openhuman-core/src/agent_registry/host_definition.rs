@@ -136,6 +136,22 @@ pub struct AgentExt {
     /// turns never get it. Off unless the definition names it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandbox_filesystem_only: bool,
+    /// Give this agent a view-only browser: it may read the web, not act on it.
+    ///
+    /// The `browser` tool then refuses every action that can change a page or
+    /// act for the signed-in account (`click`, `fill`, `type`, `press`,
+    /// `select`, `check`, `double_click`, `find` that clicks or fills, `task`,
+    /// `task_continue`, `confirm_pending`, `wait_download`), before the
+    /// approval gate and `[browser] unattended_actions`, which cannot re-allow
+    /// them. It may still open, read, look, scroll, hover, wait and close. Its
+    /// sessions, and `browser_open`'s, use a fresh profile whatever
+    /// `[browser] profile_mode` says, pooled apart from the persistent
+    /// profile's. It only tightens a run tree: a run is view-only when its own
+    /// definition sets this or its parent run is view-only, and a child never
+    /// clears it (`OpenHumanRunContext::tighten_browser_view_only`). Off unless
+    /// the definition names it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub browser_view_only: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
     /// Runtime only: never serialised and not authorable in TOML.
     #[serde(skip)]
@@ -167,6 +183,7 @@ impl Default for AgentExt {
             scheduled_actions: false,
             scheduled_workspace: None,
             sandbox_filesystem_only: false,
+            browser_view_only: false,
             prompt_builder: None,
             tinyflows_prompt_owner: None,
         }
