@@ -62,6 +62,29 @@ fn scheduled_agent_fixture(
     crate::core::runtime::DispatchCtx,
     tinyflows_bus::schedule::types::CronJob,
 ) {
+    scheduled_agent_fixture_with(
+        timeout_secs,
+        None,
+        crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only(),
+    )
+}
+
+/// A due, isolated scheduled agent job run by `agent_id` (the default
+/// orchestrator when `None`) against the given agent `definitions`.
+#[cfg(feature = "storage-sqlite")]
+pub(super) fn scheduled_agent_fixture_with(
+    timeout_secs: u64,
+    agent_id: Option<&str>,
+    definitions: crate::agent_registry::host_definition::AgentDefinitionRegistry,
+) -> (
+    TempDir,
+    crate::storage::test_support::SqliteBackend,
+    crate::storage::test_support::InstalledBackendGuard,
+    Config,
+    std::sync::Arc<crate::core::runtime::CoreContext>,
+    crate::core::runtime::DispatchCtx,
+    tinyflows_bus::schedule::types::CronJob,
+) {
     let temp = TempDir::new().expect("cron workspace");
     let mut config = Config::default();
     config.workspace_dir = temp.path().join("workspace");
@@ -77,8 +100,7 @@ fn scheduled_agent_fixture(
     config.reliability.scheduler_retries = 0;
     std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
 
-    let definitions =
-        Arc::new(crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only());
+    let definitions = Arc::new(definitions);
     let core = crate::core::runtime::CoreContext::for_test_with_config(
         crate::core::runtime::DomainSet::full(),
         config.clone(),
@@ -101,6 +123,7 @@ fn scheduled_agent_fixture(
     spec.name = Some("headless child test".into());
     spec.session_target = SessionTarget::Isolated;
     spec.model = Some("test-model".into());
+    spec.agent_id = agent_id.map(str::to_string);
     spec.enabled = true;
     let job =
         crate::cron::add_agent_job_from_spec(&config, spec).expect("persist scheduled agent job");
@@ -119,7 +142,7 @@ fn scheduled_agent_fixture(
 /// scheduler's own callbacks and timers, so no watchdog can fire and the
 /// runner's 5-minute kill is the first thing to notice. A plain thread keeps
 /// the runtime turning and the deadline real.
-async fn list_runs_off_runtime(
+pub(super) async fn list_runs_off_runtime(
     config: &Config,
     job_id: &str,
 ) -> anyhow::Result<Vec<tinyflows_bus::schedule::types::CronRun>> {
@@ -136,7 +159,7 @@ async fn list_runs_off_runtime(
     }
 }
 
-async fn dispatch_scheduled_agent(
+pub(super) async fn dispatch_scheduled_agent(
     core: std::sync::Arc<crate::core::runtime::CoreContext>,
     dispatch: crate::core::runtime::DispatchCtx,
     config: Config,

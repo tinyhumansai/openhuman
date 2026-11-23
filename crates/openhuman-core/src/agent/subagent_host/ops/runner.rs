@@ -734,10 +734,10 @@ async fn run_typed_mode(
             "[subagent_host] prepared workspace descriptor for tinyagents run"
         );
     }
-
     let mut child_run_context = options
         .run_context
-        .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref));
+        .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref))
+        .with_scheduled_actions_grant(definition, workspace_descriptor.as_ref());
     child_run_context.parent = Some(parent.clone());
     let dynamic_tools = nested_spawn_tool
         .map(|tool| vec![Box::new(tool) as Box<dyn Tool>])

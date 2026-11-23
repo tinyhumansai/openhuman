@@ -34,6 +34,7 @@ impl OpenHumanRunContext {
             tool_result_artifact_index: None,
             headless_descendant_settlement: false,
             scheduled_actions: false,
+            scheduled_actions_root: false,
             headless_descendant_owner: None,
             attachment_placeholders: Arc::new(Vec::new()),
             native_staged_parts: Vec::new(),
@@ -240,8 +241,11 @@ impl OpenHumanRunContext {
         child.native_message_id = None;
         child.response_shape = None;
         child.shell_processes = crate::sandbox::shell_processes::ShellProcesses::new();
-        // The scheduled-actions lift belongs to the cron job's own root run;
-        // a delegate stays read-only under the inherited cron origin.
+        // The scheduled-actions lift belongs to the cron job's own root run; a
+        // delegate starts read-only under the inherited cron origin. It keeps
+        // `scheduled_actions_root` (cloned above), so the sub-agent runner can
+        // re-grant the lift to a qualifying direct child
+        // (`agent::subagent_host::ops::scheduled_actions_grant`).
         child.scheduled_actions = false;
         child
     }

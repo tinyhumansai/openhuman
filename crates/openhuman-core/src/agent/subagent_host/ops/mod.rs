@@ -17,6 +17,7 @@
 //! | `graph.rs`          | `run_subagent_via_graph` — the sub-agent turn graph + tools    |
 //! | `checkpoint.rs`     | `SubagentCheckpoint` — cap-hit summary                         |
 //! | `pause_checkpoint.rs` | `is_safe_task_id` — validates model-provided checkpoint names |
+//! | `scheduled_actions_grant.rs` | Whether a direct child of a scheduled-actions cron run may act |
 
 mod checkpoint;
 mod graph;
@@ -28,6 +29,7 @@ mod prompt;
 mod provider;
 mod runner;
 mod runner_artifacts;
+mod scheduled_actions_grant;
 mod worker_mirror;
 mod worker_thread;
 

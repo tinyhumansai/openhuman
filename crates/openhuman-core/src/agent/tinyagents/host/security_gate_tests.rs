@@ -344,7 +344,7 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
 {
     use crate::core::runtime::turn_origin::TrustedAutomationSource;
     use crate::web3::wallet::automation_tools::{WalletBalancesTool, WalletExecutePreparedTool};
-    let wallet_gate = || {
+    let wallet_gate_marked = |marked: bool| {
         OpenHumanSecurityGate::new(
             Arc::new(SecurityPolicy {
                 enabled: false,
@@ -355,8 +355,9 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
                 Box::new(WalletExecutePreparedTool) as Box<dyn Tool>,
             ])],
         )
-        .with_scheduled_actions(true)
+        .with_scheduled_actions(marked)
     };
+    let wallet_gate = || wallet_gate_marked(true);
     let args = json!({ "quoteId": "q", "confirmed": true });
     for tool_name in ["wallet_balances", "wallet_execute_prepared"] {
         let allowed = scheduled_decision(
@@ -378,15 +379,43 @@ async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_p
     )
     .await;
     assert!(!denied.is_allowed(), "plain Cron must stay refused");
+    // A sub-agent the runner did not grant scheduled actions stays read-only.
     let sub = scheduled_decision(
+        wallet_gate_marked(false),
+        TrustedAutomationSource::CronActions,
+        Some(1),
+        "wallet_execute_prepared",
+        args.clone(),
+    )
+    .await;
+    assert!(
+        !sub.is_allowed(),
+        "an ungranted sub-agent must stay read-only"
+    );
+    // A granted direct child gets exactly the root's decision: the wallet's
+    // own automation policy still runs inside the tool, as for the root.
+    let granted = scheduled_decision(
         wallet_gate(),
         TrustedAutomationSource::CronActions,
         Some(1),
         "wallet_execute_prepared",
+        args.clone(),
+    )
+    .await;
+    assert_eq!(
+        granted,
+        GateDecision::Allow,
+        "granted child matches the root"
+    );
+    let grandchild = scheduled_decision(
+        wallet_gate(),
+        TrustedAutomationSource::CronActions,
+        Some(2),
+        "wallet_execute_prepared",
         args,
     )
     .await;
-    assert!(!sub.is_allowed(), "a sub-agent must stay read-only");
+    assert!(!grandchild.is_allowed(), "a grandchild must stay read-only");
 }
 
 #[tokio::test]
@@ -428,9 +457,12 @@ async fn cron_job_without_the_scheduled_actions_opt_in_still_denies_shell_and_wr
 }
 
 #[tokio::test]
-async fn scheduled_actions_subagent_and_unscoped_runs_stay_read_only() {
+async fn scheduled_actions_grandchild_and_unscoped_runs_stay_read_only_even_when_marked() {
     use crate::core::runtime::turn_origin::TrustedAutomationSource;
-    for depth in [Some(1), None] {
+    // The depth check is a second belt behind the per-run grant: a run deeper
+    // than a direct child of the cron root, or one with no run depth at all,
+    // stays read-only even if its gate were somehow marked.
+    for depth in [Some(2), Some(3), None] {
         let decision = scheduled_decision(
             disabled_autonomy_gate().with_scheduled_actions(true),
             TrustedAutomationSource::CronActions,
@@ -444,6 +476,54 @@ async fn scheduled_actions_subagent_and_unscoped_runs_stay_read_only() {
             "depth {depth:?} must not inherit the lift"
         );
     }
+}
+
+#[tokio::test]
+async fn granted_direct_child_of_a_scheduled_actions_root_may_use_an_acting_tool() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let decision = scheduled_decision(
+        disabled_autonomy_gate().with_scheduled_actions(true),
+        TrustedAutomationSource::CronActions,
+        Some(1),
+        "write_file",
+        json!({ "path": "notes.md" }),
+    )
+    .await;
+    assert_eq!(decision, GateDecision::Allow);
+}
+
+#[tokio::test]
+async fn ungranted_direct_child_of_a_scheduled_actions_root_stays_read_only() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let decision = scheduled_decision(
+        disabled_autonomy_gate(),
+        TrustedAutomationSource::CronActions,
+        Some(1),
+        "write_file",
+        json!({ "path": "notes.md" }),
+    )
+    .await;
+    match decision {
+        GateDecision::Deny { reason } => assert!(
+            reason.contains("Scheduled agent turns may use read-only tools only"),
+            "{reason}"
+        ),
+        other => panic!("expected the cron denial, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn marked_direct_child_under_a_plain_cron_origin_stays_read_only() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let decision = scheduled_decision(
+        disabled_autonomy_gate().with_scheduled_actions(true),
+        TrustedAutomationSource::Cron,
+        Some(1),
+        "write_file",
+        json!({ "path": "notes.md" }),
+    )
+    .await;
+    assert!(!decision.is_allowed(), "plain Cron must stay read-only");
 }
 
 // Fails closed only while security is enforced: a build without the

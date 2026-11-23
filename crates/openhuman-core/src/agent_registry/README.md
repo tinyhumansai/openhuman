@@ -138,7 +138,9 @@ fields an agent TOML may author beside the portable TinyAgents ones:
 `scheduled_actions = true` lets a cron job that names this agent in `agent_id`
 use acting tools without a person's approval. It is honoured only with an
 explicit `[tools] named = [...]` scope (never the wildcard), outside SaaS mode,
-and only for the job's own root run; sub-agents stay read-only. Default `false`.
+and for the job's own root run. Its sub-agents stay read-only, except a direct
+child whose own definition also sets it, names its tools, is sandboxed and runs
+in the root's workspace; a grandchild never acts. Default `false`.
 See [`cron/README.md`](../cron/README.md#scheduled-actions-opt-in).
 
 `scheduled_workspace` roots a cron run of the agent at a directory of its own

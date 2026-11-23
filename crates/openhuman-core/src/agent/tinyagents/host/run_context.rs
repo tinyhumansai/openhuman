@@ -296,10 +296,18 @@ pub struct OpenHumanRunContext {
     /// This root run owns settlement of driver jobs before its host turn
     /// returns. Inherited by recursive child contexts, never by ordinary chat.
     pub(crate) headless_descendant_settlement: bool,
-    /// This root run belongs to a cron job whose agent opted into scheduled
-    /// actions (`cron::origin::scheduled_actions_enabled`); its security gate
-    /// may lift the read-only cron stage. Never inherited by a child.
+    /// This run may lift the read-only cron stage in its security gate: the
+    /// root run of a cron job whose agent opted into scheduled actions
+    /// (`cron::origin::scheduled_actions_enabled`), or a direct child of that
+    /// root that the sub-agent runner granted it to
+    /// (`agent::subagent_host::ops::scheduled_actions_grant`). `child()` clears
+    /// it, so a child starts read-only.
     pub(crate) scheduled_actions: bool,
+    /// The root of this run's tree is a scheduled-actions cron run. Set with
+    /// `scheduled_actions` on the root and inherited by every descendant; it
+    /// grants nothing by itself and only tells the sub-agent runner that a
+    /// direct child may be considered for the grant.
+    pub(crate) scheduled_actions_root: bool,
     /// Stable owner scope for the whole headless descendant tree. Native child
     /// runs get their own thread ids, but the root turn's settlement lease must
     /// retain every descendant under one owner key.
@@ -324,7 +332,12 @@ pub struct OpenHumanRunContext {
     /// Sandbox mode of the agent definition executing this turn.
     pub sandbox_mode: Option<SandboxMode>,
     /// The definition executing this turn opted its sandboxed shell into a
-    /// files-only jail (`AgentExt::sandbox_filesystem_only`). Root runs only.
+    /// files-only jail (`AgentExt::sandbox_filesystem_only`). Set from the
+    /// definition for a session's root run; `child()` copies the parent's value
+    /// and `for_subagent` keeps it, so a sub-agent runs with its parent's
+    /// setting, not its own definition's. That holds for a child granted
+    /// scheduled actions too
+    /// (`agent::subagent_host::ops::scheduled_actions_grant`).
     pub sandbox_filesystem_only: bool,
     /// Zero-based OpenHuman subagent depth (the root is zero).
     pub spawn_depth: usize,

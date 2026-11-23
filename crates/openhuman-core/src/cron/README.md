@@ -176,11 +176,47 @@ in `agent_id`, the definition sets `scheduled_actions = true`, its tools are
 SaaS mode. The run then executes as `TrustedAutomation { CronActions }`, and
 `run_agent_job_for_run` marks the session it built
 (`OpenHumanSessionHost::enable_scheduled_actions`). The gate skips the
-read-only cron stage only when all three hold: the `CronActions` origin, the
-marked session, and a root run (`current_run_depth() == 0`). A sub-agent the
-run spawns inherits the origin but not the mark, so it stays read-only. The
-approval engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so
-the root's tools run without a person's approval.
+read-only cron stage only when all three hold: the `CronActions` origin, a
+marked run, and a run depth of 0 or 1 (`current_run_depth()`). The approval
+engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so the
+root's tools run without a person's approval.
+
+A sub-agent the run spawns inherits the origin but not the mark, so it is
+read-only by default. The sub-agent runner re-marks one direct child
+(`agent/subagent_host/ops/scheduled_actions_grant.rs`) only when all of these
+hold:
+
+- its tree's root is the scheduled-actions run (`scheduled_actions_root` on the
+  run context) and the child is at depth 1;
+- the child's own definition passes the same definition checks as the root
+  (`scheduled_actions = true`, `named` tools, not SaaS);
+- the child's definition is `sandbox_mode = "sandboxed"`;
+- the child runs in the root's workspace: a spawn that hands it a different
+  workspace descriptor (a delegated worktree) is not granted. In practice the
+  root needs a `scheduled_workspace` (below). A root on the bare `action_dir`
+  carries no descriptor, and `spawn_subagent` then gives its child one for the
+  core's `workspace_dir`, which is not where the root works, so no child of
+  such a root is granted.
+
+A granted child runs its shell with the root's `sandbox_filesystem_only`
+setting, whatever its own definition says: files-only also gives the shell
+the host network, and a child must not get more of it than its root. Every
+later gate stage (autonomy
+tier, approvals, wallet policy, action budget) runs for it exactly as for the
+root. A grandchild (depth 2 or deeper) stays read-only even if it was somehow
+marked.
+
+```toml
+# <workspace>/agents/builder_worker/agent.toml: a child the builder may hand
+# acting work to.
+id = "builder_worker"
+when_to_use = "Runs one build step for the scheduled builder"
+scheduled_actions = true
+sandbox_mode = "sandboxed"
+
+[tools]
+named = ["shell", "file_read", "file_write"]
+```
 
 `CronActions` also counts as trusted automation for the wallet: its root run
 may call `wallet_balances` and `wallet_execute_prepared` (executes only when
@@ -263,8 +299,12 @@ isolation. A definition whose shell already gets the host network may set
 `sandbox::spawn_plan::files_only`): files jailed to the run's root, the host's
 network. The host sends it only for the operator's own agent spawn with the
 host network, and the module admits it only for a trusted operator source
-outside SaaS. Sub-agents, channel turns, and text the host did not author keep
-the full requirements. Off unless the definition names it.
+outside SaaS. Channel turns and text the host did not author keep the full
+requirements. A sub-agent's run carries its parent's setting, not its own
+definition's (the run context copies it into every child); a child granted
+scheduled actions runs files-only only when its parent's run does, so set the
+option on the root's definition; a child's own setting cannot enable it. Off
+unless the root's definition names it.
 
 ### After the run
 

@@ -141,8 +141,11 @@ impl OpenHumanSecurityGate {
         // The one exception is the scheduled-actions opt-in: a job whose agent
         // definition sets `scheduled_actions = true` with a named tool scope
         // runs under `CronActions`, and the scheduler marks the session it
-        // built. Only that session's root run (depth 0) skips this stage; a
-        // sub-agent it spawns inherits the origin but stays read-only here.
+        // built. That root run (depth 0) skips this stage, and so does a direct
+        // child (depth 1) the sub-agent runner granted the mark to
+        // (`agent::subagent_host::ops::scheduled_actions_grant`). Any other
+        // sub-agent inherits the origin but not the mark, and depth 2 or deeper
+        // stays read-only here even if marked.
         let cron_source = match self.turn_origin() {
             Some(crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
                 source,
@@ -154,12 +157,13 @@ impl OpenHumanSecurityGate {
             cron_source,
             Some(crate::core::runtime::turn_origin::TrustedAutomationSource::CronActions)
         ) && self.scheduled_actions
-            && tinyagents_harness::context::current_run_depth().is_some_and(|run| run.depth == 0);
+            && tinyagents_harness::context::current_run_depth().is_some_and(|run| run.depth <= 1);
         if scheduled_actions_lifted {
             tracing::debug!(
                 target: "tinyagents",
                 tool = %call.tool_name,
-                "[tinyagents::host::security] scheduled-actions cron root: read-only cron stage lifted"
+                depth = tinyagents_harness::context::current_run_depth().map(|run| run.depth),
+                "[tinyagents::host::security] scheduled-actions run: read-only cron stage lifted"
             );
         }
         let is_cron_turn = cron_source.is_some() && !scheduled_actions_lifted;

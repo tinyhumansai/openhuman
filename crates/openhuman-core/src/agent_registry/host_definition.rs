@@ -93,7 +93,11 @@ pub struct AgentExt {
     /// (`[tools] named = [...]`, never the wildcard) and the job names this
     /// agent in `agent_id`; the run then executes under
     /// `TrustedAutomationSource::CronActions`. Sub-agents the run spawns stay
-    /// read-only, and the autonomy tier, TinySecurity's command analysis and
+    /// read-only, except a direct child (depth 1) whose own definition also
+    /// sets this flag, names its tools, is `sandbox_mode = "sandboxed"` and
+    /// runs in the root's workspace
+    /// (`agent::subagent_host::ops::scheduled_actions_grant`); a grandchild
+    /// never acts. The autonomy tier, TinySecurity's command analysis and
     /// protected-path floor, the agent's sandbox, the browser's allowed
     /// websites and its forced checkpoint before payment all still apply.
     /// Ignored in SaaS mode. See `cron::origin::scheduled_actions_enabled`.
@@ -123,8 +127,13 @@ pub struct AgentExt {
     /// stay jailed to the run's root; the network is the host's. The option is
     /// sent only for the operator's own agent spawn with the host network, and
     /// the module admits it only for a trusted operator source outside SaaS, so
-    /// it never reaches text the host did not author. Sub-agents and channel
-    /// turns never inherit it. Off unless the definition names it.
+    /// it never reaches text the host did not author. It is read from the
+    /// definition of a session's root run. A sub-agent's run keeps whatever its
+    /// parent's run had (`OpenHumanRunContext::child` carries it), and the
+    /// sub-agent's own definition value is not applied, not even for a child
+    /// granted scheduled actions: files-only also gives the shell the host
+    /// network, and a child must not get more of it than its root. Channel
+    /// turns never get it. Off unless the definition names it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandbox_filesystem_only: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
