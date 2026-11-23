@@ -204,18 +204,31 @@ async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
 fn only_a_host_run_of_a_waived_command_is_refused() {
     use crate::sandbox::SandboxBackendKind as Backend;
     assert!(unjailed_floor_refusal(true, Backend::None).is_some());
-    for backend in [
-        Backend::Local,
-        Backend::Docker,
-        Backend::OpenShell,
-        Backend::Agent37,
-    ] {
+    for backend in [Backend::Docker, Backend::OpenShell, Backend::Agent37] {
         assert!(
             unjailed_floor_refusal(true, backend).is_none(),
             "{backend:?}"
         );
     }
+    assert_eq!(
+        unjailed_floor_refusal(true, Backend::Local).is_some(),
+        cfg!(target_os = "macos")
+    );
     assert!(unjailed_floor_refusal(false, Backend::None).is_none());
+}
+
+/// Seatbelt reads allow-by-default, so on macOS the native jail cannot stand in
+/// for TinySecurity's floor; Landlock, bubblewrap, containers and boxes can.
+#[test]
+fn a_macos_native_jail_keeps_the_protected_path_floor() {
+    use crate::sandbox::SandboxBackendKind as Backend;
+    assert!(unjailed_floor_refusal_on(true, Backend::Local, true).is_some());
+    assert!(unjailed_floor_refusal_on(true, Backend::Local, false).is_none());
+    for backend in [Backend::Docker, Backend::OpenShell, Backend::Agent37] {
+        assert!(unjailed_floor_refusal_on(true, backend, true).is_none());
+    }
+    assert!(unjailed_floor_refusal_on(true, Backend::None, true).is_some());
+    assert!(unjailed_floor_refusal_on(false, Backend::Local, true).is_none());
 }
 
 /// Production (Nov 2026): `[runtime.local_jail] extra_read_write` and

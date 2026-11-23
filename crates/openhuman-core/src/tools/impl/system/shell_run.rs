@@ -272,19 +272,46 @@ pub(super) async fn run_in_policy(
     (true, result)
 }
 
+/// Whether `backend` confines what a command can read to its grants. The
+/// waiver of TinySecurity's lexical floor rests on that: `cat ../secret` is
+/// harmless only where `..` cannot reach the secret. No sandbox does not
+/// confine anything. On macOS the native jail is Seatbelt, which is best-effort
+/// and allows reads by default (`sandbox::native_jail::jail_isolation`); only
+/// its credential deny list holds, so it does not confine reads either.
+pub(super) fn confines_reads(backend: crate::sandbox::SandboxBackendKind, macos: bool) -> bool {
+    use crate::sandbox::SandboxBackendKind as Backend;
+    match backend {
+        Backend::None => false,
+        Backend::Local => !macos,
+        _ => true,
+    }
+}
+
 /// The refusal for a command admitted only because it would run in the jail
 /// (TinySecurity's protected-path floor waived, see
-/// `SecurityPolicy::check_jailed_command`) that resolved to the host instead:
-/// the operator turned the sandbox off, or the plan chose no sandbox. There the
-/// floor is the only boundary, so the command is refused as it always was.
+/// `SecurityPolicy::check_jailed_command`) that resolved to the host, or to a
+/// jail that does not confine reads, instead: the operator turned the sandbox
+/// off, the plan chose no sandbox, or the native jail is macOS Seatbelt. There
+/// the floor is the only boundary, so the command is refused as it always was.
 pub(super) fn unjailed_floor_refusal(
     floor_waived: bool,
     backend: crate::sandbox::SandboxBackendKind,
 ) -> Option<ToolResult> {
-    if !floor_waived || backend != crate::sandbox::SandboxBackendKind::None {
+    unjailed_floor_refusal_on(floor_waived, backend, cfg!(target_os = "macos"))
+}
+
+fn unjailed_floor_refusal_on(
+    floor_waived: bool,
+    backend: crate::sandbox::SandboxBackendKind,
+    macos: bool,
+) -> Option<ToolResult> {
+    if !floor_waived || confines_reads(backend, macos) {
         return None;
     }
-    tracing::debug!("[shell] a jailed command resolved to the host; protected-path floor applies");
+    tracing::debug!(
+        ?backend,
+        "[shell] a jailed command resolved to a run that does not confine reads; protected-path floor applies"
+    );
     Some(ToolResult::error(
         crate::security::policy::Refusal::Protected.to_string(),
     ))
