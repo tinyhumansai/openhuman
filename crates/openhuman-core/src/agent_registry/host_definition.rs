@@ -170,6 +170,7 @@ impl Default for AgentExt {
             scheduled_actions: false,
             scheduled_workspace: None,
             sandbox_filesystem_only: false,
+            browser_view_only: false,
             prompt_builder: None,
             tinyflows_prompt_owner: None,
         }
