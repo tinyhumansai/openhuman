@@ -433,6 +433,7 @@ impl OpenHumanSessionHost {
             .post_turn_hooks(post_turn_hooks)
             .agent_definition_name(agent_id.to_string())
             .omit_memory_context(effective_omit_memory_context)
+            .omit_memory_log(target_def.is_some_and(|def| def.extensions.omit_memory_log))
             .tokenjuice_compression(effective_tokenjuice_compression);
         builder = match turn_model_source {
             Some((source, _)) => builder.turn_model_source(source),

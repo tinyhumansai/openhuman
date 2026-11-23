@@ -110,6 +110,9 @@ struct OpenHumanTurnPrelude {
     /// No per-turn memory pack for this agent (definition's
     /// `omit_memory_context`); its turns are still logged.
     omit_memory_context: bool,
+    /// Neither log nor recall this agent's turns (definition's
+    /// `omit_memory_log`).
+    omit_memory_log: bool,
     thread_id: Option<String>,
     agent_definition_id: String,
     event_session_id: String,

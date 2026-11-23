@@ -361,7 +361,21 @@ when_to_use = "defaults"
     assert!(def.extensions.omit_safety_preamble);
     assert!(!def.extensions.searches_connected_mcp);
     assert!(!def.extensions.refresh_prompt_on_resume);
+    assert!(!def.extensions.omit_memory_log);
     assert!(def.extensions.prompt_builder.is_none());
+}
+
+#[test]
+fn omit_memory_log_parses_from_the_toml() {
+    let def: AgentDefinition = toml::from_str(
+        r#"
+id = "helper"
+when_to_use = "drafts"
+omit_memory_log = true
+"#,
+    )
+    .unwrap();
+    assert!(def.extensions.omit_memory_log);
 }
 
 #[test]

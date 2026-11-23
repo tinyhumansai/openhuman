@@ -414,3 +414,96 @@ async fn failed_profile_capture_is_denied_but_ordinary_desktop_work_still_runs()
         "ordinary desktop work retains its existing deferred behavior"
     );
 }
+
+#[tokio::test]
+async fn omit_memory_log_keeps_a_helper_agents_turns_out_of_memory() {
+    crate::agent::session_host::test_support::install_model_fixture();
+    use crate::memory::test_fixtures::stored;
+    use tinyagents_runtime::{
+        CommitReceipt, ResumeMode, SessionTurnOutcome, TranscriptTurnOptions,
+    };
+    use tinymemory_api::{ItemKind, MetaFilter};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Default::default()
+    };
+    config.memory.conversations.enabled = true;
+    config.secrets.encrypt = false;
+    std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
+    let engine = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
+    crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
+
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .await
+    .expect("host");
+    host.ensure_runtime_session().expect("runtime session");
+    let mut prelude = host
+        .runtime_state
+        .lock()
+        .expect("runtime state")
+        .prelude
+        .clone()
+        .expect("turn prelude");
+    prelude.runtime_config = Some(Arc::new(config.clone()));
+    prelude.omit_memory_log = true;
+
+    let thread_id = "helper-thread";
+    prelude.thread_id = Some(thread_id.into());
+    prelude
+        .mutable
+        .lock()
+        .expect("prelude state")
+        .pending_user_text = Some("draft me a post".into());
+    assert!(
+        prelude.memory_pre_turn(&[], 0, None, None).await.is_none(),
+        "a helper's turn gets no memory turn"
+    );
+    // Deterministic gate: the omission must return before any pending memory
+    // turn is recorded or any background pre-turn write is queued.
+    assert!(
+        prelude
+            .mutable
+            .lock()
+            .expect("prelude state")
+            .pending_memory_turn
+            .is_none(),
+        "a helper's turn records no pending memory turn"
+    );
+    let receipt = CommitReceipt {
+        outcome: SessionTurnOutcome {
+            history: vec![],
+            output: Some("a draft".into()),
+            interrupted: false,
+        },
+        options: TranscriptTurnOptions {
+            request_id: None,
+            thread_id: Some(thread_id.into()),
+            stream: false,
+            resume: ResumeMode::Never,
+            context: crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+        },
+        transcript: None,
+    };
+    prelude.memory_post_turn(&receipt, None);
+    let items = stored(
+        &engine,
+        MetaFilter {
+            thread_id: Some(thread_id.into()),
+            ..MetaFilter::kinds([ItemKind::Conversation])
+        },
+    )
+    .await;
+    assert!(
+        items.is_empty(),
+        "nothing of the helper's turn is logged: {items:?}"
+    );
+}
