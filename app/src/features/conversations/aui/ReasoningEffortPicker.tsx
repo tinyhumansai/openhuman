@@ -86,7 +86,9 @@ export function ReasoningEffortPicker({
     ? t('composer.reasoning.forModel').replace('{model}', modelLabel)
     : label;
   return (
-    <span className="inline-flex h-7 min-w-0 items-center gap-1 rounded-md pl-2 text-content-muted transition-colors hover:bg-surface-hover hover:text-content has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-line">
+    <span
+      data-testid="composer-reasoning-effort-surface"
+      className="inline-flex h-7 min-w-0 items-center gap-1 rounded-md pl-2 text-content-muted transition-colors hover:bg-surface-hover hover:text-content has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-line">
       <ThinkingGauge value={value} />
       <select
         data-testid="composer-reasoning-effort"

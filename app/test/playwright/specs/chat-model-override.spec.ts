@@ -25,6 +25,7 @@
  */
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
+import { browserElements } from '../../e2e/helpers/element-helpers';
 import { bootAuthenticatedPage, dismissWalkthroughIfPresent } from '../helpers/core-rpc';
 
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
@@ -87,9 +88,10 @@ test.describe.configure({ timeout: 120_000 });
 test('the thinking-level control uses one hover and keyboard-focus surface', async ({ page }) => {
   await openChat(page);
 
-  const picker = page.getByTestId('composer-reasoning-effort');
-  const surface = picker.locator('..');
-  await expect(surface.getByTestId('composer-reasoning-gauge')).toBeVisible();
+  const elements = browserElements(page);
+  const picker = elements.testId('composer-reasoning-effort');
+  const surface = elements.testId('composer-reasoning-effort-surface');
+  await expect(elements.testId('composer-reasoning-gauge')).toBeVisible();
 
   const restBackground = await surface.evaluate(
     element => getComputedStyle(element).backgroundColor
