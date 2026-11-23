@@ -71,7 +71,10 @@ fn find_is_refused_only_when_it_clicks_or_fills() {
         assert_eq!(view_only_refusal("find", &args), None, "{follow}");
     }
     assert_eq!(
-        view_only_refusal("find", &json!({"action": "find", "by": "text", "value": "Go"})),
+        view_only_refusal(
+            "find",
+            &json!({"action": "find", "by": "text", "value": "Go"})
+        ),
         None
     );
 }

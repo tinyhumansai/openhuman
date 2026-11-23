@@ -261,7 +261,10 @@ fn a_subagent_inherits_the_parents_files_only_jail_not_its_own_definitions() {
     );
 }
 
-fn definition(id: &str, browser_view_only: bool) -> crate::agent_registry::host_definition::AgentDefinition {
+fn definition(
+    id: &str,
+    browser_view_only: bool,
+) -> crate::agent_registry::host_definition::AgentDefinition {
     let mut definition = crate::agent_registry::host_definition::AgentDefinition {
         id: id.into(),
         ..Default::default()
@@ -309,7 +312,10 @@ fn a_subagent_is_browser_view_only_when_its_parent_or_its_own_definition_is() {
     assert!(child.browser_view_only, "a child cannot clear its parent's");
     assert!(tool_sees_browser_view_only(child.clone()));
     assert!(
-        child.child().for_subagent(&definition("plain", false), None).browser_view_only,
+        child
+            .child()
+            .for_subagent(&definition("plain", false), None)
+            .browser_view_only,
         "nor can a grandchild"
     );
     assert!(view_only_parent.detached_child().browser_view_only);

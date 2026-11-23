@@ -437,11 +437,23 @@ async fn unattended_actions_cannot_reallow_a_click_for_a_view_only_run() {
 
     let (normal, logs) = dispatch_click_in_run(scheduled(), &["click"], false).await;
     assert!(logs.contains(ALLOWED_LINE), "{logs}");
-    assert!(!normal.output().contains("view-only"), "{}", normal.output());
+    assert!(
+        !normal.output().contains("view-only"),
+        "{}",
+        normal.output()
+    );
 
     let (view_only, logs) = dispatch_click_in_run(scheduled(), &["click"], true).await;
     assert!(!logs.contains(ALLOWED_LINE), "{logs}");
     assert!(view_only.is_error, "{}", view_only.output());
-    assert!(view_only.output().contains("`click`"), "{}", view_only.output());
-    assert!(view_only.output().contains("view-only"), "{}", view_only.output());
+    assert!(
+        view_only.output().contains("`click`"),
+        "{}",
+        view_only.output()
+    );
+    assert!(
+        view_only.output().contains("view-only"),
+        "{}",
+        view_only.output()
+    );
 }

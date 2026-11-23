@@ -39,7 +39,6 @@ impl BrowserOpenTool {
             self.client.clone()
         }
     }
-
 }
 
 #[async_trait]
@@ -70,7 +69,11 @@ impl Tool for BrowserOpenTool {
 }
 
 impl BrowserOpenTool {
-    async fn open(&self, args: serde_json::Value, client: &BrowserClient) -> anyhow::Result<ToolResult> {
+    async fn open(
+        &self,
+        args: serde_json::Value,
+        client: &BrowserClient,
+    ) -> anyhow::Result<ToolResult> {
         let url = args["url"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
@@ -84,7 +87,9 @@ impl BrowserOpenTool {
             return Ok(ToolResult::error(error.to_string()));
         }
         let session = client.open_session_for_url(url).await?;
-        let result = client.navigate(&session.id, NavigateRequest::new(url)).await;
+        let result = client
+            .navigate(&session.id, NavigateRequest::new(url))
+            .await;
         let close = client.close_session(&session.id).await;
         match (result, close) {
             (Ok(page), Ok(())) => Ok(ToolResult::success(serde_json::to_string_pretty(&page)?)),

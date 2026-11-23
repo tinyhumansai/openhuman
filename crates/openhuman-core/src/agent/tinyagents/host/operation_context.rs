@@ -223,9 +223,7 @@ pub(crate) fn sandbox_filesystem_only_for_tool(
 
 /// Whether the run's browser is view-only (`AgentExt::browser_view_only`),
 /// from the explicit tool carrier. Direct tool dispatch never is.
-pub(crate) fn browser_view_only_for_tool(
-    context: Option<&dyn tinytools::ToolRunContext>,
-) -> bool {
+pub(crate) fn browser_view_only_for_tool(context: Option<&dyn tinytools::ToolRunContext>) -> bool {
     context
         .and_then(tinytools::ToolRunContext::host_extension)
         .and_then(|extension| {

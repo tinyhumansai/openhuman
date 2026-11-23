@@ -498,8 +498,8 @@ named = ["browser"]
         "an unset flag is not written: {plain_toml}"
     );
 
-    let opted: AgentDefinition = toml::from_str(&format!("browser_view_only = true\n{base}"))
-        .expect("the opt-in parses");
+    let opted: AgentDefinition =
+        toml::from_str(&format!("browser_view_only = true\n{base}")).expect("the opt-in parses");
     assert!(opted.extensions.browser_view_only);
     let round_trip: AgentDefinition =
         toml::from_str(&toml::to_string(&opted).expect("serialises")).expect("parses again");
