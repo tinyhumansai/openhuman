@@ -341,7 +341,7 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
 
     fn assess(
         &self,
-        _ctx: &RunContext<OpenHumanRunContext>,
+        ctx: &RunContext<OpenHumanRunContext>,
         _invocation: &ToolInvocationIdentity,
         call: &TaToolCall,
         _scope: &FailureScope,
@@ -423,7 +423,7 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
                 recovery_policy_with_effect(&call.name, &content, body_failure, effect)
             {
                 let budget = if class == "blocked_by_policy" && call.name == "shell" {
-                    self.refused_command_budget(_ctx.instance_id(), call, budget)
+                    self.refused_command_budget(ctx.instance_id(), call, budget)
                 } else {
                     budget
                 };
