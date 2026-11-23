@@ -27,6 +27,11 @@ impl BrowserOpenTool {
         }
         self.client.check_url(raw).map_err(anyhow::Error::new)
     }
+
+    /// Stub.
+    fn client_for(&self, _context: Option<&dyn tinytools::ToolRunContext>) -> Arc<BrowserClient> {
+        self.client.clone()
+    }
 }
 
 #[async_trait]
