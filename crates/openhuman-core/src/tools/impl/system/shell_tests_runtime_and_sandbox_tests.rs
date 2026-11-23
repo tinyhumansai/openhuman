@@ -62,7 +62,11 @@ fn floor_shell(autonomy: AutonomyLevel) -> ShellTool {
 #[tokio::test]
 async fn a_jailed_command_is_admitted_without_the_protected_path_floor() {
     let tool = floor_shell(AutonomyLevel::Full);
-    for command in ["cd .. && ls", "sed 's/../X/' notes.txt", "cat /etc/os-release"] {
+    for command in [
+        "cd .. && ls",
+        "sed 's/../X/' notes.txt",
+        "cat /etc/os-release",
+    ] {
         let answer = tool
             .check_for_execution(command, true)
             .await
@@ -79,11 +83,22 @@ async fn a_command_outside_the_jail_keeps_the_protected_path_floor() {
         .check_for_execution("cd .. && ls", false)
         .await
         .expect_err("the floor refuses a host command");
-    assert!(refusal.output().contains("protected path"), "{}", refusal.output());
+    assert!(
+        refusal.output().contains("protected path"),
+        "{}",
+        refusal.output()
+    );
     // And the whole tool, called with no run (no sandbox mode), refuses it too.
-    let result = tool.execute(json!({"command": "cd .. && ls"})).await.unwrap();
+    let result = tool
+        .execute(json!({"command": "cd .. && ls"}))
+        .await
+        .unwrap();
     assert!(result.is_error);
-    assert!(result.output().contains("protected path"), "{}", result.output());
+    assert!(
+        result.output().contains("protected path"),
+        "{}",
+        result.output()
+    );
 }
 
 #[cfg(feature = "security-module")]
@@ -94,5 +109,9 @@ async fn a_jailed_command_keeps_the_read_only_refusal_at_execution() {
         .check_for_execution("rm -rf ../build", true)
         .await
         .expect_err("read-only mode refuses a destructive command");
-    assert!(refusal.output().contains("read-only"), "{}", refusal.output());
+    assert!(
+        refusal.output().contains("read-only"),
+        "{}",
+        refusal.output()
+    );
 }

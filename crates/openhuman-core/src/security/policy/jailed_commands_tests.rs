@@ -31,7 +31,11 @@ fn neutral_text_replaces_path_words_and_keeps_shell_syntax() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_jailed_command_naming_a_protected_path_is_not_refused_for_it() {
-    for command in ["cd .. && ls", "sed 's/../X/' notes.txt", "cat /etc/os-release"] {
+    for command in [
+        "cd .. && ls",
+        "sed 's/../X/' notes.txt",
+        "cat /etc/os-release",
+    ] {
         let (policy, _) = floor_policy(AutonomyLevel::Full);
         let answer = policy
             .check_jailed_command(harness(command))
@@ -58,7 +62,9 @@ async fn a_jailed_command_keeps_every_other_refusal() {
     // The tier's class gate: read-only mode refuses a destructive command.
     let (policy, _) = floor_policy(AutonomyLevel::ReadOnly);
     assert_eq!(
-        policy.check_jailed_command(harness("rm -rf ../build")).await,
+        policy
+            .check_jailed_command(harness("rm -rf ../build"))
+            .await,
         Err(Refusal::ReadOnly)
     );
     // The hidden-execution defence.
@@ -103,7 +109,10 @@ async fn a_floor_refusal_without_a_known_class_stays_refused() {
     // No path word to neutralize: the floor cannot be asked around.
     let (policy, _) = floor_policy(AutonomyLevel::Full);
     assert_eq!(
-        policy.check_jailed_command(harness("ls ..")).await.map(|a| a.floor_waived),
+        policy
+            .check_jailed_command(harness("ls .."))
+            .await
+            .map(|a| a.floor_waived),
         Ok(true)
     );
     // A gateway that cannot name the class (the default) keeps the refusal.

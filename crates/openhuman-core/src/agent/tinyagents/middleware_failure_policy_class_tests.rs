@@ -196,7 +196,11 @@ async fn the_same_refused_shell_command_retried_still_stops_the_turn() {
         Err(SHELL_BLOCK),
     )
     .await;
-    assert_eq!(drain_pause_count(&handle), 1, "the same command refused again stops");
+    assert_eq!(
+        drain_pause_count(&handle),
+        1,
+        "the same command refused again stops"
+    );
     let summary = slot.lock().unwrap().clone().unwrap();
     assert!(summary.contains("blocked_by_policy"), "{summary}");
 }
@@ -225,7 +229,10 @@ async fn refused_shell_commands_with_nothing_running_still_stop_the_turn() {
 async fn a_second_policy_block_on_another_tool_still_stops_the_turn() {
     let (mw, handle, slot) = breaker();
     let mut context = ctx();
-    for (id, url) in [("f-1", "https://blocked.test/a"), ("f-2", "https://blocked.test/a")] {
+    for (id, url) in [
+        ("f-1", "https://blocked.test/a"),
+        ("f-2", "https://blocked.test/a"),
+    ] {
         run_call(
             &mw,
             &mut context,

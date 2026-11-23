@@ -732,7 +732,11 @@ async fn floor_decision(
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_sandboxed_shell_is_not_refused_for_naming_a_protected_path() {
-    for command in ["cd .. && ls", "sed 's/../X/' notes.txt", "cat /etc/os-release"] {
+    for command in [
+        "cd .. && ls",
+        "sed 's/../X/' notes.txt",
+        "cat /etc/os-release",
+    ] {
         let decision = floor_decision(AutonomyLevel::Full, true, command).await;
         assert_eq!(decision, GateDecision::Allow, "{command}");
     }
@@ -754,5 +758,8 @@ async fn an_unsandboxed_shell_keeps_the_protected_path_floor() {
 async fn a_sandboxed_shell_keeps_the_read_only_refusal() {
     let decision = floor_decision(AutonomyLevel::ReadOnly, true, "rm -rf ../build").await;
     assert!(!decision.is_allowed(), "{decision:?}");
-    assert!(format!("{decision:?}").contains("read-only"), "{decision:?}");
+    assert!(
+        format!("{decision:?}").contains("read-only"),
+        "{decision:?}"
+    );
 }
