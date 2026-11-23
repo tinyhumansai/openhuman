@@ -467,6 +467,17 @@ async fn omit_memory_log_keeps_a_helper_agents_turns_out_of_memory() {
         prelude.memory_pre_turn(&[], 0, None, None).await.is_none(),
         "a helper's turn gets no memory turn"
     );
+    // Deterministic gate: the omission must return before any pending memory
+    // turn is recorded or any background pre-turn write is queued.
+    assert!(
+        prelude
+            .mutable
+            .lock()
+            .expect("prelude state")
+            .pending_memory_turn
+            .is_none(),
+        "a helper's turn records no pending memory turn"
+    );
     let receipt = CommitReceipt {
         outcome: SessionTurnOutcome {
             history: vec![],
