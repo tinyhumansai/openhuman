@@ -135,11 +135,27 @@ impl BrowserCallError {
 #[derive(Clone)]
 pub struct BrowserClient {
     config: Arc<Config>,
+    /// Sessions open on a fresh profile whatever `[browser] profile_mode` says.
+    fresh_profile: bool,
 }
 
 impl BrowserClient {
     pub fn new(config: Arc<Config>) -> Self {
-        Self { config }
+        Self {
+            config,
+            fresh_profile: false,
+        }
+    }
+
+    /// Stub.
+    pub fn with_fresh_profile(&self) -> Self {
+        self.clone()
+    }
+
+    /// The profile folder a session this client opens asks for; `None` is a
+    /// fresh, throwaway profile.
+    pub fn session_profile(&self) -> Option<String> {
+        profile::session_profile(&self.config.browser, self.fresh_profile)
     }
 
     pub fn config(&self) -> &Config {
