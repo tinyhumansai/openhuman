@@ -322,7 +322,7 @@ fn is_read_only_refusal(error: &str) -> bool {
 pub(super) fn shell_refusal_nudge(failure_line: &str) -> String {
     format!(
         "The `shell` command was blocked by policy and did not run ({failure_line}). Try a \
-         different, permitted command (a scoped path, a bounded command, a read instead of a \
+         different, narrower, permitted command (a scoped path, a bounded command, a read instead of a \
          write) or continue with other tools. Do not resend the same command: refused again, \
          it ends the turn."
     )
