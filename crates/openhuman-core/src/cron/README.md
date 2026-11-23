@@ -230,7 +230,9 @@ Nothing else is lifted: the channel boundary, the autonomy tier
 (`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
 analysis and protected-path floor, the agent's `sandbox_mode`, the browser's
 allowed-websites list and its forced checkpoint before payment all still
-apply. A job created from a channel conversation keeps running as that
+apply. (An agent whose `sandbox_mode = "sandboxed"` runs its shell in the
+kernel jail, where the lexical protected-path floor on command text is waived
+and the jail's grants are the boundary; see `security/policy/README.md`.) A job created from a channel conversation keeps running as that
 channel's `ExternalChannel` turn, opted-in agent or not.
 
 The browser's `[browser] unattended_actions` list is reachable from every cron
