@@ -494,10 +494,6 @@ async fn omit_memory_log_keeps_a_helper_agents_turns_out_of_memory() {
         transcript: None,
     };
     prelude.memory_post_turn(&receipt, None);
-    for _ in 0..50 {
-        tokio::task::yield_now().await;
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let items = stored(
         &engine,
         MetaFilter {
