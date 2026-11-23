@@ -144,6 +144,7 @@ async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
         Some(&call),
         None,
         &audit,
+        false,
     )
     .await;
     assert!(allowed);
@@ -186,6 +187,7 @@ async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
         None,
         None,
         &Mutex::new(None),
+        false,
     )
     .await;
     assert_eq!(
@@ -193,4 +195,42 @@ async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
         "start\ndone",
         "nothing to follow it with"
     );
+}
+
+/// A command admitted only because it would run in the jail (the protected-path
+/// floor waived) is refused when it resolves to the host instead.
+#[tokio::test]
+async fn a_jailed_command_that_resolves_to_the_host_keeps_the_floor() {
+    let _storage = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
+    let (allowed, result) = run_in_policy(
+        &crate::core::runtime::DispatchCtx::unbound(),
+        unsandboxed_policy(),
+        "cd .. && ls",
+        None,
+        YieldRequest {
+            allowed: false,
+            requested: None,
+        },
+        &jail_workdir(),
+        None,
+        None,
+        &Mutex::new(None),
+        true,
+    )
+    .await;
+    assert!(!allowed);
+    assert!(result.is_error);
+    assert!(result.output().contains("protected path"), "{}", result.output());
+}
+
+#[test]
+fn only_a_host_run_of_a_waived_command_is_refused() {
+    use crate::sandbox::SandboxBackendKind as Backend;
+    assert!(unjailed_floor_refusal(true, Backend::None).is_some());
+    for backend in [Backend::Local, Backend::Docker, Backend::OpenShell, Backend::Agent37] {
+        assert!(unjailed_floor_refusal(true, backend).is_none(), "{backend:?}");
+    }
+    assert!(unjailed_floor_refusal(false, Backend::None).is_none());
 }

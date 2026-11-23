@@ -175,6 +175,7 @@ pub(super) async fn run_in_policy(
     context: Option<&dyn ToolRunContext>,
     meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
     audit: &AuditOnce,
+    floor_waived: bool,
 ) -> (bool, ToolResult) {
     tracing::debug!(
         backend = ?policy.backend,
@@ -230,6 +231,9 @@ pub(super) async fn run_in_policy(
                 return (true, result);
             }
         };
+    if let Some(refusal) = unjailed_floor_refusal(floor_waived, resolved.backend()) {
+        return (false, refusal);
+    }
 
     let (slot, yield_after, effective) =
         come_back(request, context, command, effective, resolved.can_yield());
@@ -266,6 +270,24 @@ pub(super) async fn run_in_policy(
     };
     let result = finish(outcome, slot, command, started, timeout, audit);
     (true, result)
+}
+
+/// The refusal for a command admitted only because it would run in the jail
+/// (TinySecurity's protected-path floor waived, see
+/// `SecurityPolicy::check_jailed_command`) that resolved to the host instead:
+/// the operator turned the sandbox off, or the plan chose no sandbox. There the
+/// floor is the only boundary, so the command is refused as it always was.
+pub(super) fn unjailed_floor_refusal(
+    floor_waived: bool,
+    backend: crate::sandbox::SandboxBackendKind,
+) -> Option<ToolResult> {
+    if !floor_waived || backend != crate::sandbox::SandboxBackendKind::None {
+        return None;
+    }
+    tracing::debug!("[shell] a jailed command resolved to the host; protected-path floor applies");
+    Some(ToolResult::error(
+        crate::security::policy::Refusal::Protected.to_string(),
+    ))
 }
 
 /// The call's audit entry, to be written once by whoever learns the outcome.
