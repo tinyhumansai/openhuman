@@ -339,6 +339,8 @@ pub struct OpenHumanRunContext {
     /// scheduled actions too
     /// (`agent::subagent_host::ops::scheduled_actions_grant`).
     pub sandbox_filesystem_only: bool,
+    /// Stub.
+    pub browser_view_only: bool,
     /// Zero-based OpenHuman subagent depth (the root is zero).
     pub spawn_depth: usize,
     /// This run's subagent usage roll-up; intentionally isolated for children.
