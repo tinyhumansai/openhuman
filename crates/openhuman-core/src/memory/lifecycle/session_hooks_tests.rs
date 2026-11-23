@@ -502,5 +502,8 @@ async fn omit_memory_log_keeps_a_helper_agents_turns_out_of_memory() {
         },
     )
     .await;
-    assert!(items.is_empty(), "nothing of the helper's turn is logged: {items:?}");
+    assert!(
+        items.is_empty(),
+        "nothing of the helper's turn is logged: {items:?}"
+    );
 }
