@@ -12,42 +12,49 @@
 use serde_json::Value;
 use std::path::Path;
 
-/// `browser` actions that change a page, act for the signed-in account, run a
-/// task (which acts) or take a file onto the host.
-const ACTING: &[&str] = &[
-    "click",
-    "double_click",
-    "fill",
-    "type",
-    "press",
-    "select",
-    "check",
-    "task",
-    "task_continue",
-    "confirm_pending",
-    "wait_download",
+/// The only `browser` actions a view-only run has: opening, reading, looking
+/// and leaving. Everything else is refused, so an action added to the tool
+/// later is refused until it is listed here. `find` is listed and checked
+/// further by what it does with the element (`VIEWING_FIND`).
+const VIEWING: &[&str] = &[
+    "open",
+    "snapshot",
+    "read_page",
+    "get_text",
+    "get_title",
+    "get_url",
+    "wait",
+    "hover",
+    "scroll",
+    "is_visible",
+    "find",
+    "list_downloads",
+    "close",
 ];
 
-/// What `find` may do with the element it found that acts on the page.
-const ACTING_FIND: &[&str] = &["click", "fill"];
+/// What `find` may do with the element it found without acting on the page.
+const VIEWING_FIND: &[&str] = &["text", "hover"];
 
 /// Prefix that keeps a view-only session's pool key apart from every key a
 /// normal session uses (those start with the agent scope's absolute path).
 const VIEW_ONLY_KEY_PREFIX: &str = "view-only:";
 
-/// The tool error a view-only run gets for `action`, or `None` when the action
-/// is left to normal handling (allowed, or unknown and refused there).
+/// The tool error a view-only run gets for `action`, or `None` when it is one
+/// of the viewing actions. An action this list does not know is refused: that
+/// covers every acting action, tasks (which act, and whose ids are not this
+/// run's to cancel), downloads, and anything misspelt.
 pub(super) fn view_only_refusal(action: &str, args: &Value) -> Option<String> {
-    let acting = ACTING.contains(&action)
-        || (action == "find"
-            && args["find_action"].as_str().is_some_and(|follow| {
-                ACTING_FIND.contains(&follow.trim().to_ascii_lowercase().as_str())
-            }));
+    let viewing = VIEWING.contains(&action)
+        && (action != "find"
+            || args["find_action"]
+                .as_str()
+                .is_some_and(|follow| VIEWING_FIND.contains(&follow)));
+    let acting = !viewing;
     acting.then(|| {
         format!(
             "{} Browser action `{action}` refused: this agent's browser is view-only \
              (browser_view_only). It may open, read, scroll and look at pages, but not \
-             click, type, submit, run tasks or download.",
+             click, type, submit, run or cancel tasks, or download.",
             tinytools::status::POLICY_BLOCKED_MARKER
         )
     })

@@ -14,6 +14,7 @@ const REFUSED: &[&str] = &[
     "task_continue",
     "confirm_pending",
     "wait_download",
+    "task_cancel",
 ];
 
 /// Reading, looking and leaving.
@@ -29,7 +30,6 @@ const ALLOWED: &[&str] = &[
     "scroll",
     "is_visible",
     "list_downloads",
-    "task_cancel",
     "close",
 ];
 
@@ -58,31 +58,42 @@ fn every_reading_action_passes() {
 }
 
 #[test]
-fn find_is_refused_only_when_it_clicks_or_fills() {
-    for follow in ["click", "fill", " Click "] {
+fn find_passes_only_when_it_reads_or_hovers() {
+    for follow in [
+        json!("click"),
+        json!("fill"),
+        json!(" Click "),
+        json!("TEXT"),
+        json!("press"),
+        json!(null),
+    ] {
         let args = json!({"action": "find", "by": "text", "value": "Go", "find_action": follow});
         let refusal = view_only_refusal("find", &args)
-            .unwrap_or_else(|| panic!("find with {follow:?} must be refused"));
+            .unwrap_or_else(|| panic!("find with {follow} must be refused"));
         assert!(refusal.contains("`find`"), "{refusal}");
         assert!(refusal.contains("view-only"), "{refusal}");
     }
-    for follow in [json!("text"), json!("hover"), json!(null)] {
+    for follow in ["text", "hover"] {
         let args = json!({"action": "find", "by": "text", "value": "Go", "find_action": follow});
         assert_eq!(view_only_refusal("find", &args), None, "{follow}");
     }
-    assert_eq!(
-        view_only_refusal(
-            "find",
-            &json!({"action": "find", "by": "text", "value": "Go"})
-        ),
-        None
-    );
+    // The tool requires `find_action`; without one there is nothing to allow.
+    assert!(view_only_refusal(
+        "find",
+        &json!({"action": "find", "by": "text", "value": "Go"})
+    )
+    .is_some());
 }
 
 #[test]
-fn an_unknown_action_is_left_to_normal_handling() {
-    for action in ["drag", "", "evaluate"] {
-        assert_eq!(view_only_refusal(action, &json!({"action": action})), None);
+fn an_action_the_list_does_not_know_is_refused() {
+    // A new acting action must not become available to a view-only run just
+    // because nobody added it to a deny list.
+    for action in ["drag", "", "evaluate", "upload", "Open", " open"] {
+        assert!(
+            view_only_refusal(action, &json!({"action": action})).is_some(),
+            "{action:?}"
+        );
     }
 }
 
