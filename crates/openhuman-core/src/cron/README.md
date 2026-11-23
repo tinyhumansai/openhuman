@@ -237,7 +237,11 @@ The browser's `[browser] unattended_actions` list is reachable from every cron
 turn, with or without this opt-in: the `browser` tool declares no external
 effect (its consequential actions are gated inside `execute`), so the cron
 stage lets the call through to `browser_unattended::allow`, which treats both
-`Cron` and `CronActions` as unattended.
+`Cron` and `CronActions` as unattended. An agent whose definition sets
+`browser_view_only = true` (or any run below a view-only one) never reaches
+that pass for an acting action: `browser_view_only.rs` refuses it first, and
+its sessions open on a fresh profile, never the persistent one. See
+[`agent_registry/README.md`](../agent_registry/README.md#host-definition-fields).
 
 A job whose `agent_id` is not live is first offered to the host through
 `HostAgentResolver::open` (an embedding host sets it with
