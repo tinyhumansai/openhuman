@@ -147,9 +147,15 @@ impl BrowserClient {
         }
     }
 
-    /// Stub.
+    /// This client with every session it opens on a fresh, throwaway profile,
+    /// whatever `[browser] profile_mode` says: what a view-only run's browser
+    /// uses (`AgentExt::browser_view_only`). It never claims, waits for or
+    /// attaches to the persistent profile.
     pub fn with_fresh_profile(&self) -> Self {
-        self.clone()
+        Self {
+            config: self.config.clone(),
+            fresh_profile: true,
+        }
     }
 
     /// The profile folder a session this client opens asks for; `None` is a
@@ -206,7 +212,8 @@ impl BrowserClient {
             ));
         }
         let browser = &self.config.browser;
-        if browser.profile_mode == "persistent"
+        if !self.fresh_profile
+            && browser.profile_mode == "persistent"
             && !browser
                 .profile_path
                 .as_ref()
@@ -228,11 +235,7 @@ impl BrowserClient {
         options.headless = browser.headless;
         options.viewport = Viewport::desktop(browser.viewport_width, browser.viewport_height);
         options.executable = browser.chrome_path.clone();
-        options.user_data_dir = if browser.profile_mode == "persistent" {
-            browser.profile_path.clone()
-        } else {
-            None
-        };
+        options.user_data_dir = self.session_profile();
         let claimed = claim_profile(
             &self.config,
             &mut options,
