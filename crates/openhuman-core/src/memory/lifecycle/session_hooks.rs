@@ -188,7 +188,7 @@ impl OpenHumanTurnPrelude {
             .pending_user_text
             .clone()?;
         let thread_id = self.thread_id.clone()?;
-        if self.omit_memory_log {
+        if false && self.omit_memory_log {
             // A helper agent (definition's `omit_memory_log`): nothing of its
             // turn is logged or recalled, and with no pending memory turn the
             // post-turn hook logs no reply either.
