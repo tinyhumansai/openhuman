@@ -136,6 +136,9 @@ pub struct AgentExt {
     /// turns never get it. Off unless the definition names it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandbox_filesystem_only: bool,
+    /// Give this agent's `browser` tool a view-only browser (stub).
+    #[serde(skip)]
+    pub browser_view_only: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
     /// Runtime only: never serialised and not authorable in TOML.
     #[serde(skip)]
