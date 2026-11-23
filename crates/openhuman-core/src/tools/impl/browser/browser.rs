@@ -128,10 +128,19 @@ pub struct BrowserTool {
     /// Set once this tool typed a keychain password: from then on it takes
     /// no picture at all (`capture`), whatever the page seems to show.
     password_typed: std::sync::atomic::AtomicBool,
+    /// Serves the calls of a run whose agent's browser is view-only
+    /// (`AgentExt::browser_view_only`): its own sessions, opened on a fresh
+    /// profile and pooled under their own keys. `None` on that tool itself.
+    view_only_tool: Option<Box<BrowserTool>>,
 }
 
 impl BrowserTool {
     pub fn new(client: Arc<BrowserClient>, max_steps: usize) -> Self {
+        let view_only = Self::serving(Arc::new(client.with_fresh_profile()), max_steps, None);
+        Self::serving(client, max_steps, Some(Box::new(view_only)))
+    }
+
+    fn serving(client: Arc<BrowserClient>, max_steps: usize, view_only: Option<Box<Self>>) -> Self {
         Self {
             client,
             session: Mutex::new(None),
@@ -140,12 +149,20 @@ impl BrowserTool {
             thread_key: StdMutex::new(None),
             max_steps: max_steps.clamp(1, 100),
             password_typed: std::sync::atomic::AtomicBool::new(false),
+            view_only_tool: view_only,
         }
     }
 
-    /// Stub.
-    fn for_run(&self, _view_only: bool) -> &BrowserTool {
-        self
+    /// The tool that serves a run: the view-only one when its browser is.
+    fn for_run(&self, view_only: bool) -> &BrowserTool {
+        match &self.view_only_tool {
+            Some(tool) if view_only => tool,
+            _ => self,
+        }
+    }
+
+    fn is_view_only(&self) -> bool {
+        self.view_only_tool.is_none()
     }
 
     #[cfg(test)]
@@ -460,6 +477,14 @@ impl BrowserTool {
     /// allow-listed action may skip the forced approval gate.
     async fn run(&self, args: &Value, origin: Option<&AgentTurnOrigin>) -> anyhow::Result<Value> {
         let verb = required(args, "action")?;
+        if let Some(refusal) = self
+            .is_view_only()
+            .then(|| view_only::view_only_refusal(verb, args))
+            .flatten()
+        {
+            tracing::debug!("[tool.browser] view-only run refused an acting action");
+            anyhow::bail!(refusal);
+        }
         if verb == "close" {
             return self.close().await;
         }
@@ -668,15 +693,17 @@ impl Tool for BrowserTool {
         _options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
+        use crate::agent::tinyagents::host::run_context::browser_view_only_for_tool;
+        let tool = self.for_run(browser_view_only_for_tool(context));
         if let Some(thread_id) = context.and_then(ToolRunContext::thread_id) {
-            let scope = crate::core::runtime::agent_scope_dir(self.client.config());
-            let key = format!("{}:{thread_id}", scope.display());
-            if let Ok(mut held) = self.thread_key.lock() {
+            let scope = crate::core::runtime::agent_scope_dir(tool.client.config());
+            let key = view_only::pool_key(&scope, thread_id, tool.is_view_only());
+            if let Ok(mut held) = tool.thread_key.lock() {
                 *held = Some(key);
             }
         }
         let origin = crate::agent::tinyagents::host::run_context::turn_origin_for_tool(context);
-        self.execute_with_origin(args, origin).await
+        tool.execute_with_origin(args, origin).await
     }
 }
 
