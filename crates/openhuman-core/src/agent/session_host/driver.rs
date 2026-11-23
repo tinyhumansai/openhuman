@@ -41,6 +41,8 @@ pub struct OpenHumanSessionDriver {
     workspace: Option<tinytools::WorkspaceDescriptor>,
     sandbox_mode: tinyagents_definition::SandboxMode,
     sandbox_filesystem_only: bool,
+    /// The definition's `browser_view_only`; only ever tightens the run.
+    browser_view_only: bool,
     hosted_base: Option<Arc<OpenHumanHostBase>>,
     agent_id: String,
 }
@@ -60,6 +62,7 @@ impl OpenHumanSessionDriver {
         workspace: Option<tinytools::WorkspaceDescriptor>,
         sandbox_mode: tinyagents_definition::SandboxMode,
         sandbox_filesystem_only: bool,
+        browser_view_only: bool,
         hosted_base: Option<Arc<OpenHumanHostBase>>,
         agent_id: String,
     ) -> Self {
@@ -74,6 +77,7 @@ impl OpenHumanSessionDriver {
             workspace,
             sandbox_mode,
             sandbox_filesystem_only,
+            browser_view_only,
             hosted_base,
             agent_id,
         }

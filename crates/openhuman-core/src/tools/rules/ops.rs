@@ -169,6 +169,8 @@ impl crate::agent::tinyagents::host::OpenHumanRunContext {
         let mut child = self.clone();
         child.tool_rules = child_rule_policy(self.tool_rules.as_deref(), config, def);
         child.sandbox_mode = Some(def.sandbox_mode);
+        // Kept from the parent, and raised by the child's own definition.
+        child.tighten_browser_view_only(Some(def));
         child
     }
 }

@@ -339,7 +339,11 @@ pub struct OpenHumanRunContext {
     /// scheduled actions too
     /// (`agent::subagent_host::ops::scheduled_actions_grant`).
     pub sandbox_filesystem_only: bool,
-    /// Stub.
+    /// This run's browser is view-only (`AgentExt::browser_view_only`): the
+    /// `browser` tool refuses acting actions and opens on a fresh profile.
+    /// Only ever tightened: set from a session root's definition, kept by
+    /// `child()` and raised again by `for_subagent` when the child's own
+    /// definition asks for it ([`Self::tighten_browser_view_only`]).
     pub browser_view_only: bool,
     /// Zero-based OpenHuman subagent depth (the root is zero).
     pub spawn_depth: usize,

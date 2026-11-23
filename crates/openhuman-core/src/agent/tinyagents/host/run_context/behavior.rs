@@ -225,11 +225,16 @@ impl OpenHumanRunContext {
         self
     }
 
-    /// Stub.
+    /// Makes this run's browser view-only when `definition` asks for it
+    /// (`AgentExt::browser_view_only`). Never clears it: a run already
+    /// view-only, such as the child of a view-only parent, stays so.
     pub(crate) fn tighten_browser_view_only(
         &mut self,
-        _definition: Option<&crate::agent_registry::host_definition::AgentDefinition>,
+        definition: Option<&crate::agent_registry::host_definition::AgentDefinition>,
     ) {
+        if definition.is_some_and(|definition| definition.extensions.browser_view_only) {
+            self.browser_view_only = true;
+        }
     }
 
     /// Builds a child context that inherits authority, cancellation and shared
@@ -314,6 +319,7 @@ impl OpenHumanRunContext {
             approval: self.approval.clone(),
             sandbox_mode: self.sandbox_mode,
             sandbox_filesystem_only: self.sandbox_filesystem_only,
+            browser_view_only: self.browser_view_only,
             parent_agent_id: self
                 .parent
                 .as_ref()

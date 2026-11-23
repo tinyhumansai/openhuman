@@ -349,6 +349,7 @@ impl OpenHumanTurnPrelude {
             .definition
             .as_ref()
             .is_some_and(|definition| definition.extensions.sandbox_filesystem_only);
+        run_context.tighten_browser_view_only(self.definition.as_deref());
         // Same pin as `SessionDriver::run_turn`: the harness speaks the dialect
         // the prompt was composed for, so a text dialect keeps its schemas off
         // the wire and renders the catalogue itself (`ToolsSection` no longer
