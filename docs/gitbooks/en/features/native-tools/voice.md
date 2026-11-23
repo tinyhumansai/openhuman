@@ -15,7 +15,17 @@ Voice is an optional core capability. The Cargo `voice` feature is off in contri
 - **Hallucination filter.** Strips known artifacts such as "Thanks for watching" and phrases invented from silence.
 - **Postprocessing.** Punctuation, capitalization and dictation cleanup.
 
-When you stop recording, the transcription is submitted as a message to the current chat. Desktop global voice shortcuts are no longer part of the product.
+To send a voice message when recording ends, use **Voice mode**. Desktop global voice shortcuts are no longer part of the product.
+
+## Dictate into a chat draft
+
+On Chat, select **Dictate** to record into the text composer. You can keep editing while recording. Select **Finish dictation** to transcribe the clip through your configured speech provider and append one final transcript to the draft. Review or edit it, then select **Send**.
+
+Select Finish within one minute. At that limit, capture stops and the clip is discarded with a timeout message; it is not uploaded or transcribed.
+
+**Discard dictation** or Escape discards the recording or pending transcript. Switching threads, switching to Voice mode, or leaving the composer cancels dictation. The microphone stops when recording ends. Dictation appears when microphone capture and the core's speech provider are available.
+
+**Voice mode**, shown with a waveform icon, opens the microphone composer and sends a voice message with its transcript. **Dictate**, shown with a microphone icon, adds text to your editable draft.
 
 ## Text-to-speech
 

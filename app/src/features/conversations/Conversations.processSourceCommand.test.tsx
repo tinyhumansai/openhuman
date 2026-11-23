@@ -67,7 +67,10 @@ const {
   })),
 }));
 
-vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn().mockResolvedValue({}) }));
+vi.mock('../../services/coreRpcClient', () => ({
+  callCoreRpc: vi.fn().mockResolvedValue({}),
+  subscribeCoreRpcTokenInvalidated: () => vi.fn(),
+}));
 
 vi.mock('../../services/chatService', () => ({
   chatCancel: vi.fn().mockResolvedValue({ accepted: true, turnCancelled: true }),

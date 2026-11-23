@@ -9,6 +9,8 @@ import { createContext, type ReactNode, useContext, useMemo } from 'react';
 
 import { useOpenHumanToolkit } from '../features/conversations/aui/toolkit';
 import { useAppSelector } from '../store/hooks';
+import { ComposerDictationContext } from './ComposerDictationContext';
+import { useComposerDictation } from './useComposerDictation';
 import { useOpenHumanExternalStore } from './useOpenHumanExternalStore';
 
 const debug = debugFactory('openhuman:assistant-ui');
@@ -81,7 +83,11 @@ export function AssistantUiRuntimeProvider({
     effectiveThreadId ?? '(none)',
     threadId === undefined ? 'selection' : 'explicit'
   );
-  const adapter = useOpenHumanExternalStore(effectiveThreadId, { welcomeSuggestions });
+  const dictation = useComposerDictation(effectiveThreadId);
+  const adapter = useOpenHumanExternalStore(effectiveThreadId, {
+    welcomeSuggestions,
+    dictationAdapter: dictation.adapter,
+  });
   const runtime = useExternalStoreRuntime(adapter);
   // Registers every `aui/toolkit.tsx` entry (currently just `task`) so
   // assistant-ui resolves them ahead of the surface's own `ToolFallback`.
@@ -92,7 +98,9 @@ export function AssistantUiRuntimeProvider({
   return (
     <AssistantRuntimeProvider runtime={runtime} config={config}>
       <AuiThreadIdContext.Provider value={effectiveThreadId}>
-        {children}
+        <ComposerDictationContext.Provider value={dictation}>
+          {children}
+        </ComposerDictationContext.Provider>
       </AuiThreadIdContext.Provider>
     </AssistantRuntimeProvider>
   );

@@ -3678,6 +3678,17 @@ const messages: TranslationMap = {
   'composer.settings.temperature': 'Sıcaklık',
   'composer.settings.loadingModels': 'Modeller yükleniyor…',
   'composer.voiceMode': 'Ses modu',
+  'composer.dictate': 'Dikte et',
+  'composer.finishDictation': 'Dikteyi bitir',
+  'composer.discardDictation': 'Dikteyi iptal et',
+  'composer.dictationStarting': 'Mikrofon başlatılıyor…',
+  'composer.dictationRecording': 'Kayıt sürüyor. Metni eklemek için bitirin veya kaydı iptal edin.',
+  'composer.dictationFailed': 'Konuşma metne dönüştürülemedi. Lütfen tekrar deneyin.',
+  'composer.dictationTimedOut': 'Dikte zaman aşımına uğradı. Lütfen tekrar deneyin.',
+  'composer.dictationUnavailable':
+    'Dikte kullanılamıyor. Ayarlar > Ses bölümünden konuşma tanıma sağlayıcınızı kontrol edin.',
+  'composer.dictationStatusFailed':
+    'Diktenin kullanılabilirliği denetlenemedi. Tekrar denemek için bu pencereye dönün.',
   'composer.humanMode': 'İnsan modu',
   'voiceNote.record': 'Sesli not kaydet',
   'voiceNote.stop': 'Kaydı durdur',
