@@ -15,6 +15,8 @@ mod session_pool;
 mod task_actions;
 #[path = "browser_unattended.rs"]
 mod unattended;
+#[path = "browser_view_only.rs"]
+mod view_only;
 use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::modules::browser::BrowserClient;
 use crate::security::approval::{ApprovalGate, GateOutcome};
