@@ -88,6 +88,17 @@ pub trait CommandGateway: sealed::Sealed + std::fmt::Debug + Send + Sync {
         policy: &SecurityPolicy,
         query: &CommandQuery<'_>,
     ) -> Result<CommandVerdict, Refusal>;
+
+    /// The class of a command refused only by the protected-path floor, or
+    /// `None` when it was not refused for that reason or the class is unknown
+    /// (see [`SecurityPolicy::check_jailed_command`]). `None` keeps the refusal.
+    async fn protected_class(
+        &self,
+        _policy: &SecurityPolicy,
+        _query: &CommandQuery<'_>,
+    ) -> Option<CommandClass> {
+        None
+    }
 }
 
 /// A shared gateway handle, as stored on the policy.
@@ -403,6 +414,52 @@ impl SecurityPolicy {
     #[cfg(not(feature = "security-module"))]
     fn native_class_gate_blocking(&self, _class: CommandClass) -> Result<GateDecision, Refusal> {
         Err(Refusal::Unavailable)
+    }
+}
+
+impl SecurityPolicy {
+    /// The class TinySecurity gave `query.command` when its only refusal was
+    /// the protected-path floor. The floor answers before the rest of the
+    /// module's admission, so its class is all a refusal carries. `None` when
+    /// the module refused for another reason, allowed it, or cannot answer.
+    pub(super) async fn protected_command_class(
+        &self,
+        query: &CommandQuery<'_>,
+    ) -> Option<CommandClass> {
+        if crate::security::switch::disabled().is_some() {
+            return None;
+        }
+        if let Some(gateway) = &self.command_gateway {
+            return gateway.protected_class(self, query).await;
+        }
+        self.native_protected_class(query).await
+    }
+
+    #[cfg(feature = "security-module")]
+    async fn native_protected_class(&self, query: &CommandQuery<'_>) -> Option<CommandClass> {
+        use crate::modules::security::command::{command_decision, CommandOp};
+
+        // Classification never spends the budget, so the authorize-stage
+        // policy (already registered with the module) serves either stage.
+        let policy = self
+            .native_command_policy(query.flow, CommandStage::Authorize)
+            .ok()?;
+        let decision = command_decision(
+            &self.workspace_dir,
+            policy,
+            query.command,
+            query.declared.map(to_bus_class),
+            CommandOp::Classify,
+        )
+        .await
+        .ok()?;
+        (decision.denial == Some(tinysecurity_bus::CommandDenial::Protected))
+            .then(|| from_bus_class(decision.class))
+    }
+
+    #[cfg(not(feature = "security-module"))]
+    async fn native_protected_class(&self, _query: &CommandQuery<'_>) -> Option<CommandClass> {
+        None
     }
 }
 
