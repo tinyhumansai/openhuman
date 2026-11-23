@@ -499,6 +499,7 @@ impl SessionHostBuilder {
             host_only: false,
             untrusted_input: false,
             omit_memory_context: self.omit_memory_context.unwrap_or(false),
+            omit_memory_log: self.omit_memory_log.unwrap_or(false),
             payload_summarizer: self.payload_summarizer,
             tokenjuice_compression: self.tokenjuice_compression,
             tool_policy: self.tool_policy.unwrap_or_else(|| {
