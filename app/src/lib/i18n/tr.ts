@@ -2849,6 +2849,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'İş türü',
   'settings.cron.jobs.formJobTypeAgent': 'Ajan (yapay zekâ istemi)',
   'settings.cron.jobs.formJobTypeShell': 'Kabuk komutu',
+  'settings.cron.jobs.formKeepStored': 'Mevcut ayarı koru ({value})',
   'settings.cron.jobs.formName': 'İş adı',
   'settings.cron.jobs.formNamePlaceholder': 'ör. daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'Ajan istemi',

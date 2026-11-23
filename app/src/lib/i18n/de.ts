@@ -2746,6 +2746,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'Job-Typ',
   'settings.cron.jobs.formJobTypeAgent': 'Agent (KI-Prompt)',
   'settings.cron.jobs.formJobTypeShell': 'Shell-Befehl',
+  'settings.cron.jobs.formKeepStored': 'Bestehende Einstellung beibehalten ({value})',
   'settings.cron.jobs.formName': 'Job-Name',
   'settings.cron.jobs.formNamePlaceholder': 'z. B. daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'Agent-Prompt',

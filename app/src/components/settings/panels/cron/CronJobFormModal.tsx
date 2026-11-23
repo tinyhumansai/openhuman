@@ -35,6 +35,11 @@ type JobType = 'agent' | 'shell';
 type ScheduleKind = 'cron' | 'at' | 'every';
 type DeliveryMode = 'none' | 'proactive';
 type SessionTarget = 'isolated' | 'main';
+// Select value for "leave the stored setting as it is". Edit mode shows it when
+// the stored value is one the selects do not offer (a job created from a chat
+// has session_target `current` and delivery `origin` or `announce`).
+const KEEP_STORED = 'keep-stored';
+type KeepStored = typeof KEEP_STORED;
 
 export interface CronJobFormModalProps {
   mode: 'create' | 'edit';
@@ -103,8 +108,14 @@ function getInitialEveryMs(job: CoreCronJob): string {
   return job.schedule.kind === 'every' ? String(job.schedule.every_ms) : '';
 }
 
-function getInitialDelivery(job: CoreCronJob): DeliveryMode {
-  return job.delivery.mode === 'proactive' ? 'proactive' : 'none';
+function getInitialDelivery(job: CoreCronJob): DeliveryMode | KeepStored {
+  const mode = job.delivery.mode;
+  return mode === 'proactive' || mode === 'none' ? mode : KEEP_STORED;
+}
+
+function getInitialSessionTarget(job: CoreCronJob): SessionTarget | KeepStored {
+  const target = job.session_target;
+  return target === 'isolated' || target === 'main' ? target : KEEP_STORED;
 }
 
 interface CronJobFormInitialState {
@@ -117,8 +128,8 @@ interface CronJobFormInitialState {
   everyMs: string;
   prompt: string;
   command: string;
-  sessionTarget: SessionTarget;
-  delivery: DeliveryMode;
+  sessionTarget: SessionTarget | KeepStored;
+  delivery: DeliveryMode | KeepStored;
   deleteAfterRun: boolean;
 }
 
@@ -139,7 +150,7 @@ function getInitialFormState(mode: 'create' | 'edit', job?: CoreCronJob): CronJo
       everyMs: scheduleKind === 'every' ? getInitialEveryMs(job) : '',
       prompt: job.prompt ?? '',
       command: job.command ?? '',
-      sessionTarget: job.session_target === 'main' ? 'main' : 'isolated',
+      sessionTarget: getInitialSessionTarget(job),
       delivery: getInitialDelivery(job),
       deleteAfterRun: job.delete_after_run,
     };
@@ -185,13 +196,10 @@ const CronJobFormModal = ({
   const [everyMs, setEveryMs] = useState(initialState.everyMs);
   const [prompt, setPrompt] = useState(initialState.prompt);
   const [command, setCommand] = useState(initialState.command);
-  const [sessionTarget, setSessionTarget] = useState<SessionTarget>(initialState.sessionTarget);
-  const [delivery, setDelivery] = useState<DeliveryMode>(initialState.delivery);
-  // Whether the user picked a value in these selects. Edit mode sends them
-  // only when touched, because their initial value can be a fallback for a
-  // stored value the selects cannot show (see the edit patch below).
-  const [sessionTargetTouched, setSessionTargetTouched] = useState(false);
-  const [deliveryTouched, setDeliveryTouched] = useState(false);
+  const [sessionTarget, setSessionTarget] = useState<SessionTarget | KeepStored>(
+    initialState.sessionTarget
+  );
+  const [delivery, setDelivery] = useState<DeliveryMode | KeepStored>(initialState.delivery);
   const [deleteAfterRun, setDeleteAfterRun] = useState(initialState.deleteAfterRun);
 
   const [saving, setSaving] = useState(false);
@@ -237,7 +245,9 @@ const CronJobFormModal = ({
           job_type: jobType,
           ...(jobType === 'agent' ? { prompt: prompt.trim() } : {}),
           ...(jobType === 'shell' ? { command: command.trim() } : {}),
-          ...(jobType === 'agent' ? { session_target: sessionTarget } : {}),
+          ...(jobType === 'agent' && sessionTarget !== KEEP_STORED
+            ? { session_target: sessionTarget }
+            : {}),
           ...(jobType === 'agent'
             ? { delivery: { mode: delivery, best_effort: true } }
             : { delivery: { mode: 'none', best_effort: false } }),
@@ -254,19 +264,20 @@ const CronJobFormModal = ({
         await onCreate(params);
       } else {
         if (!job) return;
-        // The selects only offer isolated/main and none/proactive, so a job
-        // created from a chat (session_target `current`, delivery `origin` or
-        // `announce` with a channel/recipient) is shown with a fallback value.
-        // Send those fields only when the user picked a value; the core
-        // replaces `delivery` wholesale, so re-sending an untouched fallback
-        // would detach the job from the conversation it reports back to.
+        // Send the routing selects only when the user moved them off the
+        // stored value. The core replaces `delivery` wholesale, so re-sending
+        // a value the user left alone would reset fields the form does not
+        // show (an `announce` channel/recipient, `best_effort`). KEEP_STORED
+        // is only ever the initial value, so it is never sent.
         const patch: Record<string, unknown> = {
           name: name.trim() || null,
           schedule,
           ...(jobType === 'agent' ? { prompt: prompt.trim() } : {}),
           ...(jobType === 'shell' ? { command: command.trim() } : {}),
-          ...(jobType === 'agent' && sessionTargetTouched ? { session_target: sessionTarget } : {}),
-          ...(jobType === 'agent' && deliveryTouched
+          ...(jobType === 'agent' && sessionTarget !== initialState.sessionTarget
+            ? { session_target: sessionTarget }
+            : {}),
+          ...(jobType === 'agent' && delivery !== initialState.delivery
             ? { delivery: { mode: delivery, best_effort: true } }
             : {}),
           delete_after_run: deleteAfterRun,
@@ -548,12 +559,14 @@ const CronJobFormModal = ({
             <NativeSelect
               data-testid="cron-form-session-target"
               value={sessionTarget}
-              onChange={e => {
-                setSessionTarget(e.target.value as SessionTarget);
-                setSessionTargetTouched(true);
-              }}
+              onChange={e => setSessionTarget(e.target.value as SessionTarget | KeepStored)}
               disabled={saving}
               className="w-full">
+              {initialState.sessionTarget === KEEP_STORED && job && (
+                <option value={KEEP_STORED}>
+                  {t('settings.cron.jobs.formKeepStored').replace('{value}', job.session_target)}
+                </option>
+              )}
               <option value="isolated">{t('settings.cron.jobs.formSessionIsolated')}</option>
               <option value="main">{t('settings.cron.jobs.formSessionMain')}</option>
             </NativeSelect>
@@ -569,12 +582,14 @@ const CronJobFormModal = ({
             <NativeSelect
               data-testid="cron-form-delivery"
               value={delivery}
-              onChange={e => {
-                setDelivery(e.target.value as DeliveryMode);
-                setDeliveryTouched(true);
-              }}
+              onChange={e => setDelivery(e.target.value as DeliveryMode | KeepStored)}
               disabled={saving}
               className="w-full">
+              {initialState.delivery === KEEP_STORED && job && (
+                <option value={KEEP_STORED}>
+                  {t('settings.cron.jobs.formKeepStored').replace('{value}', job.delivery.mode)}
+                </option>
+              )}
               <option value="proactive">{t('settings.cron.jobs.formDeliveryProactive')}</option>
               <option value="none">{t('settings.cron.jobs.formDeliveryNone')}</option>
             </NativeSelect>

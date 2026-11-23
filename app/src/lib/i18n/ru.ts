@@ -2694,6 +2694,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'Тип задачи',
   'settings.cron.jobs.formJobTypeAgent': 'Agent (запрос к ИИ)',
   'settings.cron.jobs.formJobTypeShell': 'Shell-команда',
+  'settings.cron.jobs.formKeepStored': 'Оставить текущую настройку ({value})',
   'settings.cron.jobs.formName': 'Название задачи',
   'settings.cron.jobs.formNamePlaceholder': 'напр. daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'Запрос для агента',

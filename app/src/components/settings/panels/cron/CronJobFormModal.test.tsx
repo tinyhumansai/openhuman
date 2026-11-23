@@ -54,6 +54,21 @@ function renderEdit(stored: CoreCronJob) {
   return onUpdate;
 }
 
+/**
+ * Picks an option the way a browser does. A native `<select>` fires no `change`
+ * event when the user confirms the option it already shows, so a test that
+ * fires `change` with the displayed value would pass on a form the user cannot
+ * actually drive.
+ */
+function pick(testId: string, value: string) {
+  const select = screen.getByTestId(testId) as HTMLSelectElement;
+  if (select.value !== value) fireEvent.change(select, { target: { value } });
+}
+
+function optionValues(testId: string) {
+  return Array.from((screen.getByTestId(testId) as HTMLSelectElement).options).map(o => o.value);
+}
+
 async function submittedPatch(onUpdate: ReturnType<typeof vi.fn>) {
   fireEvent.click(screen.getByTestId('cron-form-submit'));
   await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
@@ -102,10 +117,29 @@ describe('CronJobFormModal edit mode', () => {
     });
   });
 
+  it('shows the stored routing as its own option instead of a fallback', () => {
+    renderEdit(job());
+
+    const delivery = screen.getByTestId('cron-form-delivery') as HTMLSelectElement;
+    const session = screen.getByTestId('cron-form-session-target') as HTMLSelectElement;
+    expect(delivery.value).not.toBe('none');
+    expect(session.value).not.toBe('isolated');
+    expect(optionValues('cron-form-delivery')).toEqual([delivery.value, 'proactive', 'none']);
+    expect(optionValues('cron-form-session-target')).toEqual([session.value, 'isolated', 'main']);
+    expect(delivery.selectedOptions[0].textContent).toBe('settings.cron.jobs.formKeepStored');
+  });
+
+  it('offers no keep option when the stored routing is one the form shows', () => {
+    renderEdit(job({ session_target: 'main', delivery: { mode: 'proactive', best_effort: true } }));
+
+    expect(optionValues('cron-form-delivery')).toEqual(['proactive', 'none']);
+    expect(optionValues('cron-form-session-target')).toEqual(['isolated', 'main']);
+  });
+
   it('sends delivery and session target when the user changes them', async () => {
     const onUpdate = renderEdit(job());
-    fireEvent.change(screen.getByTestId('cron-form-delivery'), { target: { value: 'proactive' } });
-    fireEvent.change(screen.getByTestId('cron-form-session-target'), { target: { value: 'main' } });
+    pick('cron-form-delivery', 'proactive');
+    pick('cron-form-session-target', 'main');
 
     const patch = await submittedPatch(onUpdate);
 
@@ -113,18 +147,43 @@ describe('CronJobFormModal edit mode', () => {
     expect(patch.session_target).toBe('main');
   });
 
-  it('sends the fallback values when the user re-selects them to detach the job', async () => {
+  it('sends none and isolated when the user picks them directly to detach the job', async () => {
     const onUpdate = renderEdit(job());
-    fireEvent.change(screen.getByTestId('cron-form-delivery'), { target: { value: 'proactive' } });
-    fireEvent.change(screen.getByTestId('cron-form-delivery'), { target: { value: 'none' } });
-    fireEvent.change(screen.getByTestId('cron-form-session-target'), {
-      target: { value: 'isolated' },
-    });
+    pick('cron-form-delivery', 'none');
+    pick('cron-form-session-target', 'isolated');
 
     const patch = await submittedPatch(onUpdate);
 
     expect(patch.delivery).toEqual({ mode: 'none', best_effort: true });
     expect(patch.session_target).toBe('isolated');
+  });
+
+  it('keeps the stored routing when the user goes back to the keep option', async () => {
+    const onUpdate = renderEdit(job());
+    const keepDelivery = (screen.getByTestId('cron-form-delivery') as HTMLSelectElement).value;
+    const keepSession = (screen.getByTestId('cron-form-session-target') as HTMLSelectElement).value;
+    pick('cron-form-delivery', 'proactive');
+    pick('cron-form-delivery', keepDelivery);
+    pick('cron-form-session-target', 'main');
+    pick('cron-form-session-target', keepSession);
+
+    const patch = await submittedPatch(onUpdate);
+
+    expect(patch).not.toHaveProperty('delivery');
+    expect(patch).not.toHaveProperty('session_target');
+  });
+
+  it('does not re-send routing the form shows when it is left unchanged', async () => {
+    const onUpdate = renderEdit(
+      job({ session_target: 'main', delivery: { mode: 'proactive', best_effort: false } })
+    );
+    pick('cron-form-delivery', 'none');
+    pick('cron-form-delivery', 'proactive');
+
+    const patch = await submittedPatch(onUpdate);
+
+    expect(patch).not.toHaveProperty('delivery');
+    expect(patch).not.toHaveProperty('session_target');
   });
 
   it('drops tz and active hours when the schedule switches away from cron', async () => {

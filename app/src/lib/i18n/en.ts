@@ -3147,6 +3147,7 @@ const en: TranslationMap = {
   'settings.cron.jobs.formJobType': 'Job type',
   'settings.cron.jobs.formJobTypeAgent': 'Agent (AI prompt)',
   'settings.cron.jobs.formJobTypeShell': 'Shell command',
+  'settings.cron.jobs.formKeepStored': 'Keep existing setting ({value})',
   'settings.cron.jobs.formName': 'Job name',
   'settings.cron.jobs.formNamePlaceholder': 'e.g. daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'Agent prompt',

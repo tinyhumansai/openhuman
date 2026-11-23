@@ -2512,6 +2512,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': '任务类型',
   'settings.cron.jobs.formJobTypeAgent': 'Agent（AI 提示词）',
   'settings.cron.jobs.formJobTypeShell': 'Shell 命令',
+  'settings.cron.jobs.formKeepStored': '保留现有设置（{value}）',
   'settings.cron.jobs.formName': '任务名称',
   'settings.cron.jobs.formNamePlaceholder': '例如 daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'Agent 提示词',
