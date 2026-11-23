@@ -241,3 +241,27 @@ async fn the_hosted_base_carries_the_policy_the_caller_built() {
         "the hosted base must carry the caller's policy, not a stand-in"
     );
 }
+
+/// A definition's `omit_memory_log` reaches a direct `agent_definition(def)`
+/// caller that never calls the setter, so its turns stay out of memory.
+#[test]
+fn a_definitions_omit_memory_log_reaches_a_direct_builder_caller() {
+    let mut def = AgentDefinition::clone(&definition(SEAT, vec![]));
+    def.extensions.omit_memory_log = true;
+    let agent = seat(Some(Arc::new(def)));
+    assert!(agent.omit_memory_log);
+}
+
+/// An explicit `omit_memory_log` setter still overrides the definition's flag.
+#[test]
+fn an_explicit_omit_memory_log_setter_overrides_the_definition() {
+    let mut def = AgentDefinition::clone(&definition(SEAT, vec![]));
+    def.extensions.omit_memory_log = true;
+    let agent = bare()
+        .agent_definition_name(SEAT)
+        .agent_definition(Arc::new(def))
+        .omit_memory_log(false)
+        .build()
+        .expect("a library host seat is a legal build");
+    assert!(!agent.omit_memory_log);
+}

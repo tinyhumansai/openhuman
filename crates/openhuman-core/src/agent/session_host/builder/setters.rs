@@ -40,6 +40,7 @@ impl SessionHostBuilder {
             session_parent_prefix: None,
             session_history_locator: None,
             omit_memory_context: None,
+            omit_memory_log: None,
             payload_summarizer: None,
             tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Full,
             tool_policy: None,
@@ -380,6 +381,14 @@ impl SessionHostBuilder {
     /// user message.
     pub fn omit_memory_context(mut self, omit: bool) -> Self {
         self.omit_memory_context = Some(omit);
+        self
+    }
+
+    /// Forward the target agent definition's `omit_memory_log` flag: when
+    /// `true`, the session's turns are neither logged to long-term memory nor
+    /// given a recalled pack.
+    pub fn omit_memory_log(mut self, omit: bool) -> Self {
+        self.omit_memory_log = Some(omit);
         self
     }
 

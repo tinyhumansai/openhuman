@@ -49,6 +49,13 @@ pub struct AgentExt {
     /// Do not inject the compiled memory context as the first user message.
     #[serde(default = "true_")]
     pub omit_memory_context: bool,
+    /// Keep this agent's turns out of long-term memory: no conversation
+    /// turn is logged and no per-turn pack is recalled. For helper agents
+    /// (writers, judges, reviewers) whose transcripts are not the user's
+    /// conversation and would only crowd what recall brings back to the
+    /// agents that do use memory. Off unless the definition names it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub omit_memory_log: bool,
     /// Strip the standard safety preamble.
     #[serde(default = "true_")]
     pub omit_safety_preamble: bool,
@@ -175,6 +182,7 @@ impl Default for AgentExt {
         Self {
             omit_identity: true,
             omit_memory_context: true,
+            omit_memory_log: false,
             omit_safety_preamble: true,
             tokenjuice_compression: AgentTokenjuiceCompression::default(),
             refresh_prompt_on_resume: false,

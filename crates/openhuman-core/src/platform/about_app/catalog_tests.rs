@@ -589,3 +589,12 @@ fn browser_automation_discloses_the_optional_upstream_proxy() {
             && destination.contains("[browser] upstream_proxies")
             && destination.contains("next core start")));
 }
+
+#[test]
+fn browser_automation_discloses_the_view_only_agent_mode() {
+    let capability =
+        lookup("workflows.computer_browser_automation").expect("browser automation is listed");
+    assert!(capability.description.contains("browser_view_only"));
+    assert!(capability.description.contains("fresh browser profile"));
+    assert!(capability.description.contains("viewing actions"));
+}

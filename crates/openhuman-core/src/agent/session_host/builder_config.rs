@@ -92,6 +92,9 @@ pub struct SessionHostBuilder {
     /// Forwarded to [`OpenHumanSessionHost::omit_memory_context`] at `build()`
     /// time; `None` falls back to `false` (inject `context.md`).
     pub(super) omit_memory_context: Option<bool>,
+    /// Forwarded to [`OpenHumanSessionHost::omit_memory_log`] at `build()`
+    /// time; `None` falls back to `false` (turns are logged).
+    pub(super) omit_memory_log: Option<bool>,
     /// Optional payload-summarizer threaded through to [`OpenHumanSessionHost`] at
     /// build time. Defaults to `None`; the orchestrator branch in
     /// [`super::builder::OpenHumanSessionHost::build_session_agent_inner`] sets this

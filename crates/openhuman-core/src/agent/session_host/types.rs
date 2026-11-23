@@ -429,6 +429,9 @@ pub struct OpenHumanSessionHost {
     /// first user message. Defaults to `false` (inject) for agents built
     /// without a definition.
     pub(super) omit_memory_context: bool,
+    /// Mirrors the agent definition's `omit_memory_log` flag: when set, the
+    /// session's turns never reach long-term memory (no log, no recall).
+    pub(super) omit_memory_log: bool,
     /// Optional payload-summarizer wired in at agent-build time.
     /// Currently set only for the orchestrator session
     /// (see [`super::builder`]). TinyAgents `ToolOutputMiddleware` uses this

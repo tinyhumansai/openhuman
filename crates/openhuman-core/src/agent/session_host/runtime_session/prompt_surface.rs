@@ -37,6 +37,7 @@ impl OpenHumanSessionHost {
             model_name: self.model_name.clone(),
             agent_definition_name: self.agent_definition_name.clone(),
             omit_memory_context: self.omit_memory_context,
+            omit_memory_log: self.omit_memory_log,
             thread_id: self.thread_id.clone(),
             agent_definition_id: self.agent_definition_id.clone(),
             event_session_id: self.event_session_id.clone(),
