@@ -149,7 +149,7 @@ struct HostFailurePolicy {
 /// is sent again unchanged. Refusals of different commands share the class's
 /// own budget (`failure_policy`, `blocked_by_policy` for `shell`), which a
 /// successful command resets.
-const SAME_REFUSED_COMMAND_LIMIT: u32 = 3;
+const SAME_REFUSED_COMMAND_LIMIT: u32 = 2;
 
 impl HostFailurePolicy {
     fn new(
@@ -430,6 +430,13 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
                 let nudge = if class == "missing_app" && call.name == "shell" {
                     Some(missing_program_nudge(
                         &call.name,
+                        &first_error_line(&failure_text),
+                    ))
+                } else if class == "blocked_by_policy"
+                    && call.name == "shell"
+                    && budget == super::failure_policy::SHELL_REFUSAL_BUDGET
+                {
+                    Some(super::failure_policy::shell_refusal_nudge(
                         &first_error_line(&failure_text),
                     ))
                 } else {

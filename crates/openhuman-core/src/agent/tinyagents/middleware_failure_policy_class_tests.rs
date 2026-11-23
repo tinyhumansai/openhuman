@@ -167,19 +167,36 @@ async fn refused_shell_commands_are_budgeted_per_command() {
 async fn the_same_refused_shell_command_retried_still_stops_the_turn() {
     let (mw, handle, slot) = breaker();
     let mut context = ctx();
-    for attempt in 1..=3 {
-        assert_eq!(drain_pause_count(&handle), 0, "attempt {attempt}");
-        run_call(
-            &mw,
-            &mut context,
-            &format!("scan-{attempt}"),
-            "shell",
-            serde_json::json!({"command": "find / -name x"}),
-            Err(SHELL_BLOCK),
-        )
-        .await;
-    }
-    assert_eq!(drain_pause_count(&handle), 1, "the third identical refusal stops");
+    run_call(
+        &mw,
+        &mut context,
+        "scan-1",
+        "shell",
+        serde_json::json!({"command": "ls /blocked"}),
+        Err(SHELL_BLOCK),
+    )
+    .await;
+    // A different command in between does not reset the first one's count.
+    run_call(
+        &mw,
+        &mut context,
+        "scan-2",
+        "shell",
+        serde_json::json!({"command": "find / -name x"}),
+        Err(SHELL_BLOCK),
+    )
+    .await;
+    assert_eq!(drain_pause_count(&handle), 0);
+    run_call(
+        &mw,
+        &mut context,
+        "scan-3",
+        "shell",
+        serde_json::json!({"command": " find / -name x ", "timeout_secs": 30}),
+        Err(SHELL_BLOCK),
+    )
+    .await;
+    assert_eq!(drain_pause_count(&handle), 1, "the same command refused again stops");
     let summary = slot.lock().unwrap().clone().unwrap();
     assert!(summary.contains("blocked_by_policy"), "{summary}");
 }

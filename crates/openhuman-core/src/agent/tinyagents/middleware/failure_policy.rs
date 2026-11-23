@@ -235,8 +235,11 @@ pub(super) fn classified_recovery_policy(
         // command is a fresh attempt, so a shell refusal gets a wider budget,
         // reset by any command that runs; the same command refused again
         // unchanged still stops the run (`repeated_failure`,
-        // `SAME_REFUSED_COMMAND_LIMIT`).
-        Class::BlockedByPolicy if tool == "shell" => ("blocked_by_policy", 8),
+        // `SAME_REFUSED_COMMAND_LIMIT`). Read-only mode refuses every acting
+        // command alike, so another command cannot help there: one retry.
+        Class::BlockedByPolicy if tool == "shell" && !is_read_only_refusal(error) => {
+            ("blocked_by_policy", SHELL_REFUSAL_BUDGET)
+        }
         Class::BlockedByPolicy => ("blocked_by_policy", 1),
         // The user said no, or never answered. Asking again only re-prompts.
         Class::Denied | Class::ApprovalExpired => ("policy", 0),
@@ -302,4 +305,25 @@ pub(super) fn classified_recovery_policy(
         }
         Class::Unknown => return None,
     })
+}
+
+/// Refusals of different shell commands a run may collect with no command
+/// running in between (a command that runs resets it).
+pub(super) const SHELL_REFUSAL_BUDGET: usize = 8;
+
+/// The autonomy tier's read-only refusal (`security::policy::refusal_message`).
+fn is_read_only_refusal(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("read-only mode")
+}
+
+/// The corrective after a refused shell command. The harness's own copy for
+/// `blocked_by_policy` says another refusal ends the turn, which holds for the
+/// other tools but not for a different shell command.
+pub(super) fn shell_refusal_nudge(failure_line: &str) -> String {
+    format!(
+        "The `shell` command was blocked by policy and did not run ({failure_line}). Try a \
+         different, permitted command (a scoped path, a bounded command, a read instead of a \
+         write) or continue with other tools. Do not resend the same command: refused again, \
+         it ends the turn."
+    )
 }
