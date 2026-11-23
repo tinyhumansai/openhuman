@@ -58,7 +58,11 @@ pub(super) async fn drive_turn(
                 .with_headless_descendant_settlement(run_context.headless_descendant_settlement)
                 // Only a child the sub-agent runner granted scheduled actions
                 // carries the mark (`subagent_host::ops::scheduled_actions_grant`).
-                .with_scheduled_actions(run_context.scheduled_actions);
+                .with_scheduled_actions(run_context.scheduled_actions)
+                .with_sandboxed_shell(matches!(
+                    run_context.sandbox_mode,
+                    Some(tinyagents_definition::SandboxMode::Sandboxed)
+                ));
                 if let Some(policy) = tool_policy.as_ref() {
                     gate = gate.with_tool_policy(Arc::new(policy.session.clone()));
                 }
