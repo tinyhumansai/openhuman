@@ -219,6 +219,11 @@ pub(crate) fn sandbox_filesystem_only_for_tool(
         .is_some_and(|host| host.sandbox_filesystem_only)
 }
 
+/// Stub.
+pub(crate) fn browser_view_only_for_tool(_context: Option<&dyn tinytools::ToolRunContext>) -> bool {
+    false
+}
+
 /// Reads the run's approval context from the explicit tool carrier. Direct tool
 /// dispatch (CLI, JSON-RPC, tests) has none, so a tool called that way sees the
 /// non-interactive default.
