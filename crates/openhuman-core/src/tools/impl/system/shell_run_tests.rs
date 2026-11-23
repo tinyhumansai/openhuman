@@ -234,7 +234,7 @@ fn a_macos_native_jail_keeps_the_protected_path_floor() {
 /// Production (Nov 2026): `[runtime.local_jail] extra_read_write` and
 /// `extra_read_only` reached the jail only with security off, so an operator
 /// could not give a sandboxed agent's shell a code checkout or a scratch dir.
-#[cfg(feature = "modules")]
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn configured_local_jail_grants_reach_a_jailed_shell() {
     let tmp = tempfile::tempdir().unwrap();
