@@ -220,7 +220,7 @@ async fn a_jailed_command_that_resolves_to_the_host_keeps_the_floor() {
         true,
     )
     .await;
-    assert!(!allowed);
+    assert!(!allowed, "{}", result.output());
     assert!(result.is_error);
     assert!(result.output().contains("protected path"), "{}", result.output());
 }
