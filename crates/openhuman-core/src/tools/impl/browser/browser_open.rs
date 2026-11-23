@@ -40,7 +40,7 @@ impl BrowserOpenTool {
         }
     }
 
-    async fn open(&self, args: serde_json::Value, client: &BrowserClient) -> anyhow::Result<ToolResult> {
+}
 
 #[async_trait]
 impl Tool for BrowserOpenTool {
@@ -70,7 +70,7 @@ impl Tool for BrowserOpenTool {
 }
 
 impl BrowserOpenTool {
-    async fn open_url(&self, args: serde_json::Value, client: &BrowserClient) -> anyhow::Result<ToolResult> {
+    async fn open(&self, args: serde_json::Value, client: &BrowserClient) -> anyhow::Result<ToolResult> {
         let url = args["url"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
