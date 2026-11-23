@@ -15,6 +15,9 @@
 //! a temporary turn scope does not lose the engine binding or pin an idle
 //! profile. A retired root cannot fall back to a configured external engine.
 //!
+//! An agent whose definition sets `omit_memory_log` skips both hooks: its
+//! turns are neither logged nor given a pack.
+//!
 //! The committed turn is also published as
 //! `DomainEvent::ConversationTurnCommitted` for observers.
 
@@ -185,6 +188,13 @@ impl OpenHumanTurnPrelude {
             .pending_user_text
             .clone()?;
         let thread_id = self.thread_id.clone()?;
+        if self.omit_memory_log {
+            // A helper agent (definition's `omit_memory_log`): nothing of its
+            // turn is logged or recalled, and with no pending memory turn the
+            // post-turn hook logs no reply either.
+            log::debug!("[session_host:memory] omit_memory_log: turn kept out of memory");
+            return None;
+        }
         let config = self.memory_config().await?;
         let mut identity = self.memory_identity(&config);
         if self.omit_memory_context {
