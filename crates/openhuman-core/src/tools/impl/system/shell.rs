@@ -611,22 +611,9 @@ impl ShellTool {
         if policy.filesystem_only {
             tracing::debug!("[shell] the agent opted into a files-only sandbox");
         }
-        // The operator's `[runtime.local_jail]` grants (extra read-write and
-        // read-only folders, toolchain homes, /proc). The plan still admits
-        // each one: a grant on the protected floor, the credential deny list
-        // or the core's own workspace is refused there, not here.
-        // Only the native jail reads them; a container or a box keeps its own.
-        let policy = if policy.backend == crate::sandbox::SandboxBackendKind::Local {
-            match crate::sandbox::local_grants::with_resolved_grants(&config, &policy).await {
-                Ok(granted) => granted,
-                Err(error) => {
-                    tracing::warn!(%error, "[shell] local jail grants unavailable; the jail keeps its workspace only");
-                    policy
-                }
-            }
-        } else {
-            policy
-        };
+        // The operator's `[runtime.local_jail]` grants; the plan still admits
+        // each one (`shell_run::with_jail_grants`).
+        let policy = super::shell_run::with_jail_grants(&config, policy).await;
         let timeout = requested_timeout;
         run_in_policy(
             ctx,

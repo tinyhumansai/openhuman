@@ -234,3 +234,55 @@ fn only_a_host_run_of_a_waived_command_is_refused() {
     }
     assert!(unjailed_floor_refusal(false, Backend::None).is_none());
 }
+
+/// Production (Nov 2026): `[runtime.local_jail] extra_read_write` and
+/// `extra_read_only` reached the jail only with security off, so an operator
+/// could not give a sandboxed agent's shell a code checkout or a scratch dir.
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn configured_local_jail_grants_reach_a_jailed_shell() {
+    let tmp = tempfile::tempdir().unwrap();
+    let _port = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new(
+            [std::path::PathBuf::from("/etc")],
+            vec![],
+        ),
+    );
+    let code = tmp.path().join("code");
+    let scratch = tmp.path().join("scratch");
+    std::fs::create_dir_all(&code).unwrap();
+    std::fs::create_dir_all(&scratch).unwrap();
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = tmp.path().join("core");
+    config.runtime.local_jail.toolchain_homes = false;
+    config.runtime.local_jail.extra_read_only =
+        vec![code.to_string_lossy().into_owned(), "/etc".into()];
+    config.runtime.local_jail.extra_read_write = vec![scratch.to_string_lossy().into_owned()];
+
+    let mut jailed = unsandboxed_policy();
+    jailed.backend = crate::sandbox::SandboxBackendKind::Local;
+    let granted = with_jail_grants(&config, jailed).await;
+    let real = |path: &std::path::Path| path.canonicalize().unwrap();
+    assert!(
+        granted.read_only_mounts.contains(&real(&code)),
+        "{:?}",
+        granted.read_only_mounts
+    );
+    assert!(
+        granted.read_write_mounts.contains(&real(&scratch)),
+        "{:?}",
+        granted.read_write_mounts
+    );
+    // A grant on the protected floor is dropped before it reaches the plan.
+    assert!(!granted
+        .read_only_mounts
+        .iter()
+        .any(|path| path.starts_with("/etc")));
+
+    // A container keeps its own mounts.
+    let mut container = unsandboxed_policy();
+    container.backend = crate::sandbox::SandboxBackendKind::Docker;
+    let kept = with_jail_grants(&config, container.clone()).await;
+    assert_eq!(kept.read_only_mounts, container.read_only_mounts);
+    assert_eq!(kept.read_write_mounts, container.read_write_mounts);
+}

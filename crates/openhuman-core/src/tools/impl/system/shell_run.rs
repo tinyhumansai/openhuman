@@ -290,6 +290,38 @@ pub(super) fn unjailed_floor_refusal(
     ))
 }
 
+/// `policy` with the operator's `[runtime.local_jail]` grants added: the extra
+/// read-write and read-only folders, the toolchain homes and `/proc` when
+/// allowed. Only the native jail reads them; a container or a box keeps its
+/// own. Nothing is decided here: TinyBox drops a grant on TinySecurity's floor
+/// while resolving them, and the spawn plan then admits each remaining one,
+/// refusing any that overlaps the core's workspace or sits on the floor, and
+/// keeps the core's credential files on the jail's deny list
+/// (`sandbox::spawn_plan`). Grants that cannot be resolved leave the policy as
+/// it was.
+pub(super) async fn with_jail_grants(
+    config: &crate::config::Config,
+    policy: crate::sandbox::SandboxPolicy,
+) -> crate::sandbox::SandboxPolicy {
+    if policy.backend != crate::sandbox::SandboxBackendKind::Local {
+        return policy;
+    }
+    match crate::sandbox::local_grants::with_resolved_grants(config, &policy).await {
+        Ok(granted) => {
+            tracing::debug!(
+                read_only = granted.read_only_mounts.len(),
+                read_write = granted.read_write_mounts.len(),
+                "[shell] local jail grants applied"
+            );
+            granted
+        }
+        Err(error) => {
+            tracing::warn!(%error, "[shell] local jail grants unavailable; the jail keeps its workspace only");
+            policy
+        }
+    }
+}
+
 /// The call's audit entry, to be written once by whoever learns the outcome.
 pub(super) fn audit_once(
     audit: Arc<crate::security::AuditSink>,
