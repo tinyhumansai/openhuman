@@ -46,6 +46,7 @@ impl OpenHumanRunContext {
             autonomous_iter_cap: None,
             sandbox_mode: None,
             sandbox_filesystem_only: false,
+            browser_view_only: false,
             spawn_depth: 0,
             subagent_usage: Arc::new(Mutex::new(Vec::new())),
             parent_subagent_usage: None,
