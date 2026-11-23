@@ -366,6 +366,20 @@ impl ConversationStore {
     ) -> Result<ConversationThread, String> {
         let _admission = thread_admission(&self.workspace_dir).admit_create()?;
         self.run("ensure_thread", NONE, |s| async move {
+            let mut request = request;
+            // The driver's ensure is an upsert: on an existing thread it
+            // rewrites the title and labels from the request. The channel
+            // persistence paths re-ensure on every inbound message with a
+            // derived title and the default labels, so a title the user
+            // renamed or labels they set are silently reverted by the
+            // next message. This facade is create-or-return, so when the
+            // thread already exists its stored title and labels win;
+            // renames go through `update_thread_title` and
+            // `update_thread_labels`.
+            if let Some(existing) = s.get_thread(&request.id).await? {
+                request.title = existing.title;
+                request.labels = Some(existing.labels);
+            }
             s.ensure_thread(request).await
         })
     }
