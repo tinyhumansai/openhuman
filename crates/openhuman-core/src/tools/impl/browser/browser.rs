@@ -143,6 +143,11 @@ impl BrowserTool {
         }
     }
 
+    /// Stub.
+    fn for_run(&self, _view_only: bool) -> &BrowserTool {
+        self
+    }
+
     #[cfg(test)]
     async fn session(&self) -> anyhow::Result<SessionId> {
         self.session_for_url(None).await
