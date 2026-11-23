@@ -213,10 +213,24 @@ impl ChannelHostCallbacks {
     }
 
     async fn persist_allowed_identity(&self, channel: String, identity: String) -> Result<()> {
-        crate::channels::host::ConfigAllowlistStore
+        // Run under the captured context, like the remote-control callback
+        // below: without it, a shared backend resolves the config document
+        // from the ambient scope, so persistence falls back to the local file
+        // instead of the tenant's config document.
+        let persist = async {
+            crate::channels::host::ConfigAllowlistStore {
+                config: Arc::clone(&self.config),
+            }
             .persist_allowed_identity(&channel, &identity)
             .await
             .map_err(|_| Error::failed("channel identity persistence failed"))
+        };
+        match &self.core_context {
+            Some(core_context) => {
+                crate::core::runtime::CoreContext::scope(Arc::clone(core_context), persist).await
+            }
+            None => persist.await,
+        }
     }
 
     async fn transcribe(
