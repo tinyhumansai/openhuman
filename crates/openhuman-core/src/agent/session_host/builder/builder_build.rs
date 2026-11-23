@@ -499,7 +499,13 @@ impl SessionHostBuilder {
             host_only: false,
             untrusted_input: false,
             omit_memory_context: self.omit_memory_context.unwrap_or(false),
-            omit_memory_log: self.omit_memory_log.unwrap_or(false),
+            // An explicit setter wins; otherwise the supplied definition's own
+            // flag applies, so a direct `agent_definition(def)` caller is honoured.
+            omit_memory_log: self.omit_memory_log.unwrap_or_else(|| {
+                session_definition
+                    .as_ref()
+                    .is_some_and(|def| def.extensions.omit_memory_log)
+            }),
             payload_summarizer: self.payload_summarizer,
             tokenjuice_compression: self.tokenjuice_compression,
             tool_policy: self.tool_policy.unwrap_or_else(|| {
