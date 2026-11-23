@@ -12,7 +12,7 @@ test("zero exit without the example's behavioral marker is a failure", () => {
 });
 test("runner executes feature gated examples and checks stdout", () => {
   const calls = [];
-  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{OPENHUMAN_EXAMPLE_LIVE:"1"}, run(command,args,options) {
+  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{OPENHUMAN_EXAMPLE_LIVE:"1"},platform:"linux", run(command,args,options) {
     calls.push({command,args,options});
     return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
   }});
@@ -20,6 +20,47 @@ test("runner executes feature gated examples and checks stdout", () => {
   assert.ok(calls[0].args.includes("--features"));
   assert.ok(calls[0].args.includes("channels"));
   assert.equal(calls[0].options.env.OPENHUMAN_EXAMPLE_LIVE, undefined);
+});
+test("on win32 with bash the wrapper runs through bash instead of being spawned directly", () => {
+  const calls = [];
+  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{},platform:"win32", run(command,args,options) {
+    calls.push({command,args,options});
+    if (command === "bash" && args[0] === "--version") return {status:0,stdout:"GNU bash, version 5.2\n",stderr:""};
+    return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
+  }});
+  assert.equal(calls[0].command, "bash");
+  assert.equal(calls[0].args[0], "--version");
+  assert.equal(calls[1].command, "bash");
+  assert.ok(calls[1].args[0].endsWith("ci-cancel-aware.sh"));
+  assert.equal(calls[1].args[1], "cargo");
+  assert.ok(calls[1].args.includes("--example"));
+  assert.ok(calls[1].args.includes("telegram"));
+  assert.ok(calls[1].args.includes("--features"));
+});
+test("on win32 without bash cargo runs directly and the wrapper is skipped", () => {
+  const calls = [];
+  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{},platform:"win32", run(command,args,options) {
+    calls.push({command,args,options});
+    if (command === "bash") return {error:new Error("spawnSync bash ENOENT"),status:null,stdout:"",stderr:""};
+    return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
+  }});
+  assert.equal(calls[0].command, "bash");
+  assert.equal(calls[1].command, "cargo");
+  assert.equal(calls[1].args[0], "run");
+  assert.ok(calls[1].args.includes("--example"));
+  assert.ok(calls[1].args.includes("telegram"));
+  assert.ok(!calls[1].args.join(" ").includes("ci-cancel-aware.sh"));
+});
+test("on win32 a throwing bash probe falls back to direct cargo", () => {
+  const calls = [];
+  runExamples({examples:[{name:"telegram",features:[]}],environment:{},platform:"win32", run(command,args,options) {
+    calls.push({command,args,options});
+    if (command === "bash") throw new Error("spawnSync bash EACCES");
+    return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
+  }});
+  assert.equal(calls[1].command, "cargo");
+  assert.equal(calls[1].args[0], "run");
+  assert.ok(calls[1].args.includes("telegram"));
 });
 test("every discoverable example has an offline output contract", () => {
   const examples = discoverExamples();
@@ -32,6 +73,7 @@ test("all example runs share the same required feature graph", () => {
   runExamples({
     examples: [{name:"skills",features:["skills"]},{name:"mcp",features:["mcp"]}],
     environment: {},
+    platform: "linux",
     run(_command,args) {
       featureArguments.push(args[args.indexOf("--features") + 1]);
       const name = args[args.indexOf("--example") + 1];
@@ -50,7 +92,7 @@ test("fleet measurements retain their declared release and minimal-feature invoc
   assert.equal(fleet.profile, "release");
   assert.equal(fleet.defaultFeatures, false);
   const calls = new Map();
-  runExamples({examples, environment: {}, run(_command, args) {
+  runExamples({examples, environment: {}, platform: "linux", run(_command, args) {
     const name = args[args.indexOf("--example") + 1];
     calls.set(name, args);
     return {status: 0, stdout: `EXAMPLE_OK ${name}\n`, stderr: ""};
@@ -66,7 +108,7 @@ test("fleet measurements retain their declared release and minimal-feature invoc
 test("a forced dev profile builds release-declared measurements in the dev profile and keeps their feature graph", () => {
   const examples = discoverExamples().filter(({name}) => name === "linux_fleet" || name === "mcp");
   const calls = new Map();
-  runExamples({examples, environment: {}, profile: "dev", run(_command, args) {
+  runExamples({examples, environment: {}, profile: "dev", platform: "linux", run(_command, args) {
     const name = args[args.indexOf("--example") + 1];
     calls.set(name, args);
     return {status: 0, stdout: `EXAMPLE_OK ${name}\n`, stderr: ""};
