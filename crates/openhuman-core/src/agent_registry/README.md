@@ -151,13 +151,13 @@ dir. See [`cron/README.md`](../cron/README.md#scheduled-workspace).
 
 `browser_view_only = true` gives the agent a browser for reading the web, not
 for acting as whoever the host's browser profile is signed in as. The `browser`
-tool refuses `click`, `double_click`, `fill`, `type`, `press`, `select`,
-`check`, a `find` that clicks or fills, `task`, `task_continue`,
-`confirm_pending` and `wait_download` with a tool error, before the approval
-gate and `[browser] unattended_actions` (which cannot re-allow them); `open`,
-`snapshot`, `read_page`, `get_text`, `get_title`, `get_url`, `wait`, `hover`,
-`scroll`, `is_visible`, a plain `find`, `list_downloads`, `task_cancel` and
-`close` still work. Its `browser` and `browser_open` sessions open on a fresh
+tool gives it only `open`, `snapshot`, `read_page`, `get_text`, `get_title`,
+`get_url`, `wait`, `hover`, `scroll`, `is_visible`, `list_downloads`, `close`
+and a `find` that reads text or hovers. Every other action is refused with a
+tool error, before the approval gate and `[browser] unattended_actions` (which
+cannot re-allow it): clicks, typing, key presses, tasks (starting, continuing
+or cancelling one), `confirm_pending`, downloads, and any action added to the
+tool later until it is listed in `browser_view_only.rs`. Its `browser` and `browser_open` sessions open on a fresh
 profile whatever `[browser] profile_mode` says, and pool under their own keys,
 so a view-only run never attaches to, waits for or reuses the persistent
 profile or a session opened on it. It only tightens: a run is view-only when its
