@@ -463,6 +463,22 @@ fn failure_scope_keeps_resource_and_permission_context_but_ignores_query() {
     );
 }
 
+#[test]
+fn a_shell_failure_scope_names_the_command_but_not_its_text() {
+    let scope = |command: &str| {
+        super::super::repeated_failure::failure_scope(
+            "shell",
+            &serde_json::json!({"command": command, "timeout_secs": 30}),
+        )
+    };
+    assert_eq!(scope("cat /etc/os-release"), scope("  cat /etc/os-release\n"));
+    assert_ne!(scope("cat /etc/os-release"), scope("cd .. && ls"));
+    assert!(scope("cat /etc/os-release").starts_with("shell:command="));
+    // A fingerprint, never the command itself: the scope is persisted with a
+    // halt cause and a command can carry a token.
+    assert!(!scope("cat /etc/os-release").contains("os-release"));
+}
+
 #[tokio::test]
 async fn legitimate_wait_polling_does_not_consume_transient_budget() {
     let handle = SteeringHandle::allow_all();
