@@ -229,11 +229,14 @@ pub(super) fn classified_recovery_policy(
         // the user's denial, and a second refusal on the same operation and
         // scope still stops.
         //
-        // A shell failure is scoped by its command (`failure_scope`), so a
-        // different command is a fresh attempt, not a retry; the same refused
-        // command gets a few retries before the turn stops. Before that, any
-        // two refused commands in a run ended it (Nov 2026, scheduled agents).
-        Class::BlockedByPolicy if tool == "shell" => ("blocked_by_policy", 3),
+        // Every shell failure shares the scope `shell`, so with one retry any
+        // two refused commands in a row ended the run, however unrelated
+        // (Nov 2026, scheduled agents in the kernel sandbox). A different
+        // command is a fresh attempt, so a shell refusal gets a wider budget,
+        // reset by any command that runs; the same command refused again
+        // unchanged still stops the run (`repeated_failure`,
+        // `SAME_REFUSED_COMMAND_LIMIT`).
+        Class::BlockedByPolicy if tool == "shell" => ("blocked_by_policy", 8),
         Class::BlockedByPolicy => ("blocked_by_policy", 1),
         // The user said no, or never answered. Asking again only re-prompts.
         Class::Denied | Class::ApprovalExpired => ("policy", 0),

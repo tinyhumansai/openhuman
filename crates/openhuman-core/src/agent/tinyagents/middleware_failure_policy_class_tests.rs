@@ -65,11 +65,11 @@ fn a_policy_block_allows_one_alternative_but_a_user_denial_does_not() {
             "{tool}"
         );
     }
-    // A refused shell command is budgeted per command (see
-    // `refused_shell_commands_are_budgeted_per_command`), with a few retries.
+    // A refused shell command gets a wider budget: a different command is a
+    // fresh attempt (see `refused_shell_commands_are_budgeted_per_command`).
     assert_eq!(
         recovery_policy("shell", SHELL_BLOCK, false),
-        Some(("blocked_by_policy", 3))
+        Some(("blocked_by_policy", 8))
     );
     // The user said no, or never answered: asking again only re-prompts them.
     assert_eq!(
@@ -167,7 +167,8 @@ async fn refused_shell_commands_are_budgeted_per_command() {
 async fn the_same_refused_shell_command_retried_still_stops_the_turn() {
     let (mw, handle, slot) = breaker();
     let mut context = ctx();
-    for attempt in 1..=4 {
+    for attempt in 1..=3 {
+        assert_eq!(drain_pause_count(&handle), 0, "attempt {attempt}");
         run_call(
             &mw,
             &mut context,
@@ -178,9 +179,29 @@ async fn the_same_refused_shell_command_retried_still_stops_the_turn() {
         )
         .await;
     }
-    assert_eq!(drain_pause_count(&handle), 1);
+    assert_eq!(drain_pause_count(&handle), 1, "the third identical refusal stops");
     let summary = slot.lock().unwrap().clone().unwrap();
     assert!(summary.contains("blocked_by_policy"), "{summary}");
+}
+
+#[tokio::test]
+async fn refused_shell_commands_with_nothing_running_still_stop_the_turn() {
+    let (mw, handle, slot) = breaker();
+    let mut context = ctx();
+    for attempt in 1..=9 {
+        assert_eq!(drain_pause_count(&handle), 0, "attempt {attempt}");
+        run_call(
+            &mw,
+            &mut context,
+            &format!("scan-{attempt}"),
+            "shell",
+            serde_json::json!({"command": format!("ls /blocked-{attempt}")}),
+            Err(SHELL_BLOCK),
+        )
+        .await;
+    }
+    assert_eq!(drain_pause_count(&handle), 1);
+    assert!(slot.lock().unwrap().is_some());
 }
 
 #[tokio::test]
