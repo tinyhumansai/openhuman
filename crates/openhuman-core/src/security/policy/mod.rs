@@ -1,6 +1,7 @@
 //! Host context and adapters for TinySecurity policy operations.
 
 mod enforcement;
+mod jailed_commands;
 mod local_only_commands;
 mod module_gate;
 mod native_commands;
@@ -18,7 +19,7 @@ pub use native_commands::{
     CommandFlow, CommandGateway, CommandQuery, CommandStage, CommandVerdict, Refusal,
 };
 #[cfg(test)]
-pub(crate) use jailed_commands::test_support::FloorGateway;
+pub(crate) use jailed_commands::test_support::{floor_policy, FloorGateway};
 
 pub use enforcement::validate_path_within_root;
 pub use enforcement::{ensure_openhuman_scratch_dir, openhuman_scratch_dir};
