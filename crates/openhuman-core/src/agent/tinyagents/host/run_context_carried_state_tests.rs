@@ -260,3 +260,81 @@ fn a_subagent_inherits_the_parents_files_only_jail_not_its_own_definitions() {
         "a child's own opt-in is not applied to its run"
     );
 }
+
+fn definition(id: &str, browser_view_only: bool) -> crate::agent_registry::host_definition::AgentDefinition {
+    let mut definition = crate::agent_registry::host_definition::AgentDefinition {
+        id: id.into(),
+        ..Default::default()
+    };
+    definition.extensions.browser_view_only = browser_view_only;
+    definition
+}
+
+/// What a tool in `context`'s run reads for the view-only browser.
+fn tool_sees_browser_view_only(context: OpenHumanRunContext) -> bool {
+    let run = context.into_tinyagents(tinyagents_harness::context::RunConfig::new("view-only"));
+    let call = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
+        &run,
+        tinyagents_harness::ids::CallId::new("view-only-call"),
+    );
+    browser_view_only_for_tool(Some(&call))
+}
+
+/// A session's root run takes the view-only browser from its own definition,
+/// and a tool in that run reads it.
+#[test]
+fn a_root_run_is_browser_view_only_when_its_definition_says_so() {
+    let mut root = OpenHumanRunContext::new();
+    root.tighten_browser_view_only(Some(&definition("reader", true)));
+    assert!(root.browser_view_only);
+    assert!(tool_sees_browser_view_only(root));
+
+    let mut plain = OpenHumanRunContext::new();
+    plain.tighten_browser_view_only(Some(&definition("plain", false)));
+    plain.tighten_browser_view_only(None);
+    assert!(!plain.browser_view_only);
+    assert!(!tool_sees_browser_view_only(plain));
+}
+
+/// Unlike the files-only jail, the view-only browser only ever tightens down
+/// a run tree: a child is view-only when its parent is, whatever its own
+/// definition says, and also when only its own definition asks for it.
+#[test]
+fn a_subagent_is_browser_view_only_when_its_parent_or_its_own_definition_is() {
+    let mut view_only_parent = OpenHumanRunContext::new();
+    view_only_parent.browser_view_only = true;
+    let child = view_only_parent
+        .child()
+        .for_subagent(&definition("plain", false), None);
+    assert!(child.browser_view_only, "a child cannot clear its parent's");
+    assert!(tool_sees_browser_view_only(child.clone()));
+    assert!(
+        child.child().for_subagent(&definition("plain", false), None).browser_view_only,
+        "nor can a grandchild"
+    );
+    assert!(view_only_parent.detached_child().browser_view_only);
+
+    let parent = OpenHumanRunContext::new();
+    let opted = parent
+        .child()
+        .for_subagent(&definition("reader", true), None);
+    assert!(opted.browser_view_only, "a child's own opt-in counts");
+    assert!(tool_sees_browser_view_only(opted));
+
+    let neither = parent
+        .child()
+        .for_subagent(&definition("plain", false), None);
+    assert!(!neither.browser_view_only);
+    assert!(!tool_sees_browser_view_only(neither));
+}
+
+/// A root run whose carrier already came in view-only stays so even when its
+/// own definition does not ask for it.
+#[test]
+fn a_definition_without_the_flag_never_clears_a_view_only_run() {
+    let mut context = OpenHumanRunContext::new();
+    context.browser_view_only = true;
+    context.tighten_browser_view_only(Some(&definition("plain", false)));
+    context.tighten_browser_view_only(None);
+    assert!(context.browser_view_only);
+}
