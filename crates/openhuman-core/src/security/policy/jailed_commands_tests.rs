@@ -12,6 +12,25 @@ fn harness(command: &str) -> CommandQuery<'_> {
     }
 }
 
+/// The second policy query sees only this text, so the words that decide the
+/// high-risk and allowlist verdicts must survive it.
+#[test]
+fn neutral_text_keeps_the_command_word_and_assignment_names() {
+    assert_eq!(neutral_command_text("/bin/rm -rf /etc"), "rm -rf x");
+    assert_eq!(neutral_command_text("mkfs.ext4 /dev/sda"), "mkfs.ext4 x");
+    assert_eq!(
+        neutral_command_text("GIT_PAGER=../pager git log"),
+        "GIT_PAGER=x git log"
+    );
+    assert_eq!(
+        neutral_command_text("ls && /usr/bin/sudo ../x"),
+        "ls && sudo x"
+    );
+    assert_eq!(neutral_command_text("../run.sh"), "run.sh");
+    assert_eq!(neutral_command_text(".. x"), "x x");
+    assert_eq!(neutral_command_text("echo ../x | /bin/sh"), "echo x | sh");
+}
+
 #[test]
 fn neutral_text_replaces_path_words_and_keeps_shell_syntax() {
     assert_eq!(neutral_command_text("cd .. && ls"), "cd x && ls");

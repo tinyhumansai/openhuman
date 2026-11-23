@@ -90,8 +90,11 @@ impl SecurityPolicy {
 /// about everything but the protected-path floor. A path-like word is a run of
 /// word characters holding `.`, `/` or `~`. Quotes, `$`, backticks,
 /// parentheses, redirections and separators are kept as they are, so the
-/// module still sees any hidden execution. The result is only ever classified,
-/// never run.
+/// module still sees any hidden execution. The words that decide the verdict
+/// are kept too: a command word keeps its name (`/bin/rm` becomes `rm`,
+/// `mkfs.ext4` stays), so the high-risk and allowlist checks still see what
+/// runs, and a leading `NAME=value` assignment keeps its name (`NAME=x`). The
+/// result is only ever classified, never run.
 pub(crate) fn neutral_command_text(command: &str) -> String {
     fn word_char(c: char) -> bool {
         c.is_alphanumeric()
@@ -100,25 +103,68 @@ pub(crate) fn neutral_command_text(command: &str) -> String {
                 '.' | '/' | '~' | '-' | '_' | '+' | '@' | '%' | ':' | ',' | '='
             )
     }
-    fn flush(word: &mut String, out: &mut String) {
-        if word.contains(['.', '/', '~']) {
+    fn assignment_name(word: &str) -> Option<&str> {
+        let (name, _) = word.split_once('=')?;
+        let mut chars = name.chars();
+        let first = chars.next()?;
+        ((first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .then_some(name)
+    }
+    /// Pushes the neutral form of `word`; returns whether the next word is
+    /// still in command position.
+    fn flush(word: &mut String, out: &mut String, command_position: bool) -> bool {
+        let mut next = command_position;
+        if word.is_empty() {
+            return next;
+        }
+        let pathlike = word.contains(['.', '/', '~']);
+        if command_position {
+            if let Some(name) = assignment_name(word) {
+                out.push_str(name);
+                out.push('=');
+                if word[name.len() + 1..].is_empty() || !pathlike {
+                    out.push_str(&word[name.len() + 1..]);
+                } else {
+                    out.push('x');
+                }
+            } else {
+                next = false;
+                let base = word.rsplit('/').next().unwrap_or("");
+                if !pathlike {
+                    out.push_str(word);
+                } else if base.is_empty()
+                    || base.starts_with(['.', '~'])
+                    || (!word.contains('/') && word.starts_with(['.', '~']))
+                {
+                    out.push('x');
+                } else {
+                    out.push_str(base);
+                }
+            }
+        } else if pathlike {
             out.push('x');
         } else {
             out.push_str(word);
         }
         word.clear();
+        next
     }
     let mut out = String::with_capacity(command.len());
     let mut word = String::new();
+    let mut command_position = true;
     for c in command.chars() {
         if word_char(c) {
             word.push(c);
         } else {
-            flush(&mut word, &mut out);
+            command_position = flush(&mut word, &mut out, command_position);
+            if matches!(c, ';' | '&' | '|' | '(' | '\n' | '`') {
+                command_position = true;
+            }
             out.push(c);
         }
     }
-    flush(&mut word, &mut out);
+    flush(&mut word, &mut out, command_position);
     out
 }
 
