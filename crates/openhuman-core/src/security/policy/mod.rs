@@ -1,6 +1,7 @@
 //! Host context and adapters for TinySecurity policy operations.
 
 mod enforcement;
+mod jailed_commands;
 mod local_only_commands;
 mod module_gate;
 mod native_commands;
@@ -10,6 +11,9 @@ mod path_checks;
 mod types;
 mod workspace_scope;
 
+#[cfg(test)]
+pub(crate) use jailed_commands::test_support::floor_policy;
+pub use jailed_commands::JailedVerdict;
 pub use module_gate::{host_action_class, PathKind};
 #[cfg(test)]
 pub(crate) use native_commands::Sealed;

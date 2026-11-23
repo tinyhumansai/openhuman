@@ -175,6 +175,7 @@ pub(super) async fn run_in_policy(
     context: Option<&dyn ToolRunContext>,
     meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
     audit: &AuditOnce,
+    floor_waived: bool,
 ) -> (bool, ToolResult) {
     tracing::debug!(
         backend = ?policy.backend,
@@ -230,6 +231,9 @@ pub(super) async fn run_in_policy(
                 return (true, result);
             }
         };
+    if let Some(refusal) = unjailed_floor_refusal(floor_waived, resolved.backend()) {
+        return (false, refusal);
+    }
 
     let (slot, yield_after, effective) =
         come_back(request, context, command, effective, resolved.can_yield());
@@ -266,6 +270,56 @@ pub(super) async fn run_in_policy(
     };
     let result = finish(outcome, slot, command, started, timeout, audit);
     (true, result)
+}
+
+/// The refusal for a command admitted only because it would run in the jail
+/// (TinySecurity's protected-path floor waived, see
+/// `SecurityPolicy::check_jailed_command`) that resolved to the host instead:
+/// the operator turned the sandbox off, or the plan chose no sandbox. There the
+/// floor is the only boundary, so the command is refused as it always was.
+pub(super) fn unjailed_floor_refusal(
+    floor_waived: bool,
+    backend: crate::sandbox::SandboxBackendKind,
+) -> Option<ToolResult> {
+    if !floor_waived || backend != crate::sandbox::SandboxBackendKind::None {
+        return None;
+    }
+    tracing::debug!("[shell] a jailed command resolved to the host; protected-path floor applies");
+    Some(ToolResult::error(
+        crate::security::policy::Refusal::Protected.to_string(),
+    ))
+}
+
+/// `policy` with the operator's `[runtime.local_jail]` grants added: the extra
+/// read-write and read-only folders, the toolchain homes and `/proc` when
+/// allowed. Only the native jail reads them; a container or a box keeps its
+/// own. Nothing is decided here: TinyBox drops a grant on TinySecurity's floor
+/// while resolving them, and the spawn plan then admits each remaining one,
+/// refusing any that overlaps the core's workspace or sits on the floor, and
+/// keeps the core's credential files on the jail's deny list
+/// (`sandbox::spawn_plan`). Grants that cannot be resolved leave the policy as
+/// it was.
+pub(super) async fn with_jail_grants(
+    config: &crate::config::Config,
+    policy: crate::sandbox::SandboxPolicy,
+) -> crate::sandbox::SandboxPolicy {
+    if policy.backend != crate::sandbox::SandboxBackendKind::Local {
+        return policy;
+    }
+    match crate::sandbox::local_grants::with_resolved_grants(config, &policy).await {
+        Ok(granted) => {
+            tracing::debug!(
+                read_only = granted.read_only_mounts.len(),
+                read_write = granted.read_write_mounts.len(),
+                "[shell] local jail grants applied"
+            );
+            granted
+        }
+        Err(error) => {
+            tracing::warn!(%error, "[shell] local jail grants unavailable; the jail keeps its workspace only");
+            policy
+        }
+    }
 }
 
 /// The call's audit entry, to be written once by whoever learns the outcome.

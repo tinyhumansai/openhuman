@@ -305,26 +305,17 @@ impl ShellTool {
         // TinySecurity owns command classification and admission. Re-check at
         // execution time so a command approved earlier cannot bypass a policy
         // reload or a newly exhausted budget.
-        let verdict = match self
-            .security
-            .check_command(crate::security::policy::CommandQuery {
-                command,
-                declared: None,
-                flow: crate::security::policy::CommandFlow::Harness,
-                stage: crate::security::policy::CommandStage::Execute,
-            })
-            .await
-        {
-            Ok(verdict) if verdict.gate != crate::security::policy::GateDecision::Block => verdict,
-            Ok(_) => {
-                return (
-                    false,
-                    ToolResult::error("[policy-blocked] Security policy blocked this command."),
-                );
-            }
-            Err(reason) => return (false, ToolResult::error(reason.to_string())),
+        // A run whose sandbox mode is `Sandboxed` always takes the sandbox
+        // path below (`should_plan_command`), so its command is jailed unless
+        // the plan resolves it to the host; `run_in_policy` refuses that case.
+        let jailed = matches!(
+            crate::agent::tinyagents::host::run_context::sandbox_mode_for_tool(context),
+            Some(tinyagents_definition::SandboxMode::Sandboxed)
+        );
+        let floor_waived = match self.check_for_execution(command, jailed).await {
+            Ok(answer) => answer.floor_waived,
+            Err(refusal) => return (false, refusal),
         };
-        let _ = verdict;
 
         let _cwd = self.effective_action_dir_for_context(context);
 
@@ -344,7 +335,16 @@ impl ShellTool {
                 Ok(policy) => {
                     let (timeout, dir) = (requested_timeout, &action_dir);
                     run_in_policy(
-                        ctx, policy, command, timeout, come_back, dir, context, meter, audit,
+                        ctx,
+                        policy,
+                        command,
+                        timeout,
+                        come_back,
+                        dir,
+                        context,
+                        meter,
+                        audit,
+                        floor_waived,
                     )
                     .await
                 }
@@ -385,8 +385,17 @@ impl ShellTool {
                     context,
                     meter,
                     audit,
+                    floor_waived,
                 )
                 .await;
+        }
+        // Unreachable while a `Sandboxed` run always plans; should that change,
+        // a command admitted for the jail must not run on the host.
+        if floor_waived {
+            return (
+                false,
+                ToolResult::error(crate::security::policy::Refusal::Protected.to_string()),
+            );
         }
 
         // Clear the environment to prevent leaking API keys and other secrets
@@ -576,6 +585,7 @@ impl ShellTool {
         context: Option<&dyn ToolRunContext>,
         meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
         audit: &AuditOnce,
+        floor_waived: bool,
     ) -> (bool, ToolResult) {
         let config = match ctx.load_config().await {
             Ok(config) => config,
@@ -601,11 +611,59 @@ impl ShellTool {
         if policy.filesystem_only {
             tracing::debug!("[shell] the agent opted into a files-only sandbox");
         }
+        // The operator's `[runtime.local_jail]` grants; the plan still admits
+        // each one (`shell_run::with_jail_grants`).
+        let policy = super::shell_run::with_jail_grants(&config, policy).await;
         let timeout = requested_timeout;
         run_in_policy(
-            ctx, policy, command, timeout, come_back, action_dir, context, meter, audit,
+            ctx,
+            policy,
+            command,
+            timeout,
+            come_back,
+            action_dir,
+            context,
+            meter,
+            audit,
+            floor_waived,
         )
         .await
+    }
+
+    /// The execution-stage admission. TinySecurity owns classification and
+    /// admission; this re-check at execution means a command approved earlier
+    /// cannot bypass a policy reload or a newly exhausted budget. A `jailed`
+    /// command does not answer to the lexical protected-path floor
+    /// (`SecurityPolicy::check_jailed_command`); the caller must then keep it
+    /// in the jail.
+    async fn check_for_execution(
+        &self,
+        command: &str,
+        jailed: bool,
+    ) -> Result<crate::security::policy::JailedVerdict, ToolResult> {
+        let query = crate::security::policy::CommandQuery {
+            command,
+            declared: None,
+            flow: crate::security::policy::CommandFlow::Harness,
+            stage: crate::security::policy::CommandStage::Execute,
+        };
+        let checked = if jailed {
+            self.security.check_jailed_command(query).await
+        } else {
+            self.security
+                .check_command(query)
+                .await
+                .map(crate::security::policy::JailedVerdict::checked)
+        };
+        match checked {
+            Ok(answer) if answer.verdict.gate != crate::security::policy::GateDecision::Block => {
+                Ok(answer)
+            }
+            Ok(_) => Err(ToolResult::error(
+                "[policy-blocked] Security policy blocked this command.",
+            )),
+            Err(reason) => Err(ToolResult::error(reason.to_string())),
+        }
     }
 }
 

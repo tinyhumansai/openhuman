@@ -11,6 +11,16 @@ consumption denies execution. OpenHuman maps the module results to the existing
 `None`, `Local`, `Docker`, `OpenShell` or `Agent37` routing and status contracts; it does
 not duplicate the protected-path or credential-root policy.
 
+`[runtime.local_jail]` grants (`extra_read_only`, `extra_read_write`,
+`toolchain_homes`, `allow_proc`) are resolved by TinyBox
+(`local_grants::with_resolved_grants`) and added to a native-jail policy before
+it is planned: for the agent shell's sandboxed path
+(`tools/impl/system/shell_run.rs::with_jail_grants`), for the MCP stdio
+sandbox, and with security disabled. The plan still admits each grant: one on
+TinySecurity's floor or overlapping the core's `workspace_dir` is refused, and
+the core's credential files (secrets file, auth profiles, config) stay on the
+jail's deny list.
+
 `[security.sandbox] backend = "openshell"` routes a command to the tenant's own
 long-lived box on an NVIDIA OpenShell gateway ([`openshell/`](./openshell/mod.rs)),
 declared to TinySecurity as the `tinybox-openshell` container executor. Nothing

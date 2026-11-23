@@ -158,6 +158,12 @@ pub struct OpenHumanSecurityGate {
     /// `TrustedAutomationSource::CronActions` origin and a run depth of 0 or 1
     /// it lifts the read-only Cron stage; every later stage still applies.
     scheduled_actions: bool,
+    /// The run's sandbox mode is `Sandboxed`, so its shell commands run inside
+    /// the kernel jail and TinySecurity's lexical protected-path floor is
+    /// waived for them (`SecurityPolicy::check_jailed_command`). The shell
+    /// re-checks at execution and refuses again if the command would land on
+    /// the host after all.
+    sandboxed_shell: bool,
 }
 
 impl OpenHumanSecurityGate {
@@ -180,7 +186,15 @@ impl OpenHumanSecurityGate {
             screening_config: None,
             headless_descendant_settlement: false,
             scheduled_actions: false,
+            sandboxed_shell: false,
         }
+    }
+
+    /// Marks the gate as a run whose shell is jailed (its definition's sandbox
+    /// mode is `Sandboxed`).
+    pub(crate) fn with_sandboxed_shell(mut self, enabled: bool) -> Self {
+        self.sandboxed_shell = enabled;
+        self
     }
 
     /// Marks the gate as the root session of an opted-in scheduled-actions

@@ -58,17 +58,19 @@ fn breaker() -> (
 
 #[test]
 fn a_policy_block_allows_one_alternative_but_a_user_denial_does_not() {
-    for (tool, error) in [
-        ("shell", SHELL_BLOCK),
-        ("web_fetch", FETCH_BLOCK),
-        ("file_read", FILE_BLOCK),
-    ] {
+    for (tool, error) in [("web_fetch", FETCH_BLOCK), ("file_read", FILE_BLOCK)] {
         assert_eq!(
             recovery_policy(tool, error, false),
             Some(("blocked_by_policy", 1)),
             "{tool}"
         );
     }
+    // A refused shell command gets a wider budget: a different command is a
+    // fresh attempt (see `refused_shell_commands_are_budgeted_per_command`).
+    assert_eq!(
+        recovery_policy("shell", SHELL_BLOCK, false),
+        Some(("blocked_by_policy", 8))
+    );
     // The user said no, or never answered: asking again only re-prompts them.
     assert_eq!(
         recovery_policy(
@@ -132,11 +134,21 @@ async fn a_blocked_shell_command_lets_the_model_try_a_narrower_one() {
     assert!(slot.lock().unwrap().is_none());
 }
 
+/// Production (Nov 2026): a scheduled agent's second refused shell command of
+/// a run, whatever the two commands were, ended the run with "a step this
+/// needs is blocked by your security settings". Two different commands are
+/// two different attempts, not a retry of one blocked step.
 #[tokio::test]
-async fn a_second_consecutive_policy_block_stops_the_turn() {
+async fn refused_shell_commands_are_budgeted_per_command() {
     let (mw, handle, slot) = breaker();
     let mut context = ctx();
-    for (id, command) in [("scan-1", "find / -name x"), ("scan-2", "ls -R /")] {
+    for (id, command) in [
+        ("scan-1", "find / -name x"),
+        ("scan-2", "ls -R /"),
+        ("scan-3", "cat /etc/os-release"),
+        ("scan-4", "cd .. && ls"),
+        ("scan-5", "du -sh /"),
+    ] {
         run_call(
             &mw,
             &mut context,
@@ -144,6 +156,90 @@ async fn a_second_consecutive_policy_block_stops_the_turn() {
             "shell",
             serde_json::json!({"command": command}),
             Err(SHELL_BLOCK),
+        )
+        .await;
+    }
+    assert_eq!(drain_pause_count(&handle), 0);
+    assert!(slot.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn the_same_refused_shell_command_retried_still_stops_the_turn() {
+    let (mw, handle, slot) = breaker();
+    let mut context = ctx();
+    run_call(
+        &mw,
+        &mut context,
+        "scan-1",
+        "shell",
+        serde_json::json!({"command": "ls /blocked"}),
+        Err(SHELL_BLOCK),
+    )
+    .await;
+    // A different command in between does not reset the first one's count.
+    run_call(
+        &mw,
+        &mut context,
+        "scan-2",
+        "shell",
+        serde_json::json!({"command": "find / -name x"}),
+        Err(SHELL_BLOCK),
+    )
+    .await;
+    assert_eq!(drain_pause_count(&handle), 0);
+    run_call(
+        &mw,
+        &mut context,
+        "scan-3",
+        "shell",
+        serde_json::json!({"command": " find / -name x ", "timeout_secs": 30}),
+        Err(SHELL_BLOCK),
+    )
+    .await;
+    assert_eq!(
+        drain_pause_count(&handle),
+        1,
+        "the same command refused again stops"
+    );
+    let summary = slot.lock().unwrap().clone().unwrap();
+    assert!(summary.contains("blocked_by_policy"), "{summary}");
+}
+
+#[tokio::test]
+async fn refused_shell_commands_with_nothing_running_still_stop_the_turn() {
+    let (mw, handle, slot) = breaker();
+    let mut context = ctx();
+    for attempt in 1..=9 {
+        assert_eq!(drain_pause_count(&handle), 0, "attempt {attempt}");
+        run_call(
+            &mw,
+            &mut context,
+            &format!("scan-{attempt}"),
+            "shell",
+            serde_json::json!({"command": format!("ls /blocked-{attempt}")}),
+            Err(SHELL_BLOCK),
+        )
+        .await;
+    }
+    assert_eq!(drain_pause_count(&handle), 1);
+    assert!(slot.lock().unwrap().is_some());
+}
+
+#[tokio::test]
+async fn a_second_policy_block_on_another_tool_still_stops_the_turn() {
+    let (mw, handle, slot) = breaker();
+    let mut context = ctx();
+    for (id, url) in [
+        ("f-1", "https://blocked.test/a"),
+        ("f-2", "https://blocked.test/a"),
+    ] {
+        run_call(
+            &mw,
+            &mut context,
+            id,
+            "web_fetch",
+            serde_json::json!({"url": url}),
+            Err(FETCH_BLOCK),
         )
         .await;
     }

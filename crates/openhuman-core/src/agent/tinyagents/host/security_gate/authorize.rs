@@ -200,15 +200,25 @@ impl OpenHumanSecurityGate {
                     tinytools::status::POLICY_BLOCKED_MARKER
                 )));
             };
-            let verdict = match policy
-                .check_command(crate::security::policy::CommandQuery {
-                    command,
-                    declared: None,
-                    flow: crate::security::policy::CommandFlow::Harness,
-                    stage: crate::security::policy::CommandStage::Authorize,
-                })
-                .await
-            {
+            let query = crate::security::policy::CommandQuery {
+                command,
+                declared: None,
+                flow: crate::security::policy::CommandFlow::Harness,
+                stage: crate::security::policy::CommandStage::Authorize,
+            };
+            // A jailed shell leaves paths to the jail: only TinySecurity's
+            // lexical protected-path floor is waived, every other refusal
+            // stays, and the shell refuses again at execution should the
+            // command land on the host.
+            let checked = if self.sandboxed_shell {
+                policy
+                    .check_jailed_command(query)
+                    .await
+                    .map(|answer| answer.verdict)
+            } else {
+                policy.check_command(query).await
+            };
+            let verdict = match checked {
                 Ok(verdict) => verdict,
                 Err(reason) => return Ok(GateDecision::deny(reason.to_string())),
             };

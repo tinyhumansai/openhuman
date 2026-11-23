@@ -140,7 +140,16 @@ struct HostFailurePolicy {
     stop: StopLatch,
     tool_facts: Mutex<Option<ToolFactsLookup>>,
     last_exit_report: Mutex<HashMap<u64, String>>,
+    /// Per run: how often each shell command (by fingerprint) was refused by
+    /// the security policy. See [`SAME_REFUSED_COMMAND_LIMIT`].
+    refused_commands: Mutex<HashMap<u64, HashMap<String, u32>>>,
 }
+
+/// The refusal of one shell command that stops the run when the same command
+/// is sent again unchanged. Refusals of different commands share the class's
+/// own budget (`failure_policy`, `blocked_by_policy` for `shell`), which a
+/// successful command resets.
+const SAME_REFUSED_COMMAND_LIMIT: u32 = 2;
 
 impl HostFailurePolicy {
     fn new(
@@ -151,6 +160,36 @@ impl HostFailurePolicy {
             stop: StopLatch::new(handle, halt_summary),
             tool_facts: Mutex::default(),
             last_exit_report: Mutex::default(),
+            refused_commands: Mutex::default(),
+        }
+    }
+
+    /// The budget for a shell command the policy refused: the class budget,
+    /// or none once this exact command has been refused
+    /// [`SAME_REFUSED_COMMAND_LIMIT`] times in the run.
+    fn refused_command_budget(&self, instance: u64, call: &TaToolCall, budget: usize) -> usize {
+        let Some(command) = call.arguments.get("command").and_then(|c| c.as_str()) else {
+            return budget;
+        };
+        let fingerprint = args_fingerprint(&serde_json::Value::String(command.trim().to_owned()));
+        let mut runs = self
+            .refused_commands
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let count = runs
+            .entry(instance)
+            .or_default()
+            .entry(fingerprint)
+            .or_default();
+        *count += 1;
+        if *count >= SAME_REFUSED_COMMAND_LIMIT {
+            tracing::debug!(
+                refusals = *count,
+                "[tinyagents::failure] the same refused shell command was sent again; stopping"
+            );
+            0
+        } else {
+            budget
         }
     }
 }
@@ -302,7 +341,7 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
 
     fn assess(
         &self,
-        _ctx: &RunContext<OpenHumanRunContext>,
+        ctx: &RunContext<OpenHumanRunContext>,
         _invocation: &ToolInvocationIdentity,
         call: &TaToolCall,
         _scope: &FailureScope,
@@ -383,9 +422,21 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
             if let Some((class, budget)) =
                 recovery_policy_with_effect(&call.name, &content, body_failure, effect)
             {
+                let budget = if class == "blocked_by_policy" && call.name == "shell" {
+                    self.refused_command_budget(ctx.instance_id(), call, budget)
+                } else {
+                    budget
+                };
                 let nudge = if class == "missing_app" && call.name == "shell" {
                     Some(missing_program_nudge(
                         &call.name,
+                        &first_error_line(&failure_text),
+                    ))
+                } else if class == "blocked_by_policy"
+                    && call.name == "shell"
+                    && budget == super::failure_policy::SHELL_REFUSAL_BUDGET
+                {
+                    Some(super::failure_policy::shell_refusal_nudge(
                         &first_error_line(&failure_text),
                     ))
                 } else {
@@ -556,6 +607,10 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
     fn finish_run(&self, ctx: &RunContext<OpenHumanRunContext>) {
         self.stop.finish_run();
         self.last_exit_report
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&ctx.instance_id());
+        self.refused_commands
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(&ctx.instance_id());
