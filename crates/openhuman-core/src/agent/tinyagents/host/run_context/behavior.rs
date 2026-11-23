@@ -225,6 +225,13 @@ impl OpenHumanRunContext {
         self
     }
 
+    /// Stub.
+    pub(crate) fn tighten_browser_view_only(
+        &mut self,
+        _definition: Option<&crate::agent_registry::host_definition::AgentDefinition>,
+    ) {
+    }
+
     /// Builds a child context that inherits authority, cancellation and shared
     /// workspace policy while keeping route observation and usage isolated.
     pub fn child(&self) -> Self {
