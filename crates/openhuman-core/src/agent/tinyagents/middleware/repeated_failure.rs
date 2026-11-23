@@ -208,8 +208,21 @@ fn args_fingerprint(arguments: &serde_json::Value) -> String {
 /// tool it reaches, and by that inner call's resource fields: every
 /// `use_skill` failure used to share one budget, so a timeout in one skill's
 /// sub-tool and a refusal in another's halted the turn together.
+///
+/// A `shell` call is scoped by a fingerprint of its command (never the text,
+/// which can carry a token): two different commands are two operations. Every
+/// shell failure used to share the scope `shell`, so a policy refusal of one
+/// command and of an unrelated one ended the run together.
 pub(super) fn failure_scope(tool: &str, arguments: &serde_json::Value) -> String {
     let mut scope = tool.to_owned();
+    if tool == "shell" {
+        if let Some(command) = arguments.get("command").and_then(|c| c.as_str()) {
+            scope.push_str(":command=");
+            scope.push_str(&args_fingerprint(&serde_json::Value::String(
+                command.trim().to_owned(),
+            )));
+        }
+    }
     let mut resource_args = arguments;
     if let Some(target) = dispatch_target(tool, arguments) {
         if let Some(skill) = target.skill {
