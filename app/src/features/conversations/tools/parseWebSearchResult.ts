@@ -24,6 +24,8 @@
  * URLs are admitted; anything else is dropped rather than rendered as a
  * link.
  */
+import { truncateText } from '../../../utils/truncateText';
+
 /** Upper bound on a provider label, so a malformed marker can't blow up a row. */
 const MAX_SEARCH_PROVIDER_LENGTH = 32;
 
@@ -135,7 +137,7 @@ function safeHttpUrl(value: string): URL | undefined {
 function clip(text: string | undefined, max = MAX_EXCERPT): string | undefined {
   const cleaned = text?.replace(/\s+/g, ' ').trim();
   if (!cleaned) return undefined;
-  return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
+  return truncateText(cleaned, max);
 }
 
 function hit(
@@ -205,7 +207,7 @@ function fromStructured(value: unknown): ParsedWebSearch | undefined {
 function clipAnswer(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
-  return trimmed.length > MAX_ANSWER ? `${trimmed.slice(0, MAX_ANSWER - 1)}…` : trimmed;
+  return truncateText(trimmed, MAX_ANSWER);
 }
 
 /** Attach the optional answer-side fields only when they carry something. */
