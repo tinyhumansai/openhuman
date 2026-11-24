@@ -185,6 +185,7 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         || name.starts_with("querit_")
         || name.starts_with("tavily_")
         || name.starts_with("seltz_")
+        || name.starts_with("keenable_")
         || name.starts_with("searxng_")
         || name.starts_with("google_places_")
         || name.starts_with("stock_")

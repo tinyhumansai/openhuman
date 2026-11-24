@@ -182,6 +182,7 @@ pub(crate) fn secret_slots(config: &mut Config) -> Vec<(String, SecretSlot<'_>)>
         ("tavily", &mut search.tavily),
         ("gemini", &mut search.gemini),
         ("tinyfish", &mut search.tinyfish),
+        ("keenable", &mut search.keenable),
     ] {
         slots.push((
             format!("search.{provider}.api_key"),
