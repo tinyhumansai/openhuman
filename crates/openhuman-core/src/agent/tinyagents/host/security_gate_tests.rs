@@ -710,6 +710,5 @@ async fn security_configured_off_keeps_local_only_for_the_shell_tool() {
     assert_eq!(local, GateDecision::Allow);
 }
 
-
 #[path = "security_gate_jailed_shell_tests.rs"]
 mod jailed_shell;
