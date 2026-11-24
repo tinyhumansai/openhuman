@@ -25,6 +25,7 @@
  */
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
+import { browserElements } from '../../e2e/helpers/element-helpers';
 import { bootAuthenticatedPage, dismissWalkthroughIfPresent } from '../helpers/core-rpc';
 
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
@@ -83,6 +84,31 @@ const pickerTitle = (page: Page): Locator => page.getByText('Choose provider and
  * to sort first should not be the one that flakes.
  */
 test.describe.configure({ timeout: 120_000 });
+
+test('the thinking-level control uses one hover and keyboard-focus surface', async ({ page }) => {
+  await openChat(page);
+
+  const elements = browserElements(page);
+  const picker = elements.testId('composer-reasoning-effort');
+  const surface = elements.testId('composer-reasoning-effort-surface');
+  await expect(elements.testId('composer-reasoning-gauge')).toBeVisible();
+
+  const restBackground = await surface.evaluate(
+    element => getComputedStyle(element).backgroundColor
+  );
+  await picker.hover();
+  await expect(surface).not.toHaveCSS('background-color', restBackground);
+  await expect(picker).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+
+  await page.mouse.move(0, 0);
+  await picker.focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  await expect(picker).toBeFocused();
+  await expect.poll(() => picker.evaluate(element => element.matches(':focus-visible'))).toBe(true);
+  await expect(picker).toHaveCSS('box-shadow', 'none');
+  await expect(surface).not.toHaveCSS('box-shadow', 'none');
+});
 
 test.describe('Chat composer model override', () => {
   test.beforeEach(async () => {
