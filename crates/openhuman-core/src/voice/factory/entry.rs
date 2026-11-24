@@ -54,6 +54,9 @@ pub async fn create_stt_provider(
             registered_model
         };
         debug!("{LOG_PREFIX} create_stt_provider using registered provider slug={registered_slug}");
+        // A registered provider exposes no endpoint to inspect, so under
+        // LocalOnly it is treated as off-device and refused (#6870).
+        super::privacy::enforce_local_only_stt(registered_slug, None)?;
         return factory(effective_model, config);
     }
     let (slug, slug_model) = split_slug_model(provider.trim());

@@ -42,7 +42,7 @@ Each card has a **Test** button that opens a short session to check the provider
 - TTS audio is streamed and discarded. Nothing is stored.
 - What you and the agent say in a live session is saved to the open conversation. When memory is on, it reaches your memory engine on the same terms as typed chat.
 
-There is no local speech-to-text engine. Speech-to-text is either the hosted route or a third-party API you bring a key for. Text-to-speech still has a local option (Piper).
+No speech-to-text engine ships with OpenHuman. Speech-to-text is the hosted route, a third-party API you bring a key for, or a transcription server you run on this computer; under [privacy mode](../privacy-mode.md) `local_only`, only the last is allowed. Live voice sessions are not covered by `local_only`. Text-to-speech still has a local option (Piper).
 
 ## Google Meet
 

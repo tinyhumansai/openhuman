@@ -58,11 +58,13 @@ Capability {
         name: "Speech Recognition Engine",
         domain: "voice",
         category: CapabilityCategory::Conversation,
-        description: "Choose which hosted engine transcribes your speech. \"Backend\" uses \
+        description: "Choose which engine transcribes your speech. \"Backend\" uses \
                       OpenHuman's transcription proxy and needs no setup; ElevenLabs and OpenAI \
-                      call the provider directly with your own API key. Audio always leaves the \
-                      device — the bundled offline whisper.cpp engine was removed, so there is \
-                      no local option.",
+                      call the provider directly with your own API key. The bundled offline \
+                      whisper.cpp engine was removed, so there is no built-in local engine, but a \
+                      voice provider entry pointing at a transcription server on this device \
+                      keeps audio on it — and that is the only speech-to-text local-only privacy \
+                      mode permits.",
         how_to: "Settings → Voice → Speech recognition engine",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
