@@ -104,6 +104,16 @@ export function createWalkthroughSteps(
       title: t('walkthrough.steps.settings.title'),
       content: t('walkthrough.steps.settings.content'),
       placement: 'top',
+      floatingOptions: {
+        shiftOptions: {
+          // The rail can span the rest of the window. Clamp the tooltip to
+          // the viewport and leave room for the native title-bar controls.
+          crossAxis: true,
+          boundary: [],
+          rootBoundary: 'viewport',
+          padding: { top: 40, right: 10, bottom: 10, left: 10 },
+        },
+      },
       skipBeacon: true,
       before: async () => {
         navigate('/settings');
