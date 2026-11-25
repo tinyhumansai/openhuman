@@ -327,44 +327,14 @@ impl OpenHumanSessionHost {
         // the run-time visible-name gate all consume, so adding it here makes a
         // `⟦tj:…⟧` marker actionable for Named-scope agents
         // (e.g. the orchestrator's curated list). An empty set already means
-        // "no filter", so it needs nothing. Added BEFORE the disallow filter
-        // below so an agent that explicitly disallows it still has it removed.
+        // "no filter", so it needs nothing. An agent that disallows it still
+        // loses it: `disallowed_tools` is a deny rule in the session's rule
+        // set (`tools::rules::agent_rule_layer`), which the prompt catalogue,
+        // the harness catalogue, `tool_search` and every call obey.
         // A summary names the tool in its footer too, and summaries run with
         // the router off, so either one makes the tool necessary.
         if !host_only {
             super::super::ensure_tinyjuice_tools_visible(&mut visible, agent_id, config);
-        }
-
-        if let Some(def) = target_def {
-            if !def.disallowed_tools.is_empty() {
-                match &def.tools {
-                    ToolScope::Wildcard => {
-                        visible = tools
-                            .iter()
-                            .map(|t| t.name().to_string())
-                            .chain(
-                                delegation_tools
-                                    .iter()
-                                    .filter(|t| t.exposure() != tinytools::ToolExposure::Hidden)
-                                    .map(|t| t.name().to_string()),
-                            )
-                            .filter(|name| {
-                                !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
-                            })
-                            .collect();
-                    }
-                    ToolScope::Named(_) => {
-                        visible.retain(|name| {
-                            !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
-                        });
-                    }
-                }
-                // Disallowing every tool must remain a zero-tool scope. An
-                // empty visible set means "no filter" to the harness.
-                if visible.is_empty() {
-                    visible.insert(NO_TOOLS_SENTINEL.to_string());
-                }
-            }
         }
 
         // The delegation tools stay beside the durable registry rather than

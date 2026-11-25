@@ -7,9 +7,11 @@
 //!    [`crate::agent::OpenHumanSessionHost::turn`] attached to the run context
 //!    (`OpenHumanRunContext::parent`).
 //! 2. Resolves the sub-agent's model name (inherit / hint / exact).
-//! 3. Filters the parent's tool registry per `definition.tools`,
-//!    `disallowed_tools`, and `skill_filter` (or, in `fork` mode,
-//!    inherits the parent's tools verbatim).
+//! 3. Filters the parent's tool registry per `definition.tools` and
+//!    `skill_filter` (or, in `fork` mode, inherits the parent's tools
+//!    verbatim); `disallowed_tools` is a deny rule in the child's rule
+//!    policy, which the harness applies to the catalogue, `tool_search` and
+//!    every call.
 //! 4. Builds a narrow system prompt that strips the sections the
 //!    definition asks to omit (`omit_identity`, `omit_memory_context`,
 //!    `omit_safety_preamble`).
