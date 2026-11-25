@@ -2727,6 +2727,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'Type de tâche',
   'settings.cron.jobs.formJobTypeAgent': 'Agent (invite IA)',
   'settings.cron.jobs.formJobTypeShell': 'Commande shell',
+  'settings.cron.jobs.formKeepStored': 'Conserver le réglage existant ({value})',
   'settings.cron.jobs.formName': 'Nom de la tâche',
   'settings.cron.jobs.formNamePlaceholder': 'ex. daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': "Invite de l'agent",

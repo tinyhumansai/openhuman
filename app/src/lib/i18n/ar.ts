@@ -2618,6 +2618,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'نوع المهمة',
   'settings.cron.jobs.formJobTypeAgent': 'Agent (موجّه AI)',
   'settings.cron.jobs.formJobTypeShell': 'أمر shell',
+  'settings.cron.jobs.formKeepStored': 'الإبقاء على الإعداد الحالي ({value})',
   'settings.cron.jobs.formName': 'اسم المهمة',
   'settings.cron.jobs.formNamePlaceholder': 'مثال: daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'موجّه Agent',

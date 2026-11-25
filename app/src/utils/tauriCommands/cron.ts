@@ -8,6 +8,7 @@ export interface CoreCronScheduleCron {
   kind: 'cron';
   expr: string;
   tz?: string | null;
+  active_hours?: { start: string; end: string } | null;
 }
 
 export interface CoreCronScheduleAt {

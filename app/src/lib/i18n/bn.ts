@@ -2664,6 +2664,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'জবের ধরন',
   'settings.cron.jobs.formJobTypeAgent': 'Agent (AI প্রম্পট)',
   'settings.cron.jobs.formJobTypeShell': 'শেল কমান্ড',
+  'settings.cron.jobs.formKeepStored': 'বিদ্যমান সেটিং রাখুন ({value})',
   'settings.cron.jobs.formName': 'জবের নাম',
   'settings.cron.jobs.formNamePlaceholder': 'যেমন daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'Agent প্রম্পট',

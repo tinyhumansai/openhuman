@@ -2668,6 +2668,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'जॉब प्रकार',
   'settings.cron.jobs.formJobTypeAgent': 'Agent (AI प्रॉम्प्ट)',
   'settings.cron.jobs.formJobTypeShell': 'शेल कमांड',
+  'settings.cron.jobs.formKeepStored': 'मौजूदा सेटिंग रखें ({value})',
   'settings.cron.jobs.formName': 'जॉब नाम',
   'settings.cron.jobs.formNamePlaceholder': 'उदा. daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'Agent प्रॉम्प्ट',

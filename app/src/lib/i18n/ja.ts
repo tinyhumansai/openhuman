@@ -3162,6 +3162,7 @@ const messages: TranslationMap = {
   'settings.cron.jobs.formJobType': 'ジョブタイプ',
   'settings.cron.jobs.formJobTypeAgent': 'エージェント (AI プロンプト)',
   'settings.cron.jobs.formJobTypeShell': 'シェルコマンド',
+  'settings.cron.jobs.formKeepStored': '既存の設定を維持（{value}）',
   'settings.cron.jobs.formName': 'ジョブ名',
   'settings.cron.jobs.formNamePlaceholder': '例: daily-report, cleanup-task',
   'settings.cron.jobs.formPrompt': 'エージェントプロンプト',
