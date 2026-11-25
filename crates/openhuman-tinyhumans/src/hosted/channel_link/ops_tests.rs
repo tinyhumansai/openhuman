@@ -48,7 +48,7 @@ async fn link_token_round_trip_and_401_classification() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     let out = auth_create_channel_link_token(&config, "TELEGRAM")
         .await
         .unwrap();
@@ -76,7 +76,7 @@ async fn link_token_409_is_not_session_expiry_and_keeps_its_reason() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     let err = auth_create_channel_link_token(&config, "telegram")
         .await
         .unwrap_err();

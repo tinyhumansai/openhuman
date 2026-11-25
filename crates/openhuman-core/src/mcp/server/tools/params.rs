@@ -220,9 +220,15 @@ async fn validate_tool_arguments(
 
     let config = crate::config::ops::load_current_or_init(ctx)
         .await
-        .map_err(|_| ToolCallError::Internal("MCP argument validation is unavailable".into()))?;
-    let client = crate::mcp::module_client::McpConfiguredClient::for_config(&config)
-        .map_err(|_| ToolCallError::Internal("MCP argument validation is unavailable".into()))?;
+        .map_err(|error| {
+            log::warn!("[mcp][params] argument validation unavailable: {error:?}");
+            ToolCallError::Internal("MCP argument validation is unavailable".into())
+        })?;
+    let client =
+        crate::mcp::module_client::McpConfiguredClient::for_config(&config).map_err(|error| {
+            log::warn!("[mcp][params] argument validation unavailable: {error:?}");
+            ToolCallError::Internal("MCP argument validation is unavailable".into())
+        })?;
     let result = client
         .validate_server_arguments(ValidateServerArgumentsRequest {
             arguments,
@@ -230,7 +236,10 @@ async fn validate_tool_arguments(
             rules,
         })
         .await
-        .map_err(|_| ToolCallError::Internal("MCP argument validation is unavailable".into()))?;
+        .map_err(|error| {
+            log::warn!("[mcp][params] argument validation unavailable: {error:?}");
+            ToolCallError::Internal("MCP argument validation is unavailable".into())
+        })?;
     match result {
         ServerArgumentsValidation::Valid(arguments) => Ok(arguments),
         ServerArgumentsValidation::Invalid(error) => Err(error),

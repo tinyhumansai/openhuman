@@ -1,12 +1,13 @@
 //! Schemas for third-party integration settings: web search and Composio triggers.
 
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::util::params::{json_output, optional_string};
 
-use super::super::helpers::{json_output, optional_bool, optional_string};
+use super::super::helpers::optional_bool;
 
 pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
     match function {
-"update_search_settings" => Some( ControllerSchema {
+        "update_search_settings" => Some(ControllerSchema {
             namespace: "config",
             function: "update_search_settings",
             description: "Update search providers, their routes (managed or own key), per-role provider order, limits, and the web-access allowlist. Keys are write-only.",
@@ -29,7 +30,10 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     required: false,
                 },
                 optional_string("presentation", "roles | all_tools | router | one_provider."),
-                optional_string("presentation_provider", "Provider for one_provider or the router default; empty clears."),
+                optional_string(
+                    "presentation_provider",
+                    "Provider for one_provider or the router default; empty clears.",
+                ),
                 FieldSchema {
                     name: "max_results",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
@@ -57,13 +61,15 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     required: false,
                 },
             ],
-            outputs: vec![json_output("settings", "Updated search settings (same shape as get_search_settings).")],
+            outputs: vec![json_output(
+                "settings",
+                "Updated search settings (same shape as get_search_settings).",
+            )],
         }),
-"get_search_settings" => Some( ControllerSchema {
+        "get_search_settings" => Some(ControllerSchema {
             namespace: "config",
             function: "get_search_settings",
-            description:
-                "Read search settings: each provider's route, key presence and status, the per-role provider order, and which providers serve each role now. Keys are never returned.",
+            description: "Read search settings: each provider's route, key presence and status, the per-role provider order, and which providers serve each role now. Keys are never returned.",
             inputs: vec![],
             outputs: vec![json_output(
                 "settings",

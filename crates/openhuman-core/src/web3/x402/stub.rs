@@ -1,9 +1,8 @@
 //! Disabled-x402 facade.
 //!
 //! Compiled only when the `web3` Cargo feature is off. The controller
-//! registration pair remains callable and returns an empty surface. Ledger
-//! initialization is the always-on compatibility no-op in the parent module;
-//! the real ledger opens lazily through the TinyWallet module.
+//! registration pair remains callable and returns an empty surface. The real
+//! ledger opens lazily through the TinyWallet module.
 
 use crate::core::all::RegisteredController;
 use crate::core::ControllerSchema;
@@ -21,8 +20,8 @@ pub fn all_x402_registered_controllers() -> Vec<RegisteredController> {
 
 // Compiled only in the disabled build (`#[cfg(not(feature = "web3"))] mod stub;`
 // in `super`), so a plain `#[cfg(test)]` here runs only when x402 is compiled
-// out — it pins the disabled facade's callable no-op + empty-registration
-// contract that `core/runtime/bootstrap.rs` boot and `core/all.rs` rely on.
+// out — it pins the disabled facade's empty-registration
+// contract that `core/all.rs` relies on.
 #[cfg(test)]
 #[path = "stub_tests.rs"]
 mod tests;

@@ -37,7 +37,7 @@
 ///   peer (or an intercepting firewall / antivirus / corporate TLS proxy)
 ///   closes the TCP connection mid-TLS-handshake, surfacing as
 ///   `"TLS error: native-tls error: unexpected EOF during handshake"`
-///   wrapped by `socket::ws_loop::run_connection` into
+///   wrapped by the SDK socket supervisor into
 ///   `"WebSocket connect: …"` (`TAURI-RUST-4ZD`, first seen on
 ///   `openhuman@0.56.0`, Windows). The existing `"tls handshake"` anchor
 ///   misses it because the words aren't contiguous (`"tls error"` …
@@ -133,7 +133,7 @@ fn is_channel_supervisor_restart_message(lower: &str) -> bool {
 ///
 /// Also matches the second canonical wire shape: tungstenite's
 /// `WsError::Http(response)` Display, which renders as `"HTTP error: <status>"`
-/// (and which `socket::ws_loop::run_connection` wraps as
+/// (and which the SDK socket supervisor wraps as
 /// `"WebSocket connect: HTTP error: 502 Bad Gateway"`). Per
 /// OPENHUMAN-TAURI-5P (~110 events) and -EZ (~51 events), backend
 /// staging/production load balancers emit HTTP 502/504 during the WebSocket
@@ -240,7 +240,7 @@ fn is_upstream_edge_block_message(lower: &str) -> bool {
 /// 5xx is intentionally **not** classified here — server-side failures from
 /// our backend are real bugs that should reach Sentry. The transient
 /// 502/503/504 deduplication is handled by the threshold logic in callers
-/// (see e.g. `crate::platform::socket::ws_loop::FAIL_ESCALATE_THRESHOLD`).
+/// (see e.g. the SDK socket supervisor's retry escalation threshold).
 fn is_backend_user_error_message(lower: &str) -> bool {
     let Some(rest) = lower.split_once("backend returned ").map(|(_, r)| r) else {
         return false;
@@ -422,6 +422,28 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     // `demotes_composio_set_key_invalid_key_rejection` so a reword that drops the
     // phrase fails CI instead of silently re-opening the leak.
     if lower.contains(crate::integrations::composio::direct_auth::COMPOSIO_INVALID_API_KEY_ANCHOR) {
+        return true;
+    }
+
+    // TAURI-RUST-116R (#8509) — the runtime sibling of X9/K27. Once the
+    // `direct_auth` gate opens for a BYO key Composio rejected 3× in a row,
+    // `direct_list_connections` stops calling Composio and returns
+    // `invalid_api_key_backoff_message` ("Direct-mode Composio API key was
+    // rejected N consecutive times with HTTP 401 Invalid API key; re-enter a
+    // valid key in Connections > Composio …") on every 5 s Settings poll.
+    // `ops::composio_list_connections` hands that bare text to
+    // `report_composio_op_error` BEFORE adding the `[composio-direct]` prefix,
+    // and "Composio" splits the K27 `invalid composio api key` anchor, so it
+    // leaked as a Sentry error per poll (~2.6 k events / 8 users on
+    // 0.64.10–0.64.15). Same user-state as X9/K27: the key is invalid/revoked
+    // and only the user can fix it; the UI surfaces the re-entry prompt via the
+    // integration-degraded notice. Keyed off the shared
+    // `COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR` const (only our own backoff message
+    // renders it) and drift-coupled by
+    // `composio_backoff_anchor_is_prefix_of_backoff_message`.
+    if lower
+        .contains(crate::integrations::composio::direct_auth::COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR)
+    {
         return true;
     }
 

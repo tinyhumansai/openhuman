@@ -25,6 +25,7 @@ import type {
   RunEventListResponse,
 } from '../../types/turnState';
 import type { ChatThreadTodoItem, ThreadGoal } from '../chatService';
+import type { ContentPart } from '../chatWire';
 import { callCoreRpc } from '../coreRpcClient';
 import { attachArtifactRows } from './artifactRows';
 
@@ -94,10 +95,18 @@ export const threadApi = {
     return unwrapEnvelope(response)?.hits ?? [];
   },
 
-  appendMessage: async (threadId: string, message: ThreadMessage): Promise<ThreadMessage> => {
+  appendMessage: async (
+    threadId: string,
+    message: ThreadMessage,
+    attachments?: ContentPart[]
+  ): Promise<ThreadMessage> => {
     const response = await callCoreRpc<Envelope<ThreadMessage>>({
       method: 'openhuman.threads_message_append',
-      params: { thread_id: threadId, message },
+      params: {
+        thread_id: threadId,
+        message,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      },
     });
     return normalizeThreadMessage(unwrapEnvelope(response));
   },

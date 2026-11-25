@@ -50,11 +50,11 @@ pub(super) use dispatch::AggregatedUsage;
 
 // Only what `graph_tests.rs`'s `use super::*` still needs directly (the rest
 // of the original flat imports now live with the code that uses them, in
-// `dispatch.rs` / `transcript.rs` / `threads::worker_mirror`).
+// `dispatch.rs` / `transcript.rs` / `worker_mirror`).
+#[cfg(test)]
+use super::{mirror_worker_thread, mirror_worker_thread_from_history};
 #[cfg(test)]
 use crate::progress::AgentProgress;
-#[cfg(test)]
-use crate::threads::worker_mirror::{mirror_worker_thread, mirror_worker_thread_from_history};
 #[cfg(test)]
 use std::collections::HashSet;
 #[cfg(test)]

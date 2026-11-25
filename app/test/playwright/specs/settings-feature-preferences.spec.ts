@@ -171,12 +171,19 @@ function readEnabledTools(snapshot: ToolsSnapshot): string[] {
 test.describe('Settings - Feature Preferences', () => {
   test('falls through the retired features settings route to settings home', async ({ page }) => {
     await openAuthenticatedRoute(page, 'pw-settings-features-route', '/settings/features');
-
-    await expect
-      .poll(async () => page.evaluate(() => window.location.hash))
-      .toMatch(/^#\/settings(?:\/account)?$/);
-    await expect(page.getByText('Screen Intelligence', { exact: true })).toHaveCount(0);
-    await expect(page.getByText('Screen Awareness Debug', { exact: true })).toHaveCount(0);
+    for (const route of [
+      '/settings/features',
+      '/settings/screen-intelligence',
+      '/settings/screen-awareness-debug',
+    ]) {
+      await page.goto(`/#${route}`);
+      await waitForAppReady(page);
+      await expect
+        .poll(async () => page.evaluate(() => window.location.hash))
+        .toMatch(/^#\/settings(?:\/account)?$/);
+      await expect(page.getByText('Screen Intelligence', { exact: true })).toHaveCount(0);
+      await expect(page.getByText('Screen Awareness Debug', { exact: true })).toHaveCount(0);
+    }
   });
 
   test('persists the default messaging channel through redux state', async ({ page }) => {
@@ -280,5 +287,26 @@ test.describe('Settings - Feature Preferences', () => {
     await page.goto('/#/human');
     await waitForAppReady(page);
     await expect.poll(() => getSelectedMascotId(page)).toBe('river-guide');
+  });
+
+  test('persists the custom mascot voice override on the voice panel', async ({ page }) => {
+    await openAuthenticatedRoute(page, 'pw-settings-mascot-voice', '/settings/face');
+
+    await expect(page.getByRole('heading', { name: 'Voice', exact: true })).toBeVisible();
+    const customVoiceOption = page.locator(
+      '[data-testid="mascot-voice-select"] option[value="__custom__"]'
+    );
+    await expect(customVoiceOption).toHaveCount(1);
+
+    await page.getByTestId('mascot-voice-select').selectOption('__custom__');
+    await expect(page.getByTestId('mascot-voice-input')).toBeVisible();
+
+    await page.getByTestId('mascot-voice-input').fill('voice-e2e-custom');
+    await page.getByTestId('mascot-voice-save-paste').click();
+
+    await expect.poll(() => getMascotVoiceId(page)).toBe('voice-e2e-custom');
+
+    await reloadAndWait(page);
+    await expect.poll(() => getMascotVoiceId(page)).toBe('voice-e2e-custom');
   });
 });

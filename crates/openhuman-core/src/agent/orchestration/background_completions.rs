@@ -1,5 +1,5 @@
 //! Host adapter over the harness `CompletionRouter` for finished detached
-//! background sub-agents (`spawn_async_subagent`).
+//! background sub-agents (`spawn_subagent`).
 //!
 //! The queue itself is the harness's: `tinyagents_tasks::CompletionRouter`
 //! deduplicates by task id, holds tombstones (collected inline, stopped,
@@ -14,8 +14,7 @@
 //!   thread-addressed, and a thread-scoped cancel (Stop, delete, purge) is then
 //!   the router's own `cancel_parent` / `resume_parent`;
 //! * the product-specific lifecycle helpers (`record_failure`,
-//!   `record_awaiting_input`, `mark_collected`, ...) the spawn, wait, cancel and
-//!   thread paths call.
+//!   `record_awaiting_input`, ...) the spawn, cancel and thread paths call.
 //!
 //! When a parent is idle enough to receive a delivery turn, and the turn itself,
 //! stays in [`super::background_delivery`]. The wording is
@@ -23,8 +22,14 @@
 
 use crate::core::runtime::DispatchCtx;
 use std::collections::{HashMap, HashSet, VecDeque};
+mod parent_lifecycle;
 mod store_adapter;
 mod thread_index;
+use parent_lifecycle::is_marked_deleted;
+pub(crate) use parent_lifecycle::{
+    clear_all, delete_parent_for_thread, discard_for_thread, discard_pending_for_thread,
+    finish_stop_for_thread, mark_stopped_task_if_thread_stopped, resume_stopped_thread,
+};
 pub(crate) use store_adapter::router_for_workspace_ctx;
 pub(super) use store_adapter::{
     degrade_to_memory, entry_for_ctx, open_driver_store, router_pool, router_scope_for,
@@ -33,9 +38,10 @@ pub(super) use store_adapter::{
 pub(super) use store_adapter::{
     entry_for, router_for_workspace, router_scope, test_store_overrides,
 };
-use thread_index::{key, note_thread_workspace};
+use thread_index::key;
 pub(crate) use thread_index::{
-    note_session_thread, router_for_thread, thread_for_session, workspace_for_thread,
+    note_session_thread, note_thread_workspace, router_for_thread, thread_for_session,
+    workspace_for_thread,
 };
 
 use std::path::{Path, PathBuf};
@@ -46,12 +52,13 @@ use tinyagents_orchestration::subagent::{
     record_detached_completion, DetachedCompletionTarget, DetachedSubagentStatus,
 };
 use tinyagents_tasks::{
-    CompletionRecord, CompletionResult, CompletionRouter, CompletionState, CompletionStatus,
-    CompletionStore, NotifyMode, TombstoneOutcome,
+    CompletionRecord, CompletionResult, CompletionRouter, CompletionState, CompletionStore,
+    NotifyMode,
 };
 
 use super::completion_notice::BackgroundCompletionFormatter;
 pub(crate) use super::completion_notice::{BackgroundAgentOutcome, AWAITING_INPUT_LABEL};
+use super::completion_target::awaiting_input_record_id;
 #[cfg(test)]
 pub(crate) use super::completion_target::claim_recovery;
 #[cfg(test)]
@@ -59,7 +66,6 @@ pub(crate) use super::completion_target::tests::{
     forget_workspace_for_test, install_store_for_test, TestWorkspace,
 };
 pub(crate) use super::completion_target::CompletionTarget;
-use super::completion_target::{awaiting_input_record_id, awaiting_input_record_prefix};
 pub(crate) use super::completion_target::{claim_recovery_ctx, forget_recovery_ctx};
 
 /// How long a settled record (delivered / gave up / tombstoned) is kept before
@@ -125,6 +131,9 @@ pub(super) struct HostState {
     pub(super) deleted_threads: HashSet<String>,
     /// Workspaces whose log boot recovery has already scanned this process.
     pub(super) recovered_workspaces: HashSet<RouterScope>,
+    /// Scopes whose durable store failed and whose router now sits on an
+    /// in-memory queue holding records the backend does not have.
+    pub(super) degraded_scopes: HashSet<RouterScope>,
 }
 
 pub(super) fn state() -> std::sync::MutexGuard<'static, HostState> {
@@ -177,10 +186,35 @@ pub(crate) async fn record_outcome(
     parent_thread_id: Option<String>,
     outcome: BackgroundAgentOutcome,
 ) {
+    record_outcome_with_parent_epoch(
+        ctx,
+        workspace_dir,
+        parent_session,
+        task_id,
+        agent_id,
+        summary,
+        parent_thread_id,
+        None,
+        outcome,
+    )
+    .await;
+}
+
+pub(crate) async fn record_outcome_with_parent_epoch(
+    ctx: &DispatchCtx,
+    workspace_dir: &Path,
+    parent_session: &str,
+    task_id: impl Into<String>,
+    agent_id: impl Into<String>,
+    summary: impl Into<String>,
+    parent_thread_id: Option<String>,
+    parent_epoch: Option<u64>,
+    outcome: BackgroundAgentOutcome,
+) {
     let task_id = task_id.into();
     let Some(thread_id) = parent_thread_id else {
         // Delivery is thread-addressed; a headless spawn has nowhere to land
-        // the result. (`spawn_async_subagent` refuses to start one.)
+        // the result. (`spawn_subagent` refuses to start one.)
         log::warn!("[background_completions] dropping headless completion task_id={task_id}");
         return;
     };
@@ -218,8 +252,11 @@ pub(crate) async fn record_outcome(
 
     let router = router_for_workspace_ctx(ctx, workspace_dir);
     let summary = summary.into();
-    let target = DetachedCompletionTarget::new(router.clone(), thread_id.clone(), agent_id)
+    let mut target = DetachedCompletionTarget::new(router.clone(), thread_id.clone(), agent_id)
         .with_notify_mode(NotifyMode::Followup);
+    if let Some(parent_epoch) = parent_epoch {
+        target.parent_epoch = parent_epoch;
+    }
     let status = match outcome {
         BackgroundAgentOutcome::Completed => DetachedSubagentStatus::Completed {
             output: summary,
@@ -229,7 +266,7 @@ pub(crate) async fn record_outcome(
         BackgroundAgentOutcome::AwaitingInput => {
             // TinyAgents deliberately excludes pauses from terminal dedupe; the
             // host gives each paused checkpoint its own record identity above.
-            let record = CompletionRecord::new(
+            let mut record = CompletionRecord::new(
                 task_id.clone(),
                 thread_id.clone(),
                 target.agent_id.clone(),
@@ -238,6 +275,9 @@ pub(crate) async fn record_outcome(
             )
             .with_notify_mode(NotifyMode::Followup)
             .with_label(AWAITING_INPUT_LABEL);
+            if let Some(parent_epoch) = parent_epoch {
+                record.parent_epoch = parent_epoch;
+            }
             record_completion_record(ctx, workspace_dir, &router, record, &task_id, &thread_id)
                 .await;
             return;
@@ -256,12 +296,15 @@ pub(crate) async fn record_outcome(
              task_id={task_id} thread_id={thread_id}"
         );
         let fallback = degrade_to_memory(ctx, workspace_dir, &router);
-        let fallback_target = DetachedCompletionTarget::new(
+        let mut fallback_target = DetachedCompletionTarget::new(
             fallback.router.clone(),
             thread_id.clone(),
             target.agent_id.clone(),
         )
         .with_notify_mode(NotifyMode::Followup);
+        if let Some(parent_epoch) = parent_epoch {
+            fallback_target.parent_epoch = parent_epoch;
+        }
         if !record_detached_completion(&fallback_target, &task_id, &status).await {
             log::error!(
                 "[background_completions] completion LOST — in-memory fallback failed task_id={task_id} thread_id={thread_id}"
@@ -440,250 +483,6 @@ pub(crate) fn pending_for_ctx(
     thread_id: &str,
 ) -> Vec<CompletionRecord> {
     router_for_workspace_ctx(ctx, workspace_dir).pending_for(thread_id)
-}
-
-/// Mark `task_id` as collected inline by the parent (via `wait_subagent`) so its
-/// background completion is not independently delivered as a second, duplicate
-/// answer. The router withdraws an already-recorded completion and drops one
-/// that arrives later. Returns whether a pending completion was withdrawn.
-#[cfg(test)]
-pub(crate) fn mark_collected(workspace_dir: &Path, task_id: &str) -> bool {
-    let entry = entry_for(workspace_dir);
-    mark_collected_in_entry(entry, task_id)
-}
-
-pub(crate) fn mark_collected_ctx(ctx: &DispatchCtx, workspace_dir: &Path, task_id: &str) -> bool {
-    mark_collected_in_entry(entry_for_ctx(ctx, workspace_dir), task_id)
-}
-
-fn mark_collected_in_entry(entry: Arc<Entry>, task_id: &str) -> bool {
-    let router = &entry.router;
-    let completion = router.tombstone(task_id);
-    // A parent that collected the final result inline has no use for any
-    // queued pause notices from that same task. Sweep them too, including
-    // pauses persisted before a restart.
-    let pause_prefix = awaiting_input_record_prefix(task_id);
-    let pauses: Vec<String> = entry
-        .store
-        .list(None)
-        .into_iter()
-        .filter(|record| record.task_id.starts_with(&pause_prefix))
-        .map(|record| record.task_id)
-        .collect();
-    let pauses_collected = pauses.into_iter().fold(false, |collected, pause_id| {
-        let suppressed = matches!(
-            router.tombstone(&pause_id),
-            Ok(TombstoneOutcome::Suppressed)
-        );
-        collected | suppressed
-    });
-    log::debug!(
-        "[background_completions] mark_collected task_id={task_id} completion={completion:?} \
-         pauses_collected={pauses_collected}"
-    );
-    matches!(completion, Ok(TombstoneOutcome::Suppressed)) || pauses_collected
-}
-
-/// Drop every queued completion for `thread_id` and everything that finishes
-/// for it later. Called when the thread is deleted: the router's cancelled-parent
-/// marker is durable, and the thread is also remembered as deleted in memory, so
-/// a straggler that wins the cooperative-abort race, a child that registers after
-/// the delete, or a result that finishes after a restart is dropped rather than
-/// delivered into a thread that no longer exists. Takes the caller's workspace so
-/// the marker is written even when no child of the thread was seen by this
-/// process. Returns the number of queued completions removed.
-pub(crate) fn discard_for_thread(
-    ctx: &DispatchCtx,
-    workspace_dir: &Path,
-    thread_id: &str,
-) -> usize {
-    let seen = {
-        let thread_key = key(ctx, thread_id);
-        let mut st = state();
-        st.deleted_threads.insert(thread_key.clone());
-        st.stopped_threads.remove(&thread_key);
-        st.thread_workspaces.contains_key(&thread_key)
-    };
-    let entry = entry_for_ctx(ctx, workspace_dir);
-    // Nothing in this process or on disk refers to the thread (an ordinary chat
-    // thread that never spawned background work): the in-memory gate is enough
-    // and no log line is written for it.
-    if !seen && entry.router.pending_for(thread_id).is_empty() {
-        return 0;
-    }
-    let removed = cancel_deleted_parent(&entry, thread_id);
-    log::debug!(
-        "[background_completions] discard_for_thread thread_id={thread_id} removed={removed}"
-    );
-    removed
-}
-
-/// Task id of the durable "this thread was deleted" marker. The router's
-/// cancelled-parent marker cannot tell a delete from a Stop (a Stop is lifted
-/// when the user returns), so a delete also leaves this one, which nothing
-/// lifts. It is stored `Pending` (with no parent, so nothing ever claims it):
-/// compaction only drops settled records, and a deletion must outlive them.
-fn deleted_marker_id(thread_id: &str) -> String {
-    format!("\u{1}host-thread-deleted:{thread_id}")
-}
-
-fn is_marked_deleted(entry: &Entry, thread_id: &str) -> bool {
-    entry.store.get(&deleted_marker_id(thread_id)).is_some()
-}
-
-/// Cancel `thread_id` for good in `entry`'s router and write the deleted marker.
-/// Failures are logged; the in-memory deleted set still gates this process.
-fn cancel_deleted_parent(entry: &Entry, thread_id: &str) -> usize {
-    let marker = CompletionRecord::new(
-        deleted_marker_id(thread_id),
-        "",
-        "",
-        CompletionStatus::Incomplete,
-        CompletionResult::default(),
-    )
-    .with_notify_mode(NotifyMode::Off);
-    if let Err(error) = entry.store.put(&marker) {
-        log::error!(
-            "[background_completions] could not persist the deleted marker thread_id={thread_id} \
-             error={error}"
-        );
-    }
-    entry
-        .router
-        .cancel_parent(thread_id)
-        .unwrap_or_else(|error| {
-            log::error!(
-                "[background_completions] cancel_parent failed thread_id={thread_id} error={error}"
-            );
-            0
-        })
-}
-
-/// Drop every queued completion for `thread_id` and gate late results from the
-/// stopped generation.
-///
-/// The Stop-button counterpart of [`discard_for_thread`]: the user halted the
-/// thread's work, so results that finished but were not yet delivered must not
-/// start a fresh delivery turn behind their back. The thread stays alive; the
-/// gate lifts at [`resume_stopped_thread`] (the next accepted user turn), while
-/// the stopped generation's task ids stay tombstoned
-/// ([`finish_stop_for_thread`]). Returns the number of queued completions removed.
-pub(crate) fn discard_pending_for_thread(ctx: &DispatchCtx, thread_id: &str) -> usize {
-    state().stopped_threads.insert(key(ctx, thread_id));
-    let Some(router) = router_for_thread(ctx, thread_id) else {
-        return 0;
-    };
-    let removed = router.cancel_parent(thread_id).unwrap_or_else(|error| {
-        log::error!(
-            "[background_completions] cancel_parent failed thread_id={thread_id} error={error}"
-        );
-        0
-    });
-    log::debug!(
-        "[background_completions] discard_pending_for_thread thread_id={thread_id} removed={removed}"
-    );
-    removed
-}
-
-/// Complete a Stop after its registered children were aborted: tombstone their
-/// task ids so a straggler from the stopped generation cannot record once a
-/// later user turn reopens the thread.
-pub(crate) fn finish_stop_for_thread(ctx: &DispatchCtx, thread_id: &str, task_ids: &[String]) {
-    let Some(router) = router_for_thread(ctx, thread_id) else {
-        return;
-    };
-    for task_id in task_ids {
-        if let Err(error) = router.tombstone(task_id) {
-            log::warn!("[background_completions] tombstone failed task_id={task_id} error={error}");
-        }
-    }
-}
-
-/// Reopen a thread's completion gate for a newly accepted user turn.
-///
-/// The Stop gate deliberately outlives registry cancellation, because a detached
-/// child may be between `tokio::spawn` and `running_subagents::register` when
-/// Stop is pressed. New task ids remain distinct from the stopped generation.
-/// Only a thread this process stopped or cancelled pays for the durable resume
-/// marker, so an ordinary chat message writes nothing.
-pub(crate) fn resume_stopped_thread(ctx: &DispatchCtx, thread_id: &str) {
-    let was_stopped = state().stopped_threads.remove(&key(ctx, thread_id));
-    if !was_stopped {
-        return;
-    }
-    if let Some(router) = router_for_thread(ctx, thread_id) {
-        router.resume_parent(thread_id);
-        log::debug!("[background_completions] resumed thread_id={thread_id}");
-    }
-}
-
-/// Record a child that registers while its parent thread is stopped or deleted.
-///
-/// Registration happens after the detached task is spawned. If Stop (or delete)
-/// races that narrow interval the registry sweep cannot see the child;
-/// tombstoning its task id here keeps it rejected even after a later user turn
-/// reopens a stopped thread. Also notes which workspace holds the thread's
-/// completions, so a later thread-scoped Stop can find the router. The first
-/// child this process spawns on a (not deleted) thread lifts any
-/// cancelled-parent marker an earlier process left behind (a Stop before a
-/// restart): a live spawn proves the user re-engaged the thread. Returns whether
-/// the child must be aborted.
-pub(crate) fn mark_stopped_task_if_thread_stopped(
-    ctx: &DispatchCtx,
-    workspace_dir: &Path,
-    thread_id: &str,
-    task_id: &str,
-) -> bool {
-    let entry = entry_for_ctx(ctx, workspace_dir);
-    let thread_key = key(ctx, thread_id);
-    let (first_sight, mut stopped) = {
-        let mut st = state();
-        let first_sight = st
-            .thread_workspaces
-            .insert(thread_key.clone(), workspace_dir.to_path_buf())
-            .is_none();
-        let stopped =
-            st.stopped_threads.contains(&thread_key) || st.deleted_threads.contains(&thread_key);
-        (first_sight, stopped)
-    };
-    // A delete outlives a restart: the durable marker, not just this process's
-    // memory, decides whether a late child belongs to a dead thread.
-    if first_sight && !stopped && is_marked_deleted(&entry, thread_id) {
-        state().deleted_threads.insert(thread_key);
-        stopped = true;
-    }
-    if stopped {
-        if let Err(error) = entry.router.tombstone(task_id) {
-            log::warn!("[background_completions] tombstone failed task_id={task_id} error={error}");
-        }
-        return true;
-    }
-    if first_sight {
-        entry.router.resume_parent(thread_id);
-    }
-    false
-}
-
-/// Withdraw every queued completion of `workspace_dir`. Called on a full thread
-/// purge of that workspace; each thread with undelivered results is cancelled
-/// durably (and remembered as deleted), so stragglers are still dropped. Other
-/// workspaces are untouched. Returns the number of completions removed.
-pub(crate) fn clear_all(ctx: &DispatchCtx, workspace_dir: &Path) -> usize {
-    let entry = entry_for_ctx(ctx, workspace_dir);
-    let parents: HashSet<String> = entry
-        .store
-        .list(None)
-        .into_iter()
-        .filter(|r| r.state == CompletionState::Pending && !r.parent_key.is_empty())
-        .map(|r| r.parent_key)
-        .collect();
-    let mut removed = 0;
-    for parent in parents {
-        state().deleted_threads.insert(key(ctx, &parent));
-        removed += cancel_deleted_parent(&entry, &parent);
-    }
-    log::debug!("[background_completions] clear_all removed={removed}");
-    removed
 }
 
 /// Boot recovery for a workspace: open its log, drop long-settled records, and

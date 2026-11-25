@@ -21,8 +21,8 @@ use async_trait::async_trait;
 use super::{
     apply_decision, remote_trigger_origin, run_triage, TriageOutcome, TriageRun, TriggerEnvelope,
 };
+use crate::core::runtime::turn_origin::with_origin;
 use crate::core::runtime::DispatchCtx;
-use crate::security::turn_origin::with_origin;
 
 /// Classify a trigger and apply a decision.
 #[async_trait]

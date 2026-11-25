@@ -175,9 +175,9 @@ pub(crate) async fn serve(
     require_approval: bool,
     catalog: Arc<CatalogStorageRegistration>,
 ) -> Result<CapsHostRegistration, String> {
-    let origin = crate::security::turn_origin::AgentTurnOrigin::TrustedAutomation {
+    let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
         job_id: flow_id.clone(),
-        source: crate::security::turn_origin::TrustedAutomationSource::Workflow {
+        source: crate::core::runtime::turn_origin::TrustedAutomationSource::Workflow {
             require_approval,
         },
     };

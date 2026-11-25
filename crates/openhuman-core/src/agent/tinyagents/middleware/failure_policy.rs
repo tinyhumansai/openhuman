@@ -70,6 +70,19 @@ pub(super) fn recovery_policy_with_effect(
     Some((class, budget))
 }
 
+/// Whether `error` is the browser's report of a page an action led to and
+/// the session left (`the page reached, <url>, is not permitted ...; the
+/// session left it`).
+fn is_browser_left_page(error: &str) -> bool {
+    let text = error.trim_start();
+    let text = text
+        .strip_prefix("BlockedByPolicy:")
+        .unwrap_or(text)
+        .trim_start();
+    text.starts_with("the page reached, ")
+        && text.contains("is not permitted by this session's allowed origins; the session left it")
+}
+
 /// Tools that reach a service on the user's behalf: an external connector,
 /// the hosted backend, or the memory store. Work can go on without them.
 pub(super) fn is_optional_service(tool: &str) -> bool {
@@ -116,6 +129,15 @@ pub(super) fn missing_program_nudge(tool: &str, detail: &str) -> String {
          ({detail}). Commands run on {}. Retry once with a command that exists there, or check \
          first (`where` on Windows, `command -v` elsewhere); do not resend it unchanged.",
         host_shell_description()
+    )
+}
+
+/// A timed-out local command may have completed some of its work before it
+/// was stopped. Tell the model to reconcile that state before trying a
+/// smaller bounded command.
+pub(super) fn uncertain_timeout_nudge(tool: &str) -> String {
+    format!(
+        "The `{tool}` command timed out and may have partially completed. Reconcile its effects before retrying, then use a smaller, bounded step."
     )
 }
 
@@ -179,6 +201,17 @@ pub(super) fn classified_recovery_policy(
     if let Some(policy) = fetched_site_policy(tool, error) {
         return policy;
     }
+    // A browser action that ran and took the session to a page on another
+    // site, which the session then left (TinyComputer's `LeftRefusedPage`).
+    // The keyword classifier reads its "is not permitted" as a missing
+    // permission, a zero-retry class: one click on a link to another site
+    // ended nine operator runs in a row before the agent could report. The
+    // tool answers it as a result naming the page now; should the text still
+    // arrive as a failure, it is a refusal the agent can work around (open
+    // the page itself, or carry on), not a reason to end the run.
+    if tool == "browser" && is_browser_left_page(error) {
+        return Some(("blocked_by_policy", 2));
+    }
     // A tool-owned JSON error contract is less ambiguous than rendered prose;
     // the harness reads only its explicit status/code fields.
     if let Some(decision) = json_error_recovery(error) {
@@ -195,6 +228,18 @@ pub(super) fn classified_recovery_policy(
         // attempt. Its own class, so a refusal does not share a budget with
         // the user's denial, and a second refusal on the same operation and
         // scope still stops.
+        //
+        // Every shell failure shares the scope `shell`, so with one retry any
+        // two refused commands in a row ended the run, however unrelated
+        // (Nov 2026, scheduled agents in the kernel sandbox). A different
+        // command is a fresh attempt, so a shell refusal gets a wider budget,
+        // reset by any command that runs; the same command refused again
+        // unchanged still stops the run (`repeated_failure`,
+        // `SAME_REFUSED_COMMAND_LIMIT`). Read-only mode refuses every acting
+        // command alike, so another command cannot help there: one retry.
+        Class::BlockedByPolicy if tool == "shell" && !is_read_only_refusal(error) => {
+            ("blocked_by_policy", SHELL_REFUSAL_BUDGET)
+        }
         Class::BlockedByPolicy => ("blocked_by_policy", 1),
         // The user said no, or never answered. Asking again only re-prompts.
         Class::Denied | Class::ApprovalExpired => ("policy", 0),
@@ -235,7 +280,9 @@ pub(super) fn classified_recovery_policy(
         // attempt, steered by a reconcile-first nudge, and halts on a second.
         // Remote actions (`gmail_send`, payments, …) stay at zero: a retry
         // there can repeat an effect the agent cannot observe.
-        Class::Timeout if tool == "shell" => ("uncertain_side_effect", 1),
+        Class::Timeout if tool == "shell" || tool == "shell_process" => {
+            ("uncertain_side_effect", 1)
+        }
         Class::Timeout => ("uncertain_side_effect", 0),
         // The harness's own schema-validation answer, classified from its
         // prefix before any keyword in the echoed schema could read as a
@@ -258,4 +305,25 @@ pub(super) fn classified_recovery_policy(
         }
         Class::Unknown => return None,
     })
+}
+
+/// Refusals of different shell commands a run may collect with no command
+/// running in between (a command that runs resets it).
+pub(super) const SHELL_REFUSAL_BUDGET: usize = 8;
+
+/// The autonomy tier's read-only refusal (`security::policy::refusal_message`).
+fn is_read_only_refusal(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("read-only mode")
+}
+
+/// The corrective after a refused shell command. The harness's own copy for
+/// `blocked_by_policy` says another refusal ends the turn, which holds for the
+/// other tools but not for a different shell command.
+pub(super) fn shell_refusal_nudge(failure_line: &str) -> String {
+    format!(
+        "The `shell` command was blocked by policy and did not run ({failure_line}). Try a \
+         different, narrower, permitted command (a scoped path, a bounded command, a read instead of a \
+         write) or continue with other tools. Do not resend the same command: refused again, \
+         it ends the turn."
+    )
 }

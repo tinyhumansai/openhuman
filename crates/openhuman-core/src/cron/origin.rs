@@ -7,7 +7,7 @@
 //! from an external channel keeps running as that channel's turn, so its own
 //! external-effect tools stay gated exactly like its creator's were.
 
-use crate::security::turn_origin::{self, AgentTurnOrigin};
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use serde_json::Value;
 use {
     tinyflows_bus::schedule::types::delivery_mode, tinyflows_bus::schedule::types::CronJob,
@@ -33,6 +33,7 @@ pub(crate) fn job_origin_from_turn(origin: &AgentTurnOrigin) -> Option<JobOrigin
             sender,
             reply_target,
             history_key: Some(history_key),
+            channel_session: Some(channel_session),
             ..
         } if !channel.trim().is_empty() && !reply_target.trim().is_empty() => {
             Some(JobOrigin::Channel {
@@ -41,7 +42,7 @@ pub(crate) fn job_origin_from_turn(origin: &AgentTurnOrigin) -> Option<JobOrigin
                 history_key: history_key.clone(),
                 sender: sender.clone(),
                 thread_id: None,
-                session_identity: None,
+                channel_session: Some(Box::new(channel_session.clone())),
             })
         }
         _ => None,
@@ -61,19 +62,101 @@ pub fn current_job_origin(origin: Option<&AgentTurnOrigin>) -> Option<JobOrigin>
     job_origin
 }
 
+/// Whether a run of `job` by the agent `definition` may take actions: the
+/// scheduled-actions opt-in.
+///
+/// True only when ALL hold:
+/// - the job names its agent explicitly (`agent_id`; the default
+///   orchestrator never qualifies),
+/// - the definition sets `scheduled_actions = true`,
+/// - the definition names its tools explicitly (`ToolScope::Named`); a
+///   wildcard scope would hand every registered tool to an unattended turn,
+/// - the process is not in SaaS mode.
+///
+/// A job created from a channel conversation still runs as that channel's
+/// turn ([`turn_origin_for_job_run`]), so the opt-in never widens it.
+pub(crate) fn scheduled_actions_enabled(
+    job: &CronJob,
+    definition: &crate::agent_registry::host_definition::AgentDefinition,
+) -> bool {
+    if job.agent_id.is_none() {
+        return false;
+    }
+    match scheduled_actions_definition_refusal(definition, crate::core::runtime::is_saas()) {
+        None => true,
+        Some(ScheduledActionsRefusal::NotOptedIn) => false,
+        Some(ScheduledActionsRefusal::WildcardTools) => {
+            tracing::warn!(
+                job_id = %job.id,
+                agent_id = %definition.id,
+                "[cron] agent sets scheduled_actions but its tool scope is the wildcard; \
+                 the run stays read-only (name the tools explicitly to enable it)"
+            );
+            false
+        }
+        Some(ScheduledActionsRefusal::Saas) => {
+            tracing::warn!(
+                job_id = %job.id,
+                agent_id = %definition.id,
+                "[cron] scheduled_actions is ignored in SaaS mode; the run stays read-only"
+            );
+            false
+        }
+    }
+}
+
+/// Why an agent definition's scheduled-actions opt-in does not take effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScheduledActionsRefusal {
+    /// The definition does not set `scheduled_actions = true`.
+    NotOptedIn,
+    /// The definition's tool scope is the wildcard, not `ToolScope::Named`.
+    WildcardTools,
+    /// The process runs in SaaS mode, where the opt-in is ignored.
+    Saas,
+}
+
+/// The definition half of the scheduled-actions opt-in, shared by the cron root
+/// ([`scheduled_actions_enabled`]) and the sub-agent grant
+/// (`agent::subagent_host::ops::scheduled_actions_grant`): the definition sets
+/// `scheduled_actions = true`, names its tools, and the process is not SaaS.
+/// `None` means the definition qualifies.
+pub(crate) fn scheduled_actions_definition_refusal(
+    definition: &crate::agent_registry::host_definition::AgentDefinition,
+    saas: bool,
+) -> Option<ScheduledActionsRefusal> {
+    if !definition.extensions.scheduled_actions {
+        return Some(ScheduledActionsRefusal::NotOptedIn);
+    }
+    if !matches!(definition.tools, tinyagents_definition::ToolScope::Named(_)) {
+        return Some(ScheduledActionsRefusal::WildcardTools);
+    }
+    if saas {
+        return Some(ScheduledActionsRefusal::Saas);
+    }
+    None
+}
+
 /// The turn origin a run of `job` executes under.
 ///
 /// A job with a channel origin runs as that channel's turn
 /// (`ExternalChannel`, message id `cron:<job>:<run>`), so the approval gate
 /// treats its external-effect tools like the creator's. Everything else keeps
-/// the user-authorized `TrustedAutomation { Cron }` it always had.
-pub(crate) fn turn_origin_for_job_run(job: &CronJob, run_id: &str) -> AgentTurnOrigin {
+/// the user-authorized `TrustedAutomation { Cron }` it always had, or
+/// `TrustedAutomation { CronActions }` when `scheduled_actions` (from
+/// [`scheduled_actions_enabled`]) is set.
+pub(crate) fn turn_origin_for_job_run(
+    job: &CronJob,
+    run_id: &str,
+    scheduled_actions: bool,
+) -> AgentTurnOrigin {
     match &job.origin {
         Some(JobOrigin::Channel {
             channel,
             reply_target,
             history_key,
             sender,
+            channel_session,
             ..
         }) => AgentTurnOrigin::ExternalChannel {
             sender_name: None,
@@ -82,10 +165,15 @@ pub(crate) fn turn_origin_for_job_run(job: &CronJob, run_id: &str) -> AgentTurnO
             reply_target: reply_target.clone(),
             message_id: format!("cron:{}:{run_id}", job.id),
             history_key: Some(history_key.clone()),
+            channel_session: channel_session.as_deref().cloned(),
         },
         _ => AgentTurnOrigin::TrustedAutomation {
             job_id: job.id.clone(),
-            source: turn_origin::TrustedAutomationSource::Cron,
+            source: if scheduled_actions {
+                turn_origin::TrustedAutomationSource::CronActions
+            } else {
+                turn_origin::TrustedAutomationSource::Cron
+            },
         },
     }
 }

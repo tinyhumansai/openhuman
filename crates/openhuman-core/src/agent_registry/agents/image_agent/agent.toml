@@ -1,6 +1,5 @@
 id = "image_agent"
 display_name = "Image Creator"
-delegate_name = "create_image"
 when_to_use = "Image-generation specialist: create images from a prompt, or edit/restyle a reference image. Route make/generate/draw/edit-an-image requests here. Saves each result to the configured Files folder and returns its local path; paths from earlier media calls there can be reused as references."
 temperature = 0.6
 max_iterations = 8

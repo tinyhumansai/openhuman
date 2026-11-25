@@ -33,6 +33,24 @@ function tool(over: Partial<ToolTimelineEntry> = {}): ToolTimelineEntry {
 }
 
 describe('toThreadMessageLike', () => {
+  it.each([
+    '',
+    '[IMAGE:data:image/png;base64,old]',
+    `[ATTACHMENT:${encodeURIComponent(
+      JSON.stringify({
+        path: 'uploads/code.py',
+        name: 'code.py',
+        mime: 'text/plain',
+        size_bytes: 1,
+      })
+    )}]`,
+  ])('preserves user code and Markdown whitespace with attachment %s', attachment => {
+    const text = '```python\nif ready:\n    print("two  spaces")\n```\nfirst line  \nsecond line';
+    const content = attachment ? `${text} ${attachment}` : text;
+
+    expect(toThreadMessageLike(msg({ content })).content[0]).toEqual({ type: 'text', text });
+  });
+
   it('renders durable uploads as file chips without raw reference JSON or inline bytes', () => {
     const references = [
       { path: 'uploads/t/id/scan.png', name: 'scan.png', mime: 'image/png', size_bytes: 3 },

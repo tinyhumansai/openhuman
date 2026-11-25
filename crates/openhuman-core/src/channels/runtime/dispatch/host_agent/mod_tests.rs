@@ -35,23 +35,3 @@ fn the_binding_is_read_from_toml() {
         Some("teeny-chat")
     );
 }
-
-#[test]
-fn seed_rows_keep_only_the_prior_turns() {
-    use tinyagents_session::transcript::TranscriptMessage;
-    let history = vec![
-        TranscriptMessage::system("CHANNEL_PROMPT"),
-        TranscriptMessage::user("earlier"),
-        TranscriptMessage::assistant("reply"),
-        TranscriptMessage::user("now"),
-    ];
-    assert_eq!(
-        seed_rows(&history),
-        vec![
-            ("user".to_string(), "earlier".to_string()),
-            ("assistant".to_string(), "reply".to_string()),
-        ]
-    );
-    assert!(seed_rows(&history[..2]).is_empty());
-    assert!(seed_rows(&[]).is_empty());
-}

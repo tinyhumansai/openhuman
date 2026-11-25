@@ -3,7 +3,7 @@
 //! TinyFlows module; this file only consumes its typed PollRun projection.
 
 use serde_json::json;
-use tinyagents_graph::GraphObservation;
+use tinyflows::engine::GraphObservation;
 use tinyflows_bus::catalog::Workflow as Flow;
 use tinyflows_bus::runs::FlowRunTrigger;
 

@@ -12,7 +12,7 @@ use tinyconnectors_bus::ComposioDirectCredential;
 /// URL, so a credential on it sends no override.
 const COMPOSIO_API_BASE_V3: &str = "https://backend.composio.dev/api/v3";
 
-pub(super) fn is_loopback_http_url(url: &str) -> bool {
+pub(crate) fn is_loopback_http_url(url: &str) -> bool {
     // Parse rather than prefix-match: a raw `starts_with("http://127.0.0.1:")`
     // is fooled by userinfo smuggling like
     // `http://127.0.0.1:8080@evil.com/api/v3/tools`, which an HTTP client routes

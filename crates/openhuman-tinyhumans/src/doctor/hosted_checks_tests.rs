@@ -2,7 +2,7 @@ use super::*;
 use crate::session::test_support::{EXPIRED_JWT, LIVE_JWT};
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::core::runtime::CoreContext;
-use openhuman_embed::__host::doctor::{registered_checks, DoctorCheck};
+use openhuman_embed::__host::doctor::{registered_checks, ComponentId, DoctorCheck};
 use openhuman_embed::{CoreBuilder, DomainSet, HostKind, ServiceSet};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -529,6 +529,32 @@ fn backend_credential_check_runs_in_the_connect_tier() {
         check(&HostedDoctorCheckSource::default(), "backend/credential").tier(),
         DoctorTier::Connect
     );
+}
+
+#[test]
+fn every_hosted_check_is_gated_by_the_hosting_component() {
+    let checks = HostedDoctorCheckSource::default().checks();
+    let expected_ids = [
+        "backend/reachable",
+        "backend/credential",
+        "backend/identity",
+        "backend/socket",
+        "backend/api-url",
+        "inference/managed-catalog",
+    ];
+
+    assert_eq!(
+        checks.iter().map(|check| check.id()).collect::<Vec<_>>(),
+        expected_ids
+    );
+    for check in checks {
+        assert_eq!(
+            check.component_gate(),
+            Some(ComponentId::Hosting),
+            "{} must require the Hosting component",
+            check.id()
+        );
+    }
 }
 
 #[tokio::test]

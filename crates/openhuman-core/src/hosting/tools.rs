@@ -29,7 +29,7 @@ pub(super) fn hosting_tools(account: Account) -> Vec<Box<dyn Tool>> {
         .collect()
 }
 
-pub fn resolve_in_workspace(workspace_dir: &Path, relative: &str) -> anyhow::Result<PathBuf> {
+pub async fn resolve_in_workspace(workspace_dir: &Path, relative: &str) -> anyhow::Result<PathBuf> {
     let relative = relative.trim();
     let candidate = Path::new(if relative.is_empty() { "." } else { relative });
     if candidate.is_absolute()
@@ -45,7 +45,7 @@ pub fn resolve_in_workspace(workspace_dir: &Path, relative: &str) -> anyhow::Res
     let root = workspace_dir
         .canonicalize()
         .map_err(|_| anyhow::anyhow!("cannot access the workspace directory"))?;
-    if crate::security::SecurityPolicy::is_always_forbidden(&root) {
+    if crate::security::SecurityPolicy::is_always_forbidden_async(&root).await {
         anyhow::bail!("workspace path is always forbidden");
     }
     let canonical = root
@@ -55,7 +55,7 @@ pub fn resolve_in_workspace(workspace_dir: &Path, relative: &str) -> anyhow::Res
     if !canonical.starts_with(&root) {
         anyhow::bail!("path escapes the workspace");
     }
-    if crate::security::SecurityPolicy::is_always_forbidden(&canonical) {
+    if crate::security::SecurityPolicy::is_always_forbidden_async(&canonical).await {
         anyhow::bail!("workspace path is always forbidden");
     }
     if !canonical.is_dir() {
@@ -135,7 +135,7 @@ impl HostingTool {
             .workspace_dir()
             .canonicalize()
             .map_err(|_| anyhow::anyhow!("cannot access the workspace directory"))?;
-        let source = resolve_in_workspace(&workspace, relative)?;
+        let source = resolve_in_workspace(&workspace, relative).await?;
         let relative_source = source
             .strip_prefix(&workspace)
             .map_err(|_| anyhow::anyhow!("path escapes the workspace"))?;

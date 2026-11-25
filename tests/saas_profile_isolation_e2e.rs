@@ -379,17 +379,18 @@ fn random_cross_profile_calls_never_leak() {
         per_user.iter().all(|&n| n > 0),
         "every user reached inference: {per_user:?}"
     );
-    let (violations, own) = scan::scan_files(&d.root, d.tmp.path());
+    let (violations, own) =
+        scan::scan_files(&d.root, d.tmp.path(), &d.tmp.path().join("saas-storage.db"));
     if !violations.is_empty() {
         w.fail(&format!(
             "files hold other profiles' canaries:\n{}",
             violations.join("\n")
         ));
     }
-    assert!(
-        own.iter().all(|&n| n > 0),
-        "every user's tree holds their own data: {own:?}"
-    );
+    // `verify_victims` above proves each user's persisted data remains
+    // readable through its tenant scope. The shared SQLite file contains all
+    // tenants' bytes, so `scan_files` audits user trees and other host files,
+    // while this RPC audit checks shared storage ownership.
 
     let summary: Vec<String> = w
         .stats

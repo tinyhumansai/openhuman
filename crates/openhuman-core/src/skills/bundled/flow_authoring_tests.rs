@@ -105,3 +105,78 @@ fn tiny_skills_rejects_unsafe_resource_paths_without_writing_outside_scope() {
     assert!(!workspace.path().join(".openhuman/outside.txt").exists());
     assert!(snapshot_for(&snapshot_key(workspace.path(), &gate), 1).is_none());
 }
+
+/// While the local legacy flow import is incomplete, workflow access is paused
+/// (`ensure_flow_scope_ready`), so the builtin must stay hidden; once the
+/// import finishes, the next prewarm must surface it.
+#[cfg(feature = "storage-sqlite")]
+#[tokio::test]
+// The guard serializes the process-wide storage slot for this async test.
+#[allow(clippy::await_holding_lock)]
+async fn builtin_is_hidden_until_the_legacy_flow_import_completes() {
+    use crate::core::runtime::{ComponentSet, ContextOverlay, CoreContext};
+    use crate::storage::Scope;
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let legacy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/storage/import/fixtures/tinyflows/workspace/flows");
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.path().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+    copy_tree(&legacy, &workspace.path().join("flows"));
+    let mut config = Config::default();
+    config.workspace_dir = workspace.path().to_path_buf();
+    let backend = crate::storage::test_support::sqlite_backend().expect("sqlite backend");
+    let _storage =
+        crate::storage::test_support::install_backend_for_test(Arc::clone(&backend.backend));
+    let context = CoreContext::for_test_with_components(ComponentSet::all()).derive_with(
+        ContextOverlay::new(
+            config.clone(),
+            DomainSet::full(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )
+        .without_user_skill_roots(),
+    );
+
+    CoreContext::scope(context, async {
+        let ctx = DispatchCtx::ambient();
+        let visible = |ctx: &DispatchCtx| {
+            crate::skills::load_workflow_metadata_for(ctx, &config)
+                .iter()
+                .any(|skill| skill.id() == FLOW_SKILL_ID)
+        };
+
+        prewarm(&ctx, &config, None).await;
+        assert!(
+            !visible(&ctx),
+            "flow-authoring must stay hidden while the legacy flow import is incomplete"
+        );
+
+        let imported = crate::storage::import::tinyflows::import_flows(
+            &backend.backend,
+            &Scope::local(),
+            &config,
+        )
+        .expect("legacy flow import");
+        assert!(
+            matches!(imported, crate::storage::import::Outcome::Imported { .. }),
+            "{imported:?}"
+        );
+
+        prewarm(&ctx, &config, None).await;
+        assert!(
+            visible(&ctx),
+            "flow-authoring must appear once the legacy flow import has completed"
+        );
+    })
+    .await;
+}

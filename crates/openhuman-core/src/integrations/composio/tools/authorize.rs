@@ -71,7 +71,7 @@ impl Tool for ComposioAuthorizeTool {
     ) -> anyhow::Result<ToolResult> {
         let ctx = dispatch_ctx_for_tool(context);
         let outcome = Box::pin(self.execute_unredacted(&ctx, args)).await;
-        redact_composio_outcome(&self.config, outcome)
+        redact_composio_outcome(&self.config, outcome).await
     }
 }
 
@@ -108,7 +108,7 @@ impl ComposioAuthorizeTool {
                 )));
             }
         };
-        match resolve_composio_route(&live_config) {
+        match resolve_composio_route(&live_config).await {
             Ok(ComposioRoute::Backend) => {
                 tracing::debug!("[composio] authorize.execute: backend variant");
             }

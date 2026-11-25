@@ -18,7 +18,7 @@ use tinymcp_bus::ToolCallError;
 /// config will not load. `method` names the MCP method for the log line.
 async fn available_tool_specs(ctx: &DispatchCtx, method: &str) -> Vec<McpToolSpec> {
     match ctx.load_config().await {
-        Ok(config) => tool_specs_for_loaded_config(&config),
+        Ok(config) => tool_specs_for_loaded_config(&config).await,
         Err(err) => {
             log::warn!(
                 "[mcp_server] {method} config load failed; omitting config-gated tools: {err}"
@@ -79,7 +79,9 @@ pub async fn call_tool(
         }
         "memory.learn" | "memory.forget" => {
             let config = write_dispatch::load_write_config(ctx, spec.name).await?;
-            if let Err(err) = write_dispatch::enforce_write_policy_for_config(spec.name, &config) {
+            if let Err(err) =
+                write_dispatch::enforce_write_policy_for_config(spec.name, &config).await
+            {
                 write_dispatch::audit_write_rejection(
                     &config,
                     spec.name,
@@ -187,6 +189,7 @@ async fn enforce_read_policy(ctx: &DispatchCtx, tool_name: &str) -> Result<(), T
     // reason text instead of a generic internal-error banner.
     policy
         .enforce_tool_operation(ToolOperation::Read, tool_name)
+        .await
         .map_err(ToolCallError::InvalidParams)
 }
 
@@ -206,6 +209,7 @@ async fn enforce_act_policy(ctx: &DispatchCtx, tool_name: &str) -> Result<(), To
         SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
     policy
         .enforce_tool_operation(ToolOperation::Act, tool_name)
+        .await
         .map_err(ToolCallError::InvalidParams)
 }
 
@@ -229,6 +233,7 @@ async fn build_orchestrator_agent(
 ) -> Result<OpenHumanSessionHost, ToolCallError> {
     let config = load_config_and_init_registry(ctx).await?;
     let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, &config, "orchestrator")
+        .await
         .map_err(|err| {
             ToolCallError::Internal(format!("failed to build orchestrator agent: {err}"))
         })?;
@@ -347,8 +352,9 @@ async fn run_subagent_tool(
     )))?;
 
     let config = load_config_and_init_registry(ctx).await?;
-    let mut agent =
-        OpenHumanSessionHost::from_config_for_agent(ctx, &config, agent_id).map_err(|err| {
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, &config, agent_id)
+        .await
+        .map_err(|err| {
             ToolCallError::InvalidParams(format!("failed to build agent `{agent_id}`: {err}"))
         })?;
     agent.set_event_context(
@@ -361,7 +367,7 @@ async fn run_subagent_tool(
     // clients. Treat callers as ExternalChannel — their prompt text is
     // remote-controlled and any external_effect tool the agent tries to
     // run must route through the gate's audit + TTL-deny path.
-    let origin = crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+    let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         sender_name: None,
         channel: "mcp_server".to_string(),
         // MCP server callers don't carry a per-user identity at this
@@ -372,6 +378,7 @@ async fn run_subagent_tool(
         reply_target: agent_id.to_string(),
         message_id: uuid::Uuid::new_v4().to_string(),
         history_key: None,
+        channel_session: None,
     };
     // Run the subagent one level deeper in the chain, so its own Claude Code
     // turns stamp `child_depth` onto any grandchildren they spawn. The agent
@@ -379,7 +386,7 @@ async fn run_subagent_tool(
     // `handle_json_value` dispatch above it) keeps a small stack frame.
     let response = Box::pin(subagent_depth::scope(
         child_depth,
-        crate::security::turn_origin::with_origin(origin, agent.run_single(prompt)),
+        crate::core::runtime::turn_origin::with_origin(origin, agent.run_single(prompt)),
     ))
     .await
     .map_err(|err| ToolCallError::Internal(format!("subagent `{agent_id}` failed: {err}")))?;

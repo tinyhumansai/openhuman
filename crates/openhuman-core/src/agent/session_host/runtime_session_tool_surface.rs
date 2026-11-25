@@ -52,7 +52,7 @@ impl OpenHumanTurnPrelude {
     /// this request is prepared.
     pub(super) fn refresh_delegation_tool_surface(&self) -> anyhow::Result<()> {
         use crate::agent_registry::host_definition::AgentDefinitionRegistry;
-        use crate::tools::orchestrator_tools::collect_orchestrator_tools;
+        use crate::integrations::composio::orchestrator_actions::collect_orchestrator_tools;
         use tinytools::ToolPolicyEngine;
 
         let Some(registry) = AgentDefinitionRegistry::current() else {
@@ -103,7 +103,7 @@ impl OpenHumanTurnPrelude {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut collected = definition
             .as_ref()
-            .map(|definition| collect_orchestrator_tools(definition, &registry, &integrations))
+            .map(|definition| collect_orchestrator_tools(definition, &integrations))
             .unwrap_or_default();
         #[cfg(feature = "mcp")]
         collected.extend(mcp_tools);
@@ -273,7 +273,7 @@ impl OpenHumanTurnPrelude {
             &surface.agent_definition_name,
             &all_tools,
         );
-        let visible = super::super::builder::dedup_visible_tool_specs(
+        let visible = tinyagents_runtime::dedup_visible_tool_specs(
             super::super::builder::visible_tool_specs_for_policy(
                 &specs,
                 &surface.visible_tool_names,

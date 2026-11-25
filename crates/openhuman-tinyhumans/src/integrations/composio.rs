@@ -22,8 +22,10 @@ const NO_SESSION: &str = "composio backend mode unavailable: no backend session 
 
 /// The proxy target for `config`: the backend origin and the credential secret.
 #[cfg(feature = "modules")]
-fn proxy_target(config: &Config) -> Result<ProxyTarget, String> {
-    let client = build_client(config).ok_or_else(|| NO_SESSION.to_string())?;
+async fn proxy_target(config: &Config) -> Result<ProxyTarget, String> {
+    let client = build_client(config)
+        .await
+        .ok_or_else(|| NO_SESSION.to_string())?;
     Ok(ProxyTarget {
         base_url: client.backend_url.clone(),
         auth_token: client.auth_token.clone(),
@@ -34,12 +36,16 @@ fn proxy_target(config: &Config) -> Result<ProxyTarget, String> {
 /// Idempotent.
 pub(crate) fn register() {
     register_composio_route_builder(COMPOSIO_MODE_BACKEND, |config| {
-        if build_client(config).is_none() {
-            anyhow::bail!("{NO_SESSION}");
-        }
-        log::debug!("[tinyhumans] composio: resolved backend route");
-        Ok(ComposioRoute::Backend)
+        Box::pin(async move {
+            if build_client(config).await.is_none() {
+                anyhow::bail!("{NO_SESSION}");
+            }
+            log::debug!("[tinyhumans] composio: resolved backend route");
+            Ok(ComposioRoute::Backend)
+        })
     });
     #[cfg(feature = "modules")]
-    register_proxy_target(COMPOSIO_MODE_BACKEND, proxy_target);
+    register_proxy_target(COMPOSIO_MODE_BACKEND, |config| {
+        Box::pin(proxy_target(config))
+    });
 }

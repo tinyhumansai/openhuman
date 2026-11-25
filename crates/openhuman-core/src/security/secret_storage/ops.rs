@@ -4,8 +4,9 @@
 
 use std::path::Path;
 
-use chacha20poly1305::aead::{rand_core::RngCore, OsRng};
 use parking_lot::Mutex;
+use rand::RngExt as _;
+use sha2::{Digest, Sha256};
 
 use crate::security::secret_storage::error::SecretStorageError;
 use crate::security::secret_storage::store::backend;
@@ -164,7 +165,7 @@ pub(crate) fn process_get(user_id: &str, key: &str) -> Result<Option<String>, Se
     match &result {
         Ok(Some(_)) => log::debug!("[keyring] get hit"),
         Ok(None) => log::debug!("[keyring] get miss"),
-        Err(e) => log::warn!("[keyring] get error: {e} | detail={}", e.diagnostic()),
+        Err(e) => log::warn!("[keyring] get error: {}", e.diagnostic()),
     }
     result
 }
@@ -178,7 +179,7 @@ pub(crate) fn process_set(user_id: &str, key: &str, value: &str) -> Result<(), S
     let result = backend().set(&namespaced, value);
     match &result {
         Ok(()) => log::debug!("[keyring] set ok"),
-        Err(e) => log::warn!("[keyring] set error: {e} | detail={}", e.diagnostic()),
+        Err(e) => log::warn!("[keyring] set error: {}", e.diagnostic()),
     }
     result
 }
@@ -192,7 +193,7 @@ pub(crate) fn process_delete(user_id: &str, key: &str) -> Result<(), SecretStora
     let result = backend().delete(&namespaced);
     match &result {
         Ok(()) => log::debug!("[keyring] delete ok"),
-        Err(e) => log::warn!("[keyring] delete error: {e} | detail={}", e.diagnostic()),
+        Err(e) => log::warn!("[keyring] delete error: {}", e.diagnostic()),
     }
     result
 }
@@ -279,7 +280,7 @@ fn probe_availability() -> bool {
             // The detail captures the real cause (locked keychain / denied
             // prompt / no Secret Service) instead of just the lossy Display.
             log::warn!(
-                "[keyring] is_available=false (probe failed): {e} | detail={}",
+                "[keyring] is_available=false (probe failed): {}",
                 e.diagnostic()
             );
             false
@@ -306,7 +307,7 @@ pub fn get_or_create_random(
     key: &str,
     len_bytes: usize,
 ) -> Result<String, SecretStorageError> {
-    log::debug!("[keyring] get_or_create_random user_id={user_id} key={key} len_bytes={len_bytes}");
+    log::debug!("[keyring] get_or_create_random len_bytes={len_bytes}");
 
     if len_bytes == 0 {
         return Err(SecretStorageError::Backend(
@@ -314,33 +315,50 @@ pub fn get_or_create_random(
         ));
     }
 
-    if let Some(existing) = process_get(user_id, key)? {
-        log::debug!(
-            "[keyring] get_or_create_random returning existing value user_id={user_id} key={key}"
-        );
+    let lock_path = random_key_lock_path(user_id, key)?;
+    get_or_create_random_with_backend(backend().as_ref(), user_id, key, len_bytes, &lock_path)
+}
+
+/// A stable cross-process lock path for one namespaced key. The key itself is
+/// hashed so neither the filename nor any lock error reveals the key name.
+fn random_key_lock_path(
+    user_id: &str,
+    key: &str,
+) -> Result<std::path::PathBuf, SecretStorageError> {
+    let root = crate::config::default_root_openhuman_dir().map_err(|error| {
+        SecretStorageError::Backend(format!(
+            "could not resolve secret-store lock directory: {error}"
+        ))
+    })?;
+    let digest = Sha256::digest(namespaced_key(user_id, key).as_bytes());
+    Ok(root.join("secret-storage-locks").join(hex_encode(&digest)))
+}
+
+fn get_or_create_random_with_backend(
+    backend: &dyn crate::security::secret_storage::backend::SecretBackend,
+    user_id: &str,
+    key: &str,
+    len_bytes: usize,
+    lock_path: &Path,
+) -> Result<String, SecretStorageError> {
+    // Hold the advisory lock over the entire read → create → verify sequence.
+    // This works for OS keychains as well as file providers and coordinates
+    // independent core processes sharing the same user keyring.
+    let _lock = super::file_store::lock_for_write(lock_path)?;
+    let namespaced = namespaced_key(user_id, key);
+    if let Some(existing) = backend.get(&namespaced)? {
         return Ok(existing);
     }
 
-    // Generate random bytes using the OS CSPRNG.
     let mut bytes = vec![0u8; len_bytes];
-    OsRng.fill_bytes(&mut bytes);
+    rand::rng().fill(&mut bytes);
     let hex_value = hex_encode(&bytes);
-
-    log::debug!("[keyring] get_or_create_random creating new entry user_id={user_id} key={key}");
-    process_set(user_id, key, &hex_value)?;
-
-    // Verify write succeeded.
-    let readback = process_get(user_id, key)?;
-    if readback.as_deref() != Some(&hex_value) {
-        log::warn!(
-            "[keyring] get_or_create_random write verification failed user_id={user_id} key={key}"
-        );
+    backend.set(&namespaced, &hex_value)?;
+    if backend.get(&namespaced)?.as_deref() != Some(&hex_value) {
         return Err(SecretStorageError::VerifyFailed {
             key: key.to_string(),
         });
     }
-
-    log::debug!("[keyring] get_or_create_random created and verified user_id={user_id} key={key}");
     Ok(hex_value)
 }
 
@@ -360,27 +378,28 @@ pub fn migrate_from_file(
     key: &str,
     path: &Path,
 ) -> Result<MigrationOutcome, SecretStorageError> {
-    log::debug!(
-        "[keyring] migrate_from_file user_id={user_id} key={key} path={}",
-        path.display()
-    );
+    log::debug!("[keyring] migrate_from_file path={}", path.display());
+    migrate_from_file_with_backend(user_id, key, path, backend().as_ref())
+}
 
+fn migrate_from_file_with_backend(
+    user_id: &str,
+    key: &str,
+    path: &Path,
+    secret_backend: &dyn crate::security::secret_storage::backend::SecretBackend,
+) -> Result<MigrationOutcome, SecretStorageError> {
     // Step 1: check if already migrated.
-    if process_get(user_id, key)?.is_some() {
-        log::debug!("[keyring] migrate_from_file already migrated user_id={user_id} key={key}");
+    let namespaced = namespaced_key(user_id, key);
+    if secret_backend.get(&namespaced)?.is_some() {
         return Ok(MigrationOutcome::AlreadyMigrated);
     }
 
     // Step 2: check if source file exists.
     if !path.exists() {
-        log::debug!(
-            "[keyring] migrate_from_file no source file user_id={user_id} key={key} path={}",
-            path.display()
-        );
         return Ok(MigrationOutcome::NoSourceFile);
     }
 
-    if !backend().is_persistent() {
+    if !secret_backend.is_persistent() {
         return Err(SecretStorageError::Backend(
             "file migration requires persistent secret storage; source retained".into(),
         ));
@@ -397,13 +416,18 @@ pub fn migrate_from_file(
             source: e,
         })?;
     let value = file_content.trim().to_string();
+    if value.is_empty() {
+        return Err(SecretStorageError::Backend(
+            "migration source contains no secret material; source retained".to_string(),
+        ));
+    }
 
     // Step 4: write to backend.
     log::debug!("[keyring] migrate_from_file writing to backend user_id={user_id} key={key}");
-    process_set(user_id, key, &value)?;
+    secret_backend.set(&namespaced, &value)?;
 
     // Step 5: verify read-back matches.
-    let readback = process_get(user_id, key)?;
+    let readback = secret_backend.get(&namespaced)?;
     if readback.as_deref() != Some(value.as_str()) {
         log::warn!(
             "[keyring] migrate_from_file verification failed user_id={user_id} key={key}; NOT deleting source file"
@@ -414,19 +438,13 @@ pub fn migrate_from_file(
     }
 
     // Step 6: delete the source file (only after verified write).
-    log::debug!(
-        "[keyring] migrate_from_file deleting source file path={}",
-        path.display()
-    );
+    log::debug!("[keyring] migrate_from_file deleting source file");
     std::fs::remove_file(path).map_err(|e| SecretStorageError::MigrationDeleteFailed {
         path: path.display().to_string(),
         source: e,
     })?;
 
-    log::info!(
-        "[keyring] migrate_from_file completed user_id={user_id} key={key} path={}",
-        path.display()
-    );
+    log::info!("[keyring] migrate_from_file completed");
     Ok(MigrationOutcome::MigratedAndDeleted)
 }
 
@@ -441,7 +459,7 @@ pub(crate) fn namespaced_key(user_id: &str, key: &str) -> String {
 }
 
 pub(crate) fn hex_encode(data: &[u8]) -> String {
-    super::crypto::hex_encode(data)
+    hex::encode(data)
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -465,3 +483,7 @@ pub(crate) fn force_backend_for_test(
 #[cfg(test)]
 #[path = "ops_adoption_tests.rs"]
 mod adoption_tests;
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod tests;

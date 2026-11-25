@@ -34,7 +34,7 @@ pub(crate) fn migrate_legacy_inference_url(config: &mut Config) {
     };
     let logged = match moved.as_deref() {
         None => "<derived>".to_string(),
-        Some(u) => super::redact_url_for_log(u),
+        Some(u) => migration_url_for_log(u),
     };
     tracing::info!(
         "[config][migrate] splitting legacy api_url -> inference_url (api_url cleared, inference_url={})",
@@ -45,30 +45,8 @@ pub(crate) fn migrate_legacy_inference_url(config: &mut Config) {
     config.load_diagnostics_mut().record_migrated_key("api_url");
 }
 
-/// Strip userinfo (basic-auth) and query string from a URL string for log
-/// emission. Falls back to a coarse `<host>/...` form when parsing fails so
-/// we never leak the raw input. Public only so the migration's unit test
-/// can assert the behaviour.
-pub fn redact_url_for_log(raw: &str) -> String {
-    if let Ok(mut url) = url::Url::parse(raw) {
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
-        url.set_query(None);
-        url.set_fragment(None);
-        return url.to_string();
-    }
-    let truncated = raw
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(raw)
-        .trim_end_matches('/');
-    if let Some((scheme, rest)) = truncated.split_once("://") {
-        if let Some((_, host_path)) = rest.split_once('@') {
-            return format!("{scheme}://***@{host_path}");
-        }
-        return format!("{scheme}://{rest}");
-    }
-    "<unparseable url>".to_string()
+fn migration_url_for_log(url: &str) -> String {
+    tinyinference_core::sanitize::redact_url(url)
 }
 
 /// Migrate `cloud_providers` entries to the new slug-keyed shape and rewrite
@@ -349,8 +327,7 @@ pub(crate) fn migrate_legacy_memory_backend(config: &mut Config, raw: &str) {
 
 /// One-shot migration of the legacy per-dependency switches into
 /// `[components]` (`hosting.enabled`, `search.enabled`, `mcp_client.enabled`,
-/// `memory.engine = "none"`, `OPENHUMAN_TINYMEMES`, `composio.mode =
-/// "disabled"`). `composio.enabled` was never read and is simply dropped with
+/// `memory.engine = "none"`, `composio.mode = "disabled"`). `composio.enabled` was never read and is simply dropped with
 /// its field; `composio.mode` stays as the route selector.
 ///
 /// A legacy switch is read from the raw TOML (so an unset key keeps its
@@ -358,14 +335,6 @@ pub(crate) fn migrate_legacy_memory_backend(config: &mut Config, raw: &str) {
 /// name, which makes the migration idempotent: once saved, the explicit
 /// `components.*` key wins and the legacy key is never consulted again.
 pub(crate) fn migrate_components(config: &mut Config, raw: &str) {
-    #[cfg(feature = "tinymemes")]
-    let tinymemes = std::env::var(crate::tinymemes::FLAG_ENV).ok();
-    #[cfg(not(feature = "tinymemes"))]
-    let tinymemes: Option<String> = None;
-    migrate_components_with(config, raw, tinymemes.as_deref());
-}
-
-pub(crate) fn migrate_components_with(config: &mut Config, raw: &str, tinymemes: Option<&str>) {
     let value = toml::from_str::<toml::Value>(raw).ok();
     let explicit = |name: &str| {
         value
@@ -406,14 +375,6 @@ pub(crate) fn migrate_components_with(config: &mut Config, raw: &str, tinymemes:
         .and_then(toml::Value::as_str)
         .is_some_and(|e| e.trim().eq_ignore_ascii_case("none"));
     disable(config, "memory", engine_none.then_some(false));
-    #[cfg(feature = "tinymemes")]
-    let memes_on = tinymemes
-        .filter(|v| !v.trim().is_empty())
-        .map(crate::tinymemes::flag_enabled);
-    // Without the `tinymemes` gate there is no legacy flag to migrate.
-    #[cfg(not(feature = "tinymemes"))]
-    let memes_on = tinymemes.and(None::<bool>);
-    disable(config, "memes", memes_on);
     // The old tool-output compaction master switch, `[tokenjuice]
     // router_enabled = false`, becomes `[components] juice = false`. The
     // switch stays as a sub-setting of the on state.
@@ -466,7 +427,6 @@ pub(crate) fn migrate_components_with(config: &mut Config, raw: &str, tinymemes:
                 "mcp" => &["mcp_client.enabled"],
                 "connectors" => &["composio.mode"],
                 "memory" => &["memory.engine"],
-                "memes" => &["OPENHUMAN_TINYMEMES"],
                 "juice" => &["tokenjuice.router_enabled"],
                 "voice" => &[
                     "dictation.enabled",
@@ -486,3 +446,7 @@ pub(crate) fn migrate_components_with(config: &mut Config, raw: &str, tinymemes:
         );
     }
 }
+
+#[cfg(test)]
+#[path = "migrate_tests.rs"]
+mod tests;

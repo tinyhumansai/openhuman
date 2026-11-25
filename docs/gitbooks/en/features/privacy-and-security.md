@@ -80,11 +80,13 @@ Memory only helps if it is safe to keep. Every item goes through secret and PII 
 
 **Encrypted in transit.** All communication between the app and the OpenHuman backend uses TLS. So do hosted memory requests and direct calls to CortexDB's managed API. A self-hosted CortexDB endpoint is only as protected as the URL you configure.
 
-**Key in keyring, ciphertext on disk.** For local secrets that must be saved in app files, OpenHuman stores encrypted ciphertext on disk and keeps the master decryption key in the OS keyring. See [OS keyring and secret storage](os-keyring-and-secret-storage.md).
+**Key in keyring, ciphertext on disk.** For local secrets that must be saved in app files, OpenHuman stores encrypted ciphertext on disk and keeps the master decryption key in the OS keyring. TinySecurity performs secret-cipher operations; the host supplies the keyring and storage callbacks. See [OS keyring and secret storage](os-keyring-and-secret-storage.md).
 
-**Sandboxed execution.** Shell commands and code the agent runs go through a sandbox backend chosen per session: none, the OS jail (Landlock on Linux, Seatbelt on macOS), or a Docker container with no network, dropped capabilities and a read-only root filesystem by default. Skills are not sandboxed separately. A skill runs as its own agent session under the same execution policy as any other turn.
+**Sandboxed execution.** TinySecurity plans the sandbox and decides which restrictions apply; TinyBox executes the resulting plan in the OS jail or Docker backend. The host passes the plan to the executor and fails closed when planning or plan consumption fails. Skills are not sandboxed separately. A skill runs as its own agent session under the same execution policy as any other turn.
 
-**Working-folder-scoped tools.** The native [filesystem tools](native-tools/coder.md) act inside the agent's working folder. That confinement is part of the autonomy policy, which is off by default. Until you set `[autonomy] enabled = true`, it is not enforced. What is enforced either way is the hard floor: credential stores and system roots. See [Approval gate](approval-gate.md).
+**Working-folder-scoped tools.** The native [filesystem tools](native-tools/coder.md) act inside the agent's working folder. Configurable path and command restrictions are part of the autonomy policy, which is off by default. Until you set `[autonomy] enabled = true`, those restrictions do not apply. TinySecurity still enforces the hard floor either way: credential stores, system roots, parent traversal and invalid path bytes remain refused. See [Approval gate](approval-gate.md).
+
+**Security decisions run in TinySecurity.** The host sends trusted configuration and caller facts over `tinysecurity-bus`. TinySecurity owns command and path authorization, approval state and grants, action budgets, redaction, prompt scans, and privacy and egress decisions. OpenHuman keeps the product configuration, consent and prompt surfaces, host callbacks, and execution of approved actions. If the module is missing or faulted, security-sensitive operations fail closed.
 
 **Short-lived tokens.** Authentication tokens between the app and the backend are time-limited.
 

@@ -236,6 +236,10 @@ fn str_at<'a>(value: &'a Value, pointer: &str) -> &'a str {
 #[tokio::test]
 async fn cron_run_records_history_and_remove_is_not_idempotent() {
     let _lock = env_lock_async().await;
+    // The shell job runs through the TinyBox module, which keeps its command
+    // resources in host storage. A real host's boot installs that backend;
+    // this suite boots none, so install one for the test.
+    let _storage = crate::HostStorage::install(&_lock);
     let h = setup().await;
 
     let job = h

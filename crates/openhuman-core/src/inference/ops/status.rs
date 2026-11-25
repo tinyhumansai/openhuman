@@ -122,6 +122,7 @@ pub async fn inference_test_provider_model(
             config,
             config.default_temperature,
         )
+        .await
     }
     .map_err(|e| e.to_string())?;
     debug!(%model, local, "{LOG_PREFIX} test_provider_model:invoke");

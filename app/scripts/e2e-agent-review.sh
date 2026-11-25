@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-# Canonical "agent review" run: builds the app if needed, runs the
-# agent-review spec, and prints the artifact directory so agents (and
-# humans) can inspect screenshots, page-source dumps, and mock request
-# logs on disk.
+# Canonical browser "agent review" run: builds the standalone web app if
+# needed, runs the Playwright owner, and prints its artifact directory.
 #
 # Usage:
 #   bash app/scripts/e2e-agent-review.sh [--skip-build] [--label <name>]
@@ -35,28 +33,21 @@ export E2E_ARTIFACT_LABEL="$LABEL"
 cd "$REPO_ROOT"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  echo "[agent-review] building E2E app with in-process core"
-  pnpm --filter openhuman-app test:e2e:build
+  echo "[agent-review] building standalone E2E web app"
+  pnpm --filter openhuman-app test:e2e:web:build
 else
-  echo "[agent-review] --skip-build set; reusing existing build"
+  echo "[agent-review] --skip-build set; reusing existing web build"
 fi
 
-echo "[agent-review] running spec test/e2e/specs/agent-review.spec.ts"
-bash "$APP_DIR/scripts/e2e-run-spec.sh" test/e2e/specs/agent-review.spec.ts agent-review
-
-# Find the most recent run dir for this label.
 ARTIFACT_ROOT="${E2E_ARTIFACT_ROOT:-$APP_DIR/test/e2e/artifacts}"
-if [ -d "$ARTIFACT_ROOT" ]; then
-  LATEST="$(ls -1dt "$ARTIFACT_ROOT"/*"-$LABEL" 2>/dev/null | head -n 1 || true)"
-  if [ -n "$LATEST" ]; then
-    echo
-    echo "[agent-review] ==========================================="
-    echo "[agent-review] artifact dir: $LATEST"
-    echo "[agent-review] ==========================================="
-    ls -1 "$LATEST" 2>/dev/null || true
-  else
-    echo "[agent-review] no artifact dir found under $ARTIFACT_ROOT"
-  fi
-else
-  echo "[agent-review] artifact root missing: $ARTIFACT_ROOT"
-fi
+ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-$ARTIFACT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$LABEL}"
+echo "[agent-review] running browser owner test/playwright/specs/agent-review.spec.ts"
+bash "$APP_DIR/scripts/e2e-web-session.sh" \
+  test/playwright/specs/agent-review.spec.ts \
+  --output "$ARTIFACT_DIR"
+
+echo
+echo "[agent-review] ==========================================="
+echo "[agent-review] artifact dir: $ARTIFACT_DIR"
+echo "[agent-review] ==========================================="
+ls -1 "$ARTIFACT_DIR" 2>/dev/null || true

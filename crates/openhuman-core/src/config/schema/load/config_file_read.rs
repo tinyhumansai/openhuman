@@ -6,6 +6,8 @@ use super::super::Config;
 use super::branches::default_config_boxed;
 use super::{ConfigLoadFallback, ConfigParseError};
 
+/// Unboxed [`parse_config_boxed`], for the recovery tests.
+#[cfg(test)]
 pub(crate) async fn parse_config_with_recovery(
     config_path: &Path,
     contents: &str,
@@ -14,7 +16,7 @@ pub(crate) async fn parse_config_with_recovery(
     (*config, recovered)
 }
 
-/// [`parse_config_with_recovery`] with the config kept behind a `Box`, so the
+/// Parses `config.toml` with recovery, keeping the config behind a `Box` so the
 /// async chain that threads it through (load, recover, migrate, save) moves a
 /// pointer instead of an ~8 KB value per hop.
 pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (Box<Config>, bool) {
@@ -36,7 +38,7 @@ pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (B
         tracing::warn!(
             path = %config_path.display(),
             backup = %backup_path.display(),
-            error = %parse_err,
+            error = %parse_error.safe_summary(),
             "[config] Config file is corrupted — attempting recovery from backup"
         );
         match fs::read_to_string(&backup_path).await {
@@ -58,7 +60,8 @@ pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (B
                     tracing::warn!(
                         path = %config_path.display(),
                         backup = %backup_path.display(),
-                        error = %bak_err,
+                        error = %ConfigParseError::from_error(backup_path.clone(), &bak_err)
+                            .safe_summary(),
                         "[config] Backup is also corrupted; resetting to defaults"
                     );
                 }
@@ -75,7 +78,7 @@ pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (B
     } else {
         tracing::warn!(
             path = %config_path.display(),
-            error = %parse_err,
+            error = %parse_error.safe_summary(),
             "[config] Config file is corrupted (no backup found); resetting to defaults"
         );
     }

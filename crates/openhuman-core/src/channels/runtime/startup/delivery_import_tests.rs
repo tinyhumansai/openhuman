@@ -8,13 +8,13 @@ fn entry(id: &str, at: u64) -> DeliveryQueueEntry {
         id,
         ChannelOutboundIntent {
             idempotency_key: id.to_owned(),
-            channel_ref: None,
-            conversation_ref: None,
-            turn_id: None,
             channel_id: "telegram".into(),
+            channel_ref: None,
             conversation_id: "chat-1".into(),
+            conversation_ref: None,
             reply_to_id: None,
             thread_id: None,
+            turn_id: None,
             durability: DeliveryDurability::Required,
             payload: OutboundPayload::Text {
                 text: "hello".into(),

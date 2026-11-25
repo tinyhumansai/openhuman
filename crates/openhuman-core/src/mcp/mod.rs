@@ -17,6 +17,13 @@
 //! - [`server`] — the `openhuman mcp` host adapter for stdio and HTTP entry
 //!   points. The tool catalog, permission model, and agent dispatch stay here;
 //!   TinyMCP owns protocol sessions and transport behavior.
+//! - `tools` — the generic configured-server bridge as agent tools
+//!   (`mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`), one file each.
+//! - `server_tools` — each configured server's tools as direct
+//!   `mcp_<server>_<tool>` agent tools.
+//! - `gitbooks_tools` — `gitbooks_search` / `gitbooks_get_page`, the
+//!   OpenHuman docs over TinyMCP's one-shot call. Not gated on `mcp`: it is a
+//!   docs tool that only borrows the module's transport.
 //!
 //! # Where the boundary fell
 //!
@@ -43,19 +50,18 @@
 //! and `audit` keep their own gate and their `stub`, so a build without the
 //! feature still serves `/rpc` without those namespaces.
 
-/// Registers the host-side MCP subscriber and lifecycle integration.
+/// Registers the host-side MCP lifecycle integration.
 ///
 /// Core startup calls this without knowing the MCP adapter details. This
 /// remembers the process default configuration and registers cleanup for the
 /// configured module client; opening the module remains lazy until a caller
 /// needs it.
 ///
-/// Idempotent: the subscriber and configured-client shutdown hook register at
-/// most once, so the RPC domain enable point and boot-jobs path can both call
-/// this function.
+/// Idempotent: the configured-client shutdown hook registers at most once, so
+/// the RPC domain enable point and boot-jobs path can both call this
+/// function.
 #[cfg(feature = "mcp")]
 pub fn start(config: &crate::config::Config) {
-    registry::bus::init();
     host::set_default_config(config);
 
     #[cfg(feature = "modules")]
@@ -64,6 +70,12 @@ pub fn start(config: &crate::config::Config) {
 
 #[cfg(feature = "mcp")]
 pub(crate) mod module_client;
+
+#[cfg(all(test, feature = "mcp"))]
+#[path = "test_module_port.rs"]
+mod test_module_port;
+#[cfg(all(test, feature = "mcp"))]
+pub(crate) use test_module_port::install as install_test_module_port;
 
 mod host_cleanup;
 
@@ -111,7 +123,7 @@ pub(crate) async fn refresh_configured_tool_cache(config: &crate::config::Config
             return;
         }
     };
-    let client_config = host::client_config(config);
+    let client_config = host::client_config(config).await;
     let servers: Vec<String> = match client
         .call(&client_config, tinymcp_bus::names::methods::STATIC_LIST, ())
         .await
@@ -203,22 +215,32 @@ pub fn all_registered_controllers() -> Vec<crate::core::all::RegisteredControlle
     controllers
 }
 
+/// Built-in runtime entries, binding registry_get to its shared parser while
+/// preserving the legacy catalogue above for existing callers.
+pub(crate) fn all_controller_entries() -> Vec<crate::core::all::ControllerEntry> {
+    all_registered_controllers()
+        .into_iter()
+        .map(|controller| {
+            #[cfg(feature = "mcp")]
+            if controller.schema.method_name() == "mcp_clients.registry_get" {
+                return registry::registry_get_controller_entry();
+            }
+            crate::core::all::ControllerEntry::legacy(controller)
+        })
+        .collect()
+}
+
 pub mod audit;
-// Ungated, like the transport below and for the same reason: `tinymcp` is an
-// ordinary dependency, and the startup path calls `host::init` without a `cfg`
+pub(crate) mod gitbooks_tools;
+// Ungated: `tinymcp` is an ordinary dependency, and the startup path calls `host::init` without a `cfg`
 // of its own. Gating this would break the build with the domain turned off.
 pub mod host;
 pub(crate) mod host_sandbox;
 pub mod registry;
 pub mod server;
 #[cfg(feature = "mcp")]
+pub(crate) mod server_tools;
+#[cfg(feature = "mcp")]
+pub(crate) mod tools;
+#[cfg(feature = "mcp")]
 pub mod ui;
-
-/// MCP wire-contract response types used by host adapters.
-pub mod http_client {
-    pub use tinymcp_bus::{
-        AuthorizationServerMetadata, McpAuthChallenge, McpAuthorizationContext,
-        McpInitializeResult, McpRemoteTool, McpServerToolResult, McpSseEvent,
-        ProtectedResourceMetadata,
-    };
-}

@@ -29,7 +29,7 @@ impl DurableSubagentStatus {
     }
 
     pub fn reusable(self) -> bool {
-        matches!(self, Self::Running | Self::Idle)
+        matches!(self, Self::Running | Self::Idle | Self::AwaitingUser)
     }
 }
 
@@ -65,6 +65,11 @@ pub struct DurableSubagentSession {
     /// validated checkpoint before resuming or controlling a live child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<tinyagents_orchestration::subagent::SubagentTaskKey>,
+    /// Parent lifecycle generation admitted for `current_task_id`. Older rows
+    /// intentionally remain `None`; callers must never synthesize a new epoch
+    /// when settling a legacy paused child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_epoch: Option<u64>,
     pub status: DurableSubagentStatus,
     pub reusable: bool,
     #[serde(default, with = "crate::agent::messages::history_wire::option")]
@@ -146,11 +151,14 @@ pub struct SubagentSessionUpsert {
     /// retained for legacy host paths and rows written before this field was
     /// introduced.
     pub lifecycle_key: Option<tinyagents_orchestration::subagent::SubagentTaskKey>,
+    /// Admission generation captured for this exact current task.
+    pub parent_epoch: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SubagentSessionStore {
     pub workspace_dir: PathBuf,
+    pub(crate) context: Option<std::sync::Arc<crate::core::runtime::CoreContext>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

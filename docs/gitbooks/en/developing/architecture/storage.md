@@ -34,8 +34,6 @@ The storage URL is the first of these that is set. Blank values count as unset.
 2. `[storage] url` in `config.toml`
 3. The default, `sqlite:<workspace>/storage` (one database per workspace)
 
-The retired `classic` opt-out value is read as unset, with a warning.
-
 `[storage]` is bootstrap configuration. It is always read from the environment or the file and never from storage itself.
 
 | URL                                                                    | Driver                                                                                                                                                                                                               | Cargo feature     |
@@ -94,9 +92,13 @@ it starts a background refresh with `spawn_scoped`.
 
 ### Background work
 
-Background work runs under the process default context, which names no agent, and on its own would only see `local`. `storage::agents` closes the gap. Agents are known when they are live (`AgentContextRegistry`) or when an earlier process recorded their id in the `local` scope (`storage_agents`). `for_each_scope` runs a step once for `local` and once under each known agent. The cron scheduler's agent pass (`cron::scheduler::tick_live_agents`, driven in tests through the public `cron::scheduler::run_live_agent_pass`) runs each live agent's due jobs under that agent's own context, so their results are recorded in the agent's own scope. A recorded agent that is not live waits until it is live again, because its jobs need its host tools and prompt.
+Background work runs under the process default context, which names no agent, and on its own would only see `local`. `storage::agents` closes the gap. Agents are known when they are live (`AgentContextRegistry`) or when an earlier process recorded their id in the `local` scope (`agents.registry`). `for_each_scope` runs a step once for `local` and once under each known agent. The cron scheduler's agent pass (`cron::scheduler::tick_live_agents`, driven in tests through the public `cron::scheduler::run_live_agent_pass`) runs each live agent's due jobs under that agent's own context, so their results are recorded in the agent's own scope. A recorded agent that is not live waits until it is live again, because its jobs need its host tools and prompt.
 
 On a shared backend (MongoDB) other processes may write the same records, so boot-time recovery such as the orphaned-run sweep is skipped (`storage::installed_is_shared`).
+
+### The storage runtime
+
+`storage::open` connects the driver on a process-wide tokio runtime of its own (two `openhuman-storage` worker threads, never shut down). MongoDB's connection-time pool and server-monitor tasks live there and not on the host's runtime. Cleanup tasks registered by later object drops can run on the internal `storage::block_on` runtime instead. Synchronous stores reach the ports through `storage::block_on`, which parks the calling thread; with the backend on the storage runtime, any number of parked callers cannot leave the host runtime without the threads the backend needs to answer them. An embedder that wants this isolation passes its storage as a URL (`StorageSource::Url`) rather than a backend it opened on its own runtime.
 
 ## Drivers and on-disk layout
 
@@ -155,7 +157,7 @@ The host's storage tests run on SQLite only. They test the host's wiring on a co
 
 Whether each driver honours the storage ports is proven upstream, in `tinystoragedrivers`. Its `conformance` module runs the same checks against every driver (nested scope isolation, compare-and-swap and leases across processes via `run_shared` for drivers that claim `Capability::SharedAcrossProcesses`, fencing, document secrets and migrations), and its CI runs them against a MongoDB replica set as well. The host asks a backend for `Capability::SharedAcrossProcesses` rather than hardcoding driver names where it can (`storage::backend_has_cross_process_cas`); the boot guard judges a URL before anything is opened, so it keeps a name check that a test pins to the real drivers.
 
-The targets are `storage_approvals_e2e`, `storage_domains_e2e`, `storage_flows_e2e`, `storage_secrets_e2e`, `storage_scope_e2e`, `storage_agent_scopes_e2e`, `storage_delegation_e2e`, `storage_desktop_upgrade_e2e` and `cli_storage_url_e2e`. Run one locally:
+The targets are `storage_approvals_e2e`, `storage_domains_e2e`, `storage_flows_e2e`, `storage_secrets_e2e`, `storage_scope_e2e`, `storage_agent_scopes_e2e`, `storage_desktop_upgrade_e2e` and `cli_storage_url_e2e`. Run one locally:
 
 ```bash
 cargo test -p openhuman-cli --features storage-sqlite --test storage_approvals_e2e

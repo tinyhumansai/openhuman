@@ -11,10 +11,8 @@ pub(super) const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. P
 // whose job halts on a permanent config/billing state sees the exact next step
 // instead of "Something went wrong". Static `&'static str` only — they carry no
 // `err` fields, honouring the no-leak contract on `agent_error_to_user_message`.
-pub(super) const CRON_HALT_API_KEY_UNSET_MESSAGE: &str =
-    "No API key is set for your AI provider. Add it in Connections \u{2192} API keys \u{2192} LLM, then re-run.";
-pub(super) const CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE: &str =
-    "Your AI provider is out of credits. Top it up or update its key in Connections \u{2192} API keys \u{2192} LLM.";
+pub(super) const CRON_HALT_API_KEY_UNSET_MESSAGE: &str = "No API key is set for your AI provider. Add it in Connections \u{2192} API keys \u{2192} LLM, then re-run.";
+pub(super) const CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE: &str = "Your AI provider is out of credits. Top it up or update its key in Connections \u{2192} API keys \u{2192} LLM.";
 pub(super) const CRON_HALT_BUDGET_EXHAUSTED_MESSAGE: &str =
     "You've reached your managed AI budget. Raise it in Settings \u{2192} Billing.";
 
@@ -34,10 +32,14 @@ pub(super) const CRON_HALT_BUDGET_EXHAUSTED_MESSAGE: &str =
 /// [`AGENT_JOB_USER_FAILURE_MESSAGE`], preserving today's behaviour.
 pub(super) fn agent_error_to_user_message(err: &AgentError) -> &'static str {
     match err {
-        AgentError::ProviderError { retryable: true, .. } => {
+        AgentError::ProviderError {
+            retryable: true, ..
+        } => {
             "The model provider is temporarily unavailable. The next run will retry automatically."
         }
-        AgentError::ProviderError { retryable: false, .. } => {
+        AgentError::ProviderError {
+            retryable: false, ..
+        } => {
             "The model provider rejected the request. Check provider credentials in Connections \u{2192} API keys \u{2192} LLM."
         }
         AgentError::ContextLimitExceeded { .. } => {

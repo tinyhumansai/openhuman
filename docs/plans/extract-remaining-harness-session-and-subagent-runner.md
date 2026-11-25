@@ -41,7 +41,7 @@ tinyagents-harness <--- tinyagents-session
    |                       |
 tinyagents-runtime --------+
    ^
-tinyagents-orchestration::{subagent,teams,workflow}
+tinyagents-orchestration::{subagent,workflow}
    ^
 OpenHuman agent/{session_host,subagent_host,orchestration/**}
 ```
@@ -325,7 +325,7 @@ where no neutral session adapter exists. Its durable identity is the complete
 that original key instead of deriving one from a fresh turn. Migrate
 `agent/orchestration/{ops.rs,delegation.rs,running_subagents/**,
 spawn_parallel_graph/**,subagent_sessions/**,tools/**}`, `agent/triage/**`,
-`agent_registry/**`, `tools/orchestrator_tools.rs` and integration/raw tests.
+`agent_registry/**`, `integrations/composio/orchestrator_actions.rs` and integration/raw tests.
 `agent/task_dispatcher/**` is obsolete after upstream removed tasks: remove its
 poller, executor, public module, callers and tests rather than carrying it into
 the new host layer.

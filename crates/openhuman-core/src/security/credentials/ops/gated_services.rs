@@ -17,9 +17,12 @@ pub(super) fn is_embedder_host() -> bool {
 
 /// Populate the process cache away from the next chat turn after startup or a
 /// credential change. Connection changes have their own invalidation paths.
-pub(super) fn spawn_integrations_cache_warm(config: &Config) {
+pub(super) fn spawn_integrations_cache_warm(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) {
     let integration_config = config.clone();
-    tokio::spawn(async move {
+    ctx.spawn(async move {
         let started = std::time::Instant::now();
         match crate::integrations::composio::fetch_connected_integrations_status(
             &integration_config,
@@ -81,7 +84,7 @@ pub async fn start_credential_gated_services(
         return;
     }
 
-    spawn_integrations_cache_warm(config);
+    spawn_integrations_cache_warm(ctx, config);
 
     let started = std::time::Instant::now();
     // (service label, task) pairs so a panic surfaced on join is attributed to
@@ -93,9 +96,10 @@ pub async fn start_credential_gated_services(
     //    critical path so a slow endpoint cannot delay the other services.
     {
         let config = config.clone();
+        let service_ctx = ctx.clone();
         tasks.push((
             "local_ai",
-            tokio::spawn(async move {
+            service_ctx.spawn(async move {
                 if config.local_ai.runtime_enabled {
                     let step = std::time::Instant::now();
                     log::debug!("[services] local AI endpoint probe starting");

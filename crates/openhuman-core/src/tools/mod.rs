@@ -1,11 +1,11 @@
-pub(crate) mod delegate;
 pub mod host_extensions;
+// Only the flows runtime dispatches native tools by name.
+#[cfg(feature = "flows")]
 pub(crate) mod native_ops;
+#[cfg(feature = "flows")]
 mod native_ops_types;
 pub mod ops;
-pub mod orchestrator_tools;
 pub(crate) mod per_call;
-pub(crate) mod policy_session;
 pub mod registry;
 pub mod rules;
 pub(crate) mod schema_cache;

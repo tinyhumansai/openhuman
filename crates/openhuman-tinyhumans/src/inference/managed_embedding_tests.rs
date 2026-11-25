@@ -1,16 +1,19 @@
 use super::*;
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::credentials::AuthService;
+use openhuman_embed::__host::credentials::AuthService;
+use openhuman_embed::__host::security::approval::ApprovalChatContext;
 use std::collections::HashMap;
 use tinyinference_embeddings::{
     CloudEmbeddingModel, EmbeddingModel, DEFAULT_CLOUD_DIMENSIONS, DEFAULT_CLOUD_MODEL,
 };
 
 fn test_config(tmp: &tempfile::TempDir) -> Config {
-    Config {
+    let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
-    }
+    };
+    config.secrets.encrypt = false;
+    config
 }
 
 fn state_dir_of(config: &Config) -> std::path::PathBuf {
@@ -19,6 +22,25 @@ fn state_dir_of(config: &Config) -> std::path::PathBuf {
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default()
+}
+
+/// The guarded managed embedder for an explicit credential directory with no
+/// owning config, as a directory-only caller builds it.
+fn build_cloud_model(
+    api_url: Option<String>,
+    state_dir: std::path::PathBuf,
+    secrets_encrypt: bool,
+    model: &str,
+    dimensions: usize,
+    chat: Option<ApprovalChatContext>,
+) -> CloudEmbeddingModel {
+    let context = openhuman_embed::__host::inference_registry::EmbeddingCallContext {
+        config: None,
+        chat,
+        state_dir,
+        secrets_encrypt,
+    };
+    guarded_cloud_model(api_url, &context, model, dimensions)
 }
 
 /// Builds the embedder the way the core's managed factory does: through the
@@ -37,10 +59,10 @@ fn build_through_registry(config: &Config, model: &str, dimensions: usize) -> Cl
         ),
         catalog: None,
     };
-    from_request(&EmbeddingRequest {
-        model,
+    from_request(EmbeddingRequest {
+        model: model.to_owned(),
         dimensions,
-        context: &context,
+        context,
     })
 }
 
@@ -74,11 +96,12 @@ async fn api_key_alone_authenticates_cloud_embeddings() {
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     let state = tempfile::tempdir().unwrap();
-    openhuman_embed::__host::security::credentials::api_key::store_api_key_in(
+    openhuman_embed::__host::credentials::api_key::store_api_key_in(
         state.path(),
         false,
         "tiny_test_emb",
     )
+    .await
     .unwrap();
     let provider = build_cloud_model(
         Some(format!("http://{addr}")),
@@ -86,7 +109,6 @@ async fn api_key_alone_authenticates_cloud_embeddings() {
         false,
         "m",
         2,
-        None,
         None,
     );
 
@@ -105,11 +127,12 @@ async fn api_key_alone_authenticates_cloud_embeddings() {
 #[tokio::test]
 async fn api_key_is_refused_over_plaintext_non_loopback() {
     let state = tempfile::tempdir().unwrap();
-    openhuman_embed::__host::security::credentials::api_key::store_api_key_in(
+    openhuman_embed::__host::credentials::api_key::store_api_key_in(
         state.path(),
         false,
         "tiny_test_emb",
     )
+    .await
     .unwrap();
     let provider = build_cloud_model(
         Some(
@@ -120,7 +143,6 @@ async fn api_key_is_refused_over_plaintext_non_loopback() {
         false,
         "m",
         2,
-        None,
         None,
     );
     let err = provider.embed(&["hello".to_string()]).await.unwrap_err();
@@ -167,6 +189,12 @@ fn unreachable_embedder_with_chat(
     model: &str,
     chat: Option<ApprovalChatContext>,
 ) -> CloudEmbeddingModel {
+    // These tests pin the host's disclosure event, not TinySecurity's native
+    // privacy decision (which has separate module-backed coverage). Replace
+    // only this fixture's guard so the event path is testable without loading
+    // a native TinySecurity artifact.
+    let descriptor = openhuman_embed::__host::egress::EgressDescriptor::embedding("cloud", model);
+    let chat_for_disclosure = chat.clone();
     build_cloud_model(
         Some("http://127.0.0.1:0".into()),
         std::env::temp_dir().join("openhuman_embeddings_routing_state"),
@@ -174,8 +202,14 @@ fn unreachable_embedder_with_chat(
         model,
         DEFAULT_CLOUD_DIMENSIONS,
         chat,
-        None,
     )
+    .with_egress_guard(std::sync::Arc::new(move |_, _| {
+        openhuman_embed::__host::egress::emit_external_transfer(
+            chat_for_disclosure.as_ref(),
+            descriptor.clone(),
+        );
+        Ok(())
+    }))
 }
 
 /// A cloud-embedding call made during a web-chat turn discloses its egress to
@@ -334,12 +368,13 @@ async fn factory_managed_provider_authenticates_with_config_scoped_token() {
     let config = test_config(&tmp);
     AuthService::new(&state_dir_of(&config), config.secrets.encrypt)
         .store_provider_token(
-            openhuman_embed::__host::security::credentials::APP_SESSION_PROVIDER,
+            openhuman_embed::__host::credentials::APP_SESSION_PROVIDER,
             "default",
             "sess-scoped-5356",
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     // The managed base URL comes from the backend transport, which (the
@@ -417,12 +452,13 @@ async fn default_provider_with_config_authenticates_with_config_scoped_token() {
     let config = test_config(&tmp);
     AuthService::new(&state_dir_of(&config), config.secrets.encrypt)
         .store_provider_token(
-            openhuman_embed::__host::security::credentials::APP_SESSION_PROVIDER,
+            openhuman_embed::__host::credentials::APP_SESSION_PROVIDER,
             "default",
             "sess-default-5501",
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     let config = Config {
@@ -444,6 +480,42 @@ async fn default_provider_with_config_authenticates_with_config_scoped_token() {
         Some("Bearer sess-default-5501"),
         "the memory client's default embedder must authenticate with the config-scoped token"
     );
+}
+
+/// Sign-in stores the app session through the config-bound store (the keyring
+/// under `security-module`). The managed embedder built for that config must
+/// read the session through the same store, not a directory-only one that sees
+/// no token and reports "No backend session".
+#[tokio::test]
+async fn managed_embedding_bearer_reads_the_session_sign_in_stored_through_the_config() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config {
+        config_path: tmp.path().join("config.toml"),
+        workspace_dir: tmp.path().join("workspace"),
+        api_url: Some("http://127.0.0.1:9".to_owned()),
+        ..Config::default()
+    };
+    AuthService::from_config(&config)
+        .store_provider_token(
+            openhuman_embed::__host::credentials::APP_SESSION_PROVIDER,
+            openhuman_embed::__host::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "signed.in.jwt",
+            HashMap::new(),
+            true,
+        )
+        .await
+        .expect("sign-in stores the app session through the config");
+    let context = openhuman_embed::__host::inference_registry::EmbeddingCallContext {
+        config: Some(config.clone()),
+        chat: None,
+        state_dir: state_dir_of(&config),
+        secrets_encrypt: config.secrets.encrypt,
+    };
+
+    let bearer = bearer_resolver(managed_base_url(&config.api_url), &context)()
+        .await
+        .expect("the managed embedder reads the signed-in session");
+    assert_eq!(bearer, "signed.in.jwt");
 }
 
 /// With no stored `app-session` token and no API key, the bearer resolver
@@ -492,12 +564,13 @@ async fn offline_local_session_is_refused_before_embedding_request() {
     let tmp = tempfile::tempdir().unwrap();
     AuthService::new(tmp.path(), false)
         .store_provider_token(
-            openhuman_embed::__host::security::credentials::APP_SESSION_PROVIDER,
+            openhuman_embed::__host::credentials::APP_SESSION_PROVIDER,
             "default",
             "header.payload.local",
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
     let provider = build_cloud_model(
         Some(format!("http://{addr}")),
@@ -505,7 +578,6 @@ async fn offline_local_session_is_refused_before_embedding_request() {
         false,
         "m",
         2,
-        None,
         None,
     );
 
@@ -523,7 +595,7 @@ async fn offline_local_session_is_refused_before_embedding_request() {
 async fn expired_session_publishes_session_expired_before_embedding_request() {
     use axum::{routing::post, Json, Router};
     use openhuman_embed::__host::core::events::DomainEvent;
-    use openhuman_embed::__host::security::credentials::session_support::SESSION_EXPIRES_AT_META;
+    use openhuman_embed::__host::credentials::session_state::SESSION_EXPIRES_AT_META;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -563,12 +635,13 @@ async fn expired_session_publishes_session_expired_before_embedding_request() {
     );
     AuthService::new(tmp.path(), false)
         .store_provider_token(
-            openhuman_embed::__host::security::credentials::APP_SESSION_PROVIDER,
+            openhuman_embed::__host::credentials::APP_SESSION_PROVIDER,
             "default",
             "expired.session.jwt",
             metadata,
             true,
         )
+        .await
         .unwrap();
     let provider = build_cloud_model(
         Some(format!("http://{addr}")),
@@ -576,7 +649,6 @@ async fn expired_session_publishes_session_expired_before_embedding_request() {
         false,
         "m",
         2,
-        None,
         None,
     );
 
@@ -588,7 +660,7 @@ async fn expired_session_publishes_session_expired_before_embedding_request() {
     assert_eq!(requests.load(Ordering::SeqCst), 0);
     let mut published = None;
     while let Ok(event) = rx.try_recv() {
-        if let DomainEvent::SessionExpired { source, reason } = event {
+        if let DomainEvent::SessionExpired { source, reason, .. } = event {
             if source == "managed_embedding.resolve_bearer" {
                 published = Some((source, reason));
                 break;

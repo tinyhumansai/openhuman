@@ -181,3 +181,30 @@ fn legacy_doctor_namespace_commands_stay_with_the_core_dispatcher() {
         assert!(!is_doctor_command(&invocation));
     }
 }
+
+#[test]
+fn help_flags_ask_for_usage_instead_of_failing() {
+    for flag in ["--help", "-h", "help"] {
+        assert!(args(&[flag]).help, "{flag}");
+        assert!(is_doctor_command(&["doctor".to_owned(), flag.to_owned()]));
+    }
+    assert!(!args(&[]).help);
+    assert!(super::args::USAGE.contains("--severity-min"));
+}
+
+#[test]
+fn a_failed_run_names_a_safe_reason_class() {
+    use super::runner::{failure_output, DoctorFailure};
+    for failure in [
+        DoctorFailure::Runtime,
+        DoctorFailure::Host,
+        DoctorFailure::Rpc,
+        DoctorFailure::NoReport,
+    ] {
+        let text = failure_output(false, failure);
+        assert!(text.starts_with("doctor could not produce a report: "));
+        assert!(text.ends_with(failure.reason()));
+        let json: Value = serde_json::from_str(&failure_output(true, failure)).unwrap();
+        assert_eq!(json, json!({ "ok": false, "reason": failure.reason() }));
+    }
+}

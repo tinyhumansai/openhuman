@@ -396,6 +396,36 @@ describe('ToolTimelineAdapter — renders the processing transcript inline', () 
     expect(screen.getByText('Let me check that file.')).toBeInTheDocument();
   });
 
+  it('shows an available tool-result diagnostic for unknown failures in the processing transcript', () => {
+    const entries: ToolTimelineEntry[] = [
+      {
+        id: 'failed-tool',
+        name: 'run_code',
+        round: 1,
+        seq: 1,
+        status: 'error',
+        result: 'Process exited with status 127: command not found.',
+        failure: {
+          class: 'Unknown',
+          category: 'Permanent',
+          recoverable: false,
+          causePlain: 'Generic failure.',
+          nextAction: 'Try again.',
+        },
+      },
+    ];
+    render(
+      <ToolTimelineAdapter
+        entries={entries}
+        transcript={[{ kind: 'toolCall', round: 1, seq: 1, callId: 'failed-tool' }]}
+      />
+    );
+
+    const card = screen.getByTestId('assistant-ui-tool-failure');
+    expect(card).toHaveTextContent('Process exited with status 127: command not found.');
+    expect(card).not.toHaveTextContent('Generic failure.');
+  });
+
   it('falls back to the tool-row list when no transcript is present', () => {
     render(
       <ToolTimelineAdapter

@@ -100,7 +100,7 @@ fn classifies_expected_config_errors() {
 /// Sentry TAURI-RUST-83A: the Codex-CLI import user-state errors must
 /// classify as `CodexCliAuthUnavailable` so the ~430-event flood stays out
 /// of Sentry. Verbatim envelope shapes from
-/// `openai_oauth::store::import_codex_cli_auth_from_path` (with a fake path
+/// the TinyHumans `provider_oauth` Codex CLI importer (with a fake path
 /// in place of the real `~/.codex/auth.json`).
 
 #[test]

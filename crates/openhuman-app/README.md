@@ -155,9 +155,18 @@ Every clean exit path (`RunEvent::ExitRequested`, tray or menu quit,
 `perform_early_teardown_sync_once`. That stops the iMessage scanner, tears
 down any provisioned gateway, and sends the core its terminate signal. After
 Tauri's event loop returns, `process_kill::sweep_orphan_children` kills any
-child process still parented to the app. On macOS closing the main window
-hides the app instead of destroying the webview, so the dock and tray can
-bring it back; on Windows closing the main window exits.
+child process still parented to the app.
+
+An OS session end (Windows `WM_ENDSESSION`) skips `ExitRequested`, so
+`RunEvent::Exit` runs the teardown itself: geometry save, then
+`perform_session_end_teardown_once` (core terminate first, gateway cleanup
+bounded by `SESSION_END_GATEWAY_BUDGET`). On Windows tao's runner is already
+destroyed by then, so the handler removes the tray, sweeps children and calls
+`std::process::exit(0)` before control returns to the event loop (#8505).
+
+On macOS closing the main window hides the app instead of destroying the
+webview, so the dock and tray can bring it back; on Windows closing the main
+window exits.
 
 ## Layout
 

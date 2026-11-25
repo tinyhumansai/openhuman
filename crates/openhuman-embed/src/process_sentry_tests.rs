@@ -23,7 +23,9 @@ fn fixed_user() -> Option<String> {
 fn the_chain_is_the_union_of_both_hosts_with_unique_names() {
     // 19 CLI predicates + 1 shell-only (localhost dev fetch); the shell's other
     // 11 were already in the CLI chain. `is_transient_backend_api_failure` and
-    // its three siblings were one `||` group in both hosts.
+    // its three siblings were one `||` group in both hosts. +1 disk-full
+    // (#8508, TAURI-RUST-15PJ). -1 channel-message-404, now registered by the
+    // TinyHumans layer (`register_crash_noise_filter`).
     assert_eq!(NOISE_FILTERS.len(), 21);
     let mut names: Vec<_> = NOISE_FILTERS.iter().map(|(name, _)| *name).collect();
     names.sort_unstable();
@@ -58,6 +60,13 @@ fn each_known_noise_class_is_dropped() {
         ),
         ("fs-limitation", event("write failed (os error 665)", &[])),
         (
+            "disk-full",
+            event(
+                "transcript persistence failed: No space left on device (os error 28)",
+                &[],
+            ),
+        ),
+        (
             "max-iterations",
             event(
                 &format!(
@@ -65,18 +74,6 @@ fn each_known_noise_class_is_dropped() {
                     tinyagents_harness::agent_error::MAX_ITERATIONS_ERROR_PREFIX
                 ),
                 &[],
-            ),
-        ),
-        (
-            "channel-message-404",
-            event(
-                "DELETE /channels/c1/messages/m1 -> 404",
-                &[
-                    ("domain", "backend_api"),
-                    ("failure", "non_2xx"),
-                    ("status", "404"),
-                    ("method", "DELETE"),
-                ],
             ),
         ),
         (
@@ -93,6 +90,24 @@ fn each_known_noise_class_is_dropped() {
         assert!(
             before_send(event, no_user).is_none(),
             "{expected}: before_send kept it (classified as {name:?})"
+        );
+    }
+}
+
+/// A remote server's full disk is operator-actionable: the `disk-full` filter
+/// must not claim backend or embeddings responses that quote the phrase or an
+/// errno (CodeRabbit on #8517).
+#[test]
+fn the_disk_full_filter_ignores_remote_responses() {
+    for message in [
+        "Backend returned 507 Insufficient Storage for PUT https://api.example.test/x: \
+         No space left on device (os error 28)",
+        "Embedding API error (500 Internal Server Error): disk full (os error 112)",
+    ] {
+        assert_ne!(
+            known_noise(&event(message, &[])),
+            Some("disk-full"),
+            "{message}"
         );
     }
 }
@@ -272,4 +287,21 @@ fn core_dsn_precedence_is_runtime_then_baked_and_skips_blanks() {
         Some("bl")
     );
     assert_eq!(select_core_dsn(None, None, None, Some("  ")), None);
+}
+
+/// A host-registered filter joins the chain after the built-in ones.
+#[test]
+fn a_host_registered_filter_is_consulted_after_the_built_in_chain() {
+    fn is_host_noise(event: &Event<'static>) -> bool {
+        event.message.as_deref() == Some("host-only noise shape")
+    }
+    let noise = event("host-only noise shape", &[]);
+    assert_eq!(known_noise(&noise), None);
+    obs::register_crash_noise_filter(obs::CrashNoiseFilter {
+        name: "test-host-noise",
+        matches: is_host_noise,
+    });
+    assert_eq!(known_noise(&noise), Some("test-host-noise"));
+    assert!(before_send(noise, no_user).is_none());
+    assert!(obs::unregister_crash_noise_filter("test-host-noise"));
 }

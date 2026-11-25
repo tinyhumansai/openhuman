@@ -89,6 +89,10 @@ pub fn path(workspace_dir: &Path) -> PathBuf {
     crate::memory::state_store::legacy_path(workspace_dir, STATE)
 }
 
-#[cfg(test)]
+// These read and write the migration state, and every state read adopts the
+// legacy file under an import claim that needs conditional writes. The
+// in-memory test backend has none; only `storage-sqlite` gives tests a
+// backend that does (`StateKv::open`), so without it they cannot run.
+#[cfg(all(test, feature = "storage-sqlite"))]
 #[path = "state_tests.rs"]
 mod tests;

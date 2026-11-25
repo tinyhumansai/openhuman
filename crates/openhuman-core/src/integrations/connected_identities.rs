@@ -12,7 +12,8 @@
 /// `block_in_place` waits can exhaust that runtime's blocking pool and prevent
 /// the identity read itself from starting. The explicit dispatch context is
 /// retained across the runtime hop. Outside a multi-thread runtime this remains
-/// a best-effort empty section.
+/// a best-effort empty section. Async turn preparation should use
+/// [`render_connected_identities_async`] instead of blocking.
 pub fn render_connected_identities(ctx: &crate::core::runtime::DispatchCtx) -> String {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         return String::new();
@@ -21,6 +22,12 @@ pub fn render_connected_identities(ctx: &crate::core::runtime::DispatchCtx) -> S
         return String::new();
     }
     render_blocking(render_section(ctx))
+}
+
+/// Render connected identities from an async caller without blocking a Tokio
+/// worker. Turn preparation should use this path while composing a new prompt.
+pub async fn render_connected_identities_async(ctx: &crate::core::runtime::DispatchCtx) -> String {
+    render_section(ctx).await
 }
 
 async fn render_section(ctx: &crate::core::runtime::DispatchCtx) -> String {

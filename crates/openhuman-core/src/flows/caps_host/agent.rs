@@ -38,9 +38,8 @@ mod harness;
 ///    `max_iterations` govern the turn, so an agent node gains its curated
 ///    toolset with no graph change. This is the same harness pattern
 ///    `flows_build` / `flows_discover` / cron use, so "every node
-///    is a tinyagents graph" still holds: `run_single` itself routes through the
-///    default agent graph, i.e. a nested tinyagents graph (the agent turn) inside
-///    the flow's tinyagents graph.
+///    is a TinyFlows graph" still holds: `run_single` itself routes through the
+///    default agent harness, i.e. an agent turn inside the flow graph.
 /// 2. **Persona-shaping completion fallback** (no regression for custom agents).
 ///    When `agent_ref` only resolves to a custom
 ///    [`AgentRegistryEntry`](crate::agent_registry::AgentRegistryEntry)

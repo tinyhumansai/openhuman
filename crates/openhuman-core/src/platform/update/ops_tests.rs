@@ -262,6 +262,7 @@ fn sample_update_info(current: &str, latest: &str, update_available: bool) -> Up
         update_available,
         download_url: None,
         asset_name: None,
+        asset_size: None,
         release_notes: None,
         published_at: None,
     }

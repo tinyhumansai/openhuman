@@ -11,6 +11,7 @@ async fn the_wrapped_model_keeps_its_turns_context_while_another_is_active() {
         config: Arc::new(Config::default()),
         core: DispatchCtx::new(Arc::clone(&turn)).downgrade(),
         fallback_cache: Mutex::new(Default::default()),
+        controls: None,
     };
     let seen = CoreContext::scope(Arc::clone(&other), async { concrete.dispatch_ctx() }).await;
     assert!(Arc::ptr_eq(seen.core().expect("bound"), &turn));
@@ -28,6 +29,7 @@ fn owner_media_wrapper_does_not_keep_a_turn_context_alive() {
         Arc::new(Probe::default()),
         Arc::new(Config::default()),
         Some(ModelProfile::default()),
+        None,
     );
     drop(dispatch);
     drop(context);

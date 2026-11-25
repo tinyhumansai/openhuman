@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::credentials;
+use crate::credentials;
 
 use super::shared::{channel_config_connected, credential_provider, merge_listener_health};
 use tinychannels_bus::controllers::ChannelStatusEntry;
@@ -162,9 +162,6 @@ pub async fn connected_channel_slugs(config: &Config) -> Result<Vec<String>, Str
     }
     if cc.signal.is_some() {
         slugs.insert("signal".to_string());
-    }
-    if cc.matrix.is_some() {
-        slugs.insert("matrix".to_string());
     }
     if cc.imessage.is_some() {
         slugs.insert("imessage".to_string());

@@ -1,0 +1,167 @@
+{
+  "text": [
+    {
+      "case": "bearer_header",
+      "kind": "secret",
+      "input": "Authorization: Bearer abcdef0123456789abcdef0123456789",
+      "needle": "abcdef0123456789abcdef0123456789",
+      "removed_by": [
+        "approval_args",
+        "credential_middleware",
+        "denials",
+        "log",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ]
+    },
+    {
+      "case": "github_pat",
+      "kind": "secret",
+      "needle": "0123456789abcdefghijklmnopqrstuvwxyzAB",
+      "removed_by": [
+        "approval_args",
+        "denials",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ],
+      "input_parts": [
+        "token ghp",
+        "_0123456789abcdefghijklmnopqrstuvwxyzAB"
+      ]
+    },
+    {
+      "case": "aws_access_key_id",
+      "kind": "secret",
+      "needle": "IOSFODNN7EXAMPLE",
+      "removed_by": [
+        "approval_args",
+        "credential_middleware",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ],
+      "input_parts": [
+        "AKI",
+        "AIOSFODNN7EXAMPLE"
+      ]
+    },
+    {
+      "case": "jwt",
+      "kind": "secret",
+      "needle": "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+      "removed_by": [
+        "approval_args",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ],
+      "input_parts": [
+        "eyJhb",
+        "GciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1rwW1gFWFOEjXk"
+      ]
+    },
+    {
+      "case": "slack_bot_token",
+      "kind": "secret",
+      "needle": "abcdefghijklmnopqrstuvwx",
+      "removed_by": [
+        "approval_args",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ],
+      "input_parts": [
+        "xox",
+        "b-123456789012-1234567890123-abcdefghijklmnopqrstuvwx"
+      ]
+    },
+    {
+      "case": "password_in_connection_string",
+      "kind": "secret",
+      "input": "postgres://user:hunter2@db.internal/prod",
+      "needle": "hunter2",
+      "removed_by": [
+        "approval_args",
+        "rpc_params",
+        "security_prefix"
+      ]
+    },
+    {
+      "case": "private_key_block",
+      "kind": "secret",
+      "needle": "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+      "removed_by": [
+        "approval_args",
+        "denials",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ],
+      "input_parts": [
+        "-----",
+        "BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----"
+      ]
+    },
+    {
+      "case": "phone_number",
+      "kind": "pii",
+      "input": "call +1 415 555 0132 today",
+      "needle": "415 555 0132",
+      "removed_by": [
+        "approval_args",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ]
+    },
+    {
+      "case": "us_ssn",
+      "kind": "pii",
+      "input": "ssn 123-45-6789",
+      "needle": "123-45-6789",
+      "removed_by": [
+        "approval_args",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ]
+    },
+    {
+      "case": "payment_card",
+      "kind": "pii",
+      "input": "card 4111 1111 1111 1111",
+      "needle": "4111 1111 1111 1111",
+      "removed_by": [
+        "approval_args",
+        "rpc_params",
+        "security_prefix",
+        "security_scrub"
+      ]
+    }
+  ],
+  "urls": [
+    {
+      "case": "access_token_query",
+      "input": "https://api.example.com/v1?access_token=s3cr3t",
+      "needle": "s3cr3t",
+      "removed_by": [
+        "log",
+        "util_url",
+        "storage_url",
+        "rpc_url"
+      ]
+    },
+    {
+      "case": "userinfo_only",
+      "input": "https://alice:hunter2@api.example.com/",
+      "needle": "hunter2",
+      "removed_by": [
+        "util_url",
+        "storage_url",
+        "rpc_url"
+      ]
+    }
+  ]
+}

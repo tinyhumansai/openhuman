@@ -144,6 +144,38 @@ fn explicit_role_route_still_wins_over_default_model() {
     );
 }
 
+#[test]
+fn cloud_turn_override_replaces_primary_byok_default_model() {
+    let mut config = config_with_byok_provider();
+    config.primary_cloud = Some("p_my-openai".to_string());
+    config.cloud_providers[0].default_model = Some("A".to_string());
+
+    assert_eq!(
+        route_for_turn_model("cloud", "B", &config),
+        "my-openai:B",
+        "a bare override must replace the primary BYOK model behind the cloud pin"
+    );
+}
+
+#[test]
+fn cloud_turn_override_supplies_model_when_primary_byok_has_no_default() {
+    let mut config = config_with_byok_provider();
+    config.primary_cloud = Some("p_my-openai".to_string());
+
+    assert_eq!(
+        route_for_turn_model("cloud", "B", &config),
+        "my-openai:B",
+        "a turn override must make an otherwise incomplete primary BYOK route usable"
+    );
+}
+
+#[test]
+fn cloud_turn_override_keeps_managed_primary_route() {
+    let config = Config::default();
+
+    assert_eq!(route_for_turn_model("cloud", "B", &config), "openhuman");
+}
+
 /// The #6109 regression in the other direction: a configured sibling route
 /// is used for its own role while the default model covers the unset ones —
 /// no cross-contamination either way.
@@ -267,8 +299,8 @@ fn oci_entry(auth_mode: crate::config::schema::cloud_providers::OciAuthMode) -> 
 
 /// OCI profile, session-token and principal modes keep no key in the
 /// credential store, so the billing gate must not require one for them.
-#[test]
-fn keyless_oci_routes_count_as_usable_credentials() {
+#[tokio::test]
+async fn keyless_oci_routes_count_as_usable_credentials() {
     use crate::config::schema::cloud_providers::OciAuthMode;
     for mode in [
         OciAuthMode::ConfigProfile,
@@ -280,7 +312,7 @@ fn keyless_oci_routes_count_as_usable_credentials() {
         let mut config = Config::default();
         config.cloud_providers = vec![oci_entry(mode)];
         assert!(
-            route_has_usable_credentials("oci:openai.gpt-5.5", &config),
+            route_has_usable_credentials("oci:openai.gpt-5.5", &config).await,
             "{mode:?}"
         );
     }

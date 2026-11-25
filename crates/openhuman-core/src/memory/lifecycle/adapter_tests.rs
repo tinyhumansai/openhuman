@@ -64,7 +64,9 @@ async fn background_prefetch_records_citations_only_when_returning_the_pack() {
         false,
         None,
         None,
+        None,
     )
+    .await
     .is_none());
     assert!(crate::web_chat::citations::take_turn_citations(&ctx, "citation-thread").is_empty());
 
@@ -88,7 +90,9 @@ async fn background_prefetch_records_citations_only_when_returning_the_pack() {
         false,
         None,
         None,
+        None,
     )
+    .await
     .expect("completed prefetch pack");
     assert!(
         pack.refusal.is_none(),

@@ -204,7 +204,7 @@ fn enqueue_operation(config: &Config, operation: WriteOperation, scope: &ToolSco
             WriteOperation::Learn {
                 item: tinymemory_integrations::safety::scrub_item_with(
                     item,
-                    crate::security::scrub::host_policy(),
+                    crate::memory::host_policy::host_policy(),
                 )
                 .value,
             }
@@ -575,7 +575,7 @@ impl WriteExecutor for Executor<'_> {
         let work = async {
             match operation {
                 WriteOperation::Learn { item } => {
-                    let bound = super::engine::resolve(config).engine()?;
+                    let bound = super::engine::resolve(config).await.engine()?;
                     let receipt = bound
                         .engine
                         .store_with(item.clone(), WriteOptions::accepted())

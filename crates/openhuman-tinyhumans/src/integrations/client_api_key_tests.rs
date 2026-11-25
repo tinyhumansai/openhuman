@@ -6,7 +6,7 @@ use super::*;
 use axum::http::HeaderMap;
 use std::sync::Mutex;
 
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
 const KEY: &str = "tiny_test_integrations_key";
 

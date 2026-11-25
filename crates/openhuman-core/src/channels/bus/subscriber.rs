@@ -94,7 +94,7 @@ impl EventHandler<DomainEvent> for ChannelInboundSubscriber {
         let thread_id = identity.thread_id;
         let client_id = identity.client_id;
 
-        let mut event_rx = crate::web_chat::subscribe_web_channel_events();
+        let event_rx = crate::web_chat::subscribe_web_channel_events();
         let reply =
             match ModuleProgressiveReply::open(config, channel.clone(), session.clone()).await {
                 Ok(reply) => reply,
@@ -139,145 +139,160 @@ impl EventHandler<DomainEvent> for ChannelInboundSubscriber {
             }
         };
 
-        let timeout = tokio::time::Duration::from_secs(180);
-        let deadline = tokio::time::Instant::now() + timeout;
+        run_channel_reply_loop(event_rx, request_id, channel.clone(), session, &reply).await;
+    }
+}
 
-        let mut pending = Vec::with_capacity(32);
-        let mut batch_timer = tokio::time::interval(tokio::time::Duration::from_millis(20));
-        batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            tokio::select! {
-                biased;
-                _ = session.cancelled() => return,
-                _ = batch_timer.tick(), if !pending.is_empty() => {
-                    if let Err(error) = flush_events(&reply, &mut pending).await {
+#[async_trait::async_trait]
+trait ProgressiveReplySink: Send + Sync {
+    async fn feed(&self, events: Vec<ProgressiveEvent>) -> Result<(), String>;
+    async fn finalize(&self, text: &str) -> Result<(), String>;
+}
+
+#[async_trait::async_trait]
+impl ProgressiveReplySink for ModuleProgressiveReply {
+    async fn feed(&self, events: Vec<ProgressiveEvent>) -> Result<(), String> {
+        ModuleProgressiveReply::feed(self, events)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn finalize(&self, text: &str) -> Result<(), String> {
+        ModuleProgressiveReply::finalize(self, text)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Consume the backend socket path's events from the shared runner and project
+/// progress and terminal output onto its module-owned progressive reply.
+async fn run_channel_reply_loop(
+    mut event_rx: tokio::sync::broadcast::Receiver<crate::web_chat::ScopedWebEvent>,
+    request_id: String,
+    channel: String,
+    session: tokio_util::sync::CancellationToken,
+    reply: &dyn ProgressiveReplySink,
+) {
+    let mut pending = Vec::with_capacity(32);
+    let mut batch_timer = tokio::time::interval(tokio::time::Duration::from_millis(20));
+    batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            biased;
+            _ = session.cancelled() => return,
+            _ = batch_timer.tick(), if !pending.is_empty() => {
+                if let Err(error) = flush_events(reply, &mut pending).await {
+                    tracing::error!("[channel-inbound] delivery failed: {error}");
+                    return;
+                }
+            }
+            event = event_rx.recv() => {
+                match event {
+                    Ok(ev) if ev.context().request_id == request_id => {
+                        match ev.wire_event() {
+                            crate::web_chat::WebChannelEvent::TextDelta { delta, .. } => {
+                                if let Some(delta) = delta.as_ref() {
+                                    pending.push(ProgressiveEvent::TextDelta(delta.clone()));
+                                }
+                            }
+                            crate::web_chat::WebChannelEvent::ToolCall {
+                                tool_name: Some(name), ..
+                            } => pending.push(ProgressiveEvent::ToolCall(name.clone())),
+                            crate::web_chat::WebChannelEvent::ToolCall { .. } => {}
+                            crate::web_chat::WebChannelEvent::ToolResult {
+                                tool_name: Some(name), success, ..
+                            } => pending.push(ProgressiveEvent::ToolResult {
+                                tool_name: name.clone(),
+                                success: success.unwrap_or(true),
+                            }),
+                            crate::web_chat::WebChannelEvent::ToolResult { .. } => {}
+                            crate::web_chat::WebChannelEvent::ThinkingDelta { delta, .. } => {
+                                if let Some(delta) = delta.as_ref() {
+                                    pending.push(ProgressiveEvent::ThinkingDelta(delta.clone()));
+                                }
+                            }
+                            crate::web_chat::WebChannelEvent::ChatDone { full_response, .. } => {
+                                if let Err(error) = flush_events(reply, &mut pending).await {
+                                    tracing::error!("[channel-inbound] delivery failed: {error}");
+                                    return;
+                                }
+                                let full_response = full_response.as_deref().unwrap_or_default();
+                                let reply_text = if full_response.trim().is_empty() {
+                                    tracing::warn!(
+                                        "[channel-inbound] agent returned empty response — finalizing draft with fallback",
+                                    );
+                                    "(No response from agent.)"
+                                } else {
+                                    full_response
+                                };
+                                tracing::info!(
+                                    "[channel-inbound] agent done, replying to channel='{}' len={}",
+                                    channel,
+                                    reply_text.len(),
+                                );
+                                if let Err(error) = reply.finalize(reply_text).await {
+                                    tracing::error!("[channel-inbound] final delivery failed: {error}");
+                                }
+                                return;
+                            }
+                            crate::web_chat::WebChannelEvent::ChatError { message, .. } => {
+                                if let Err(error) = flush_events(reply, &mut pending).await {
+                                    tracing::error!("[channel-inbound] delivery failed: {error}");
+                                    return;
+                                }
+                                let err_msg = message.as_deref().unwrap_or("unknown error");
+                                tracing::error!("[channel-inbound] agent error: {}", err_msg);
+                                let _ = reply.finalize(&format!("Sorry, I encountered an error: {err_msg}")).await;
+                                return;
+                            }
+                            // The runner may emit ChatCancelled on paths without
+                            // the compatibility ChatError event; finalize once.
+                            crate::web_chat::WebChannelEvent::ChatCancelled { cancel_reason, .. } => {
+                                if let Err(error) = flush_events(reply, &mut pending).await {
+                                    tracing::error!("[channel-inbound] delivery failed: {error}");
+                                    return;
+                                }
+                                tracing::info!("[channel-inbound] turn cancelled reason={:?}", cancel_reason);
+                                let _ = reply.finalize("Cancelled.").await;
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("[channel-inbound] event bus lagged, skipped {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::error!("[channel-inbound] event bus closed unexpectedly");
+                        return;
+                    }
+                }
+                if pending.len() >= 32 {
+                    if let Err(error) = flush_events(reply, &mut pending).await {
                         tracing::error!("[channel-inbound] delivery failed: {error}");
                         return;
                     }
                 }
-                _ = tokio::time::sleep_until(deadline) => {
-                    tracing::error!("[channel-inbound] agent timed out after {}s", timeout.as_secs());
-                    let _ = reply.finalize("Sorry, the request timed out.").await;
-                    return;
-                }
-                event = event_rx.recv() => {
-                    match event {
-                        Ok(ev) if ev.request_id == request_id => {
-                            match ev.event.as_str() {
-                                "text_delta" => {
-                                    if let Some(delta) = ev.delta.as_ref() {
-                                        pending.push(ProgressiveEvent::TextDelta(delta.clone()));
-                                    }
-                                }
-                                "tool_call" => {
-                                    if let Some(ref name) = ev.tool_name {
-                                        pending.push(ProgressiveEvent::ToolCall(name.clone()));
-                                    }
-                                }
-                                "tool_result" => {
-                                    if let Some(ref name) = ev.tool_name {
-                                        pending.push(ProgressiveEvent::ToolResult { tool_name: name.clone(), success: ev.success.unwrap_or(true) });
-                                    }
-                                }
-                                "thinking_delta" => {
-                                    if let Some(delta) = ev.delta.as_ref() {
-                                        pending.push(ProgressiveEvent::ThinkingDelta(delta.clone()));
-                                    }
-                                }
-                                "chat_done" | "chat:done" => {
-                                    if let Err(error) = flush_events(&reply, &mut pending).await {
-                                        tracing::error!("[channel-inbound] delivery failed: {error}");
-                                        return;
-                                    }
-                                    let full_response = ev.full_response.unwrap_or_default();
-                                    // Even when the agent produced no visible
-                                    // text, we must close out any draft we
-                                    // already posted — otherwise the user is
-                                    // left staring at a stale "_working…_"
-                                    // message indefinitely.
-                                    let reply_text = if full_response.trim().is_empty() {
-                                        tracing::warn!(
-                                            "[channel-inbound] agent returned empty response — finalizing draft with fallback",
-                                        );
-                                        "(No response from agent.)"
-                                    } else {
-                                        full_response.as_str()
-                                    };
-                                    tracing::info!(
-                                        "[channel-inbound] agent done, replying to channel='{}' len={}",
-                                        channel,
-                                        reply_text.len(),
-                                    );
-                                    // If we've been streaming progressive edits, replace
-                                    // the outbound message with the final canonical text.
-                                    // Otherwise send a fresh message atomically.
-                                    if let Err(error) = reply.finalize(reply_text).await { tracing::error!("[channel-inbound] final delivery failed: {error}"); }
-                                    return;
-                                }
-                                "chat_error" | "chat:error" => {
-                                    if let Err(error) = flush_events(&reply, &mut pending).await {
-                                        tracing::error!("[channel-inbound] delivery failed: {error}");
-                                        return;
-                                    }
-                                    let err_msg = ev.message.unwrap_or_else(|| "unknown error".to_string());
-                                    tracing::error!("[channel-inbound] agent error: {}", err_msg);
-                                    let _ = reply.finalize(&format!("Sorry, I encountered an error: {err_msg}")).await;
-                                    return;
-                                }
-                                // New terminal event (see web_chat::ops::channel_ops /
-                                // start_chat) — emitted alongside
-                                // `chat_error{error_type:"cancelled"}` for one
-                                // release. That legacy event already returns
-                                // above, ending this loop before `chat_cancelled`
-                                // for the same request_id would be observed, so
-                                // this arm only fires standalone (a cancel path
-                                // that stops emitting the legacy event, or one
-                                // that never did — e.g. the parallel-turn
-                                // cooperative-cancel path) and never double-ends
-                                // a turn already finalized by `chat_error`.
-                                "chat_cancelled" => {
-                                    if let Err(error) = flush_events(&reply, &mut pending).await {
-                                        tracing::error!("[channel-inbound] delivery failed: {error}");
-                                        return;
-                                    }
-                                    tracing::info!(
-                                        "[channel-inbound] turn cancelled reason={:?}",
-                                        ev.cancel_reason
-                                    );
-                                    let _ = reply.finalize("Cancelled.").await;
-                                    return;
-                                }
-                                _ => {}
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!("[channel-inbound] event bus lagged, skipped {} events", n);
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            tracing::error!("[channel-inbound] event bus closed unexpectedly");
-                            return;
-                        }
-                    }
-                    if pending.len() >= 32 {
-                        if let Err(error) = flush_events(&reply, &mut pending).await {
-                            tracing::error!("[channel-inbound] delivery failed: {error}");
-                            return;
-                        }
-                    }
-                }
-
             }
         }
     }
 }
 
 async fn flush_events(
-    reply: &ModuleProgressiveReply,
+    reply: &dyn ProgressiveReplySink,
     pending: &mut Vec<ProgressiveEvent>,
-) -> Result<(), tinybus::module::ModuleCallError> {
+) -> Result<(), String> {
     if pending.is_empty() {
         return Ok(());
     }
     reply.feed(std::mem::take(pending)).await
 }
+
+#[cfg(test)]
+#[path = "subscriber_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "subscriber_loop_tests.rs"]
+mod loop_tests;

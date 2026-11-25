@@ -1,7 +1,10 @@
 use super::*;
-
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_output_names, expect_schema_required_inputs,
+};
 // Additional names from the extracted schema handler modules.
-use super::handlers::{read_optional_u64, read_required, type_name};
+use super::handlers::{read_optional_u64, read_required};
 use crate::core::TypeSchema;
 use serde_json::{json, Map, Value};
 use tempfile::TempDir;
@@ -30,37 +33,51 @@ fn cron_test_config(tmp: &TempDir) -> crate::config::Config {
     config
 }
 
-// ── schemas() branch coverage ───────────────────────────────────
-
 #[test]
-fn schemas_list_has_no_inputs_and_jobs_output() {
-    let s = schemas("list");
-    assert_eq!(s.namespace, "cron");
-    assert_eq!(s.function, "list");
-    assert!(s.inputs.is_empty());
-    assert_eq!(s.outputs.len(), 1);
-    assert_eq!(s.outputs[0].name, "jobs");
-}
+fn cron_schema_wire_contracts_are_preserved() {
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "add",
+    );
+    let functions: Vec<_> = all_controller_schemas()
+        .iter()
+        .map(|schema| schema.function)
+        .collect();
+    assert_eq!(
+        functions,
+        ["add", "list", "update", "remove", "run", "runs"]
+    );
 
-#[test]
-fn schemas_update_requires_job_id_and_patch() {
-    let s = schemas("update");
-    let names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
-    assert!(names.contains(&"job_id"));
-    assert!(names.contains(&"patch"));
-    assert!(s.inputs.iter().all(|f| f.required));
-}
+    for (function, required) in [
+        ("add", &["schedule"][..]),
+        ("update", &["job_id", "patch"][..]),
+        ("remove", &["job_id"][..]),
+    ] {
+        let schema = schemas(function);
+        expect_schema_identity(&schema, "cron", function);
+        expect_schema_fields(
+            &schema,
+            &required
+                .iter()
+                .map(|name| (*name, Some(true)))
+                .collect::<Vec<_>>(),
+        );
+        if function == "update" {
+            assert!(schema.inputs.iter().all(|field| field.required));
+        }
+    }
+    expect_schema_required_inputs(&schemas("add"), &["schedule"]);
+    let list = schemas("list");
+    expect_schema_identity(&list, "cron", "list");
+    assert!(list.inputs.is_empty());
+    expect_schema_output_names(&list, &["jobs"]);
+    let remove = schemas("remove");
+    assert_eq!(remove.inputs.len(), 1);
+    assert_eq!(remove.outputs[0].name, "result");
+    assert_eq!(schemas("add").outputs[0].name, "job");
+    expect_schema_fields(&schemas("runs"), &[("limit", Some(false))]);
 
-#[test]
-fn schemas_remove_has_job_id_input_and_result_output() {
-    let s = schemas("remove");
-    assert_eq!(s.inputs.len(), 1);
-    assert_eq!(s.inputs[0].name, "job_id");
-    assert_eq!(s.outputs[0].name, "result");
-}
-
-#[test]
-fn schemas_run_result_declares_only_the_enqueue_acknowledgement() {
     let s = schemas("run");
     // `cron_run` spawns the execution and returns immediately, so the declared
     // output is the enqueue acknowledgement — `job_id` plus a `status` that is
@@ -293,42 +310,24 @@ fn read_required_errors_when_deserialization_fails() {
 // ── read_optional_u64 ───────────────────────────────────────────
 
 #[test]
-fn read_optional_u64_absent_key_is_none() {
+fn read_optional_u64_handles_absent_null_values_and_errors() {
     assert_eq!(read_optional_u64(&Map::new(), "limit").unwrap(), None);
-}
-
-#[test]
-fn read_optional_u64_explicit_null_is_none() {
     let mut params = Map::new();
     params.insert("limit".into(), Value::Null);
     assert_eq!(read_optional_u64(&params, "limit").unwrap(), None);
-}
-
-#[test]
-fn read_optional_u64_accepts_unsigned_integer() {
-    let mut params = Map::new();
+    params.clear();
     params.insert("limit".into(), json!(42));
     assert_eq!(read_optional_u64(&params, "limit").unwrap(), Some(42));
-}
 
-#[test]
-fn read_optional_u64_rejects_negative_number() {
-    let mut params = Map::new();
-    params.insert("limit".into(), json!(-1));
-    let err = read_optional_u64(&params, "limit").unwrap_err();
-    assert!(err.contains("expected unsigned integer"));
-}
-
-#[test]
-fn read_optional_u64_rejects_non_number_types() {
-    for (tag, v) in [
+    for (tag, value) in [
+        ("negative", json!(-1)),
         ("string", json!("ten")),
         ("bool", json!(true)),
         ("array", json!([1, 2])),
         ("object", json!({"k": 1})),
     ] {
         let mut params = Map::new();
-        params.insert("limit".into(), v);
+        params.insert("limit".into(), value);
         let err = read_optional_u64(&params, "limit").unwrap_err();
         assert!(
             err.contains("expected unsigned integer"),
@@ -338,13 +337,3 @@ fn read_optional_u64_rejects_non_number_types() {
 }
 
 // ── type_name ───────────────────────────────────────────────────
-
-#[test]
-fn type_name_reports_each_json_variant() {
-    assert_eq!(type_name(&Value::Null), "null");
-    assert_eq!(type_name(&json!(true)), "bool");
-    assert_eq!(type_name(&json!(1)), "number");
-    assert_eq!(type_name(&json!("s")), "string");
-    assert_eq!(type_name(&json!([])), "array");
-    assert_eq!(type_name(&json!({})), "object");
-}

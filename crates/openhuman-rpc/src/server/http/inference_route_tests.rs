@@ -133,3 +133,60 @@ async fn test_chat_completions_with_bearer_not_rejected_as_auth_error() {
         "403 must not fire when bearer is present"
     );
 }
+
+// ── Fallback scope ─────────────────────────────────────────────────────────────
+//
+// The `?token=` fallback is a transport workaround for the SSE / WebSocket
+// routes in `QUERY_TOKEN_PATHS` only. These pin that it does not widen to
+// `/rpc`, and that it still checks the token where it applies.
+
+fn rpc_body() -> Body {
+    Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"core.ping","params":{}}"#)
+}
+
+#[tokio::test]
+async fn a_valid_query_token_does_not_authorize_rpc() {
+    let token = ensure_test_rpc_auth();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/rpc?token={token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(rpc_body())
+        .unwrap();
+    assert_eq!(dispatch(req).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_wrong_header_bearer_on_rpc_is_401() {
+    let _ = ensure_test_rpc_auth();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/rpc")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer not-the-core-token")
+        .body(rpc_body())
+        .unwrap();
+    assert_eq!(dispatch(req).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_webhook_stream_checks_its_query_token() {
+    let token = ensure_test_rpc_auth();
+    for (uri, authorized) in [
+        ("/events/webhooks".to_owned(), false),
+        ("/events/webhooks?token=nope".to_owned(), false),
+        (format!("/events/webhooks?token={token}"), true),
+    ] {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(&uri)
+            .body(Body::empty())
+            .unwrap();
+        let status = dispatch(req).await.status();
+        if authorized {
+            assert_ne!(status, StatusCode::UNAUTHORIZED, "{uri}");
+        } else {
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+        }
+    }
+}

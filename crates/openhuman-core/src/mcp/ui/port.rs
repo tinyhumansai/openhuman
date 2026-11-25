@@ -14,7 +14,12 @@ use crate::config::Config;
 use crate::mcp::host;
 use crate::mcp::module_client::McpConfiguredClient;
 
-use super::types::UiToolDescriptor;
+/// What a widget-initiated tool call needs to know about its target tool.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UiToolDescriptor {
+    pub meta: Option<Value>,
+    pub annotations: Option<Value>,
+}
 
 /// What a widget RPC asks of an MCP server.
 #[async_trait]
@@ -74,7 +79,7 @@ impl HostUiPort {
         };
         let listed: Result<Vec<String>, _> = client
             .call(
-                &host::client_config(&self.config),
+                &host::client_config(&self.config).await,
                 tinymcp_bus::names::methods::STATIC_LIST,
                 (),
             )
@@ -88,7 +93,7 @@ impl HostUiPort {
         };
         let statuses: Result<Vec<tinymcp_bus::ConnStatus>, _> = client
             .call(
-                &host::client_config(&self.config),
+                &host::client_config(&self.config).await,
                 tinymcp_bus::names::methods::STATUS,
                 (),
             )
@@ -110,7 +115,7 @@ impl UiServerPort for HostUiPort {
 
     async fn tool_descriptor(&self, server_id: &str, tool: &str) -> Option<UiToolDescriptor> {
         let client = self.client()?;
-        let client_config = host::client_config(&self.config);
+        let client_config = host::client_config(&self.config).await;
         if self.is_installed_connected(server_id).await {
             let candidate =
                 super::decorate::installed_tool(&client, &client_config, server_id, tool).await?;
@@ -119,41 +124,17 @@ impl UiServerPort for HostUiPort {
                 annotations: None,
             });
         }
-        let listed: Vec<tinymcp_bus::McpRemoteTool> = client
-            .call(
-                &client_config,
-                tinymcp_bus::names::methods::STATIC_LIST_TOOLS,
-                (server_id,),
-            )
+        let safe = client
+            .safe_static_tools(&client_config, server_id)
             .await
             .map_err(|error| {
                 tracing::debug!(server_id, ?error, "[mcp_ui] could not list tools");
             })
             .ok()?;
-        let listed = client
-            .scrub_static_tools(&client_config, server_id, listed)
-            .await
-            .ok()?;
-        let meta = listed
-            .iter()
-            .find(|remote| remote.name == tool)
-            .and_then(|remote| remote.meta.clone());
-        let safe = crate::mcp::registry::tools_safe_for_agent(
-            server_id,
-            listed
-                .into_iter()
-                .map(|remote| tinymcp_bus::McpTool {
-                    description: remote.description.or(remote.title),
-                    name: remote.name,
-                    input_schema: remote.input_schema,
-                    meta: None,
-                })
-                .collect(),
-        );
-        safe.iter().find(|candidate| candidate.name == tool)?;
+        let remote = safe.into_iter().find(|remote| remote.name == tool)?;
         Some(UiToolDescriptor {
-            meta,
-            annotations: None,
+            meta: remote.meta,
+            annotations: remote.annotations,
         })
     }
 
@@ -165,7 +146,11 @@ impl UiServerPort for HostUiPort {
             tinymcp_bus::names::methods::STATIC_READ_RESOURCE
         };
         let contents: Vec<tinymcp_bus::McpResourceContents> = client
-            .call(&host::client_config(&self.config), member, (server_id, uri))
+            .call(
+                &host::client_config(&self.config).await,
+                member,
+                (server_id, uri),
+            )
             .await
             .map_err(|error| {
                 tracing::debug!(
@@ -189,7 +174,7 @@ impl UiServerPort for HostUiPort {
         arguments: Value,
     ) -> Result<Value, String> {
         let client = self.client().ok_or("MCP module is unavailable")?;
-        let client_config = host::client_config(&self.config);
+        let client_config = host::client_config(&self.config).await;
         let member = if self.is_installed_connected(server_id).await {
             tinymcp_bus::names::methods::TOOL_CALL
         } else {

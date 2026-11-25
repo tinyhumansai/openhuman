@@ -113,6 +113,40 @@ For encrypted storage, an operator can supply `OPENHUMAN_KEYRING_MASTER_KEY`
 Environment keys take precedence over a host source, then the workspace key file.
 An inaccessible host key never falls back to a newly created file key.
 
+### Unattended unlock on a headless host
+
+Reading or writing an encrypted config field (for example `local_ai.api_key`)
+needs the configuration master, and OpenHuman asks a person once per unlock:
+the "Unlock configuration secrets" approval. A headless `openhuman-core serve`
+host has nobody to ask, so that approval would park until it expires and the
+config load fails with "the approval to unlock configuration secrets was not
+answered in time".
+
+An operator can let such a host answer it itself:
+
+```toml
+[secrets]
+unattended_unlock = true
+```
+
+or `OPENHUMAN_SECRETS_UNATTENDED_UNLOCK=1` (the environment wins over the
+file; `0` turns it off). The setting is off by default and takes effect only
+when the operator also supplied the keyring master key, with
+`OPENHUMAN_KEYRING_MASTER_KEY` or `OPENHUMAN_KEYRING_MASTER_KEY_FILE`, to a
+`file` or `encrypted_file` keyring. Anyone who can read that key can already
+decrypt the keyring, so a per-unlock approval protects nothing there. With the
+key OpenHuman manages itself (the OS keychain, or a key it created, as on a
+normal desktop install) the setting is ignored, a warning is logged, and a
+person still approves each unlock. A key variable that is set but unusable
+(missing file, malformed value) also does not count. The check is on where the
+key came from, not on the kind of host: any host whose operator supplies the key
+and sets the option unlocks unattended. A SaaS core ignores the setting: its users approve
+the unlock in chat, and an unlock with no chat route behind it is refused.
+
+The host still goes through the same one-time approval; it approves the request
+itself instead of waiting. Each unattended unlock is logged under
+`[security::unattended_unlock]`, and key material is never logged.
+
 ### Moving a desktop workspace to a server
 
 A desktop workspace encrypted with an OS keychain key needs that same key

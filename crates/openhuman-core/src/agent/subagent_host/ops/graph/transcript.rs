@@ -9,7 +9,7 @@ use crate::agent::tinyagents::host::OpenHumanRunContext;
 use tinyagents_session::transcript::{TranscriptLocator, TranscriptMessage, TranscriptTurn};
 
 use super::dispatch::AggregatedUsage;
-use crate::threads::worker_mirror::mirror_worker_thread_from_history;
+use crate::agent::subagent_host::ops::mirror_worker_thread_from_history;
 
 /// The history a failed sub-agent run persists, plus the unanswered steps as
 /// text (#6281).
@@ -192,6 +192,7 @@ pub(super) fn persist_subagent_transcript(
         updated: now,
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cached_input_tokens: usage.cached_input_tokens,

@@ -26,7 +26,7 @@ fn checkpoint_data(task_id: &str) -> SubagentCheckpointData {
 
 // ── task_id is untrusted on its way into a path (tinysweeper, #5951) ────────
 //
-// `continue_subagent` takes `task_id` from its tool arguments — model-authored
+// The same-key async spawn takes `task_id` from its tool arguments — model-authored
 // — and feeds it back through `SubagentRunOptions::task_id`, so a re-paused
 // child writes a checkpoint under a name the model chose. Joined unchecked,
 // `../` walks the write out of the checkpoint directory entirely.

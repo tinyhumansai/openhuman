@@ -28,6 +28,8 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`Channels`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ChatMessage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ChatReply`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`CompactOptions`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`CompactOutcome`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Completer`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CompletionObserver`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CompletionRequest`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -38,6 +40,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`Config`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ConfigSource`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ConfigurationInfo`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`ContextOverrides`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ControllerSchema`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreAgent`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreBootMode`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -50,7 +53,6 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`CronReply`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CronSweepReport`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DEFAULT_MAX_AGENTS`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
-- [`DaemonConfig`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DefaultsInfo`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DefinitionBase`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DirectProfileProvider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -83,6 +85,8 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`McpAuthConfig`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`McpServer`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`MemoryBinding`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`MemoryBlockPrewarm`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`MemoryBlockSpec`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ModelDefaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`NoTenant`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`OpenError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -95,7 +99,6 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`PhysicalDispatchStatus`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`PhysicalDispatchTerminal`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`PhysicalDispatchUsage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
-- [`PickListenPortError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ProfileError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ProfileEvents`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ProfileHandle`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -107,6 +110,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`Provider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Provisioned`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ReasoningEffort`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`ReasoningReplay`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`RelayAccepted`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`RelayMessage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`RemoveAgent`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -140,6 +144,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`TokenSource`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Tool`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolAttachmentError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`ToolDiscoveryOptions`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolExposure`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolGroups`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolPolicy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -183,6 +188,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`providers`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`routing`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`run_from_args`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`sandbox`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`schema_for_rpc_method`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`seams`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`secret_storage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -219,7 +225,6 @@ The compiled capability report describes this build:
     "storage-mongodb": false,
     "storage-s3": false,
     "storage-sqlite": false,
-    "tinymemes": true,
     "voice": false,
     "web3": false
   },
@@ -251,7 +256,6 @@ The compiled capability report describes this build:
     "skills": "withheld",
     "storage": "withheld",
     "system": "withheld",
-    "tasks": "withheld",
     "web3": "withheld",
     "workflows": "withheld"
   },
@@ -276,6 +280,8 @@ The compiled capability report describes this build:
   "configuration": {
     "autonomy_enabled": true,
     "privacy": "Standard",
+    "prompt_screen_enforced": true,
+    "security_enforced": true,
     "secrets_encrypted": true,
     "cron_enabled": true,
     "learning": {

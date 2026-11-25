@@ -62,7 +62,13 @@ pub(crate) async fn install(connection: &tinybus::Connection) -> tinybus::Result
     connection
         .serve_at(
             ObjectPath::new(PATH)?,
-            InboundHost::new(Arc::new(deliverer)),
+            // Only the TinyEventQueues module may deliver a turn: any other peer
+            // on the shared module connection could otherwise start one.
+            crate::modules::callback_owner::OwnedBy::new(
+                InboundHost::new(Arc::new(deliverer)),
+                connection,
+                tinyeventqueues_bus::names::INTERFACE,
+            ),
         )
         .await?;
     connection.request_name(NAME).await?;

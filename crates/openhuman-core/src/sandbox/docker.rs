@@ -159,7 +159,11 @@ fn build_docker_request(
         image: overrides.and_then(|config| config.image.clone()),
         command: request.command.clone(),
         login_shell: false,
-        network: overrides.and_then(|config| config.network.clone()),
+        network: if policy.allow_network {
+            overrides.and_then(|config| config.network.clone())
+        } else {
+            Some("none".to_owned())
+        },
         memory_limit_mb: overrides.and_then(|config| config.memory_limit_mb),
         cpus: overrides.and_then(|config| config.cpu_limit),
         read_only_rootfs: overrides.and_then(|config| config.read_only_rootfs),

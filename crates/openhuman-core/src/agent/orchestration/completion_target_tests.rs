@@ -2,8 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::super::background_completions::{
-    entry_for, router_pool, router_scope, state, test_store_overrides,
+    entry_for, router_pool, router_scope, state, test_store_overrides, HostState,
 };
+use crate::core::runtime::tenant;
 use tinyagents_tasks::CompletionStore;
 
 /// A temporary workspace that forgets its router when dropped, so the
@@ -65,15 +66,27 @@ pub(crate) fn forget_workspace_for_test(workspace_dir: &Path) {
         .filter(|(_, ws)| ws.as_path() == workspace_dir)
         .map(|(thread, _)| thread.clone())
         .collect();
-    for thread in gone {
-        st.thread_workspaces.remove(&thread);
-        st.stopped_threads.remove(&thread);
-        st.deleted_threads.remove(&thread);
+    for thread in &gone {
+        st.thread_workspaces.remove(thread);
+        st.stopped_threads.remove(thread);
+        st.deleted_threads.remove(thread);
     }
     st.recovered_workspaces
         .retain(|scope| scope.workspace_dir() != workspace_dir);
-    st.session_threads.clear();
-    st.session_order.clear();
+    // Only the sessions of this workspace's threads. Clearing the whole cache
+    // raced every test running beside it (the session-cache eviction test saw
+    // its survivors vanish), and those tests do not take this lock.
+    let HostState {
+        session_threads,
+        session_order,
+        ..
+    } = &mut *st;
+    session_threads.retain(|session_key, thread| {
+        tenant::split_key(session_key).map_or(true, |(owner, _)| {
+            !gone.contains(&tenant::tenant_key(&owner, thread))
+        })
+    });
+    session_order.retain(|session_key| session_threads.contains_key(session_key));
     drop(st);
     for scope in scopes {
         let _ = router_pool().remove(&scope);

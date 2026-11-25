@@ -4,18 +4,17 @@ use super::*;
 async fn offline_local_session_never_fetches_hosted_integrations() {
     let _guard = cache_guard_async().await;
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let mut config = test_config(&tmp);
     config.api_url = Some("http://127.0.0.1:1".to_owned());
-    crate::security::credentials::AuthService::from_config(&config)
+    crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
-            crate::security::credentials::APP_SESSION_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             "desktop.test.local",
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .unwrap();
     match fetch_connected_integrations_status(&config).await {
         FetchConnectedIntegrationsStatus::Authoritative(items) => assert!(items.is_empty()),
@@ -27,7 +26,8 @@ async fn offline_local_session_never_fetches_hosted_integrations() {
 
 #[tokio::test]
 async fn fetch_connected_integrations_via_mock_aggregates_tools() {
-    crate::integrations::composio::test_backend_route::register();
+    // The connection list asks the module, which keeps preferences in storage.
+    let _serialised = module_guard().await;
     let _guard = cache_guard_async().await;
     // Connections: gmail + notion. Tools: filtered to those toolkits
     // and prefixed with the uppercased slug. The toolkits route
@@ -78,7 +78,7 @@ async fn fetch_connected_integrations_via_mock_aggregates_tools() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     // Use a fresh cache key by isolating config_path.
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     invalidate_connected_integrations_cache();
     let integrations = fetch_connected_integrations(&config).await;
     assert_eq!(integrations.len(), 2);
@@ -91,7 +91,8 @@ async fn fetch_connected_integrations_via_mock_aggregates_tools() {
 
 #[tokio::test]
 async fn fetch_connected_integrations_treats_slack_and_telegram_status_like_ui() {
-    crate::integrations::composio::test_backend_route::register();
+    // The connection list asks the module, which keeps preferences in storage.
+    let _serialised = module_guard().await;
     let _guard = cache_guard_async().await;
     let app = Router::new()
         .route(
@@ -139,7 +140,7 @@ async fn fetch_connected_integrations_treats_slack_and_telegram_status_like_ui()
         );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     invalidate_connected_integrations_cache();
 
     let integrations = fetch_connected_integrations(&config).await;
@@ -174,22 +175,22 @@ async fn fetch_connected_integrations_via_mock_returns_empty_with_no_active() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     invalidate_connected_integrations_cache();
     let integrations = fetch_connected_integrations(&config).await;
     assert!(integrations.is_empty());
 }
 
-#[test]
-fn sync_cache_invalidates_when_connection_becomes_active() {
-    let _guard = cache_guard();
+#[tokio::test]
+async fn sync_cache_invalidates_when_connection_becomes_active() {
+    let _guard = cache_guard_async().await;
     // Cache reflects the pre-connect world: gmail is listed but
     // not connected. This is exactly the state the chat runtime
     // gets stuck in on Windows when the user completes OAuth
     // after the event-bus 60 s readiness poll times out.
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let key_string = cache_key(&config);
+    let key_string = cache_key(&config).await;
     let key = key_string.as_str();
     clear_cache_key(key);
     seed_cache(
@@ -214,15 +215,15 @@ fn sync_cache_invalidates_when_connection_becomes_active() {
     );
 }
 
-#[test]
-fn sync_cache_invalidates_when_connection_is_removed() {
-    let _guard = cache_guard();
+#[tokio::test]
+async fn sync_cache_invalidates_when_connection_is_removed() {
+    let _guard = cache_guard_async().await;
     // Cache remembers gmail as connected. The user just
     // disconnected it from Settings; the next UI poll returns an
     // empty list. Chat must forget gmail within one poll.
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let key_string = cache_key(&config);
+    let key_string = cache_key(&config).await;
     let key = key_string.as_str();
     clear_cache_key(key);
     seed_cache(key, vec![integration("gmail", true)]);
@@ -236,15 +237,15 @@ fn sync_cache_invalidates_when_connection_is_removed() {
     );
 }
 
-#[test]
-fn sync_cache_noop_when_backend_matches_cached_state() {
-    let _guard = cache_guard();
+#[tokio::test]
+async fn sync_cache_noop_when_backend_matches_cached_state() {
+    let _guard = cache_guard_async().await;
     // Steady state: UI polls confirm cache is accurate. No
     // invalidation — we must not thrash the chat runtime's tool
     // registry on every 5 s UI poll.
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let key_string = cache_key(&config);
+    let key_string = cache_key(&config).await;
     let key = key_string.as_str();
     clear_cache_key(key);
     seed_cache(
@@ -263,9 +264,9 @@ fn sync_cache_noop_when_backend_matches_cached_state() {
     assert_eq!(guard.get(key).unwrap().entries.len(), 2);
 }
 
-#[test]
-fn sync_cache_ignores_non_active_connection_rows() {
-    let _guard = cache_guard();
+#[tokio::test]
+async fn sync_cache_ignores_non_active_connection_rows() {
+    let _guard = cache_guard_async().await;
     // Backend reports a PENDING row (user started OAuth but
     // hasn't completed). The cache should NOT be invalidated —
     // that would trigger a fresh `list_tools` call on every poll
@@ -274,7 +275,7 @@ fn sync_cache_ignores_non_active_connection_rows() {
     // integrations already on disk.
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let key_string = cache_key(&config);
+    let key_string = cache_key(&config).await;
     let key = key_string.as_str();
     clear_cache_key(key);
     seed_cache(key, vec![integration("gmail", true)]);
@@ -292,9 +293,9 @@ fn sync_cache_ignores_non_active_connection_rows() {
     );
 }
 
-#[test]
-fn sync_cache_treats_connected_status_equivalent_to_active() {
-    let _guard = cache_guard();
+#[tokio::test]
+async fn sync_cache_treats_connected_status_equivalent_to_active() {
+    let _guard = cache_guard_async().await;
     // Backend may emit either "ACTIVE" or "CONNECTED" — we treat
     // them identically in every status check (see
     // `fetch_connected_integrations_uncached` filter). Make sure
@@ -302,7 +303,7 @@ fn sync_cache_treats_connected_status_equivalent_to_active() {
     // produce a false-positive invalidation.
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let key_string = cache_key(&config);
+    let key_string = cache_key(&config).await;
     let key = key_string.as_str();
     clear_cache_key(key);
     seed_cache(key, vec![integration("gmail", true)]);
@@ -322,32 +323,32 @@ async fn cache_entries_survive_idle_time_until_connection_change() {
     let _guard = cache_guard_async().await;
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let key = crate::integrations::composio::connected_integrations::cache_key(&config);
+    let key = crate::integrations::composio::connected_integrations::cache_key(&config).await;
     clear_cache_key(&key);
     seed_cache(&key, vec![integration("gmail", true)]);
     {
         let mut guard = INTEGRATIONS_CACHE.write().unwrap();
         guard.get_mut(&key).unwrap().cached_at = Instant::now() - Duration::from_secs(3600);
     }
-    assert_eq!(cached_active_integrations(&config).unwrap().len(), 1);
+    assert_eq!(cached_active_integrations(&config).await.unwrap().len(), 1);
     assert!(matches!(
         fetch_connected_integrations_status(&config).await,
         FetchConnectedIntegrationsStatus::Authoritative(entries) if entries.len() == 1
     ));
     sync_cache_with_connections(&[]);
-    assert!(cached_active_integrations(&config).is_none());
+    assert!(cached_active_integrations(&config).await.is_none());
     assert!(matches!(
         fetch_connected_integrations_status(&config).await,
         FetchConnectedIntegrationsStatus::Unavailable
     ));
 }
 
-#[test]
-fn cached_integrations_remain_available_after_a_long_idle_period() {
-    let _guard = cache_guard();
+#[tokio::test]
+async fn cached_integrations_remain_available_after_a_long_idle_period() {
+    let _guard = cache_guard_async().await;
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let key = crate::integrations::composio::connected_integrations::cache_key(&config);
+    let key = crate::integrations::composio::connected_integrations::cache_key(&config).await;
     clear_cache_key(&key);
     seed_cache(&key, vec![integration("gmail", true)]);
 
@@ -357,6 +358,7 @@ fn cached_integrations_remain_available_after_a_long_idle_period() {
         guard.get_mut(&key).unwrap().cached_at = Instant::now() - Duration::from_secs(3600);
     }
     let stale = cached_active_integrations(&config)
+        .await
         .expect("a long idle period must not expire the last-known snapshot");
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].toolkit, "gmail");
@@ -391,7 +393,7 @@ async fn composio_list_available_triggers_via_mock() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let outcome = composio_list_available_triggers(&config, "gmail", Some("c1".into()))
         .await
@@ -417,7 +419,7 @@ async fn composio_list_available_triggers_omits_connection_when_none() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let outcome = composio_list_available_triggers(&config, "gmail", None)
         .await
@@ -447,7 +449,7 @@ async fn composio_list_triggers_via_mock_with_filter() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let outcome = composio_list_triggers(&config, Some("gmail".into()))
         .await
@@ -466,7 +468,7 @@ async fn composio_list_triggers_without_filter() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let outcome = composio_list_triggers(&config, None).await.unwrap();
     assert!(outcome.value.triggers.is_empty());
@@ -493,7 +495,7 @@ async fn composio_enable_trigger_via_mock() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let outcome = composio_enable_trigger(
         &config,
@@ -509,6 +511,56 @@ async fn composio_enable_trigger_via_mock() {
 }
 
 #[tokio::test]
+async fn enabling_trigger_makes_it_visible_in_list_triggers() {
+    let _serialised = module_guard().await;
+    let active = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let list_state = active.clone();
+    let enable_state = active.clone();
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/triggers",
+            get(move || {
+                let triggers = list_state.lock().unwrap().clone();
+                async move { Json(json!({"success": true, "data": {"triggers": triggers}})) }
+            })
+            .post(move |Json(body): Json<Value>| {
+                let enable_state = enable_state.clone();
+                async move {
+                    let trigger = json!({
+                        "id": "ti_enabled",
+                        "slug": body["slug"],
+                        "toolkit": "gmail",
+                        "connectionId": body["connectionId"],
+                        "state": "active"
+                    });
+                    enable_state.lock().unwrap().push(trigger);
+                    Json(json!({
+                        "success": true,
+                        "data": {"triggerId": "ti_enabled", "slug": body["slug"], "connectionId": body["connectionId"]}
+                    }))
+                }
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base).await;
+
+    assert!(composio_list_triggers(&config, None)
+        .await
+        .unwrap()
+        .value
+        .triggers
+        .is_empty());
+    composio_enable_trigger(&config, "c1", "GMAIL_NEW_GMAIL_MESSAGE", None)
+        .await
+        .unwrap();
+    let listed = composio_list_triggers(&config, None).await.unwrap();
+    assert_eq!(listed.value.triggers.len(), 1);
+    assert_eq!(listed.value.triggers[0].id, "ti_enabled");
+    assert_eq!(listed.value.triggers[0].slug, "GMAIL_NEW_GMAIL_MESSAGE");
+}
+
+#[tokio::test]
 async fn composio_disable_trigger_via_mock() {
     let _serialised = module_guard().await;
     let app = Router::new().route(
@@ -520,7 +572,7 @@ async fn composio_disable_trigger_via_mock() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let outcome = composio_disable_trigger(&config, "ti_1").await.unwrap();
     assert!(outcome.value.deleted);
@@ -541,7 +593,7 @@ async fn composio_disable_trigger_propagates_backend_error() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let err = composio_disable_trigger(&config, "missing")
         .await
@@ -553,7 +605,7 @@ async fn composio_disable_trigger_propagates_backend_error() {
 async fn composio_list_toolkits_returns_empty_in_direct_mode() {
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = direct_mode_config(&tmp);
+    let config = direct_mode_config(&tmp).await;
     let outcome = composio_list_toolkits(&config)
         .await
         .expect("direct-mode list_toolkits must succeed without HTTP");
@@ -573,7 +625,7 @@ async fn composio_list_connections_routes_through_direct_mode() {
     let _serialised = module_guard().await;
     let _guard = cache_guard_async().await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = direct_mode_config(&tmp);
+    let config = direct_mode_config(&tmp).await;
     // [composio-direct] After commit 2 of #1710, direct mode actually
     // calls `backend.composio.dev/api/v3/connected_accounts` rather
     // than returning an empty stub. Without a real Composio key the
@@ -605,40 +657,40 @@ async fn composio_list_connections_routes_through_direct_mode() {
     }
 }
 
-#[test]
-fn direct_mode_without_key_is_false_in_backend_mode() {
+#[tokio::test]
+async fn direct_mode_without_key_is_false_in_backend_mode() {
     let tmp = tempfile::tempdir().unwrap();
     // Default mode is backend — the guard must never fire there, or
     // backend users would get a silent empty list.
     let config = test_config(&tmp);
-    assert!(!direct_mode_without_key(&config).unwrap());
+    assert!(!direct_mode_without_key(&config).await.unwrap());
 }
 
-#[test]
-fn direct_mode_without_key_is_true_when_direct_and_no_key() {
+#[tokio::test]
+async fn direct_mode_without_key_is_true_when_direct_and_no_key() {
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_no_key_config(&tmp);
-    assert!(direct_mode_without_key(&config).unwrap());
+    assert!(direct_mode_without_key(&config).await.unwrap());
 }
 
-#[test]
-fn direct_mode_without_key_is_false_when_key_in_config_toml() {
+#[tokio::test]
+async fn direct_mode_without_key_is_false_when_key_in_config_toml() {
     let tmp = tempfile::tempdir().unwrap();
     // Key supplied via config.toml (not the keychain) still counts —
     // the factory accepts it, so the guard must NOT short-circuit and
     // hide the user's real connections.
     let mut config = direct_mode_no_key_config(&tmp);
     config.composio.api_key = Some("  ck_cfg_key  ".into());
-    assert!(!direct_mode_without_key(&config).unwrap());
+    assert!(!direct_mode_without_key(&config).await.unwrap());
 }
 
-#[test]
-fn direct_mode_without_key_is_false_when_key_in_keychain() {
+#[tokio::test]
+async fn direct_mode_without_key_is_false_when_key_in_keychain() {
     let tmp = tempfile::tempdir().unwrap();
     // `direct_mode_config` stores a key via the auth store — the guard
     // must see it and report "has key".
-    let config = direct_mode_config(&tmp);
-    assert!(!direct_mode_without_key(&config).unwrap());
+    let config = direct_mode_config(&tmp).await;
+    assert!(!direct_mode_without_key(&config).await.unwrap());
 }
 
 #[tokio::test]

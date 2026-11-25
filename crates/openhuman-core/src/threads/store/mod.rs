@@ -31,12 +31,17 @@
 pub mod backend;
 pub mod blocking;
 
+#[allow(
+    deprecated,
+    reason = "v21 ChannelMessage/SendMessage shims stay until the native channel path moves to canonical v22 content"
+)]
 mod bus;
 mod legacy_import;
 mod storage_schema;
 pub(crate) use storage_schema::collection_specs;
 #[cfg(feature = "legacy-import")]
 pub(crate) use storage_schema::upgrade_records;
+pub(crate) use storage_schema::{CHANNEL_MESSAGES, REPLY_VISEME_TIMELINES, STAGED_ATTACHMENTS};
 #[cfg(test)]
 #[path = "legacy_import_tests.rs"]
 mod legacy_import_tests;
@@ -69,6 +74,8 @@ impl From<types::ConversationPurgeStats> for ConversationPurgeStats {
 // Only the hosted-channel relay (`channels`) claims turns.
 #[cfg(feature = "channels")]
 pub(crate) use bus::claim_channel_turn;
+#[cfg(test)]
+pub(crate) use bus::persist_channel_message;
 pub use bus::register_conversation_persistence_subscriber;
 pub use store::{
     append_message, delete_messages_from, delete_thread, ensure_thread, list_threads,

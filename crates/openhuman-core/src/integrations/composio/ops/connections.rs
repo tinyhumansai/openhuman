@@ -114,7 +114,7 @@ pub async fn composio_list_connections(
     config: &Config,
 ) -> OpResult<Outcome<ComposioConnectionsResponse>> {
     tracing::debug!("[composio] rpc list_connections");
-    if direct_mode_without_key(config)? {
+    if direct_mode_without_key(config).await? {
         tracing::debug!(
             "[composio] list_connections: direct mode selected, no api key configured yet \
              — returning empty connection list (valid setup state, not an error)"
@@ -126,7 +126,7 @@ pub async fn composio_list_connections(
             vec!["composio: direct mode — no api key configured yet, 0 connection(s)".to_string()],
         ));
     }
-    if backend_mode_without_session(config) {
+    if backend_mode_without_session(config).await {
         // No session means no proxy route, so the connector module cannot
         // answer — but the connections may well exist server-side. That makes
         // this "unavailable", not "none": callers that tell the two apart
@@ -158,6 +158,7 @@ pub async fn composio_list_connections(
     // by desktop development and its v3 response mapper lives here.
     let resp = if config.composio.mode.trim() == crate::config::schema::COMPOSIO_MODE_DIRECT {
         let ComposioRoute::Direct(direct) = resolve_composio_route(config)
+            .await
             .map_err(|error| format!("[composio-direct] list_connections: {error:#}"))?
         else {
             unreachable!("direct Composio mode must construct a direct client")

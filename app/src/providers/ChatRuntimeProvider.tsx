@@ -56,6 +56,7 @@ import {
   clearPendingApprovalForThread,
   clearPendingApprovalIfRequest,
   clearPendingPlanReviewForThread,
+  clearPendingPlanReviewIfRequest,
   clearProcessingForThread,
   clearStreamingAssistantForThread,
   clearTurnApprovalForThread,
@@ -92,12 +93,13 @@ import {
   upsertArtifactReadyForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { pendingFollowupCompleted } from '../store/queueSlice';
 import { setRunMode } from '../store/runModeSlice';
 import { selectSocketStatus } from '../store/socketSelectors';
 import { clearThreadGoal, setThreadGoal } from '../store/threadGoalSlice';
 import {
   addInferenceResponse,
-  addMessageLocal,
+  applyChannelEvent,
   CHAT_ERROR_METADATA_KEY,
   clearThreadInferenceActive,
   createNewThread,
@@ -396,7 +398,7 @@ function chatTurnUsagePayload(event: ChatDoneEvent): {
         agentId: s.agent_id,
         inputTokens: s.input_tokens,
         outputTokens: s.output_tokens,
-        costUsd: s.cost_usd,
+        costUsd: s.cost_usd ?? null,
       })),
     };
   }
@@ -429,6 +431,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   }, [t]);
   const { refetch: refetchSnapshot } = useRefetchSnapshotOnTurnEnd();
   const socketStatus = useAppSelector(selectSocketStatus);
+  const selectedThreadId = useAppSelector(state => state.thread.selectedThreadId);
   // The core's run queue (`queue_item_*`) → `queueSlice` → the composer queue.
   useRunQueueEvents(socketStatus === 'connected');
   // The core's `chat_suggestions` → `followupSuggestionsSlice` → follow-up chips.
@@ -633,34 +636,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     const snapshotPolling = snapshotPollingRef.current;
     if (!snapshotPolling) return;
 
-    // When a turn ends, any follow-ups the user queued behind it are about to be
-    // dispatched by the backend as fresh turns. Nothing else persists their
-    // prompt — the web channel never writes user messages; the composer does
-    // (`addMessageLocal` → `appendMessage`) — so append them to the transcript
-    // now. Doing it here (after this turn's assistant reply was appended, before
-    // `endInferenceTurn` clears `queueSlice`) keeps the append-log order correct:
-    // user → assistant → queued follow-up. Without this the queued prompts are
-    // lost on reload and the dispatched answer has no visible user message.
-    const flushQueuedFollowups = async (threadId: string) => {
-      const queued = store.getState().queue.pendingFollowupsByThread[threadId] ?? [];
-      // Persist sequentially so the queued prompts land in the append-log in the
-      // order the user queued them (concurrent dispatches would race), and
-      // surface failures instead of dropping them silently. The stored message
-      // carries the original upload markers in memory. The append boundary
-      // saves originals and returns durable references before writing history.
-      for (const item of queued) {
-        try {
-          await dispatch(addMessageLocal({ threadId, message: item.message })).unwrap();
-        } catch (error) {
-          rtLog('flush_followup_append_failed', {
-            thread: threadId,
-            message: item.message.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    };
-
     /**
      * Tell the user a finished reply could not be shown.
      *
@@ -726,6 +701,23 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       reportLostReply(event.thread_id);
     };
 
+    const reloadQueuedFollowup = async (threadId: string, requestId: string) => {
+      const pending = (store.getState().queue.pendingFollowupsByThread[threadId] ?? []).some(
+        item => item.requestId === requestId
+      );
+      if (!pending) return;
+      try {
+        await dispatch(loadThreadMessages(threadId)).unwrap();
+        dispatch(pendingFollowupCompleted({ threadId, requestId }));
+      } catch (error) {
+        rtLog('queued_followup_reload_failed', {
+          thread: threadId,
+          request: requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
     const finishChatDoneTurn = async (event: ChatDoneEvent, path: string) => {
       if (snapshotPolling.signal.aborted) return;
       // One store update: freeze the turn's trail, end the tail, reveal the
@@ -745,9 +737,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         path,
       });
       refetchSnapshot();
-      // Persist queued follow-ups (in order, after this turn's assistant reply)
-      // and only then clear the queue + lifecycle.
-      await flushQueuedFollowups(event.thread_id);
+      // The core persists a queued user row under the runner lease before
+      // emitting this matching terminal event. Reload that authoritative row
+      // instead of appending a duplicate from the frontend.
+      await reloadQueuedFollowup(event.thread_id, event.request_id);
       if (snapshotPolling.signal.aborted) return;
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
@@ -786,6 +779,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     // ordering holds. See `chatDeltaCoalescer`.
     const coalesced = withCoalescedDeltas<ChatTextDeltaEvent, ChatEventListeners>(
       {
+        onChannelEvent: event => {
+          if (!event.openhuman_message_id) return;
+          dispatch(applyChannelEvent(event));
+        },
         onInferenceStart: (event: ChatInferenceStartEvent) => {
           rtLog('inference_start', { thread: event.thread_id, request: event.request_id });
           // Fresh turn: drop the previous turn's live processing transcript so a
@@ -980,8 +977,8 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           // Event-seen guard, matching `onToolCall`/`onToolResult`. This socket
           // reconnects and redelivers freely (13+ times in one measured
           // session), and a replayed `subagent_spawned` that lands AFTER
-          // `subagent_awaiting_user` looks exactly like `continue_subagent`
-          // resuming the child — the reducer would clear the pause and the
+          // `subagent_awaiting_user` looks exactly like a same-task resume —
+          // the reducer would clear the pause and the
           // question would vanish while the child was still blocked. `seq` is
           // the core's own answer to this: `(request_id, seq)` is stamped per
           // emission (`publish_seq_stamped`), so a redelivery repeats the pair
@@ -1050,9 +1047,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           );
         },
         onSubagentDone: (event: ChatSubagentDoneEvent) => {
-          // Worktree isolation metadata (#3376) — present only for workers that ran
-          // with `isolation = "worktree"`; drives the inline worktree row's
-          // open/diff/remove affordances. Undefined fields leave the row untouched.
           dispatch(
             subagentDone({
               threadId: event.thread_id,
@@ -1063,9 +1057,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               elapsedMs: event.subagent?.elapsed_ms,
               outputChars: event.subagent?.output_chars,
               output: event.subagent?.output,
-              worktreePath: event.subagent?.worktree_path,
-              changedFiles: event.subagent?.changed_files,
-              isDirty: event.subagent?.dirty_status,
             })
           );
 
@@ -1192,10 +1183,18 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               tool: event.tool_name,
               name: subagentProposal.name,
             });
+            // The core persists this proposal as message
+            // `workflow-proposal:<task_id>` when the worker finishes
+            // (`spawn_subagent_surface.rs`). Pointing the card at it lets a
+            // save record `saved_flow_id` (and Save/Dismiss mark it consumed)
+            // durably, as for a rehydrated proposal.
+            const proposalTaskId = event.subagent?.task_id;
             dispatch(
               setWorkflowProposalForThread({
                 threadId: event.thread_id,
-                proposal: subagentProposal,
+                proposal: proposalTaskId
+                  ? { ...subagentProposal, sourceMessageId: `workflow-proposal:${proposalTaskId}` }
+                  : subagentProposal,
               })
             );
           }
@@ -1572,6 +1571,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 toolCallId: event.tool_call_id,
                 expiresAt: event.expires_at,
               },
+            })
+          );
+        },
+        onPlanReviewDecided: event => {
+          rtLog('plan_review_decided', {
+            thread: event.thread_id,
+            request: event.request_id,
+            resolution: event.cancel_reason,
+          });
+          dispatch(
+            clearPendingPlanReviewIfRequest({
+              threadId: event.thread_id,
+              requestId: event.request_id,
             })
           );
         },
@@ -2027,15 +2039,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           });
           requestUsageRefresh();
 
+          // The runner persists queued user rows before either successful or
+          // failed terminal events, so reconcile the exact queued request in
+          // both paths.
+          void reloadQueuedFollowup(event.thread_id, event.request_id);
+
           // The core can start a queued follow-up before delivering the prior
           // turn's error. Its error card still belongs in the thread, but the
           // live lifecycle and composer now belong to the follow-up request.
           if (olderTurn) return;
 
-          // The backend drains + dispatches queued follow-ups even when the turn
-          // errored, so flush them to the transcript here too (otherwise their
-          // prompts are lost). Mirrors the done path (sequential internally).
-          void flushQueuedFollowups(event.thread_id);
+          // Queued user rows are persisted by their own runner lease. Keep the
+          // pending local projection until each matching terminal event reloads
+          // that row from the core.
           dispatch(endInferenceTurn({ threadId: event.thread_id }));
           dispatch(clearThreadInferenceActive(event.thread_id));
         },
@@ -2165,6 +2181,21 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       });
     }
   }, [socketStatus, dispatch]);
+
+  // Join the selected thread's room when the selection changes.
+  //
+  // The reconnect handler re-subscribes the selected thread on (re)connect,
+  // but nothing subscribes on selection itself: selecting an existing thread
+  // only dispatches `setSelectedThread` + a message read, so the socket never
+  // joins `thread:<id>`. A background turn that cold-boots on that thread
+  // sends its sub-agent progress to the thread room, and the client misses
+  // the cards until the next reconnect. Subscribe on every selection change,
+  // using the same `thread:subscribe` mechanism as reconnect; the join is
+  // idempotent, so re-selecting an already-joined thread is a no-op.
+  useEffect(() => {
+    if (socketStatus !== 'connected' || !selectedThreadId) return;
+    void socketService.subscribeThread(selectedThreadId);
+  }, [socketStatus, selectedThreadId]);
 
   // assistant-ui's runtime is mounted here, INSIDE the subscription provider,
   // so it sits above every chat surface and below the Redux store this file

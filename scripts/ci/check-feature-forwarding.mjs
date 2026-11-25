@@ -32,6 +32,8 @@ import {
   CHAIN_GATES_NOT_FORWARDED,
   CHAIN_LOCAL_GATES,
   checkLinkedModulesIsolation,
+  checkTestOnlyGatesIsolation,
+  TEST_ONLY_GATES,
   LINKED_MODULES_FEATURE,
   checkProductForwarding,
   diffChainForwarding,
@@ -239,4 +241,29 @@ if (linkedViolations.length === 0) {
   for (const violation of linkedViolations) console.log(`  - ${violation}`);
 }
 
-process.exit(product.ok && defaults.ok && chainOk && linkedViolations.length === 0 ? 0 : 1);
+// The test-only gates must stay out of every shipped build.
+const testOnlyViolations = checkTestOnlyGatesIsolation({
+  productFeatures,
+  featureTables: {
+    openhuman: parseFeatureTable(coreToml),
+    'openhuman-embed': embedFeatures,
+    'openhuman-tinyhumans': tinyhumansFeatures,
+    'openhuman-rpc': rpcFeatures,
+    'openhuman-cli': cliFeatures,
+    'openhuman-tui': tuiFeatures,
+    'openhuman-app': parseFeatureTable(shellToml),
+  },
+});
+console.log('');
+if (testOnlyViolations.length === 0) {
+  console.log(`${TEST_ONLY_GATES.join(', ')} isolation: OK (not product gates, not reached from any default).`);
+} else {
+  console.log(`${TEST_ONLY_GATES.join(', ')} isolation: FAIL`);
+  for (const violation of testOnlyViolations) console.log(`  - ${violation}`);
+}
+
+process.exit(
+  product.ok && defaults.ok && chainOk && linkedViolations.length === 0 && testOnlyViolations.length === 0
+    ? 0
+    : 1
+);

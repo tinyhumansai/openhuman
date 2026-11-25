@@ -19,6 +19,7 @@
 use std::sync::{Arc, OnceLock};
 
 use tinystoragedrivers::secrets::{DerivedKeys, DocumentSecrets, KeyProvider};
+pub use tinystoragedrivers::secrets::{MemorySecrets, SecretStore};
 use zeroize::Zeroizing;
 
 use super::{current_scope, current_scoped, Scope, Storage, StorageError};
@@ -86,7 +87,3 @@ pub fn set_blocking(
     let value = Zeroizing::new(value.to_vec());
     super::block_on(async move { secrets.set(&name, &value).await })
 }
-
-#[cfg(test)]
-#[path = "secrets_tests.rs"]
-mod tests;

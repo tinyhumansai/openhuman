@@ -21,7 +21,8 @@ fn default_agents_include_core_personas() {
             "`{removed}` was replaced by an inline skill"
         );
     }
-    assert!(ids.contains(&"planner"), "planner stays for workflow runs");
+    assert!(!ids.contains(&"planner"));
+    assert!(!ids.contains(&"critic"));
     assert!(agents
         .iter()
         .all(|agent| agent.source == AgentRegistrySource::Default));

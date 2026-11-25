@@ -7,19 +7,14 @@
 //! single place OpenHuman's schema meets it. //!
 //! # Why the mapping is split into three functions
 //!
-//! OpenHuman's model pins are not global. `Config::teams` is keyed by team name
-//! and `Config::agents` by delegate id, so "the model for this session" is only
-//! knowable once you know *which* agent is running. Folding all of that into
-//! one `session_config_from(&Config)` would force it to invent an answer.
-//! Instead [`session_config_from`] maps what is genuinely global, and the two
-//! `apply_*` functions layer the narrower pins on top in the order the runtime
-//! resolves them: team pins first, then the specific delegate's overrides.
+//! `session_config_from` maps global settings, while `apply_team_models` layers
+//! team-specific model pins when a team is selected.
 
 use tinyagents_harness::config::{
     RequiredOutput, SessionConfig, ToolConfig, ToolDispatcher, TurnConfig,
 };
 
-use crate::config::{AgentConfig, Config, DelegateAgentConfig, RequiredOutputContract};
+use crate::config::{AgentConfig, Config, RequiredOutputContract};
 
 /// Translates OpenHuman's free-form `agent.tool_dispatcher` string into the
 /// crate enum.
@@ -52,10 +47,7 @@ fn dispatcher_from(raw: &str) -> ToolDispatcher {
 /// Builds the globally-applicable [`SessionConfig`] from `config`.
 ///
 /// Leaves [`SessionConfig::lead_model`] and [`SessionConfig::subagent_model`]
-/// unset — those are per-team pins; see [`apply_team_models`]. `max_depth` is
-/// left at `0` (delegation disabled) because depth is a per-delegate setting;
-/// see [`apply_delegate`]. A caller that wants the plain single-agent case gets
-/// exactly that, with no delegation implied by accident.
+/// unset — those are per-team pins; see [`apply_team_models`].
 pub fn session_config_from(config: &Config) -> anyhow::Result<SessionConfig> {
     let model = config
         .default_model
@@ -150,33 +142,6 @@ pub fn apply_team_models(session: &mut SessionConfig, config: &Config, team: &st
     if let Some(agent) = pins.model_for_role(false) {
         session.subagent_model = Some(agent.to_string());
     }
-}
-
-/// Applies one delegate agent's overrides — its model, temperature, and the
-/// nesting depth it is permitted.
-///
-/// `delegate.model` overwrites [`SessionConfig::model`] rather than
-/// `lead_model`: a delegate *is* the agent running this session, so it is the
-/// base model, not an override layered over some other base.
-pub fn apply_delegate(session: &mut SessionConfig, delegate: &DelegateAgentConfig) {
-    // `DelegateAgentConfig::model` is a bare `String`, and TOML happily accepts
-    // `model = ""`. Assigning that unchecked would replace a working session
-    // model with the empty string and fail at dispatch rather than here, so a
-    // blank pin leaves the session default alone — the same trim-and-drop rule
-    // `TeamModelConfig::model_for_role` applies to team pins.
-    let model = delegate.model.trim();
-    if model.is_empty() {
-        tracing::warn!(
-            target: "tinyagents",
-            "[tinyagents] delegate model pin is blank; keeping the session default model"
-        );
-    } else {
-        session.model = model.to_string();
-    }
-    if let Some(t) = delegate.temperature {
-        session.temperature = Some(t);
-    }
-    session.max_depth = delegate.max_depth;
 }
 
 #[cfg(test)]

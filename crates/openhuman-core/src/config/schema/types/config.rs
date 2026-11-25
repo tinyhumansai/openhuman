@@ -186,6 +186,13 @@ pub struct Config {
     #[serde(default)]
     pub output_language: Option<String>,
 
+    /// Trusted interface locale for user-facing native channel replies and
+    /// failure copy. This is separate from `output_language`, which guides
+    /// the assistant's model-authored response. Unsupported or unset locales
+    /// use English for host-generated copy.
+    #[serde(default)]
+    pub channels_locale: Option<String>,
+
     /// The user's IANA time zone (`Asia/Kolkata`), chosen in Settings →
     /// Account. `None` follows the device. Read it through
     /// [`Config::time_zone`], which also validates it.
@@ -206,6 +213,10 @@ pub struct Config {
 
     #[serde(default)]
     pub autonomy: AutonomyConfig,
+
+    /// Durable security audit settings (`[audit]`).
+    #[serde(default)]
+    pub audit: AuditConfig,
 
     /// Operator tool rules (`[tool_rules]`): allow / deny / hide / approval
     /// patterns over tool names, families and tags, applied to every agent's
@@ -233,6 +244,25 @@ pub struct Config {
     /// (#4435, epic #4256).
     #[serde(default)]
     pub privacy: PrivacyConfig,
+
+    /// Whether untrusted input is screened for prompt injection
+    /// (`[prompt_screen]`). Missing block → enforced, failing closed when
+    /// TinySecurity gives no verdict.
+    #[serde(default)]
+    pub prompt_screen: PromptScreenConfig,
+
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`). Missing block → enforced, failing closed when the
+    /// module cannot answer. `off` allows every delegated check and implies
+    /// the prompt screen is off.
+    #[serde(default)]
+    pub security: SecurityModeConfig,
+
+    /// The Jev judge's route when the host supplies its own credential.
+    /// Absent from the user wire format: it holds a secret.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub security_judge: Option<SecurityJudgeRoute>,
 
     #[serde(default)]
     pub sandbox: SandboxConfig,
@@ -282,7 +312,8 @@ pub struct Config {
     /// session-memory extraction cadence. Consumed by
     /// the agent context middleware configuration.
     #[serde(default)]
-    pub context: ContextConfig,
+    #[schemars(with = "super::super::context::ContextConfigSchema")]
+    pub context: ContextSettings,
 
     #[serde(default)]
     pub model_routes: Vec<ModelRouteConfig>,
@@ -349,9 +380,6 @@ pub struct Config {
     #[serde(default)]
     pub searxng: SearxngConfig,
 
-    #[serde(default)]
-    pub web_search: WebSearchConfig,
-
     /// Unified search-engine selector. Picks exactly one engine
     /// (managed / parallel / brave) and layers the corresponding tools.
     #[serde(default)]
@@ -375,9 +403,6 @@ pub struct Config {
     /// custom agents and persisted enable/disable/tool-policy overrides.
     #[serde(default)]
     pub agent_registry: crate::agent_registry::types::AgentRegistryConfig,
-
-    #[serde(default)]
-    pub agents: HashMap<String, DelegateAgentConfig>,
 
     #[serde(default)]
     pub local_ai: LocalAiConfig,
@@ -477,10 +502,6 @@ pub struct Config {
     #[serde(default)]
     pub tokenjuice: TokenjuiceConfig,
 
-    /// TinyMemes remix tuning (`[memes]`); the switch is `[components] memes`.
-    #[serde(default)]
-    pub memes: MemesConfig,
-
     /// Inbound event queues (`[inbound]`); the switch is
     /// `[components] eventqueues`.
     #[serde(default)]
@@ -497,6 +518,11 @@ pub struct Config {
     /// Hosting provider credentials and switch (`hosting` feature).
     #[serde(default)]
     pub hosting: HostingConfig,
+
+    /// Native-wallet spend policy for executes without a per-transfer human
+    /// confirmation (`[wallet_policy]`); read by `web3::wallet::policy`.
+    #[serde(default)]
+    pub wallet_policy: WalletPolicyConfig,
 
     /// Storage backend for state on the `tinystoragedrivers` ports
     /// (`[storage]`). Empty uses the default, `sqlite:<workspace>/storage`.
@@ -544,6 +570,10 @@ pub struct Config {
 
     #[serde(default)]
     pub update: UpdateConfig,
+
+    /// Spoken-reply policy for channels (`[channel_voice]`).
+    #[serde(default)]
+    pub channel_voice: ChannelVoiceConfig,
 
     /// Whether the user has completed the **React UI** onboarding flow.
     ///

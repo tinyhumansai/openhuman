@@ -47,7 +47,7 @@ impl ChannelHealthProbe for ExistingModuleProbe {
         }
 
         #[cfg(all(feature = "modules", feature = "channels"))]
-        let channels = health_config(config, provider);
+        let channels = health_config(config, provider).await;
         #[cfg(all(feature = "modules", feature = "channels"))]
         return crate::modules::channel_health::check_existing(
             config,
@@ -217,14 +217,15 @@ fn proxy_policy(config: &Config, provider: &str) -> HttpProxyPolicy {
     }
 }
 
-fn health_config(config: &Config, provider: &str) -> ChannelsConfig {
+async fn health_config(config: &Config, provider: &str) -> ChannelsConfig {
     let mut channels = config.channels_config.clone();
     #[cfg(feature = "channels")]
     {
         if provider == "email" {
             if let Some(email) = channels.email.take() {
                 channels.email = Some(
-                    crate::channels::credentials::resolve_email_password_read_only(email, config),
+                    crate::channels::credentials::resolve_email_password_read_only(email, config)
+                        .await,
                 );
             }
         }
@@ -233,14 +234,14 @@ fn health_config(config: &Config, provider: &str) -> ChannelsConfig {
                 channels.yuanbao = Some(
                     crate::channels::credentials::resolve_yuanbao_app_secret_read_only(
                         yuanbao, config,
-                    ),
+                    )
+                    .await,
                 );
             }
         }
     }
 
     channels.cli = false;
-    channels.webhook = None;
     channels.relay = None;
     channels.active_channel = None;
     channels.telegram = (provider == "telegram")
@@ -257,9 +258,6 @@ fn health_config(config: &Config, provider: &str) -> ChannelsConfig {
         .flatten();
     channels.imessage = (provider == "imessage")
         .then(|| config.channels_config.imessage.clone())
-        .flatten();
-    channels.matrix = (provider == "matrix")
-        .then(|| config.channels_config.matrix.clone())
         .flatten();
     channels.signal = (provider == "signal")
         .then(|| config.channels_config.signal.clone())
@@ -299,7 +297,6 @@ fn configured_provider_ids(config: &Config) -> Vec<&'static str> {
         ("slack", channels.slack.is_some()),
         ("mattermost", channels.mattermost.is_some()),
         ("imessage", channels.imessage.is_some()),
-        ("matrix", channels.matrix.is_some()),
         ("signal", channels.signal.is_some()),
         ("whatsapp", channels.whatsapp.is_some()),
         ("linq", channels.linq.is_some()),

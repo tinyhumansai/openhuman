@@ -55,20 +55,6 @@ fn sandbox_capability_shows_disabled_when_sandbox_component_is_off() {
 }
 
 #[test]
-fn reply_remix_capability_shows_disabled_when_the_memes_component_is_off() {
-    let cap = super::super::lookup("conversation.reply_remix").expect("reply remix capability");
-    assert_ne!(cap.status, CapabilityStatus::Disabled);
-    assert_eq!(
-        apply_components(cap, &off("memes")).status,
-        CapabilityStatus::Disabled
-    );
-    // Other conversation capabilities do not follow the memes switch.
-    let send = super::super::lookup("conversation.send_text").expect("send_text");
-    assert_eq!(apply_components(send, &off("memes")).status, send.status);
-    assert_eq!(apply_components(cap, &off("voice")).status, cap.status);
-}
-
-#[test]
 fn inbound_queue_capability_shows_disabled_when_the_eventqueues_component_is_off() {
     let cap = super::super::lookup("automation.inbound_event_queues").expect("inbound queues");
     assert_ne!(cap.status, CapabilityStatus::Disabled);

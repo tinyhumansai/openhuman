@@ -6,7 +6,7 @@ use tinytools::ToolResult;
 
 /// Minimal `Arc<Config>` for the agent-tool constructors. All five
 /// composio agent tools now resolve their client per call through
-/// `resolve_composio_route(&config)` rather than holding a pre-baked
+/// `resolve_composio_route(&config).await` rather than holding a pre-baked
 /// handle, so a `Config` is sufficient to instantiate them.
 ///
 /// Config defaults set `composio.mode = "backend"` and stash a
@@ -17,8 +17,7 @@ use tinytools::ToolResult;
 /// need a session token override the keychain explicitly.
 fn fake_config_arc() -> Arc<crate::config::Config> {
     let tmp = tempfile::tempdir().expect("tempdir for fake_config_arc");
-    let mut config = crate::config::Config::default();
-    config.config_path = tmp.path().join("config.toml");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     // Leak the tempdir so the path remains valid for the test's lifetime
     // — `Config::config_path` is just used as a lookup key here, not
     // actually written to.
@@ -77,6 +76,9 @@ fn direct_mode_config() -> crate::config::Config {
     let tmp = tempfile::tempdir().expect("tempdir for direct_mode_config");
     let mut config = crate::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
+    config.workspace_dir = tmp.path().join("workspace");
+    // Tool/routing fixtures contain fake tokens, with no encrypted store.
+    config.secrets.encrypt = false;
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
     std::mem::forget(tmp);

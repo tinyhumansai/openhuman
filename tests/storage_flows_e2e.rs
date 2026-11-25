@@ -65,10 +65,6 @@ async fn a_configured_backend_holds_cron_jobs_and_flow_catalog() {
     // through the host's scoped CatalogStorage callback. The successful
     // create/list round-trip above exercises that boundary.
 
-    // The delegation graph's checkpointer lives on the backend too.
-    let delegation_config = config.clone();
-    openhuman_core::agent::orchestration::open_delegation_checkpointer(&delegation_config).unwrap();
-
     // A job's scheduling policy lives on the backend too.
     let policy_config = config.clone();
     tokio::task::spawn_blocking(move || {
@@ -114,7 +110,6 @@ async fn a_configured_backend_holds_cron_jobs_and_flow_catalog() {
         "cron/schedule.db",
         "flows/flows.db",
         "flows/catalog.db",
-        "graph_checkpoints.db",
     ] {
         assert!(
             !workspace.path().join(path).exists(),
@@ -140,7 +135,6 @@ async fn a_configured_backend_holds_cron_jobs_and_flow_catalog() {
         1
     );
     assert_eq!(fallback_flow.name, "Fallback");
-    openhuman_core::agent::orchestration::open_delegation_checkpointer(&config).unwrap();
 }
 
 /// The stores TinyFlows used to write (`jobs.db`, `flows.db`, `checkpoints.db`,
@@ -164,12 +158,43 @@ async fn legacy_tinyflows_files_are_imported_into_a_configured_backend() {
     let before = digest(workspace.path());
     case.install();
 
-    for report in openhuman_core::storage::import::run(
+    let reports = openhuman_core::storage::import::run(
         &openhuman_core::core::runtime::DispatchCtx::process_default(),
         &config,
     )
-    .await
-    {
+    .await;
+    if case.url == "memory" {
+        let mut flow_error = None;
+        for report in reports {
+            if let Err(error) = report.outcome {
+                assert!(
+                    format!("{error:#}").contains("conditional_writes"),
+                    "memory backend should explain why the {} import was refused: {error:#}",
+                    report.domain
+                );
+                if report.domain == "flows" {
+                    flow_error = Some(error);
+                }
+            }
+        }
+        flow_error.expect("flow importer should report its capability refusal");
+        let cron_config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            assert!(
+                cron::list_jobs(&cron_config).unwrap().is_empty(),
+                "memory import refusals must not leave a partial cron import"
+            );
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            digest(workspace.path()),
+            before,
+            "a legacy file was modified"
+        );
+        return;
+    }
+    for report in reports {
         report.outcome.unwrap();
     }
 

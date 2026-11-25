@@ -7,7 +7,8 @@ pub mod app_host;
 pub mod ops;
 pub mod state;
 
-#[cfg(test)]
+// Only the storage-sqlite tests (see `ops.rs`) drive the fake host.
+#[cfg(all(test, feature = "storage-sqlite"))]
 pub(crate) mod test_host;
 
 pub use app_host::AppHost;

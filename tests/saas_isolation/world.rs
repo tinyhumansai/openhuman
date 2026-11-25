@@ -185,7 +185,7 @@ impl World {
 
     /// Panic with everything needed to replay the run.
     pub fn fail(&self, what: &str) -> ! {
-        let tail = &self.trace[self.trace.len().saturating_sub(25)..];
+        let tail = &self.trace[..];
         panic!(
             "ISOLATION FAILURE (seed {seed}, step {step}): {what}\n\
              replay: OH_FUZZ_SEED={seed} OH_FUZZ_STEPS={steps} cargo test -p openhuman-cli \

@@ -1,14 +1,15 @@
 use super::*;
 use serde_json::Value;
-use tinyagents_graph::stream::GraphEvent;
-use tinyagents_harness::ids::{EventId, GraphId, NodeId, RunId, ThreadId};
+use tinyflows::engine::GraphObservation;
+use tinyflows::graph::ids::{EventId, GraphId, NodeId, RunId, ThreadId};
+use tinyflows::graph::stream::GraphEvent;
 use tinyflows_bus::runs::FlowRunTrigger;
 
 /// Builds a minimal observation stream for one node under run/thread ids
 /// shaped like a real `flows_run` (`thread_id = flow:{id}:{uuid}`).
 ///
-/// Built from the serialized TinyAgents graph-event contract consumed by the
-/// host's PollRun adapter; no TinyFlows engine types cross this boundary.
+/// Built from TinyFlows graph observations consumed by the host's PollRun
+/// adapter; these engine types are mapped into TinyAgents' generic span export.
 fn sample_observations(thread_id: &str) -> Vec<GraphObservation> {
     let node = NodeId::new("fetch");
     let mk = |offset: u64, step: usize, ts_ms: u64, event: GraphEvent| GraphObservation {
@@ -65,6 +66,83 @@ fn sample_observations(thread_id: &str) -> Vec<GraphObservation> {
     ]
 }
 
+fn three_node_observations(thread_id: &str) -> Vec<GraphObservation> {
+    let nodes = ["fetch", "transform", "publish"].map(NodeId::new);
+    let mk = |offset: u64, step: usize, ts_ms: u64, event: GraphEvent| GraphObservation {
+        event_id: EventId::new(format!("three-node-{offset}")),
+        run_id: RunId::new("run-three-node"),
+        root_run_id: RunId::new("run-three-node"),
+        parent_run_id: None,
+        thread_id: Some(ThreadId::new(thread_id)),
+        graph_id: GraphId::new("three-node-workflow"),
+        checkpoint_id: None,
+        namespace: Vec::new(),
+        step,
+        offset,
+        ts_ms,
+        event,
+    };
+    let mut observations = vec![mk(
+        0,
+        0,
+        1_000,
+        GraphEvent::RunStarted {
+            run_id: RunId::new("run-three-node"),
+        },
+    )];
+    let mut offset = 1;
+    for (step, node) in nodes
+        .into_iter()
+        .enumerate()
+        .map(|(index, node)| (index + 1, node))
+    {
+        observations.push(mk(
+            offset,
+            step,
+            1_000 + offset * 10,
+            GraphEvent::StepStarted {
+                step,
+                active: vec![node.clone()],
+            },
+        ));
+        offset += 1;
+        observations.push(mk(
+            offset,
+            step,
+            1_000 + offset * 10,
+            GraphEvent::NodeStarted {
+                node: node.clone(),
+                step,
+            },
+        ));
+        offset += 1;
+        observations.push(mk(
+            offset,
+            step,
+            1_000 + offset * 10,
+            GraphEvent::NodeCompleted { node, step },
+        ));
+        offset += 1;
+        observations.push(mk(
+            offset,
+            step,
+            1_000 + offset * 10,
+            GraphEvent::StepCompleted { step },
+        ));
+        offset += 1;
+    }
+    observations.push(mk(
+        offset,
+        3,
+        1_000 + offset * 10,
+        GraphEvent::RunCompleted {
+            run_id: RunId::new("run-three-node"),
+            steps: 3,
+        },
+    ));
+    observations
+}
+
 /// Finds the first span-create whose body id matches.
 fn find_span<'a>(batch: &'a [Value], id: &str) -> Option<&'a Value> {
     batch
@@ -96,9 +174,7 @@ fn flow_export_targets_the_v4_otlp_proxy_route() {
     )
     .expect("client");
     assert_eq!(
-        build_flow_exporter(client, "flow-1")
-            .client()
-            .otlp_endpoint(),
+        client.otlp_endpoint(),
         "https://staging-api.tinyhumans.ai/telemetry/langfuse/otel/v1/traces"
     );
 }
@@ -130,8 +206,9 @@ fn otlp_flow_trace_puts_flow_attributes_on_every_span() {
         FlowRunTrigger::Rpc,
     );
     let requests = flow_otlp_requests(
-        &build_flow_exporter(client, "flow-1"),
+        &SpanExporter::new(client),
         trace,
+        "flow-1",
         &sample_observations(thread_id),
     )
     .expect("otlp requests");
@@ -209,7 +286,7 @@ fn batch_carries_flow_trace_and_langgraph_keys_on_node_spans() {
         },
     )
     .expect("client");
-    let exporter = build_flow_exporter(client, "flow-1");
+    let exporter = SpanExporter::new(client);
     let trace = build_flow_trace_config(
         "Daily digest",
         "flow-1",
@@ -218,7 +295,7 @@ fn batch_carries_flow_trace_and_langgraph_keys_on_node_spans() {
         FlowRunTrigger::Rpc,
     );
     let payload = exporter
-        .build_ingestion_batch(trace, &observations)
+        .build_ingestion_batch(trace, &flow_spans("flow-1", &observations))
         .expect("batch");
     let batch = payload["batch"].as_array().expect("batch array");
 
@@ -257,6 +334,56 @@ fn batch_carries_flow_trace_and_langgraph_keys_on_node_spans() {
     let step = find_span(batch, &format!("{thread_id}:step:1")).expect("step span");
     assert_eq!(step["body"]["metadata"]["langgraph_step"], 1);
     assert_eq!(step["body"]["metadata"]["flow_id"], "flow-1");
+}
+
+#[test]
+fn three_node_flow_batch_preserves_the_run_step_and_node_span_shape() {
+    let thread_id = "flow:flow-3:uuid-3";
+    let observations = three_node_observations(thread_id);
+    let client = LangfuseClient::new(
+        "https://backend.test/telemetry/langfuse/ingestion",
+        LangfuseAuth::Bearer {
+            token: "tok".to_string(),
+        },
+    )
+    .expect("client");
+    let trace = build_flow_trace_config(
+        "Three node flow",
+        "flow-3",
+        thread_id,
+        "completed",
+        FlowRunTrigger::Rpc,
+    );
+    let batch = SpanExporter::new(client)
+        .build_ingestion_batch(trace, &flow_spans("flow-3", &observations))
+        .expect("batch");
+    let events = batch["batch"].as_array().expect("batch array");
+    let nodes = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "span-create"
+                && event["body"]["metadata"]["langgraph_node"].is_string()
+        })
+        .collect::<Vec<_>>();
+    let steps = events
+        .iter()
+        .filter(|event| {
+            event["type"] == "span-create"
+                && event["body"]["metadata"]["langgraph_step"].is_number()
+                && event["body"]["metadata"]["langgraph_node"].is_null()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(events.first().expect("trace event")["type"], "trace-create");
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(steps.len(), 3);
+    for node in ["fetch", "transform", "publish"] {
+        let span = nodes
+            .iter()
+            .find(|event| event["body"]["metadata"]["langgraph_node"] == node)
+            .expect("node span");
+        assert_eq!(span["body"]["traceId"], thread_id);
+        assert_eq!(span["body"]["metadata"]["flow_id"], "flow-3");
+    }
 }
 
 #[tokio::test]
@@ -302,7 +429,9 @@ async fn export_skips_api_key_credentials() {
     config.secrets.encrypt = false;
     config.api_url = Some(format!("http://{address}"));
     config.observability.share_usage_data = true;
-    crate::security::credentials::api_key::store_api_key(&config, "th_live_test").unwrap();
+    crate::credentials::api_key::store_api_key(&config, "th_live_test")
+        .await
+        .unwrap();
 
     export_flow_run_trace(
         &config,
@@ -323,8 +452,8 @@ async fn export_skips_api_key_credentials() {
     );
 }
 
-/// The bus carries serialized TinyAgents graph observations. Pin the exact
-/// round-trip the PollRun adapter uses so graph span coordinates survive.
+/// The bus carries TinyFlows observations. Pin the round-trip used by the
+/// PollRun adapter so run coordinates survive without a serde retype bridge.
 #[test]
 fn bus_graph_observation_round_trip_preserves_export_fields() {
     let thread_id = "flow:flow-1:uuid-1";

@@ -26,20 +26,20 @@ use tinyinference_llm::model::ChatModel;
 /// Build a chat model for static inspection, sharing the runtime constructor
 /// while resolving stored credentials through the read-only profile snapshot.
 /// It never calls the model and never runs runtime session-expiry gates.
-pub(crate) fn create_chat_model_with_model_id_in_for_inspection(
+pub(crate) async fn create_chat_model_with_model_id_in_for_inspection(
     ctx: &DispatchCtx,
     role: &str,
     config: &Config,
     temperature: f64,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
     let prepared =
-        create_chat_model_with_identity_in_for_inspection(ctx, role, config, temperature)?;
+        create_chat_model_with_identity_in_for_inspection(ctx, role, config, temperature).await?;
     Ok((prepared.model, prepared.model_id))
 }
 
 /// Build a model for a live inspection call and preserve the exact resolved
 /// endpoint, frozen credential, and wire-model identity used by that model.
-pub(crate) fn create_chat_model_with_identity_in_for_inspection(
+pub(crate) async fn create_chat_model_with_identity_in_for_inspection(
     ctx: &DispatchCtx,
     role: &str,
     config: &Config,
@@ -54,7 +54,7 @@ pub(crate) fn create_chat_model_with_identity_in_for_inspection(
         resolved = resolve_primary_cloud_provider_string(config);
     }
     if resolves_to_managed_backend(role, config) {
-        let build = managed_chat_model_build_for_inspection(extensions, role, config, None)?;
+        let build = managed_chat_model_build_for_inspection(extensions, role, config, None).await?;
         return Ok(prepared_inspection_model(
             build.model,
             build.model_id.clone(),
@@ -102,6 +102,7 @@ pub(crate) fn create_chat_model_with_identity_in_for_inspection(
     }
     if let Some(result) =
         try_create_cloud_slug_chat_model_for_inspection_with_identity(role, config, extensions)
+            .await
     {
         let (model, model_id, endpoint, credential, output_budget) = result?;
         return Ok(prepared_inspection_model(

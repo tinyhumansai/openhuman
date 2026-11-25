@@ -1,34 +1,34 @@
-//! Per-thread [`RunMode`] registry (Plan vs Build).
-//!
-//! `tinyagents_harness::middleware::{RunMode, RunModeHandle, plan_mode_middleware}`
-//! (vendor tinyagents#211) gate side-effecting tools per-run via a live
-//! [`RunModeHandle`] the host can flip without restarting the run. OpenHuman's
-//! unit of "a run" for this purpose is a chat *thread*: the same thread is
-//! driven through many independent turns (one `install_turn_middleware` call
-//! each), so the mode has to live somewhere that outlives any one turn's
-//! [`crate::agent::tinyagents::host::OpenHumanRunContext`] — this process-wide,
-//! thread_id-keyed registry is that home.
-//!
-//! `plan_exit` (the tool) and the `agent.set_run_mode` / `agent.get_run_mode`
-//! RPCs both read/write through here; `turn_exec` looks the handle up by
-//! `OpenHumanRunContext::thread_id` right before assembling each turn's
-//! harness and pushes `plan_mode_middleware(handle, ..)` when a handle exists
-//! for the thread.
+//! OpenHuman's RPC and event adapter for TinyAgents' per-thread run-mode store.
 
 use crate::core::runtime::DispatchCtx;
-use std::collections::HashMap;
 use std::sync::Arc;
-
-use parking_lot::Mutex;
 use tinyagents_harness::middleware::{RunMode, RunModeHandle};
+use tinyagents_harness_tools::run_mode::{InMemoryRunModeStore, ModeChangeNotifier, RunModeStore};
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 
-type RunModeRegistry = Mutex<HashMap<String, RunModeHandle>>;
+struct ThreadRunModes(InMemoryRunModeStore<()>);
 
-fn registry(ctx: &DispatchCtx) -> Arc<RunModeRegistry> {
-    crate::core::runtime::slot_for::<RunModeRegistry>(ctx)
+struct DomainEventNotifier;
+
+impl ModeChangeNotifier<()> for DomainEventNotifier {
+    fn changed(&self, _scope: &(), thread_id: &str, mode: RunMode) {
+        BUS.publish(DomainEvent::ThreadRunModeChanged {
+            thread_id: thread_id.to_owned(),
+            mode: mode_label(mode).to_owned(),
+        });
+    }
+}
+
+impl Default for ThreadRunModes {
+    fn default() -> Self {
+        Self(InMemoryRunModeStore::new(Arc::new(DomainEventNotifier)))
+    }
+}
+
+fn registry(ctx: &DispatchCtx) -> Arc<ThreadRunModes> {
+    crate::core::runtime::slot_for::<ThreadRunModes>(ctx)
 }
 
 /// Returns the [`RunModeHandle`] for `thread_id`, creating one (starting in
@@ -36,21 +36,13 @@ fn registry(ctx: &DispatchCtx) -> Arc<RunModeRegistry> {
 /// the same underlying atomic, so every clone (a live turn's middleware, this
 /// registry's own copy, a later RPC call) observes the same live value.
 pub fn handle_for_thread(ctx: &DispatchCtx, thread_id: &str) -> RunModeHandle {
-    let registry = registry(ctx);
-    let mut map = registry.lock();
-    map.entry(thread_id.to_string())
-        .or_insert_with(|| RunModeHandle::new(RunMode::Build))
-        .clone()
+    registry(ctx).0.handle_for_thread(&(), thread_id)
 }
 
 /// Returns the current mode for `thread_id` without creating a handle —
 /// `Build` (the default) when the thread has never toggled plan mode.
 pub fn get_mode(ctx: &DispatchCtx, thread_id: &str) -> RunMode {
-    registry(ctx)
-        .lock()
-        .get(thread_id)
-        .map(|h| h.get())
-        .unwrap_or_default()
+    registry(ctx).0.get_mode(&(), thread_id)
 }
 
 /// Sets the mode for `thread_id` (creating a handle if needed) and publishes
@@ -58,38 +50,18 @@ pub fn get_mode(ctx: &DispatchCtx, thread_id: &str) -> RunMode {
 /// `run_mode_changed` socket event. A no-op publish-wise when the mode is
 /// already what was requested — still safe to call unconditionally.
 pub fn set_mode(ctx: &DispatchCtx, thread_id: &str, mode: RunMode) {
-    let handle = handle_for_thread(ctx, thread_id);
-    let changed = handle.get() != mode;
-    handle.set(mode);
-    if changed {
-        tracing::info!(
-            thread_id = %thread_id,
-            mode = mode_label(mode),
-            "[agent::run_mode] thread run mode changed"
-        );
-        BUS.publish(DomainEvent::ThreadRunModeChanged {
-            thread_id: thread_id.to_string(),
-            mode: mode_label(mode).to_string(),
-        });
-    }
+    registry(ctx).0.set_mode(&(), thread_id, mode);
 }
 
 /// Stable wire label for a [`RunMode`] — `"plan"` / `"build"`.
 pub fn mode_label(mode: RunMode) -> &'static str {
-    match mode {
-        RunMode::Plan => "plan",
-        RunMode::Build => "build",
-    }
+    tinyagents_harness_tools::run_mode::mode_label(mode)
 }
 
 /// Parses a wire label back into a [`RunMode`]. Unrecognized input maps to
 /// `None` so callers can reject it rather than silently defaulting.
 pub fn parse_mode_label(label: &str) -> Option<RunMode> {
-    match label {
-        "plan" => Some(RunMode::Plan),
-        "build" => Some(RunMode::Build),
-        _ => None,
-    }
+    tinyagents_harness_tools::run_mode::parse_mode_label(label)
 }
 
 // ── JSON-RPC surface ────────────────────────────────────────────────────────
@@ -199,6 +171,7 @@ struct ThreadIdParams {
 fn handle_set_run_mode(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<ThreadModeParams>(params)?;
+        require_owned_thread(&ctx, &p.thread_id).await?;
         let Some(mode) = parse_mode_label(&p.mode) else {
             return Err(format!("invalid mode '{}' (expected plan|build)", p.mode));
         };
@@ -215,9 +188,26 @@ fn handle_set_run_mode(ctx: DispatchCtx, params: Map<String, Value>) -> Controll
 fn handle_get_run_mode(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<ThreadIdParams>(params)?;
+        require_owned_thread(&ctx, &p.thread_id).await?;
         let mode = get_mode(&ctx, &p.thread_id);
         Ok(serde_json::json!({ "mode": mode_label(mode) }))
     })
+}
+
+async fn require_owned_thread(ctx: &DispatchCtx, thread_id: &str) -> Result<(), String> {
+    if thread_id.trim().is_empty() {
+        return Err("thread_id is required".to_string());
+    }
+    let config = ctx.load_config().await?;
+    let threads =
+        crate::threads::store::blocking::list_threads(ctx.clone(), config.workspace_dir).await?;
+    if threads.iter().any(|thread| thread.id == thread_id) {
+        Ok(())
+    } else {
+        Err(format!(
+            "thread '{thread_id}' not found or not owned by caller"
+        ))
+    }
 }
 
 fn parse<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {

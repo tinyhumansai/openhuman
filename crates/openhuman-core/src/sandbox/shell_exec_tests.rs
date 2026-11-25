@@ -152,3 +152,15 @@ async fn run_host_feeds_the_callers_meter() {
     assert!(output.success());
     assert_eq!(meter.snapshot(), (18, Some("line two".to_string())));
 }
+
+#[cfg(feature = "modules")]
+#[test]
+fn a_tinybox_timeout_is_the_commands_timeout_and_other_failures_name_their_code() {
+    use contract::ExecutionFailure;
+    assert!(failure_timed_out(ExecutionFailure::TimedOut).unwrap());
+    let message = |code| failure_timed_out(code).unwrap_err().to_string();
+    assert!(message(ExecutionFailure::OutputLimit).contains("output limit"));
+    assert!(message(ExecutionFailure::StartFailed).contains("could not start"));
+    assert!(message(ExecutionFailure::BackendFailed).contains("BackendFailed"));
+    assert!(message(ExecutionFailure::CleanupFailed).contains("retained"));
+}

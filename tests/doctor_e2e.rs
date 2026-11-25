@@ -269,8 +269,18 @@ impl IsolatedEnvironment {
     }
 }
 
+/// The test runner stages the first-party modules (TinySecurity included) and
+/// points the core at them with these variables. They carry no credential or
+/// configuration, and stripping them makes the core fetch and unpack its
+/// modules from the release channel into the fixture home: network access in a
+/// test, and files the no-mutation assertions rightly report.
+const STAGED_MODULE_KEYS: [&str; 2] = ["OPENHUMAN_MODULE_PATH", "OPENHUMAN_TEST_MODULES_STAGED"];
+
 fn is_isolated_environment_key(key: &OsStr) -> bool {
     let key = key.to_string_lossy();
+    if STAGED_MODULE_KEYS.contains(&key.as_ref()) {
+        return false;
+    }
     key == "HOME"
         || key == "USERPROFILE"
         || key.starts_with("OPENHUMAN_")
@@ -432,7 +442,10 @@ impl Fixture {
             .env("OPENHUMAN_ACTION_DIR", self._home.path().join("action"))
             .env("OPENHUMAN_KEYRING_BACKEND", "file");
 
-        for name in ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"] {
+        for name in ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"]
+            .into_iter()
+            .chain(STAGED_MODULE_KEYS)
+        {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
@@ -527,28 +540,23 @@ async fn assert_expired_session_is_seeded(home: &Path) {
     .expect("resolve isolated doctor profile read-only")
     .config;
     let profile =
-        openhuman_core::security::credentials::session_support::load_app_session_profile_read_only(
-            &config,
-        )
-        .expect("read session profile without mutation")
-        .expect("synthetic session profile exists");
-    let token = openhuman_core::security::credentials::session_support::session_token_from_profile(
-        Some(&profile),
-    )
-    .expect("session profile carries a token");
+        openhuman_core::credentials::session_state::load_app_session_profile_read_only(&config)
+            .await
+            .expect("read session profile without mutation")
+            .expect("synthetic session profile exists");
+    let token =
+        openhuman_core::credentials::session_state::session_token_from_profile(Some(&profile))
+            .expect("session profile carries a token");
     let now = chrono::Utc::now();
     assert!(
-        openhuman_core::security::credentials::jwt::decode_jwt_exp(&token)
+        openhuman_core::credentials::jwt::decode_jwt_exp(&token)
             .expect("synthetic JWT has an expiration")
             < now,
         "fixture JWT itself is expired"
     );
     assert_eq!(
-        openhuman_core::security::credentials::session_support::classify_session_token(
-            Some(&profile),
-            now,
-        ),
-        openhuman_core::security::credentials::session_support::SessionTokenCheck::Expired,
+        openhuman_core::credentials::session_state::classify_session_token(Some(&profile), now,),
+        openhuman_core::credentials::session_state::SessionTokenCheck::Expired,
         "the read-only session classifier sees an expired profile before doctor runs"
     );
     assert_unchanged(&before, &snapshot_tree(home));

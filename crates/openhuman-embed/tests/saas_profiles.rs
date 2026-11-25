@@ -193,19 +193,21 @@ async fn scenario() {
     let outbound = tokio::time::timeout(TURN, async {
         loop {
             let event = bob_events.recv().await.expect("bob's events");
-            if event.event == "channel_outbound" {
+            if event.event_name() == "channel_outbound" {
                 return event;
             }
         }
     })
     .await
     .expect("bob's relayed reply");
-    assert_eq!(outbound.thread_id, relayed.thread_id);
+    assert_eq!(outbound.context().thread_id, relayed.thread_id);
     assert!(
-        outbound
-            .full_response
-            .as_deref()
-            .is_some_and(|t| t.contains("hello from telegram")),
+        matches!(
+            outbound.wire_event(),
+            openhuman_embed::chat_surface::WebChannelEvent::ChannelOutbound {
+                full_response: Some(text), ..
+            } if text.contains("hello from telegram")
+        ),
         "{outbound:?}"
     );
     let again = bob_h
@@ -239,7 +241,11 @@ async fn scenario() {
     while let Ok(Some(event)) =
         tokio::time::timeout(Duration::from_millis(50), alice_events.recv()).await
     {
-        assert_ne!(event.thread_id, relayed.thread_id, "leaked: {event:?}");
+        assert_ne!(
+            event.context().thread_id,
+            relayed.thread_id,
+            "leaked: {event:?}"
+        );
     }
 
     // ── the process is locked to SaaS ───────────────────────────────────

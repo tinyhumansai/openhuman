@@ -1,5 +1,3 @@
-#![cfg(feature = "testkit")]
-
 //! A library agent's scheduled reply reaches the host's `CronDelivery`.
 //!
 //! The agent makes a one-shot job through the `cron` tool in a chat turn on a
@@ -17,8 +15,9 @@ use std::time::Duration;
 use common::{offline_config, runtime, scripted_provider, stub_backend, tool_call_completion};
 use openhuman_embed::{
     Access, AgentDefinitionSpec, AgentSpec, AgentTurnOrigin, CronDelivery, CronReply,
-    HostTurnTools, InMemorySessionStores, JobOrigin, Runtime, ServiceSet, ToolScopeSpec, Workspace,
+    HostTurnTools, JobOrigin, Runtime, ServiceSet, ToolScopeSpec, Workspace,
 };
+use tinyagents_session::port::InMemorySessionStores;
 
 #[derive(Default)]
 struct Recorder(Mutex<Vec<CronReply>>);
@@ -94,7 +93,7 @@ fn a_library_agents_scheduled_reply_is_handed_to_the_host() {
                                 .system_prompt("TEENY")
                                 .tools(ToolScopeSpec::Named(vec!["cron".into(), "tool_search".into()])),
                         )
-                        .tools(|_| HostTurnTools::advertised(Vec::new())),
+                        .tools(|_| Box::pin(async { HostTurnTools::advertised(Vec::new()) })),
                 )
                 .expect("agent instantiates");
 

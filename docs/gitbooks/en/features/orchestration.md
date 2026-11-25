@@ -1,7 +1,7 @@
 ---
 description: >-
-  OpenHuman is an orchestrator, not a chatbot: durable agent graphs, visual
-  workflows, sub-agent fleets and an always-on two-agent layer.
+  OpenHuman is an orchestrator, not a chatbot: multi-agent workflows, async
+  sub-agents and an always-on two-agent layer.
 icon: sitemap
 ---
 
@@ -11,15 +11,14 @@ icon: sitemap
 
 Most harnesses run one agent in one loop. OpenHuman coordinates many agents over long stretches of time, across machines. It does this durably, visibly and under your control. Four layers make that work.
 
-## 1. Graphs, not loops
+## 1. An agent harness built for long tasks
 
-Every agent turn runs on [tinyagents](https://github.com/tinyhumansai/tinyagents), our open-source graph engine. Multi-step work compiles to state-machine graphs with conditional routing:
+Every agent turn runs on [tinyagents](https://github.com/tinyhumansai/tinyagents), our open-source agent harness. It supports durable async sub-agents and connects to the workflow engine for multi-step work:
 
-- `plan → execute ⇄ review → finalize` for delegation.
 - Phase DAGs for multi-agent workflow runs.
 - Map-reduce fan-out for parallel workers.
 
-All of it is checkpointed. A graph can pause mid-run, for your answer, an approval or a restart, and resume exactly where it stopped.
+Workflow state can pause mid-run for your answer, an approval or a restart, then resume from its saved state.
 
 ## 2. Sub-agent fleets that do not get lost
 

@@ -126,7 +126,8 @@ async fn handler_refusal_differs_from_the_dispatcher_refusal_for_an_absent_param
         .iter()
         .find(|controller| rpc_method_name(&controller.schema) == "openhuman.memory_recall")
         .expect("memory_recall is registered unconditionally");
-    let direct = (controller.handler)(DispatchCtx::process_default(), Map::new())
+    let direct = controller
+        .invoke(DispatchCtx::process_default(), Map::new())
         .await
         .expect_err("the handler refuses too");
 

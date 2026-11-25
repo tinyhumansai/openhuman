@@ -3,12 +3,10 @@ use super::branches::pre_login_config_boxed;
 use super::context_refresh::is_document_conflict;
 use super::dirs::{
     default_action_dir, default_config_and_workspace_dirs, resolve_action_dir,
-    resolve_config_dirs_ignoring_env, resolve_runtime_config_dirs_with, ConfigResolutionSource,
+    resolve_runtime_config_dirs_with, ConfigResolutionSource,
 };
 use super::env::{EnvLookup, NoEnv, ProcessEnv, ProcessEnvWithoutWorkspace};
-use super::migrate::{
-    apply_loaded_config_migrations, migrate_components, migrate_legacy_memory_backend,
-};
+use super::migrate::apply_loaded_config_migrations;
 use super::secrets::{
     decrypt_config_secrets, decrypt_config_secrets_strict, encrypt_config_secrets,
 };
@@ -17,6 +15,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use tokio::fs;
 
+#[cfg(test)]
 pub(crate) use super::config_file_read::parse_config_with_recovery;
 pub(crate) use super::config_file_read::CONFIG_OWNER_MISMATCH_MARKER;
 pub(super) use super::config_file_read::{
@@ -136,6 +135,23 @@ pub(super) async fn read_config_with_recovery_or_default(
 }
 
 impl Config {
+    pub(crate) async fn load_or_init_unsealed() -> Result<Self> {
+        let (openhuman_dir, workspace_dir) = default_config_and_workspace_dirs()?;
+        Self::load_or_init_unsealed_with_env_lookup(&openhuman_dir, &workspace_dir, &ProcessEnv)
+            .await
+    }
+
+    /// Open sealed values after the desktop's approval preflight is serving.
+    /// Returns whether the legacy ciphertext format was upgraded.
+    pub(crate) async fn decrypt_secrets_after_preflight(&mut self) -> Result<bool> {
+        let openhuman_dir = self
+            .config_path
+            .parent()
+            .context("config path has no parent directory")?
+            .to_path_buf();
+        decrypt_config_secrets(self, &openhuman_dir).await
+    }
+
     pub async fn load_or_init() -> Result<Self> {
         Self::load_or_init_unenriched()
             .await
@@ -160,6 +176,38 @@ impl Config {
         default_openhuman_dir: &Path,
         default_workspace_dir: &Path,
         env: &(dyn EnvLookup + Send + Sync),
+    ) -> Result<Self> {
+        Self::load_or_init_with_env_lookup_mode(
+            default_openhuman_dir,
+            default_workspace_dir,
+            env,
+            true,
+        )
+        .await
+    }
+
+    /// Load config structure while leaving encrypted values sealed. Hosts use
+    /// this during the restricted security preflight, before the cipher module
+    /// and approval surface are available.
+    pub(crate) async fn load_or_init_unsealed_with_env_lookup(
+        default_openhuman_dir: &Path,
+        default_workspace_dir: &Path,
+        env: &(dyn EnvLookup + Send + Sync),
+    ) -> Result<Self> {
+        Self::load_or_init_with_env_lookup_mode(
+            default_openhuman_dir,
+            default_workspace_dir,
+            env,
+            false,
+        )
+        .await
+    }
+
+    async fn load_or_init_with_env_lookup_mode(
+        default_openhuman_dir: &Path,
+        default_workspace_dir: &Path,
+        env: &(dyn EnvLookup + Send + Sync),
+        decrypt_secrets: bool,
     ) -> Result<Self> {
         let (openhuman_dir, workspace_dir, resolution_source) = Box::pin(
             resolve_runtime_config_dirs_with(default_openhuman_dir, default_workspace_dir, env),
@@ -212,6 +260,7 @@ impl Config {
                 config_path,
                 resolution_source,
                 env,
+                decrypt_secrets,
             ))
             .await
         } else {
@@ -223,57 +272,6 @@ impl Config {
             ))
             .await
         }
-    }
-
-    /// Load config from the default user paths, bypassing the
-    /// `OPENHUMAN_WORKSPACE` environment variable.
-    ///
-    /// This is used by the debug dump to load the real user config
-    /// for auth token resolution when the dump script overrides
-    /// `OPENHUMAN_WORKSPACE` to a throwaway temp directory.
-    pub async fn load_from_default_paths() -> Result<Self> {
-        Self::load_from_default_paths_unenriched()
-            .await
-            .map(crate::config::enrichers::enriched)
-    }
-
-    async fn load_from_default_paths_unenriched() -> Result<Self> {
-        let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
-        let (openhuman_dir, workspace_dir, _source) =
-            resolve_config_dirs_ignoring_env(&default_openhuman_dir, &default_workspace_dir)
-                .await?;
-        let config_path = openhuman_dir.join("config.toml");
-
-        if !config_path.exists() {
-            let mut config = Config {
-                config_path,
-                workspace_dir,
-                action_dir: default_action_dir(),
-                ..Default::default()
-            };
-            config.apply_env_overrides();
-            return Ok(config);
-        }
-
-        // NOTE: no backup recovery here by design -- this is the debug-dump path only;
-        // `load_or_init()` is the authoritative startup path that handles corruption.
-        // However, we still use `read_config_with_recovery_or_default` to handle the
-        // non-UTF-8 case: a corrupted file is renamed to `.corrupted.<ts>` so the next
-        // authoritative load can create a fresh config.
-        let (raw, _read_was_recovered) =
-            Box::pin(read_config_with_recovery_or_default(&config_path)).await?;
-        let (mut config, _was_corrupted) = parse_config_with_recovery(&config_path, &raw).await;
-        config.config_path = config_path.clone();
-        config.workspace_dir = workspace_dir;
-        config.action_dir = resolve_action_dir(&config.action_dir_override);
-        let migration_raw = migration_source(&config_path, &raw).await;
-        migrate_legacy_memory_backend(&mut config, &migration_raw);
-        migrate_components(&mut config, &migration_raw);
-        config.apply_env_overrides();
-        // Debug-dump path is read-only; ignore the migration signal (the
-        // authoritative `load_or_init` path persists upgraded secrets).
-        let _ = decrypt_config_secrets(&mut config, &openhuman_dir)?;
-        Ok(config)
     }
 
     /// Reload a config from an already-resolved `config.toml` path.
@@ -356,6 +354,20 @@ impl Config {
         let migration_raw = migration_source(&config_path, &raw).await;
         apply_loaded_config_migrations(&mut config, &migration_raw);
         config.apply_env_overrides_from(env);
+        // Hand callers the same plaintext secrets the first load does. All or
+        // nothing: callers reload, edit and save, so a field that cannot be
+        // opened must stay sealed rather than be cleared and saved as `None`.
+        if let Some(openhuman_dir) = config.config_path.parent().map(Path::to_path_buf) {
+            let mut opened = config.clone();
+            match decrypt_config_secrets_strict(&mut opened, &openhuman_dir).await {
+                Ok(()) => config = opened,
+                Err(error) => tracing::warn!(
+                    path = %config.config_path.display(),
+                    %error,
+                    "[config] snapshot reload keeps secrets sealed"
+                ),
+            }
+        }
 
         if config_was_corrupted {
             tracing::warn!(
@@ -439,9 +451,9 @@ impl Config {
                 .parent()
                 .context("Config path must have a parent directory")?
                 .to_path_buf();
-            decrypt_config_secrets_strict(&mut config_to_save, &openhuman_dir)?;
+            decrypt_config_secrets_strict(&mut config_to_save, &openhuman_dir).await?;
         } else {
-            encrypt_config_secrets(&mut config_to_save)?;
+            encrypt_config_secrets(&mut config_to_save).await?;
         }
 
         let toml_str =

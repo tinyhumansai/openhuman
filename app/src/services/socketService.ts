@@ -12,8 +12,13 @@ import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../t
 import type { UserErrorScope } from '../types/userError';
 import { IS_DEV, IS_TEST } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
-import { getCoreRpcToken, getCoreRpcUrl, resolveCoreSocketEndpoint } from './coreRpcClient';
-import { createCoreSocket } from './coreSocket';
+import {
+  clearCoreRpcTokenCache,
+  getCoreRpcToken,
+  getCoreRpcUrl,
+  resolveCoreSocketEndpoint,
+} from './coreRpcClient';
+import { createCoreSocket, lastHandshakeToken } from './coreSocket';
 
 // Socket service logger using debug package
 // To change these namespaces at runtime, set `localStorage.debug` — NOT the
@@ -186,6 +191,14 @@ class SocketService {
     this.socket = createCoreSocket(endpoint.baseUrl, {
       coreToken,
       authExtras: { session: token },
+      // Only a bearer for the core this socket targets: after a gateway
+      // switch the fresh bearer belongs to another endpoint, so fall back to
+      // this socket's own instead of handing it to the old core.
+      resolveToken: async () => {
+        const fresh = await getCoreRpcToken();
+        // Checked after the read, so a switch during it can't leak the bearer.
+        return (await resolveCoreSocketBaseUrl()) === backendUrl ? fresh : null;
+      },
       overrides: {
         path: endpoint.path,
         ...(endpoint.transports ? { transports: endpoint.transports } : {}),
@@ -254,15 +267,20 @@ class SocketService {
       socketError('Server error', { userId: uid, error: sanitizeError(error) });
     });
 
+    const socket = this.socket;
     this.socket.on('disconnect', (reason: string) => {
       const uid = getSocketUserId();
       socketLog('Disconnected', { userId: uid, reason });
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId: null }));
       store.dispatch(setBackend({ value: 'disconnected', error: reason }));
+      if (reason === 'io server disconnect') void this.retryRejectedHandshake(socket, backendUrl);
     });
 
     this.socket.on('connect_error', (error: Error) => {
+      // The core may have restarted with a new bearer; make the next
+      // handshake's `auth` callback re-read it.
+      clearCoreRpcTokenCache();
       const uid = getSocketUserId();
       socketError('Connection error', { userId: uid, error: sanitizeError(error) });
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
@@ -376,6 +394,24 @@ class SocketService {
   /**
    * Disconnect from the socket server
    */
+  /**
+   * The core refuses a stale bearer by disconnecting the namespace
+   * (`io server disconnect`), which socket.io never retries on its own. Re-read
+   * the bearer and reconnect — only when it changed, so a bearer the core
+   * genuinely rejects does not loop.
+   */
+  private async retryRejectedHandshake(socket: Socket, backendUrl: string): Promise<void> {
+    const used = lastHandshakeToken(socket);
+    clearCoreRpcTokenCache();
+    const fresh = await getCoreRpcToken();
+    // After a gateway switch this socket targets the old core; leave it be.
+    const sameCore = (await resolveCoreSocketBaseUrl()) === backendUrl;
+    if (this.socket === socket && sameCore && fresh && fresh !== used) {
+      socketLog('Core rejected the socket bearer; reconnecting with the refreshed one');
+      socket.connect();
+    }
+  }
+
   disconnect(): void {
     const uid = getSocketUserId();
     if (this.socket) {

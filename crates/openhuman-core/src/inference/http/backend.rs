@@ -50,6 +50,7 @@ impl ChatBackend for HostChatBackend {
                 &config,
                 raw,
             )
+            .await
             .map_err(|e| {
                 warn!("{LOG_PREFIX} resolve: provider build failed: {e}");
                 BackendFailure::invalid_request(format!("provider error: {e}"))

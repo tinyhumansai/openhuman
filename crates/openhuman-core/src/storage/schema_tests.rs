@@ -39,6 +39,24 @@ fn every_linked_crate_exposes_its_valid_collection_declarations() {
     }
 }
 
+#[cfg(feature = "inbound-queues")]
+#[test]
+fn event_queue_bus_declarations_keep_their_indexes_in_host_storage_specs() {
+    let declarations = tinyeventqueues_bus::storage::collection_specs();
+    let specs = event_queue_collection_specs();
+
+    assert_eq!(specs.len(), declarations.len());
+    for (declaration, spec) in declarations.iter().zip(specs) {
+        assert_eq!(spec.name, declaration.name);
+        assert_eq!(spec.indexes.len(), declaration.indexes.len());
+        for (index, declaration) in spec.indexes.iter().zip(&declaration.indexes) {
+            assert_eq!(index.name, declaration.name);
+            assert_eq!(index.fields, declaration.fields);
+            assert_eq!(index.unique, declaration.unique);
+        }
+    }
+}
+
 #[test]
 fn module_collections_are_limited_to_the_named_owner() {
     let mcp = module_collections("mcp");
@@ -47,68 +65,54 @@ fn module_collections_are_limited_to_the_named_owner() {
 }
 
 #[test]
-fn tinyjuice_ccr_blobs_stay_inside_the_juice_owner_namespace() {
-    assert_eq!(module_items("juice").blobs, ["juice/ccr/"]);
+fn tinychannels_bus_declarations_map_indexes_ttl_and_search_to_host_specs() {
+    let declaration = tinychannels_bus::storage::CollectionSpec {
+        name: "channels.test".into(),
+        indexes: vec![tinychannels_bus::storage::IndexSpec {
+            name: "by_sender".into(),
+            fields: vec!["sender.id".into()],
+            unique: true,
+        }],
+        ttl_field: Some("expiresAt".into()),
+        search: Some(tinychannels_bus::storage::SearchSpec {
+            fields: vec!["title".into(), "body".into()],
+        }),
+    };
+    let spec = channel_collection_spec(declaration);
+
+    assert_eq!(spec.name, "channels.test");
+    assert_eq!(spec.indexes.len(), 1);
+    assert_eq!(spec.indexes[0].name, "by_sender");
+    assert_eq!(spec.indexes[0].fields, ["sender.id"]);
+    assert!(spec.indexes[0].unique);
+    assert_eq!(spec.ttl_field.as_deref(), Some("expiresAt"));
+    assert_eq!(spec.search.as_ref().unwrap().fields, ["title", "body"]);
 }
 
-#[cfg(feature = "modules")]
-#[tokio::test]
-async fn tinyjuice_legacy_ccr_blobs_migrate_with_the_owner_contract() {
-    use tinystoragedrivers::schema::{MigrateOptions, Registry};
-    use tinystoragedrivers::{MemoryStorage, Scope, StorageBackend};
-
-    let backend = MemoryStorage::new();
-    let scoped = backend.for_scope(&Scope::local()).unwrap();
-    let blobs = scoped.blobs();
-    blobs
-        .put(
-            "tinyjuice_ccr/0123456789abcdef",
-            b"original text".to_vec(),
-            Some("text/plain; charset=utf-8"),
-        )
-        .await
-        .unwrap();
-    blobs
-        .put("tinyjuice_ccr/fedcba9876543210", b"two".to_vec(), None)
-        .await
-        .unwrap();
-    blobs
-        .put("other/keep", b"keep".to_vec(), None)
-        .await
-        .unwrap();
-
-    let registry = Registry::compose([tinyjuice_storage_schema()]).unwrap();
-    let report = registry
-        .migrate(&scoped, &MigrateOptions::new())
-        .await
-        .unwrap();
-    assert_eq!(report.ran[0].written, 2);
-    assert!(blobs
-        .list(tinyjuice_bus::storage::LEGACY_CCR_PREFIX)
-        .await
-        .unwrap()
-        .is_empty());
-    let moved = blobs
-        .get("juice/ccr/0123456789abcdef")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(moved.bytes, b"original text");
+#[test]
+fn tinyjuice_ccr_blobs_stay_inside_the_juice_owner_namespace() {
     assert_eq!(
-        moved.meta.content_type.as_deref(),
-        Some("text/plain; charset=utf-8")
+        module_collections("juice")
+            .iter()
+            .map(|collection| collection.name.as_str())
+            .collect::<Vec<_>>(),
+        [tinyjuice_bus::storage::SAVINGS_COLLECTION]
     );
-    let moved = blobs
-        .get("juice/ccr/fedcba9876543210")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(moved.meta.content_type, None);
-    assert!(blobs.get("other/keep").await.unwrap().is_some());
+}
 
-    let again = registry
-        .migrate(&scoped, &MigrateOptions::new())
-        .await
-        .unwrap();
-    assert!(again.ran.is_empty());
+#[test]
+fn tiny_artifacts_collections_compose_with_host_artifact_collections() {
+    let owners = collection_owners().expect("the owners compose");
+    let host = owners
+        .iter()
+        .find(|owner| owner.crate_name == "openhuman-core")
+        .expect("the host collection owner is present");
+    for name in ["artifacts.records", "artifacts.args", "artifacts.versions"] {
+        assert!(
+            host.collections
+                .iter()
+                .any(|collection| collection.name == name),
+            "missing host artifact collection {name}"
+        );
+    }
 }

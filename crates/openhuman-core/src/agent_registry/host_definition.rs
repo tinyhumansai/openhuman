@@ -49,6 +49,13 @@ pub struct AgentExt {
     /// Do not inject the compiled memory context as the first user message.
     #[serde(default = "true_")]
     pub omit_memory_context: bool,
+    /// Keep this agent's turns out of long-term memory: no conversation
+    /// turn is logged and no per-turn pack is recalled. For helper agents
+    /// (writers, judges, reviewers) whose transcripts are not the user's
+    /// conversation and would only crowd what recall brings back to the
+    /// agents that do use memory. Off unless the definition names it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub omit_memory_log: bool,
     /// Strip the standard safety preamble.
     #[serde(default = "true_")]
     pub omit_safety_preamble: bool,
@@ -74,10 +81,84 @@ pub struct AgentExt {
     /// before the session has read its integrations.
     #[serde(default)]
     pub refresh_prompt_on_resume: bool,
+    /// A memory block at the end of the system prompt: what long-term
+    /// memory knows about the user, rendered when a transcript generation
+    /// starts and re-sent verbatim until the next one
+    /// (`agent/session_host/runtime_session/memory_block.rs`). `None` sends
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_block: Option<MemoryBlock>,
     /// Whether this agent's turns can search and call the tools of every
     /// connected MCP server (deferred, through `tool_search`).
     #[serde(default)]
     pub searches_connected_mcp: bool,
+    /// Whether a cron job that runs this agent may use acting tools (shell,
+    /// file writes, external effects) without a person's approval.
+    ///
+    /// Off by default: a scheduled turn is read-only. On, it takes effect only
+    /// when the definition also names its tools explicitly
+    /// (`[tools] named = [...]`, never the wildcard) and the job names this
+    /// agent in `agent_id`; the run then executes under
+    /// `TrustedAutomationSource::CronActions`. Sub-agents the run spawns stay
+    /// read-only, except a direct child (depth 1) whose own definition also
+    /// sets this flag, names its tools, is `sandbox_mode = "sandboxed"` and
+    /// runs in the root's workspace
+    /// (`agent::subagent_host::ops::scheduled_actions_grant`); a grandchild
+    /// never acts. The autonomy tier, TinySecurity's command analysis and
+    /// protected-path floor, the agent's sandbox, the browser's allowed
+    /// websites and its forced checkpoint before payment all still apply.
+    /// Ignored in SaaS mode. See `cron::origin::scheduled_actions_enabled`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scheduled_actions: bool,
+    /// The directory a cron run of this agent is rooted at, so its shell and
+    /// file tools work there rather than in the process-wide `action_dir`.
+    ///
+    /// A relative path resolves against `action_dir`. Each run resolves it
+    /// again (symlinks followed) and refuses to start when it does not name an
+    /// existing directory, overlaps the core workspace, or holds the core's
+    /// credentials. The run carries it as its workspace descriptor
+    /// (`RunContext::with_workspace`), the same mechanism `agent.chat`'s `cwd`
+    /// and sub-agent worktrees use, so a sandboxed shell asks for this root
+    /// read-write instead of the whole action dir. Unset keeps the run on
+    /// `action_dir`. See `cron::scheduler::workspace_root`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_workspace: Option<String>,
+    /// Let this agent's sandboxed shell run in a files-only jail.
+    ///
+    /// A sandboxed spawn normally asks TinySecurity for an executor that enforces
+    /// both its file grants and its network rule, so where the only jail is
+    /// Landlock (a container without user namespaces) every command is refused.
+    /// An agent whose shell already gets the host network may opt in: its plan
+    /// then asks only for the files (TinySecurity contract 2.2,
+    /// `SandboxPlanOptions2::filesystem_only`), and Landlock may serve it. Files
+    /// stay jailed to the run's root; the network is the host's. The option is
+    /// sent only for the operator's own agent spawn with the host network, and
+    /// the module admits it only for a trusted operator source outside SaaS, so
+    /// it never reaches text the host did not author. It is read from the
+    /// definition of a session's root run. A sub-agent's run keeps whatever its
+    /// parent's run had (`OpenHumanRunContext::child` carries it), and the
+    /// sub-agent's own definition value is not applied, not even for a child
+    /// granted scheduled actions: files-only also gives the shell the host
+    /// network, and a child must not get more of it than its root. Channel
+    /// turns never get it. Off unless the definition names it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_filesystem_only: bool,
+    /// Give this agent a view-only browser: it may read the web, not act on it.
+    ///
+    /// The `browser` tool then refuses every action that can change a page or
+    /// act for the signed-in account (`click`, `fill`, `type`, `press`,
+    /// `select`, `check`, `double_click`, `find` that clicks or fills, `task`,
+    /// `task_continue`, `confirm_pending`, `wait_download`), before the
+    /// approval gate and `[browser] unattended_actions`, which cannot re-allow
+    /// them. It may still open, read, look, scroll, hover, wait and close. Its
+    /// sessions, and `browser_open`'s, use a fresh profile whatever
+    /// `[browser] profile_mode` says, pooled apart from the persistent
+    /// profile's. It only tightens a run tree: a run is view-only when its own
+    /// definition sets this or its parent run is view-only, and a child never
+    /// clears it (`OpenHumanRunContext::tighten_browser_view_only`). Off unless
+    /// the definition names it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub browser_view_only: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
     /// Runtime only: never serialised and not authorable in TOML.
     #[serde(skip)]
@@ -88,15 +169,29 @@ pub struct AgentExt {
     pub tinyflows_prompt_owner: Option<String>,
 }
 
+/// The memory block an agent's system prompt ends with; see
+/// [`AgentExt::memory_block`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryBlock {
+    /// The most tokens the block may take, markers and instruction included.
+    pub max_tokens: u32,
+}
+
 impl Default for AgentExt {
     fn default() -> Self {
         Self {
             omit_identity: true,
             omit_memory_context: true,
+            omit_memory_log: false,
             omit_safety_preamble: true,
             tokenjuice_compression: AgentTokenjuiceCompression::default(),
             refresh_prompt_on_resume: false,
+            memory_block: None,
             searches_connected_mcp: false,
+            scheduled_actions: false,
+            scheduled_workspace: None,
+            sandbox_filesystem_only: false,
+            browser_view_only: false,
             prompt_builder: None,
             tinyflows_prompt_owner: None,
         }

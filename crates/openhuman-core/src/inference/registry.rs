@@ -15,7 +15,9 @@
 //! registered every consult point behaves exactly as before.
 
 use std::collections::hash_map::RandomState;
+use std::future::Future;
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
 use tinyinference_embeddings::EmbeddingModel;
@@ -225,9 +227,10 @@ pub struct InspectionChatModelBuild {
 /// return the same frozen route identity used by the model invocation.
 pub type PreparedInspectionChatModelFactory = Arc<
     dyn for<'a> Fn(
-            &ChatModelRequest<'a, ProviderContext>,
-        ) -> anyhow::Result<InspectionChatModelBuild>
-        + Send
+            &'a ChatModelRequest<'a, ProviderContext>,
+        ) -> Pin<
+            Box<dyn Future<Output = anyhow::Result<InspectionChatModelBuild>> + Send + 'a>,
+        > + Send
         + Sync,
 >;
 
@@ -482,7 +485,17 @@ static EMBEDDINGS: HookSlot<EmbeddingFactory<ProviderContext>> =
 
 /// A managed embedding factory safe for doctor inspection: it uses a frozen
 /// credential snapshot and never refreshes or publishes credential state.
-pub type InspectionEmbeddingFactory = EmbeddingFactory<ProviderContext>;
+pub type InspectionEmbeddingFactory = Arc<
+    dyn Fn(
+            EmbeddingRequest<ProviderContext>,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = tinyinference_embeddings::Result<Box<dyn EmbeddingModel>>>
+                    + Send,
+            >,
+        > + Send
+        + Sync,
+>;
 
 static INSPECTION_EMBEDDINGS: HookSlot<InspectionEmbeddingFactory> =
     HookSlot::new("inference::inspection-embeddings");
@@ -490,10 +503,14 @@ static INSPECTION_EMBEDDINGS: HookSlot<InspectionEmbeddingFactory> =
 /// Registers a managed embedding factory for read-only credential inspection.
 pub fn register_inspection_embedding<F>(provider_id: impl Into<String>, factory: F)
 where
-    F: for<'a> Fn(
-            &EmbeddingRequest<'a, ProviderContext>,
-        ) -> tinyinference_embeddings::Result<Box<dyn EmbeddingModel>>
-        + Send
+    F: Fn(
+            EmbeddingRequest<ProviderContext>,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = tinyinference_embeddings::Result<Box<dyn EmbeddingModel>>>
+                    + Send,
+            >,
+        > + Send
         + Sync
         + 'static,
 {
@@ -506,10 +523,14 @@ pub fn register_inspection_embedding_in<F>(
     provider_id: impl Into<String>,
     factory: F,
 ) where
-    F: for<'a> Fn(
-            &EmbeddingRequest<'a, ProviderContext>,
-        ) -> tinyinference_embeddings::Result<Box<dyn EmbeddingModel>>
-        + Send
+    F: Fn(
+            EmbeddingRequest<ProviderContext>,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = tinyinference_embeddings::Result<Box<dyn EmbeddingModel>>>
+                    + Send,
+            >,
+        > + Send
         + Sync
         + 'static,
 {

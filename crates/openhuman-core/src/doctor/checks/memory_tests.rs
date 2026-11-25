@@ -52,11 +52,13 @@ async fn selected_health_uses_the_read_only_probe_instead_of_the_cached_engine_b
         EngineEntry {
             build: Arc::new(move |_| {
                 builder_calls_in_closure.fetch_add(1, Ordering::SeqCst);
-                Binding::Off {
-                    engine: Some(engine_id.to_owned()),
-                    endpoint: None,
-                    reason: "normal cached builder must not run in doctor".to_owned(),
-                }
+                Box::pin(async move {
+                    Binding::Off {
+                        engine: Some(engine_id.to_owned()),
+                        endpoint: None,
+                        reason: "normal cached builder must not run in doctor".to_owned(),
+                    }
+                }) as EngineFuture<Binding>
             }),
             free_background: None,
         },

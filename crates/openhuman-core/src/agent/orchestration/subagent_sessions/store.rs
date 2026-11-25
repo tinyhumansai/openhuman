@@ -4,7 +4,33 @@ use super::types::{DurableSubagentSession, SubagentSessionStore};
 
 impl SubagentSessionStore {
     pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+        Self {
+            workspace_dir,
+            context: None,
+        }
+    }
+
+    /// Opens the session store under the dispatch's resolved storage scope.
+    /// Keep the context on the handle because these synchronous compatibility
+    /// operations can run after an async task-local scope has been lost.
+    pub fn new_in_context(
+        ctx: &crate::core::runtime::DispatchCtx,
+        workspace_dir: PathBuf,
+    ) -> Result<Self, String> {
+        let context = ctx
+            .resolved()
+            .ok_or_else(|| "subagent session store has no resolved owner scope".to_owned())?;
+        Ok(Self {
+            workspace_dir,
+            context: Some(context),
+        })
+    }
+
+    fn in_scope<T>(&self, f: impl FnOnce() -> T) -> T {
+        match &self.context {
+            Some(context) => crate::core::runtime::CoreContext::sync_scope(Arc::clone(context), f),
+            None => f(),
+        }
     }
 
     /// The pre-documents `<workspace>/.openhuman/subagent_sessions.json`.
@@ -44,17 +70,36 @@ impl SubagentSessionStore {
     }
 
     pub fn load(&self) -> Result<Vec<DurableSubagentSession>, String> {
-        let docs = super::store_documents::current(&self.workspace_dir)
-            .map_err(|err| format!("{err:#}"))?;
-        self.import_legacy(&docs)?;
-        docs.load().map_err(|err| format!("{err:#}"))
+        self.in_scope(|| {
+            let docs = super::store_documents::current(&self.workspace_dir)
+                .map_err(|err| format!("{err:#}"))?;
+            self.import_legacy(&docs)?;
+            docs.load().map_err(|err| format!("{err:#}"))
+        })
+    }
+
+    /// Finds one row for the TinyAgents migration adapter. Unlike `load`, this
+    /// performs an indexed read after any one-time legacy-file import and does
+    /// not rewrite the host session row.
+    pub(super) fn find_task_for_import(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<DurableSubagentSession>, String> {
+        self.in_scope(|| {
+            let docs = super::store_documents::current(&self.workspace_dir)
+                .map_err(|err| format!("{err:#}"))?;
+            self.import_legacy(&docs)?;
+            docs.find_task(task_id).map_err(|err| format!("{err:#}"))
+        })
     }
 
     pub fn save(&self, sessions: &[DurableSubagentSession]) -> Result<(), String> {
-        let docs = super::store_documents::current(&self.workspace_dir)
-            .map_err(|err| format!("{err:#}"))?;
-        self.import_legacy(&docs)?;
-        docs.save(sessions).map_err(|err| format!("{err:#}"))
+        self.in_scope(|| {
+            let docs = super::store_documents::current(&self.workspace_dir)
+                .map_err(|err| format!("{err:#}"))?;
+            self.import_legacy(&docs)?;
+            docs.save(sessions).map_err(|err| format!("{err:#}"))
+        })
     }
 
     pub fn update_session<F>(
@@ -65,11 +110,13 @@ impl SubagentSessionStore {
     where
         F: FnMut(&mut DurableSubagentSession, String) + Send + 'static,
     {
-        let docs = super::store_documents::current(&self.workspace_dir)
-            .map_err(|err| format!("{err:#}"))?;
-        self.import_legacy(&docs)?;
-        docs.update_session(subagent_session_id, update)
-            .map_err(|err| format!("{err:#}"))
+        self.in_scope(|| {
+            let docs = super::store_documents::current(&self.workspace_dir)
+                .map_err(|err| format!("{err:#}"))?;
+            self.import_legacy(&docs)?;
+            docs.update_session(subagent_session_id, update)
+                .map_err(|err| format!("{err:#}"))
+        })
     }
 
     pub fn update_session_if<F>(
@@ -80,10 +127,14 @@ impl SubagentSessionStore {
     where
         F: FnMut(&mut DurableSubagentSession, String) -> bool + Send + 'static,
     {
-        let docs = super::store_documents::current(&self.workspace_dir)
-            .map_err(|err| format!("{err:#}"))?;
-        self.import_legacy(&docs)?;
-        docs.update_session_if(subagent_session_id, update)
-            .map_err(|err| format!("{err:#}"))
+        self.in_scope(|| {
+            let docs = super::store_documents::current(&self.workspace_dir)
+                .map_err(|err| format!("{err:#}"))?;
+            self.import_legacy(&docs)?;
+            docs.update_session_if(subagent_session_id, update)
+                .map_err(|err| format!("{err:#}"))
+        })
     }
 }
+
+use std::sync::Arc;

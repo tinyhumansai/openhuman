@@ -255,7 +255,8 @@ async fn model_reply(
     }
     let request_id = turn.request_id;
     let (chat_model, model) =
-        match provider::create_chat_model_with_model_id_in(ctx, "summarization", config, 0.2) {
+        match provider::create_chat_model_with_model_id_in(ctx, "summarization", config, 0.2).await
+        {
             Ok(resolved) => resolved,
             Err(error) => {
                 log::warn!("{LOG_PREFIX} provider init failed request_id={request_id}: {error}");

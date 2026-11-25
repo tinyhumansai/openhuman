@@ -9,7 +9,7 @@ use tinyinference_llm::model::discover::ModelLimitsCache;
 
 use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::schema::ModelRegistryEntry;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
 
 const OPENROUTER: &str = "https://openrouter.ai/api/v1";
 const V41_FLASH: &str = "deepseek/deepseek-v4.1-flash";
@@ -81,10 +81,8 @@ fn openrouter_listing() -> Value {
     }]})
 }
 
-fn openrouter_config(tmp: &TempDir) -> Config {
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+async fn openrouter_config(tmp: &TempDir) -> Config {
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
     config.cloud_providers = vec![CloudProviderCreds {
         id: "p_openrouter".to_string(),
         slug: "openrouter".to_string(),
@@ -101,6 +99,7 @@ fn openrouter_config(tmp: &TempDir) -> Config {
             Default::default(),
             true,
         )
+        .await
         .expect("store provider token");
     config
 }
@@ -125,7 +124,7 @@ async fn resolve(
 #[tokio::test]
 async fn deepseek_v41_flash_uses_provider_window_not_static_128k() {
     let tmp = TempDir::new().unwrap();
-    let config = openrouter_config(&tmp);
+    let config = openrouter_config(&tmp).await;
     let fetcher =
         FakeFetcher::default().with(&format!("{OPENROUTER}/models"), openrouter_listing());
     let cache = ModelLimitsCache::default();
@@ -199,7 +198,7 @@ async fn model_only_projection_does_not_reuse_empty_provider_discovery() {
 #[tokio::test]
 async fn second_resolution_is_served_from_cache() {
     let tmp = TempDir::new().unwrap();
-    let config = openrouter_config(&tmp);
+    let config = openrouter_config(&tmp).await;
     let fetcher =
         FakeFetcher::default().with(&format!("{OPENROUTER}/models"), openrouter_listing());
     let cache = ModelLimitsCache::default();
@@ -211,7 +210,7 @@ async fn second_resolution_is_served_from_cache() {
 #[tokio::test]
 async fn config_override_wins_over_provider() {
     let tmp = TempDir::new().unwrap();
-    let mut config = openrouter_config(&tmp);
+    let mut config = openrouter_config(&tmp).await;
     let model = "deepseek/override-test-model";
     config.model_registry.push(ModelRegistryEntry {
         id: model.to_string(),
@@ -241,7 +240,7 @@ async fn config_override_wins_over_provider() {
 #[tokio::test]
 async fn learned_overflow_limit_corrects_the_listing() {
     let tmp = TempDir::new().unwrap();
-    let config = openrouter_config(&tmp);
+    let config = openrouter_config(&tmp).await;
     let model = "deepseek/learned-test-model";
     let fetcher = FakeFetcher::default().with(
         &format!("{OPENROUTER}/models"),
@@ -262,7 +261,7 @@ async fn learned_overflow_limit_corrects_the_listing() {
 #[tokio::test]
 async fn unreachable_provider_falls_back_to_static_guess() {
     let tmp = TempDir::new().unwrap();
-    let config = openrouter_config(&tmp);
+    let config = openrouter_config(&tmp).await;
     let fetcher = FakeFetcher::default();
     let model = "deepseek/unlisted-test-model";
     let resolved = resolve(&fetcher, &ModelLimitsCache::default(), &config, model).await;
@@ -273,7 +272,7 @@ async fn unreachable_provider_falls_back_to_static_guess() {
 #[tokio::test]
 async fn unknown_model_without_provider_data_is_unknown() {
     let tmp = TempDir::new().unwrap();
-    let config = openrouter_config(&tmp);
+    let config = openrouter_config(&tmp).await;
     let resolved = resolve(
         &FakeFetcher::default(),
         &ModelLimitsCache::default(),
@@ -294,7 +293,7 @@ async fn unknown_model_without_provider_data_is_unknown() {
 #[tokio::test]
 async fn local_ollama_without_a_reachable_server_falls_back_to_the_local_profile() {
     let tmp = TempDir::new().unwrap();
-    let config = openrouter_config(&tmp);
+    let config = openrouter_config(&tmp).await;
     let fetcher = FakeFetcher::default();
     let resolved = resolve_context_window_with(
         &fetcher,
@@ -319,7 +318,7 @@ fn ollama_show() -> Value {
 #[tokio::test]
 async fn builtin_local_ollama_reads_the_window_from_api_show() {
     let tmp = TempDir::new().unwrap();
-    let mut config = openrouter_config(&tmp);
+    let mut config = openrouter_config(&tmp).await;
     config.local_ai.base_url = Some("http://127.0.0.1:11434".to_string());
     let fetcher =
         FakeFetcher::default().with_post("http://127.0.0.1:11434/api/show", ollama_show());
@@ -339,7 +338,7 @@ async fn builtin_local_ollama_reads_the_window_from_api_show() {
 #[tokio::test]
 async fn custom_openai_provider_at_ollama_v1_reads_the_window_from_api_show() {
     let tmp = TempDir::new().unwrap();
-    let mut config = openrouter_config(&tmp);
+    let mut config = openrouter_config(&tmp).await;
     config.cloud_providers.push(CloudProviderCreds {
         id: "p_ollama".to_string(),
         slug: "myollama".to_string(),
@@ -377,7 +376,7 @@ async fn custom_openai_provider_at_ollama_v1_reads_the_window_from_api_show() {
 #[tokio::test]
 async fn failed_ollama_probe_is_remembered_and_not_retried() {
     let tmp = TempDir::new().unwrap();
-    let mut config = openrouter_config(&tmp);
+    let mut config = openrouter_config(&tmp).await;
     config.local_ai.base_url = Some("http://127.0.0.1:11434".to_string());
     // The resolver remembers provider-sourced windows process-wide, so this
     // test uses a model id no other test resolves successfully.

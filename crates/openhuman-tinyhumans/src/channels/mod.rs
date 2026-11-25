@@ -11,9 +11,14 @@
 //!
 //! The core keeps only the generic slot dispatch; with this callback
 //! unregistered, those calls answer the `BACKEND_UNAVAILABLE:` sentinel.
+//!
+//! With `crash-reporting`, [`register`] also installs the
+//! [`message_filter`] Sentry noise filter for expected channel-message 404s.
 
 #[cfg(feature = "channels")]
 mod delivery;
+#[cfg(feature = "crash-reporting")]
+pub(crate) mod message_filter;
 #[cfg(feature = "channels")]
 mod messaging;
 
@@ -39,9 +44,9 @@ pub(crate) async fn serve(
     use ChannelBackendRequest as Request;
     use ChannelBackendResult as Result;
     match request {
-        Request::ProgressiveTransport(request) => Ok(Result::ProgressiveTransport(
+        Request::ProgressiveTransport(request) => Ok(Result::ProgressiveTransport(Box::new(
             delivery::execute(&ctx, *request).await,
-        )),
+        ))),
         Request::SendReaction { channel, reaction } => {
             messaging::send_reaction(&ctx.config, &channel, reaction)
                 .await
@@ -73,6 +78,8 @@ pub(crate) async fn serve(
 
 /// Registers this area's hooks with the core. Idempotent.
 pub(crate) fn register(_options: &InstallOptions) {
+    #[cfg(feature = "crash-reporting")]
+    message_filter::register();
     #[cfg(feature = "channels")]
     {
         register_channel_callback(CALLBACK_ID, |ctx, request| -> CallbackFuture<_> {

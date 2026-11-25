@@ -1,9 +1,13 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
+use crate::config::Config;
+use crate::core::all::{
+    BoundRegisteredController, ControllerEntry, ControllerFuture, ControllerTask,
+    RegisteredController,
+};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -21,6 +25,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_models,
         },
     ]
+}
+
+pub(crate) fn all_controller_entries() -> Vec<ControllerEntry> {
+    vec![
+        ControllerEntry::bound(report_controller()),
+        ControllerEntry::bound(models_controller()),
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn doctor_parameter_contracts() -> Vec<crate::core::all::ControllerParamContract> {
+    tests::doctor_parameter_contracts()
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
@@ -101,24 +117,52 @@ pub fn schemas(function: &str) -> ControllerSchema {
 }
 
 fn handle_report(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    report_controller().invoke(ctx, params)
+}
+
+fn handle_models(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    models_controller().invoke(ctx, params)
+}
+
+fn report_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(schemas("report"), parse_report, run_report)
+}
+
+fn models_controller() -> BoundRegisteredController {
+    BoundRegisteredController::after_gate(
+        schemas("models"),
+        config_for_dispatch,
+        parse_models,
+        run_models,
+    )
+}
+
+fn config_for_dispatch(ctx: DispatchCtx) -> ControllerTask<Config> {
+    Box::pin(async move { crate::doctor::ops::config_for_dispatch(&ctx).await })
+}
+
+fn parse_report(params: Map<String, Value>) -> Result<crate::doctor::DoctorOptions, String> {
+    Ok(crate::doctor::DoctorOptions {
+        tier: read_optional::<crate::doctor::DoctorTier>(&params, "tier")?
+            .unwrap_or(crate::doctor::DoctorTier::Connect),
+        only: read_optional::<Vec<String>>(&params, "only")?.unwrap_or_default(),
+        skip: read_optional::<Vec<String>>(&params, "skip")?.unwrap_or_default(),
+        profile: read_optional::<String>(&params, "profile")?,
+    })
+}
+
+fn parse_models(params: Map<String, Value>) -> Result<bool, String> {
+    Ok(read_optional::<bool>(&params, "use_cache")?.unwrap_or(true))
+}
+
+fn run_report(ctx: DispatchCtx, options: crate::doctor::DoctorOptions) -> ControllerFuture {
     Box::pin(async move {
-        let options = crate::doctor::DoctorOptions {
-            tier: read_optional::<crate::doctor::DoctorTier>(&params, "tier")?
-                .unwrap_or(crate::doctor::DoctorTier::Connect),
-            only: read_optional::<Vec<String>>(&params, "only")?.unwrap_or_default(),
-            skip: read_optional::<Vec<String>>(&params, "skip")?.unwrap_or_default(),
-            profile: read_optional::<String>(&params, "profile")?,
-        };
         to_json(crate::doctor::ops::doctor_report_for_dispatch(&ctx, options).await?)
     })
 }
 
-fn handle_models(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = crate::doctor::ops::config_for_dispatch(&ctx).await?;
-        let use_cache = read_optional::<bool>(&params, "use_cache")?.unwrap_or(true);
-        to_json(crate::doctor::ops::doctor_models(&config, use_cache).await?)
-    })
+fn run_models(_ctx: DispatchCtx, config: Config, use_cache: bool) -> ControllerFuture {
+    Box::pin(async move { to_json(crate::doctor::ops::doctor_models(&config, use_cache).await?) })
 }
 
 fn read_optional<T: DeserializeOwned>(
@@ -131,10 +175,6 @@ fn read_optional<T: DeserializeOwned>(
             .map(Some)
             .map_err(|e| format!("invalid '{key}': {e}")),
     }
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

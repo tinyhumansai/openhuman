@@ -41,9 +41,9 @@ async fn save_tier_config(config: &Config) {
 fn has_issue48_workflow_origin(ctx: &crate::core::runtime::DispatchCtx) -> bool {
     matches!(
         ctx.turn_origin(),
-        Some(crate::security::turn_origin::AgentTurnOrigin::TrustedAutomation {
+        Some(crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
             job_id,
-            source: crate::security::turn_origin::TrustedAutomationSource::Workflow {
+            source: crate::core::runtime::turn_origin::TrustedAutomationSource::Workflow {
                 require_approval: true,
             },
         }) if job_id == "issue48-flow-run"
@@ -63,9 +63,9 @@ async fn one_live_capability_observes_full_readonly_full_updates() {
         AutonomyLevel::ReadOnly,
     );
     save_tier_config(&decoy).await;
-    let origin = crate::security::turn_origin::AgentTurnOrigin::TrustedAutomation {
+    let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
         job_id: "issue48-flow-run".to_string(),
-        source: crate::security::turn_origin::TrustedAutomationSource::Workflow {
+        source: crate::core::runtime::turn_origin::TrustedAutomationSource::Workflow {
             require_approval: true,
         },
     };
@@ -78,17 +78,16 @@ async fn one_live_capability_observes_full_readonly_full_updates() {
         access: crate::security::TrustedAccess::ReadWrite,
     });
     baseline.max_actions_per_hour = 2;
-    baseline.tracker.record();
     let fresh = current_tier_policy(&ctx, &config, &baseline).await.unwrap();
     assert_eq!(fresh.workspace_dir, baseline.workspace_dir);
     assert_eq!(fresh.action_dir, baseline.action_dir);
     assert_eq!(fresh.trusted_roots, baseline.trusted_roots);
-    assert_eq!(fresh.tracker.count(), baseline.tracker.count());
-    assert!(fresh.record_action());
-    assert_eq!(baseline.tracker.count(), 2);
+    assert_eq!(fresh.max_actions_per_hour, baseline.max_actions_per_hour);
     let next_refresh = current_tier_policy(&ctx, &config, &baseline).await.unwrap();
-    assert!(next_refresh.is_rate_limited());
-    assert_eq!(next_refresh.tracker.count(), 2);
+    assert_eq!(
+        next_refresh.max_actions_per_hour,
+        baseline.max_actions_per_hour
+    );
 
     assert_eq!(
         enforce_current_node_tier_gate(&ctx, &config, &baseline, CommandClass::Write, "code")

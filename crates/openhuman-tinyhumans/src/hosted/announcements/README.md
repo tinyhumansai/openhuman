@@ -43,7 +43,7 @@ anything. Dismissal is tracked client-side by announcement id
 
 ## Dependencies
 
-- `crate::security::credentials::session_support::require_live_session_token`:
+- `crate::credentials::session_state::require_live_session_token`:
   rejects an expired token locally instead of firing a doomed backend 401
   (same guard as `billing/ops.rs`).
 - `crate::hosted::client::HostedClient`: resolves the core's credential first

@@ -51,7 +51,7 @@ fn owner_of(root: &Path, path: &Path) -> Option<usize> {
 /// tree, any user's outside every user's tree (the operator plane, shared
 /// state, the child's `$HOME`). Returns the violations and, per user, how
 /// many of their own files carry their canaries (proof the scan saw data).
-pub fn scan_files(root: &Path, home: &Path) -> (Vec<String>, [usize; 3]) {
+pub fn scan_files(root: &Path, home: &Path, shared_storage: &Path) -> (Vec<String>, [usize; 3]) {
     let mut violations = Vec::new();
     let mut own = [0usize; 3];
     for base in [root, home] {
@@ -59,6 +59,14 @@ pub fn scan_files(root: &Path, home: &Path) -> (Vec<String>, [usize; 3]) {
         files(base, &mut all, &mut violations);
         for path in all {
             if base == home && path.starts_with(root) {
+                continue;
+            }
+            // The configured shared SQLite database contains every tenant's
+            // bytes by design. Tenant ownership is expressed by storage scope,
+            // so raw database scans cannot classify those bytes. The suite
+            // checks each tenant's persisted sentinel through the scoped RPC
+            // surface and checks backend requests against their credentials.
+            if is_shared_storage_artifact(&path, shared_storage) {
                 continue;
             }
             // The child's own log sits beside the root; it is the operator's.
@@ -122,6 +130,13 @@ pub fn scan_files(root: &Path, home: &Path) -> (Vec<String>, [usize; 3]) {
         }
     }
     (violations, own)
+}
+
+fn is_shared_storage_artifact(path: &Path, storage: &Path) -> bool {
+    path == storage
+        || ["-wal", "-shm"]
+            .into_iter()
+            .any(|suffix| path == Path::new(&format!("{}{suffix}", storage.display())))
 }
 
 /// Keyring entries holding a user's canary outside that user's namespace.
@@ -191,3 +206,7 @@ pub fn audit_backend(requests: &[Recorded]) -> (Vec<String>, [usize; 3]) {
 fn redact(auth: &str) -> String {
     auth.chars().take(12).collect::<String>() + "…"
 }
+
+#[cfg(test)]
+#[path = "scan_tests.rs"]
+mod tests;

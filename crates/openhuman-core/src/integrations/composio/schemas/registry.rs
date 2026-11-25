@@ -3,7 +3,7 @@
 //! [`super::definitions::schemas`] entry to its handler and register it
 //! with the shared controller registry.
 
-use crate::core::all::RegisteredController;
+use crate::core::all::{BoundRegisteredController, ControllerEntry, RegisteredController};
 use crate::core::ControllerSchema;
 
 use super::definitions::schemas;
@@ -16,7 +16,9 @@ use super::handlers_identity::{
     handle_get_user_profile, handle_get_user_scopes, handle_refresh_all_identities,
     handle_set_user_scopes,
 };
-use super::handlers_tools::{handle_execute, handle_list_tools};
+use super::handlers_tools::{
+    handle_execute, handle_list_tools, load_execute_config, parse_execute, run_execute,
+};
 use super::handlers_triggers::{
     handle_create_trigger, handle_disable_trigger, handle_enable_trigger,
     handle_list_available_triggers, handle_list_github_repos, handle_list_trigger_history,
@@ -141,4 +143,25 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_clear_api_key,
         },
     ]
+}
+
+/// Runtime entries preserve the legacy catalog while binding execute's actual
+/// runtime parser to the same parser used by schema-example validation.
+pub(crate) fn all_controller_entries() -> Vec<ControllerEntry> {
+    let execute = BoundRegisteredController::after_gate(
+        schemas("execute"),
+        load_execute_config,
+        parse_execute,
+        run_execute,
+    );
+    all_registered_controllers()
+        .into_iter()
+        .map(|controller| {
+            if controller.schema.method_name() == "composio.execute" {
+                ControllerEntry::bound(execute.clone())
+            } else {
+                ControllerEntry::legacy(controller)
+            }
+        })
+        .collect()
 }

@@ -12,6 +12,7 @@
 import debug from 'debug';
 
 import { callCoreRpc } from '../coreRpcClient';
+import { CORE_RPC_METHODS } from '../rpcMethods';
 
 const log = debug('agentRegistryApi');
 
@@ -78,6 +79,31 @@ function pruneParams(params: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+/** Peel a `{ result, logs }` CLI envelope if a handler ever attaches logs. */
+function unwrapCliEnvelope(payload: unknown): unknown {
+  const record = asRecord(payload);
+  if (record && 'result' in record && Array.isArray(record.logs)) return record.result;
+  return payload;
+}
+
+/** `{ tools: AgentToolInfo[] }` → the well-formed entries (missing description → ''). */
+function parseAgentTools(payload: unknown): AgentToolInfo[] {
+  const raw = asRecord(payload)?.tools;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap(entry => {
+    const record = asRecord(entry);
+    const name = typeof record?.name === 'string' ? record.name.trim() : '';
+    if (!name) return [];
+    const description = typeof record?.description === 'string' ? record.description : '';
+    return [{ name, description }];
+  });
+}
+
 export const agentRegistryApi = {
   /** List registry entries (default-first). Includes disabled by default so
    *  the management UI can show and re-enable them. */
@@ -90,16 +116,21 @@ export const agentRegistryApi = {
     return res?.agents ?? [];
   },
 
-  /** List every agent tool visible to the orchestrator, with descriptions.
-   *  Used by the agent editor's tool picker; each `name` is a valid
-   *  `tool_allowlist` entry. */
+  /** List every native agent tool (the orchestrator's durable registry), with
+   *  descriptions. Used by the agent editor's tool picker — each `name` is a
+   *  valid `tool_allowlist` entry — and by the flows "Tool" node, where each
+   *  `name` is a valid `oh:<name>` slug: the flow engine resolves native tool
+   *  nodes against the same `tools::ops::all_tools_with_runtime` registry this
+   *  list is built from. Malformed entries are dropped. */
   availableTools: async (): Promise<AgentToolInfo[]> => {
-    log('availableTools');
-    const res = await callCoreRpc<{ tools?: AgentToolInfo[] }>({
-      method: 'openhuman.agent_registry_available_tools',
+    log('availableTools: request');
+    const res = await callCoreRpc<unknown>({
+      method: CORE_RPC_METHODS.agentRegistryAvailableTools,
       params: {},
     });
-    return res?.tools ?? [];
+    const tools = parseAgentTools(unwrapCliEnvelope(res));
+    log('availableTools: response count=%d', tools.length);
+    return tools;
   },
 
   /** Fetch a single entry by id. */

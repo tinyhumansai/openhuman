@@ -10,7 +10,10 @@ use std::hash::{Hash, Hasher};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
 mod messages;
-pub(crate) use messages::{COMPOSIO_INVALID_API_KEY_ANCHOR, COMPOSIO_INVALID_API_KEY_USER_MESSAGE};
+pub(crate) use messages::{
+    COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR, COMPOSIO_INVALID_API_KEY_ANCHOR,
+    COMPOSIO_INVALID_API_KEY_USER_MESSAGE,
+};
 
 pub(crate) const DIRECT_INVALID_API_KEY_THRESHOLD: u32 = 3;
 

@@ -77,7 +77,7 @@ On macOS the spawn runs inside a Seatbelt jail (`sandbox-exec`) by default when 
 
 ### Permission posture and full access
 
-The default, `acceptEdits`, limits Claude Code to file reads and edits under `project_dir` and withholds shell, network and `Task` access through `--disallowedTools`. You can opt into full access (the whole Claude Code toolset, including Bash) with the settings toggle saved in `<workspace_dir>/claude_code_settings.json`, or with `OPENHUMAN_CLAUDE_CODE_PERMISSION_MODE=bypass|bypassPermissions|full`. This is an explicit choice. Enabling the provider alone never grants shell or network access.
+The default, `acceptEdits`, limits Claude Code to file reads and edits under `project_dir` and withholds shell, network and `Task` access through `--disallowedTools`. You can opt into full access (the whole Claude Code toolset, including Bash) with the settings toggle (saved in the workspace's host storage), or with `OPENHUMAN_CLAUDE_CODE_PERMISSION_MODE=bypass|bypassPermissions|full`. This is an explicit choice. Enabling the provider alone never grants shell or network access.
 
 ## Auth resolution order
 

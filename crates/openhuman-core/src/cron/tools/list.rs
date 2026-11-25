@@ -5,7 +5,7 @@ use serde_json::json;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use tinyflows_bus::schedule::types::CronJob;
-use tinytools::{Tool, ToolCallOptions, ToolExposure, ToolResult};
+use tinytools::{Tool, ToolCallOptions, ToolResult};
 
 fn render_jobs_markdown(jobs: &[CronJob]) -> String {
     if jobs.is_empty() {
@@ -63,14 +63,6 @@ impl CronListTool {
 
 #[async_trait]
 impl Tool for CronListTool {
-    /// Superseded by the `cron` tool, which dispatches every scheduler
-    /// operation on one `action` field. Kept registered and dispatchable so a
-    /// replayed transcript or a saved skill naming `cron_*` keeps working;
-    /// hidden from the wire so six schemas do not ship where one does.
-    fn exposure(&self) -> ToolExposure {
-        ToolExposure::Hidden
-    }
-
     fn name(&self) -> &str {
         "cron_list"
     }

@@ -51,13 +51,13 @@ impl InvocationStorageBinding {
     /// module instance.
     pub(crate) async fn serve(
         runtime: &ModuleRuntime,
-        module_descriptor_name: &str,
+        _module_descriptor_name: &str,
         module_id: &str,
         storage: Storage,
     ) -> anyhow::Result<Self> {
         let expected_peer = runtime
             .host()
-            .authenticated_peer(module_descriptor_name)
+            .sender_for_module(module_id)
             .ok_or_else(|| anyhow::anyhow!("module is not a live admitted instance"))?;
         let connection = runtime.connection();
         let host = connection

@@ -43,6 +43,7 @@ pub(crate) async fn with_rpc_client<F: std::future::Future>(
     RPC_CLIENT.scope(fixture, fut).await
 }
 
+#[cfg(feature = "modules")]
 pub(crate) fn rpc_client(config: &crate::config::Config) -> Option<tinybus::module::ModuleClient> {
     RPC_CLIENT
         .try_with(|fixture| {
@@ -54,6 +55,13 @@ pub(crate) fn rpc_client(config: &crate::config::Config) -> Option<tinybus::modu
             crate::modules::ops::fixture_client(fixture.proxy.clone())
         })
         .ok()
+}
+
+/// Without `modules` there is no fixture client to build, so the caller
+/// falls through to its own client.
+#[cfg(not(feature = "modules"))]
+pub(crate) fn rpc_client(_config: &crate::config::Config) -> Option<tinybus::module::ModuleClient> {
+    None
 }
 
 /// Run `fut` with `stub` answering every compaction it makes.

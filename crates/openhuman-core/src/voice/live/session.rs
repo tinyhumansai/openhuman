@@ -20,8 +20,8 @@ use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::agent::tinyagents::live_harness::{assemble_live_tool_harness, LIVE_MAX_TOOL_CALLS};
 use crate::config::schema::voice_live::is_live_provider;
 use crate::config::Config;
+use crate::core::runtime::turn_origin::{with_origin, AgentTurnOrigin};
 use crate::security::approval::{ApprovalChatContext, ApprovalTurnContext};
-use crate::security::turn_origin::{with_origin, AgentTurnOrigin};
 use crate::threads::store::{ConversationMessage, CreateConversationThread};
 
 /// The agent a live session borrows its tools from.
@@ -137,6 +137,7 @@ pub(crate) async fn start(
     );
 
     let mut host = OpenHumanSessionHost::from_config_for_agent(ctx, &config, LIVE_AGENT_ID)
+        .await
         .map_err(|e| LiveVoiceError::internal(format!("agent build failed: {e}")))?;
     host.set_event_context(format!("voice_live_{session_id}"), "voice");
     host.set_thread_id(Some(&thread_id));
@@ -180,6 +181,7 @@ pub(crate) async fn start(
         reply_target: session_id.to_string(),
         message_id: format!("voice-live-{session_id}"),
         history_key: None,
+        channel_session: None,
     };
     let approval = ApprovalChatContext {
         thread_id: thread_id.clone(),

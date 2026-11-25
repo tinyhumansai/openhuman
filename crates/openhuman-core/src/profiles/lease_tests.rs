@@ -171,7 +171,6 @@ async fn renewal_keeps_the_lease_and_a_lost_lease_fences_the_profile() {
         crate::web_chat::track_parallel_turn_for_test(
             &crate::core::runtime::DispatchCtx::new(Arc::clone(state.context())),
             "t1",
-            "req-1",
             turn.clone(),
         ),
     )
@@ -205,15 +204,28 @@ async fn renewal_keeps_the_lease_and_a_lost_lease_fences_the_profile() {
     assert_eq!(report.fenced, vec![alice.clone()]);
     assert!(state.is_fenced(), "the profile is fenced");
     assert!(!a.is_open(&alice), "and closed");
-    assert!(turn.is_cancelled(), "its in-flight turns are stopped");
+    // The turn unwinds through the runner, which announces it afterwards.
+    tokio::time::timeout(Duration::from_secs(10), turn.cancelled())
+        .await
+        .expect("its in-flight turns are stopped");
     // The cancelled event goes to the client that started the turn, so its
     // stream resolves rather than staying "running".
-    let mut cancelled_for = None;
-    while let Ok(event) = events.try_recv() {
-        if event.event == "chat_cancelled" && event.request_id == "req-1" {
-            cancelled_for = Some(event.client_id);
+    let cancelled_for = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match events.recv().await {
+                Ok(event)
+                    if event.event_name() == "chat_cancelled"
+                        && event.context().thread_id == "t1" =>
+                {
+                    return event.context().client_id.clone();
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(error) => panic!("event stream closed: {error}"),
+            }
         }
-    }
+    })
+    .await
+    .ok();
     assert_eq!(cancelled_for.as_deref(), Some("test-client"));
 }
 

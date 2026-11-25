@@ -16,7 +16,7 @@
 # `linked_module()` so several can share one executable without duplicate
 # `TINYBUS_MODULE_ABI_V1` symbols. They all resolve against the single
 # `vendor/tinybus` through the root `[patch]` tables: every module repo
-# requires `tinybus >=0.1.3, <0.2` and patches its nested copy for standalone
+# requires tinybus 0.3 (>=0.3.6) and patches its nested copy for standalone
 # builds only. `cargo build -p openhuman-modules-linked --features all` is the
 # proof (and `lib_tests.rs` admits each factory's module).
 

@@ -3,14 +3,14 @@
 #![cfg(target_os = "linux")]
 
 use std::time::Duration;
-use tinytools_std::timeout::{output_or_kill, output_unbounded, ProcessCleanup};
+use tinyagents_harness_tools::exec::timeout::{output_or_kill, output_unbounded, ProcessCleanup};
 
 /// A shell child that leads its own process group and dies with its handle, as
 /// the module-owned shell children do.
 fn shell_child(command: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("sh");
     cmd.arg("-c").arg(command).kill_on_drop(true);
-    tinytools_std::timeout::own_process_group(cmd.as_std_mut());
+    tinyagents_harness_tools::exec::timeout::own_process_group(cmd.as_std_mut());
     cmd
 }
 
@@ -225,7 +225,12 @@ async fn cancellation_reaps_the_leader_when_an_escaped_descendant_holds_its_pipe
                 _ = tokio::time::sleep(Duration::from_millis(10)) => {}
             }
             if let Ok(pid) = std::fs::read_to_string(&pidfile) {
-                break pid;
+                if pid.trim().parse::<u32>().is_ok() {
+                    break pid;
+                }
+                // The shell creates the file before it writes the PID, so a
+                // read can land on an empty or partial file; poll again.
+                eprintln!("[process_cancellation] pidfile not ready yet: {pid:?}");
             }
         }
     })

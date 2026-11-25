@@ -3,23 +3,26 @@
 //! The JSON-RPC server in `openhuman-rpc` (HTTP `/rpc` and Socket.IO
 //! `rpc:request`), the CLI, the device tunnel and [`CoreRuntime::invoke`](crate::core::runtime::CoreRuntime::invoke)
 //! all resolve a method through [`invoke_method`]. It validates params against
-//! the controller registry, dispatches, and on a confirmed session expiry
-//! publishes the event that signs the user out.
+//! the controller registry and dispatches. A generic downstream auth error is
+//! not enough to sign out: only the request-owning client can publish expiry
+//! with the fingerprint of the credential it actually sent.
 
 use serde_json::Value;
 
-use super::session_expiry::{is_session_expired_error, is_unconfirmed_unauthorized_error};
 use crate::core::all;
+use crate::core::observability::is_session_expired_error;
 use crate::core::runtime::{CoreContext, DispatchCtx};
 use crate::core::types::AppState;
+use crate::core::StructuredRpcError;
 
 /// Invokes a JSON-RPC method by name.
 ///
 /// This is a high-level wrapper around [`invoke_method_inner`] that adds
-/// automatic session management logic. If a call fails with a confirmed
-/// OpenHuman session-expired error, it publishes the event that clears a
-/// backend session. The offline local credential has no backend session to
-/// expire and receives a recoverable hosted-unavailable error instead.
+/// generic session-error handling. It cannot identify the credential selected
+/// by a downstream client, so a hosted 401 remains non-actionable here. The
+/// request-owning client publishes expiry with its request-time fingerprint.
+/// The offline local credential has no backend session to expire and receives
+/// a recoverable hosted-unavailable error instead.
 ///
 /// # Arguments
 ///
@@ -34,6 +37,10 @@ pub async fn invoke_method(
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
+    // Generic controller dispatch does not own the hosted client's request
+    // credential selection, so its start-time session snapshot is not reliable
+    // evidence of which token received a downstream 401.
+    let request_credential_fingerprint: Option<String> = None;
     let mut result = invoke_scoped(ctx.clone(), state, method, params).await;
 
     // Session auto-cleanup: if the OpenHuman auth session is explicitly
@@ -45,34 +52,68 @@ pub async fn invoke_method(
     if let Err(ref msg) = result {
         let sanitized_reason = tinyinference_core::sanitize::sanitize_api_error(msg);
         if is_session_expired_error(msg) {
-            // The subscriber ignores an offline local session, but Socket.IO
-            // also hears this event and broadcasts sign-out independently.
-            // Suppress it at the publisher for backend-only routes that the
-            // local credential cannot use. This extra config read happens only
-            // on a classified session-expiry error, never on the normal path.
-            let local =
-                crate::security::credentials::session_support::current_session_is_local(&ctx).await;
-            if should_publish_session_expired(msg, local) {
-                log::warn!(
-                    "[jsonrpc] confirmed session expiry for method='{}' — publishing SessionExpired: {}",
-                    method,
-                    sanitized_reason
-                );
-                // `sanitize_api_error` scrubs pasted-through provider replies.
-                crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
-                    source: format!("jsonrpc.invoke_method:{method}"),
-                    reason: sanitized_reason,
-                });
+            // The credential may have changed while the handler's backend
+            // request was in flight. Suppress both the bus event and the RPC
+            // error's auth-expired marker so the renderer cannot independently
+            // sign out a replacement credential from the response body.
+            let current = if let Ok(config) = ctx.load_config().await {
+                let token = crate::credentials::session_state::get_session_token(&config)
+                    .await
+                    .ok()
+                    .flatten();
+                let local = token
+                    .as_deref()
+                    .is_some_and(crate::credentials::session_state::is_local_session_token);
+                let api_key = crate::credentials::api_key::has_api_key(&config).await;
+                Some((token, local, api_key))
             } else {
-                log::info!(
-                    "[jsonrpc] backend session unavailable for local offline credential method='{}' — leaving local auth intact",
+                None
+            };
+            let Some((current_token, local, api_key)) = current else {
+                log::warn!(
+                    "[jsonrpc] session expiry for method='{}' not acted on because current credentials could not be checked",
                     method
                 );
-                // The RPC error is also observed by the renderer's auth
-                // classifier. Keep the background hosted probe recoverable
-                // without asking it to infer the core's credential kind.
-                result = Err(translate_local_session_error(msg, local)
-                    .expect("classified local session error"));
+                return Err(
+                    "Backend request failed while current session state could not be verified"
+                        .to_string(),
+                );
+            };
+            match session_failure_outcome(
+                msg,
+                local,
+                api_key,
+                request_credential_fingerprint.as_deref(),
+                current_token.as_deref(),
+            ) {
+                SessionFailureOutcome::Replace { reason, message } => {
+                    log::info!(
+                        "[jsonrpc] session expiry for method='{}' not acted on ({reason}) — replacing auth-expired error",
+                        method
+                    );
+                    result = Err(message);
+                }
+                SessionFailureOutcome::PassThrough => {
+                    log::info!(
+                        "[jsonrpc] signed-out pre-flight refusal for method='{}' — no credential stored, returning original error",
+                        method
+                    );
+                }
+                SessionFailureOutcome::PublishExpiry => {
+                    log::warn!(
+                        "[jsonrpc] confirmed session expiry for method='{}' — publishing SessionExpired: {}",
+                        method,
+                        sanitized_reason
+                    );
+                    // `sanitize_api_error` scrubs pasted-through provider replies.
+                    crate::core::bus::BUS.publish(
+                        crate::core::events::DomainEvent::SessionExpired {
+                            source: format!("jsonrpc.invoke_method:{method}"),
+                            reason: sanitized_reason,
+                            credential_fingerprint: request_credential_fingerprint.clone(),
+                        },
+                    );
+                }
             }
         } else if is_unconfirmed_unauthorized_error(msg) {
             log::info!(
@@ -106,8 +147,127 @@ async fn invoke_scoped(
     }
 }
 
-fn should_publish_session_expired(msg: &str, credential_is_local: bool) -> bool {
-    is_session_expired_error(msg) && !credential_is_local
+/// What generic dispatch does with an error classified as session expiry.
+#[derive(Debug, PartialEq, Eq)]
+enum SessionFailureOutcome {
+    /// Replace the error so it carries no auth-expired marker the renderer
+    /// could act on; `reason` is a grep-friendly, content-free log tag.
+    Replace {
+        reason: &'static str,
+        message: String,
+    },
+    /// The request-time credential is still current: publish `SessionExpired`.
+    PublishExpiry,
+    /// Return the original error unchanged.
+    PassThrough,
+}
+
+/// Decide how [`invoke_method`] answers a session-expiry-classified error,
+/// given the credentials stored now and the request-time fingerprint (if any).
+fn session_failure_outcome(
+    msg: &str,
+    local: bool,
+    api_key: bool,
+    request_fingerprint: Option<&str>,
+    current_token: Option<&str>,
+) -> SessionFailureOutcome {
+    if api_key {
+        return replace(
+            msg,
+            "api_key_credential",
+            "Backend request failed while using an API-key credential".to_string(),
+        );
+    }
+    if let Some(message) = translate_local_session_error(msg, local) {
+        // The RPC error is also observed by the renderer's auth classifier.
+        // Keep the background hosted probe recoverable.
+        return replace(msg, "local_offline_credential", message);
+    }
+    if current_token.is_none() {
+        // Nothing was stored or sendable (no session, no API key): this is a
+        // local signed-out pre-flight refusal, not a downstream 401 against a
+        // credential. There is no provenance to verify and no session to
+        // sign out, so keep the original error and its sign-in hint.
+        return SessionFailureOutcome::PassThrough;
+    }
+    if request_session_failure_is_actionable(msg, local, request_fingerprint, current_token) {
+        return SessionFailureOutcome::PublishExpiry;
+    }
+    // Avoid returning an auth-expired marker that would let the renderer sign
+    // out a token this request may not have used.
+    replace(
+        msg,
+        "credential_provenance_unavailable",
+        "Backend request failed; credential provenance could not be verified".to_string(),
+    )
+}
+
+/// A [`SessionFailureOutcome::Replace`] whose error says `message` and keeps
+/// the original [`StructuredRpcError`] `data` unless it carries a sign-out
+/// marker. Codes such as memory's `UNAUTHORIZED` drive specific UI and never
+/// sign out, so dropping them would only cost the renderer its branch.
+fn replace(original: &str, reason: &'static str, message: String) -> SessionFailureOutcome {
+    let kept = StructuredRpcError::decode(original).and_then(|envelope| {
+        let data = envelope
+            .data
+            .filter(|data| !carries_sign_out_marker(&data.to_string()))?;
+        Some((data, envelope.expected_user_state))
+    });
+    log::debug!(
+        "[invoke][session-failure] replacing auth-expired error reason={reason} structured_data={}",
+        if kept.is_some() {
+            "kept"
+        } else {
+            "dropped_or_absent"
+        }
+    );
+    let message = match kept {
+        Some((data, expected_user_state)) => StructuredRpcError {
+            message,
+            data: Some(data),
+            expected_user_state,
+        }
+        .encode(),
+        None => message,
+    };
+    SessionFailureOutcome::Replace { reason, message }
+}
+
+/// Whether `text` holds anything that reads as "session expired, sign out":
+/// [`is_session_expired_error`], or a marker the renderer's auth classifier
+/// (`classifyRpcError` / `classifyAuthExpiredReason` in
+/// `app/src/services/coreRpcClient.ts`) matches case-insensitively —
+/// `Session expired`, `SESSION_EXPIRED`, `no backend session token`,
+/// `session jwt required`.
+fn carries_sign_out_marker(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    is_session_expired_error(text)
+        || [
+            "session expired",
+            "session_expired",
+            "no backend session token",
+            "session jwt required",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+fn request_session_failure_is_actionable(
+    msg: &str,
+    credential_is_local: bool,
+    request_fingerprint: Option<&str>,
+    current_token: Option<&str>,
+) -> bool {
+    !credential_is_local
+        && is_session_expired_error(msg)
+        && request_fingerprint
+            .zip(current_token)
+            .is_some_and(|(fingerprint, token)| {
+                crate::credentials::backend_credential::credential_fingerprint_matches(
+                    fingerprint,
+                    token,
+                )
+            })
 }
 
 fn translate_local_session_error(msg: &str, credential_is_local: bool) -> Option<String> {
@@ -117,6 +277,20 @@ fn translate_local_session_error(msg: &str, credential_is_local: bool) -> Option
             crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
         )
     })
+}
+
+/// Detect auth-looking failures that are not specific enough to clear the
+/// session. This is only for diagnostics; it must not feed the
+/// `SessionExpired` publish path.
+///
+/// Matches a generic `401 Unauthorized` OR a bare `"invalid token"` string,
+/// either of which can come from BYO-key providers, Composio, channels, or
+/// other scoped downstream calls. Used exclusively for diagnostic logging in
+/// [`invoke_method`] so provider auth failures are visible in the logs without
+/// being misclassified as session expiry.
+fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("401") && lower.contains("unauthorized")) || lower.contains("invalid token")
 }
 
 /// Internal method invocation logic.

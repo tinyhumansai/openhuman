@@ -36,7 +36,6 @@ fn allowed_users_for_channel<'a>(config: &'a Config, channel: &str) -> Option<&'
         "discord" => cc.discord.as_ref().map(|c| c.allowed_users.as_slice()),
         "slack" => cc.slack.as_ref().map(|c| c.allowed_users.as_slice()),
         "mattermost" => cc.mattermost.as_ref().map(|c| c.allowed_users.as_slice()),
-        "matrix" => cc.matrix.as_ref().map(|c| c.allowed_users.as_slice()),
         "irc" => cc.irc.as_ref().map(|c| c.allowed_users.as_slice()),
         "lark" => cc.lark.as_ref().map(|c| c.allowed_users.as_slice()),
         "dingtalk" => cc.dingtalk.as_ref().map(|c| c.allowed_users.as_slice()),

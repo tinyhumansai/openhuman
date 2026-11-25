@@ -59,15 +59,6 @@ async fn handler_rejects_invalid_params() {
     assert!(err.contains("invalid params"), "{err}");
 }
 
-#[test]
-fn an_unknown_function_gets_the_error_schema() {
-    let schema = session_import_schemas("no_such_function");
-    assert_eq!(schema.namespace, "session_import");
-    assert_eq!(schema.function, "unknown");
-    assert_eq!(schema.outputs.len(), 1);
-    assert_eq!(schema.outputs[0].name, "error");
-}
-
 /// Runs the import against `workspace` (or the configured one when `None`)
 /// with the configured workspace pointed at a scratch directory, so nothing
 /// touches the operator's home.

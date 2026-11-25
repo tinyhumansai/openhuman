@@ -113,6 +113,15 @@ each has its own message from `user_facing_error`.
   "citations"?, "fallback_from"?, "results":[...]}`, with excerpts capped at
   300 chars, which the chat UI renders as a search card.
 
+`render::render_with` takes the module's `RenderOptions` for the model text.
+`[search] compact_results = true` (env `OPENHUMAN_SEARCH_COMPACT_RESULTS`)
+selects `RenderOptions::compact()`: citations that repeat a listed result are
+left out and a page's text keeps 1,500 chars instead of 500. It defaults to
+`false`, the rendering above. `[search] contents_max_chars` (env
+`OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS`, `0` clears) asks Exa for at most that
+many characters per page (`ProviderConfig::contents_max_chars`); unset asks for
+whole pages.
+
 ### Configuration and presentation
 
 Config lives in `[search]` (`config/schema/tools/search.rs`): `providers`,

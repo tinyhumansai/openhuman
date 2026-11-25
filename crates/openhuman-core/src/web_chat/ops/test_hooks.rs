@@ -23,6 +23,10 @@ pub struct TestRunChatTaskBlock {
     /// Lets a test end a parked turn without using cancellation, so it can
     /// exercise terminal queue handling such as follow-up dispatch.
     pub release: std::sync::Arc<tokio::sync::Notify>,
+    /// Maximum virtual wall time to keep the controlled turn parked before
+    /// returning the fixture's elapsed result. Existing tests use 30 seconds;
+    /// long-turn ingress tests can select a larger value.
+    pub max_park_for: std::time::Duration,
     /// When set, a released turn succeeds with a fixed reply stored under
     /// this workspace instead of failing, so success delivery is observable.
     pub succeed_in: Option<std::path::PathBuf>,
@@ -31,6 +35,20 @@ pub struct TestRunChatTaskBlock {
 #[cfg(any(test, debug_assertions))]
 pub(crate) static TEST_RUN_CHAT_TASK_BLOCK: Lazy<Mutex<Option<TestRunChatTaskBlock>>> =
     Lazy::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) static TEST_LAST_RUN_CHAT_TASK_ERROR: Lazy<Mutex<Option<String>>> =
+    Lazy::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) async fn set_last_run_chat_task_error_for_test(error: Option<&str>) {
+    *TEST_LAST_RUN_CHAT_TASK_ERROR.lock().await = error.map(str::to_owned);
+}
+
+#[cfg(test)]
+pub(crate) async fn last_run_chat_task_error_for_test() -> Option<String> {
+    TEST_LAST_RUN_CHAT_TASK_ERROR.lock().await.clone()
+}
 
 /// Process-wide lock serializing every test that drives the global
 /// `run_chat_task` test hooks (`set_test_run_chat_task_block`,
@@ -73,4 +91,114 @@ pub(crate) static TEST_PARK_AFTER_RUN: std::sync::atomic::AtomicBool =
 #[cfg(any(test, debug_assertions))]
 pub fn set_test_park_after_run(park: bool) {
     TEST_PARK_AFTER_RUN.store(park, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether a test hook will park or fail the next turn. Such a turn skips
+/// session checkout, like one wedged before its config resolved.
+pub(crate) async fn test_hooks_active() -> bool {
+    TEST_FORCED_RUN_CHAT_TASK_ERROR.lock().await.is_some()
+        || TEST_RUN_CHAT_TASK_BLOCK.lock().await.is_some()
+}
+
+/// Apply the forced-error and parking hooks at the start of a turn's run.
+/// `Some(outcome)` is the whole turn.
+pub(crate) async fn run_test_hooks(
+    shared: &super::super::runner::Shared,
+    request: &tinyagents_harness::turn_runner::TurnRequest<
+        crate::agent::queued_turn::QueuedPayload,
+    >,
+) -> Option<Result<tinyagents_harness::turn_runner::TurnResult, String>> {
+    use tinyagents_harness::turn_runner::TurnResult;
+    let (thread_id, request_id) = (&request.thread_id, &request.request_id);
+    if let Some(forced) = TEST_FORCED_RUN_CHAT_TASK_ERROR.lock().await.take() {
+        log::debug!(
+            "[web-channel][test] forced run_chat_task failure client_id={} thread_id={thread_id} request_id={request_id}",
+            request.payload.client_id
+        );
+        return Some(Err(forced));
+    }
+    // Park the turn in flight so concurrency and cooperative cancellation can
+    // be observed. A `Drop` guard flips the supplied flag if this future is
+    // dropped (cancelled) before the sleep elapses, proving the turn was torn
+    // down cooperatively rather than left running.
+    let block = TEST_RUN_CHAT_TASK_BLOCK.lock().await.clone()?;
+    struct DropGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _guard = DropGuard(block.dropped.clone());
+    log::debug!(
+        "[web-channel][test] parking the turn thread_id={thread_id} request_id={request_id}"
+    );
+    // The turn future is live and parked: a test may cancel now.
+    block
+        .started
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::select! {
+        _ = block.release.notified() => Some(match block.succeed_in.clone() {
+            Some(workspace_dir) => {
+                shared.with(request_id, |slot| {
+                    slot.result = Some(super::super::types::WebChatTaskResult {
+                        full_response: "parked reply".to_string(),
+                        citations: Vec::new(),
+                        usage: None,
+                        workspace_dir,
+                        timing: None,
+                    });
+                });
+                Ok(TurnResult {
+                    reply: "parked reply".to_string(),
+                    data: serde_json::Value::Null,
+                })
+            }
+            None => Err("test block released".to_string()),
+        }),
+        _ = tokio::time::sleep(block.max_park_for) => {
+            Some(Err("test block elapsed".to_string()))
+        }
+    }
+}
+
+/// Test seam: keep a parallel turn parked on `thread_id`, and cancel `cancel`
+/// when that turn is torn down, so callers can watch a teardown reach it.
+#[cfg(test)]
+pub(crate) async fn track_parallel_turn_for_test(
+    ctx: &crate::core::runtime::DispatchCtx,
+    thread_id: &str,
+    cancel: tokio_util::sync::CancellationToken,
+) {
+    let _serial = RUN_CHAT_TASK_TEST_LOCK.lock().await;
+    let block = TestRunChatTaskBlock {
+        started: Default::default(),
+        dropped: Default::default(),
+        release: Default::default(),
+        max_park_for: std::time::Duration::from_secs(30),
+        succeed_in: None,
+    };
+    set_test_run_chat_task_block(Some(block.clone())).await;
+    super::start_chat(
+        ctx,
+        "test-client",
+        thread_id,
+        "parked parallel turn",
+        None,
+        None,
+        None,
+        Some("parallel".to_string()),
+        Default::default(),
+    )
+    .await
+    .expect("parallel turn starts");
+    while !block.started.load(std::sync::atomic::Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    set_test_run_chat_task_block(None).await;
+    ctx.clone().spawn(async move {
+        while !block.dropped.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        cancel.cancel();
+    });
 }

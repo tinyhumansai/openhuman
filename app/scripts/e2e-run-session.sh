@@ -233,6 +233,9 @@ trap cleanup EXIT
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
 export BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
 export OPENHUMAN_E2E_MODE="1"
+# Sign-in stores the session through TinySecurity's keyring, which asks the
+# user to approve each operation; the e2e-test-support app answers for them.
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 export APPIUM_PORT
 # Redirect Telegram Bot API calls to the mock server during E2E runs.
 # The mock server (WS-A) serves /bot<token>/* routes on the same port as the
@@ -382,7 +385,7 @@ if [ "$OS" = "Linux" ] && [ "${E2E_USE_TAURI_DRIVER:-0}" = "1" ]; then
       OPENHUMAN_TINYMCP_TEST_MODULE OPENHUMAN_CEF_CACHE_PATH \
       OPENHUMAN_SERVICE_MOCK OPENHUMAN_SERVICE_MOCK_STATE_FILE \
       OPENHUMAN_TELEGRAM_BOT_API_BASE OPENHUMAN_COMPOSIO_DIRECT_BASE_V2 \
-      OPENHUMAN_COMPOSIO_DIRECT_BASE_V3 XDG_DATA_HOME; do
+      OPENHUMAN_COMPOSIO_DIRECT_BASE_V3 OPENHUMAN_TEST_KEYRING_CONSENT XDG_DATA_HOME; do
       if declare -p "$env_name" >/dev/null 2>&1; then
         printf 'export %s=%q\n' "$env_name" "${!env_name}"
       fi

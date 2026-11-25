@@ -1,12 +1,13 @@
 //! Thin JSON-RPC handlers: parse params, load config, delegate to the ops,
 //! and persist config for the setters.
 
+use crate::util::params::value_to_json;
 use std::future::Future;
 
 use crate::config::Config;
 use crate::core::all::ControllerFuture;
 use crate::core::runtime::DispatchCtx;
-use crate::core::{Outcome, StructuredRpcError};
+use crate::core::StructuredRpcError;
 use crate::memory::explore::{self, ExploreParams, ItemsGetParams};
 use crate::memory::lifecycle::views::{self, JobsRunParams, PackPreviewParams, PolicySetParams};
 use crate::memory::scope;
@@ -74,12 +75,8 @@ fn parse<T: DeserializeOwned>(params: Map<String, Value>) -> std::result::Result
     })
 }
 
-fn to_json<T: Serialize>(value: T) -> std::result::Result<Value, String> {
-    Outcome::new(value, Vec::new()).into_cli_compatible_json()
-}
-
 fn finish<T: Serialize>(result: Result<T>) -> std::result::Result<Value, String> {
-    to_json(result.map_err(|error| StructuredRpcError::from(error).encode())?)
+    value_to_json(result.map_err(|error| StructuredRpcError::from(error).encode())?)
 }
 
 async fn load(ctx: &DispatchCtx) -> std::result::Result<Config, String> {
@@ -102,7 +99,7 @@ fn engine_set_save_error(error: anyhow::Error) -> String {
 
 pub(super) fn engines_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     rpc::<EmptyParams, _>(ctx, params, |_, config, _| async move {
-        Ok(ops::engines_list(&config))
+        Ok(ops::engines_list(&config).await)
     })
 }
 
@@ -116,7 +113,7 @@ pub(super) fn engine_set(ctx: DispatchCtx, params: Map<String, Value>) -> Contro
     Box::pin(async move {
         let params = parse::<EngineSetParams>(params)?;
         let mut config = load(&ctx).await?;
-        if let Err(error) = ops::apply_engine_set(&mut config, &params) {
+        if let Err(error) = ops::apply_engine_set(&mut config, &params).await {
             return finish::<Value>(Err(error));
         }
         if let Err(error) = config.save().await {
@@ -338,7 +335,7 @@ pub(super) fn sources_sync(ctx: DispatchCtx, params: Map<String, Value>) -> Cont
         ctx,
         params,
         |ctx, config, params: SourcesSyncParams| async move {
-            let started = sources::start_sync(&ctx, &config, params.id.as_deref())?;
+            let started = sources::start_sync(&ctx, &config, params.id.as_deref()).await?;
             Ok(SourcesSyncView { started })
         },
     )

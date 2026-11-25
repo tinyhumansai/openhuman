@@ -16,7 +16,7 @@ Thin RPC adapter domain for the referral program. It does **not** own any busine
 | --- | --- |
 | [`crates/openhuman-tinyhumans/src/hosted/referral/mod.rs`](mod.rs) | Export-only. Re-exports `ops::*` and the schema/controller pair (`all_referral_controller_schemas`, `all_referral_registered_controllers`, `referral_schemas`). |
 | [`crates/openhuman-tinyhumans/src/hosted/referral/ops.rs`](ops.rs) | Business logic: `get_stats`, `claim_referral`, each through `HostedClient` (see `../client.rs`). Tests in [`ops_tests.rs`](ops_tests.rs) run against an Axum mock backend. |
-| [`crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs`](schemas.rs) | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and helpers (`to_json`, `deserialize_params`, `json_output`). |
+| [`crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs`](schemas.rs) | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and the local `deserialize_params` helper; `to_json` and `json_output` come from the core's shared `util::params` (through `openhuman_embed::__host`). |
 
 ## Public surface
 
@@ -51,7 +51,7 @@ None of its own. The domain is stateless: it reads the backend credential throug
 - `crate::config::Config`: config struct passed into ops; `config::rpc::load_config_with_timeout` is used by the schema handlers.
 - `crate::core::all::{ControllerFuture, RegisteredController}` and `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`: controller registry types.
 - `crate::rpc::RpcOutcome`: return wrapper carrying value + logs.
-- Test-only: `crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME}` for seeding session tokens in unit tests.
+- Test-only: `crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME}` for seeding session tokens in unit tests.
 
 ## Used by
 

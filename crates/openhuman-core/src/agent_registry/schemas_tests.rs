@@ -9,12 +9,6 @@ fn all_controller_schemas_and_registered_controllers_stay_in_sync() {
 }
 
 #[test]
-#[should_panic(expected = "unknown agent_registry schema function")]
-fn schemas_panics_on_unknown_function() {
-    schemas("missing");
-}
-
-#[test]
 fn available_tools_schema_is_registered_with_tools_output() {
     let schema = schemas("available_tools");
     assert_eq!(schema.namespace, NAMESPACE);

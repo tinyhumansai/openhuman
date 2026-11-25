@@ -242,7 +242,7 @@ where
         module_state,
         accessibility: "unknown".to_owned(),
         screen_recording: "unknown".to_owned(),
-        jev_ready: crate::modules::desktop::jev_ready(config),
+        jev_ready: crate::modules::desktop::jev_ready(config).await,
         reason: None,
     };
     if !result.supported {

@@ -68,3 +68,45 @@ async fn memory_storage_probe_reports_the_backend_as_available() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].severity, FindingSeverity::Pass);
 }
+
+/// Needs a live server: set `OPENHUMAN_TEST_MONGODB_URI` (e.g.
+/// `mongodb://127.0.0.1:27017`) and build with `storage-mongodb`.
+#[cfg(feature = "storage-mongodb")]
+#[tokio::test]
+async fn mongodb_connect_probe_creates_nothing_in_the_inspected_database() {
+    use std::io::Write as _;
+    let Ok(uri) = std::env::var("OPENHUMAN_TEST_MONGODB_URI") else {
+        let _ = writeln!(
+            std::io::stderr(),
+            "skipped: OPENHUMAN_TEST_MONGODB_URI unset"
+        );
+        return;
+    };
+    // Unique per run, and dropped below only if the probe itself created it.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let database = format!("oh_doctor_probe_{}_{nanos}", std::process::id());
+    let findings = inspect_storage_config(
+        "storage/connect",
+        StorageConfig::MongoDb {
+            uri: uri.clone(),
+            database: database.clone(),
+        },
+    )
+    .await;
+    let db = tinystoragedrivers_connect::MongoConnection::connect(&uri, &database)
+        .await
+        .expect("test client")
+        .database();
+    let created = db.list_collection_names().await.expect("list collections");
+    if !created.is_empty() {
+        let _ = db.drop().await;
+    }
+    assert_eq!(findings[0].severity, FindingSeverity::Pass);
+    assert!(
+        created.is_empty(),
+        "the read-only probe created {created:?}"
+    );
+}

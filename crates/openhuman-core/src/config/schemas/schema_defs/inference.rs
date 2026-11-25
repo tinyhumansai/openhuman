@@ -1,12 +1,13 @@
 //! Schemas for config snapshot reads and model, memory, runtime, and local-AI inference settings.
 
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::util::params::{json_output, optional_string};
 
-use super::super::helpers::{json_output, optional_bool, optional_json, optional_string};
+use super::super::helpers::{optional_bool, optional_json};
 
 pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
     match function {
-"get_config" => Some( ControllerSchema {
+        "get_config" => Some(ControllerSchema {
             namespace: "config",
             function: "get",
             description: "Read persisted config snapshot and resolved paths.",
@@ -18,7 +19,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 required: true,
             }],
         }),
-"get_client_config" => Some( ControllerSchema {
+        "get_client_config" => Some(ControllerSchema {
             namespace: "config",
             function: "get_client_config",
             description: "Read safe client-facing config fields (api_url, feature flags). No secrets.",
@@ -62,14 +63,23 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 },
             ],
         }),
-"update_model_settings" => Some( ControllerSchema {
+        "update_model_settings" => Some(ControllerSchema {
             namespace: "config",
             function: "update_model_settings",
             description: "Update model and backend connection settings, including a custom OpenAI-compatible backend (api_url + api_key).",
             inputs: vec![
-                optional_string("api_url", "OpenHuman product backend URL (auth/billing/voice). Almost always left blank; the inference URL is a separate `inference_url` field."),
-                optional_string("inference_url", "Custom OpenAI-compatible LLM endpoint. When set together with `api_key`, inference goes direct to this URL instead of the OpenHuman backend. Pass an empty string to clear."),
-                optional_string("api_key", "Optional API key for the configured inference endpoint. Pass an empty string to clear a previously stored key."),
+                optional_string(
+                    "api_url",
+                    "OpenHuman product backend URL (auth/billing/voice). Almost always left blank; the inference URL is a separate `inference_url` field.",
+                ),
+                optional_string(
+                    "inference_url",
+                    "Custom OpenAI-compatible LLM endpoint. When set together with `api_key`, inference goes direct to this URL instead of the OpenHuman backend. Pass an empty string to clear.",
+                ),
+                optional_string(
+                    "api_key",
+                    "Optional API key for the configured inference endpoint. Pass an empty string to clear a previously stored key.",
+                ),
                 optional_string("default_model", "Default model id."),
                 FieldSchema {
                     name: "default_temperature",
@@ -89,18 +99,39 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     comment: "Optional list of cloud provider entries {id, slug, label, endpoint, auth_style, ca_cert_pem, oci?}. auth_style is one of bearer, anthropic, openhuman_jwt, none, oci; `oci` carries the non-secret OCI Generative AI settings {auth_mode, config_file, profile, region, compartment_id, project_id, transport, dedicated_endpoint_id}. The optional PEM CA bundle is trusted only for this provider; an empty string clears it. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
                     required: false,
                 },
-                optional_string("primary_cloud", "id of the cloud_providers entry used when a workload routes to 'cloud'. Empty string clears."),
-                optional_string("chat_provider", "Provider string for direct conversational chat workloads."),
-                optional_string("reasoning_provider", "Provider string for the main reasoning workload (e.g. 'cloud', 'ollama:llama3.1:8b', 'openai:gpt-4o')."),
-                optional_string("agentic_provider", "Provider string for sub-agent / tool-loop workloads."),
-                optional_string("coding_provider", "Provider string for code-generation workloads."),
-                optional_string("vision_provider", "Provider string for the vision / multimodal workload (managed default: the default model)."),
+                optional_string(
+                    "primary_cloud",
+                    "id of the cloud_providers entry used when a workload routes to 'cloud'. Empty string clears.",
+                ),
+                optional_string(
+                    "chat_provider",
+                    "Provider string for direct conversational chat workloads.",
+                ),
+                optional_string(
+                    "reasoning_provider",
+                    "Provider string for the main reasoning workload (e.g. 'cloud', 'ollama:llama3.1:8b', 'openai:gpt-4o').",
+                ),
+                optional_string(
+                    "agentic_provider",
+                    "Provider string for sub-agent / tool-loop workloads.",
+                ),
+                optional_string(
+                    "coding_provider",
+                    "Provider string for code-generation workloads.",
+                ),
+                optional_string(
+                    "vision_provider",
+                    "Provider string for the vision / multimodal workload (managed default: the default model).",
+                ),
                 optional_string("memory_provider", "Provider string for summarisation."),
-                optional_string("embeddings_provider", "Provider string for embedding generation."),
+                optional_string(
+                    "embeddings_provider",
+                    "Provider string for embedding generation.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),
-"update_memory_settings" => Some( ControllerSchema {
+        "update_memory_settings" => Some(ControllerSchema {
             namespace: "config",
             function: "update_memory_settings",
             description: "Update the embedding settings and the agent's memory-context window.",
@@ -116,7 +147,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),
-"update_runtime_settings" => Some( ControllerSchema {
+        "update_runtime_settings" => Some(ControllerSchema {
             namespace: "config",
             function: "update_runtime_settings",
             description: "Update runtime execution strategy settings.",
@@ -134,11 +165,10 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),
-"update_local_ai_settings" => Some( ControllerSchema {
+        "update_local_ai_settings" => Some(ControllerSchema {
             namespace: "config",
             function: "update_local_ai_settings",
-            description:
-                "Update the local AI runtime master switch and per-feature usage flags.",
+            description: "Update the local AI runtime master switch and per-feature usage flags.",
             inputs: vec![
                 optional_bool(
                     "runtime_enabled",
@@ -168,10 +198,14 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     "usage_embeddings",
                     "Use the local model for embedding generation (when runtime_enabled).",
                 ),
+                optional_bool(
+                    "native_tool_calling",
+                    "Send native tools to the local runtime instead of the text tool protocol. For endpoints whose model calls tools natively.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),
-"resolve_api_url" => Some( ControllerSchema {
+        "resolve_api_url" => Some(ControllerSchema {
             namespace: "config",
             function: "resolve_api_url",
             description: "Resolve effective API base URL using config/env/default from core.",
@@ -183,7 +217,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 required: true,
             }],
         }),
-"get_runtime_flags" => Some( ControllerSchema {
+        "get_runtime_flags" => Some(ControllerSchema {
             namespace: "config",
             function: "get_runtime_flags",
             description: "Read environment-driven runtime flags.",

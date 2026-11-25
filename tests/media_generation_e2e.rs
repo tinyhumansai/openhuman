@@ -155,7 +155,7 @@ async fn start_backend() -> (String, Backend) {
     (format!("http://{address}"), backend)
 }
 
-fn config(root: &Path, api_url: &str) -> Config {
+async fn config(root: &Path, api_url: &str) -> Config {
     let mut config = Config {
         config_path: root.join("config.toml"),
         workspace_dir: root.join("workspace"),
@@ -164,7 +164,8 @@ fn config(root: &Path, api_url: &str) -> Config {
     };
     config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    openhuman_core::security::credentials::api_key::store_api_key(&config, API_KEY)
+    openhuman_core::credentials::api_key::store_api_key(&config, API_KEY)
+        .await
         .expect("store the TinyHumans API key");
     config
 }
@@ -182,12 +183,43 @@ async fn media_tools_deliver_images_and_videos_through_the_backend_proxy() {
     tinyhumans_boot::boot();
     let tmp = tempfile::tempdir().unwrap();
     let (api_url, backend) = start_backend().await;
-    let mut config = config(tmp.path(), &api_url);
+    let mut config = config(tmp.path(), &api_url).await;
     let action_dir = tmp.path().join("projects");
     // Deliverables land in the visible Files folder (#5505); metadata is read
     // through the artifact store because it may use the configured backend.
     let files_dir = tmp.path().join("Files");
     config.files_dir_override = Some(files_dir.clone());
+
+    // The source-backed product catalog is assembled after TinyHumans installs
+    // its media registration. Keep these hosted tools in the core catalog as
+    // well as exercising their generators below.
+    let security = Arc::new(openhuman_core::security::SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    ));
+    let registered = openhuman_core::tools::ops::all_tools(
+        Arc::new(config.clone()),
+        &security,
+        openhuman_core::security::AuditSink::disabled(),
+        &config.browser,
+        &config.http_request,
+        &action_dir,
+        &config,
+    )
+    .await;
+    for expected in [
+        "media_generate_image",
+        "media_generate_video",
+        "media_list_models",
+    ] {
+        assert!(
+            registered
+                .iter()
+                .any(|candidate| candidate.name() == expected),
+            "the host-registered media source must expose `{expected}`"
+        );
+    }
 
     let generators = managed_generators(&config).expect("backend transport is installed");
     let tools = media_tools_from(

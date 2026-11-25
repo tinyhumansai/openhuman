@@ -321,8 +321,8 @@ pub struct PromptContext<'a> {
     /// turn) so the frozen system-prompt prefix / KV-cache contract holds.
     pub agents_md_global: Option<String>,
     /// Pre-loaded project-layer `AGENTS.md` content — `<action_dir>/AGENTS.md`,
-    /// or a sub-agent's `worktree_action_dir` override. `None` when the file is
-    /// absent/empty, deduplicated against the global layer (same dir), or the
+    /// `None` when the file is absent/empty, deduplicated against the global
+    /// layer (same dir), or the
     /// gate is off. Rendered after the global layer.
     pub agents_md_local: Option<String>,
 }

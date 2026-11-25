@@ -122,14 +122,14 @@ async fn backend_and_direct_routes_report_the_same_connected_integrations() {
     let _direct_v2 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &base);
 
     let backend_tmp = tempfile::tempdir().unwrap();
-    let backend_config = config_with_backend(&backend_tmp, base.clone());
+    let backend_config = config_with_backend(&backend_tmp, base.clone()).await;
     let _workspace = EnvVarGuard::workspace_unlocked(backend_tmp.path());
     backend_config.save().await.unwrap();
     invalidate_connected_integrations_cache();
     let backend = shapes(fetch_connected_integrations(&backend_config).await);
 
     let direct_tmp = tempfile::tempdir().unwrap();
-    let mut direct_config = direct_mode_config(&direct_tmp);
+    let mut direct_config = direct_mode_config(&direct_tmp).await;
     direct_config.api_url = Some(base);
     invalidate_connected_integrations_cache();
     let direct = shapes(fetch_connected_integrations(&direct_config).await);

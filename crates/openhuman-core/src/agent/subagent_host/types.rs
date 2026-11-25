@@ -59,17 +59,6 @@ pub struct SubagentRunOptions {
     /// `{workspace_dir}/.openhuman/subagent_checkpoints/`.
     pub checkpoint_dir: Option<PathBuf>,
 
-    /// Per-worker isolated checkout for git-worktree isolation.
-    ///
-    /// When `Some`, the runner derives a [`WorkspaceDescriptor`] rooted at this
-    /// path (see `workspace_descriptor_for_subagent`) and threads it onto the
-    /// tinyagents run context, so acting tools (shell, git) resolve their CWD to
-    /// the worker's isolated worktree checkout via
-    /// `ToolExecutionContext.workspace` instead of the shared `Config.action_dir`.
-    /// When `None` (the default), behaviour is unchanged — tools fall through to
-    /// `security.action_dir`.
-    pub worktree_action_dir: Option<PathBuf>,
-
     /// SDK workspace descriptor threaded into the TinyAgents tool-execution
     /// context. When present it is attached to the run's `RunContext`
     /// (`RunContext::with_workspace`) and surfaced per tool call via
@@ -100,8 +89,8 @@ pub enum SubagentRunStatus {
     /// The sub-agent completed normally with a final response.
     Completed,
     /// The sub-agent called `ask_user_clarification` and is waiting
-    /// for the orchestrator to relay the user's answer via
-    /// `continue_subagent`.
+    /// for the orchestrator to relay the user's answer via a same-key async
+    /// spawn.
     AwaitingUser {
         question: String,
         options: Option<Vec<String>>,
@@ -113,8 +102,8 @@ pub enum SubagentRunStatus {
         /// failure in the runner was logged at `warn` and then reported as an
         /// ordinary `AwaitingUser` anyway. The orchestrator relayed a question
         /// and a `task_id`, and the failure only surfaced much later, when the
-        /// user had already answered and `continue_subagent` found nothing on
-        /// disk. Carrying the outcome here is what makes a failed write
+        /// user had already answered and the next spawn found nothing on disk.
+        /// Carrying the outcome here is what makes a failed write
         /// visible at pause time rather than at resume time (#5928).
         ///
         /// `None` does not mean resumption is impossible: a sub-agent with a
@@ -196,38 +185,19 @@ impl SubagentRunOutcome {
     }
 }
 
-/// Token + cost totals for a single sub-agent run.
-///
-/// Mirrors the inner-loop `AggregatedUsage`, lifted into the public outcome so
-/// the parent turn can fold sub-agent spend into the session-level token/cost
-/// meters surfaced in the UI footer.
-#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SubagentUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cached_input_tokens: u64,
-    /// Sum of the run's known call costs; read with `cost_source`.
-    pub charged_amount_usd: f64,
-    /// How certain `charged_amount_usd` is. `Unknown` means some call had no
-    /// charge and no catalogued price, so the sum is incomplete.
-    #[serde(
-        default = "unknown_cost_source",
-        skip_serializing_if = "is_unknown_cost_source"
-    )]
-    pub cost_source: tinyagents_harness::cost::CostSource,
+/// Token + cost totals for a single sub-agent run, lifted into the public
+/// outcome so the parent turn can fold sub-agent spend into the session-level
+/// token/cost meters surfaced in the UI footer. The type is TinyAgents'
+/// (`AgentProgress::SubagentCompleted` carries it).
+use tinyagents_harness::progress::SubagentUsage;
+
+/// The run's cost as a tally, for folding into a parent's.
+pub trait SubagentUsageExt {
+    fn cost(&self) -> tinyagents_harness::cost::CostTally;
 }
 
-fn unknown_cost_source() -> tinyagents_harness::cost::CostSource {
-    tinyagents_harness::cost::CostSource::Unknown
-}
-
-fn is_unknown_cost_source(source: &tinyagents_harness::cost::CostSource) -> bool {
-    *source == tinyagents_harness::cost::CostSource::Unknown
-}
-
-impl SubagentUsage {
-    /// The run's cost as a tally, for folding into a parent's.
-    pub fn cost(&self) -> tinyagents_harness::cost::CostTally {
+impl SubagentUsageExt for SubagentUsage {
+    fn cost(&self) -> tinyagents_harness::cost::CostTally {
         tinyagents_harness::cost::CostTally {
             known_usd: self.charged_amount_usd,
             source: self.cost_source,

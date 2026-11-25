@@ -5,6 +5,9 @@ and a terminal `TurnTrace`. Callbacks run synchronously: enqueue export work in
 the host and return promptly. Model observations contain the answering model,
 finish reason, duration, and provider-reported usage/cost. Tool observations
 pair starts and completions by call ID and report failure without an error body.
+A completed tool observation also carries `input_bytes` (the serialized
+arguments) and `output_bytes` (the result text the model is shown) whatever the
+capture mode, so tool cost can be attributed without capturing content.
 The terminal trace reports dispatch success, latency and final metadata.
 
 `TraceContent::MetadataOnly` is the default. It excludes model messages, replies,
@@ -43,6 +46,15 @@ callback records. Failed pipeline invocations report `failed=true`, without
 including raw provider errors. Unknown per-model charges stay `None`. Terminal
 `LastTurnUsage` retains the core cost-source classification, which can distinguish
 provider charges from catalogue estimates.
+
+`TurnObservation::Setup` reports a step the turn ran before its first model
+request, in the order the steps ran: `SetupPhase::AgentOpen`,
+`TranscriptResume`, `PromptRefresh` and `MemoryBlock`, each with its duration
+in milliseconds and whether it failed or was skipped (a memory block that
+missed its `memory_block_deadline_ms`). A step the turn did not need (no
+resume on a new thread, no refresh on a prompt that stays) reports nothing.
+Setup events carry no text or identifiers, and `run_id` is usually `None`
+because the run has not started; correlate by order within the observed turn.
 
 The terminal callback runs after the supplied dispatch future completes,
 including its cleanup, and handles failures that have no `TurnOutcome`. Dropping

@@ -545,7 +545,7 @@ fn forget(store: &mut Store, body: &Value) -> (u16, Value) {
     let cascade = body["cascade"].as_str().unwrap_or("derived_only");
     match cascade {
         "derived_only" => {
-            return ok(json!({ "deleted": { "events": 0 }, "requested": ids.len(), "matched": 0 }))
+            return ok(json!({ "deleted": { "events": 0 }, "requested": ids.len(), "matched": 0 }));
         }
         "redact_events" => {}
         _ => return fail(400, "INVALID_CASCADE"),

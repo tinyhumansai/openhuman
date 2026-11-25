@@ -34,8 +34,8 @@ struct ConfigVoiceProbe;
 impl VoiceStatusProbe for ConfigVoiceProbe {
     async fn inspect(&self, config: &Config) -> VoiceSnapshot {
         VoiceSnapshot {
-            stt: stt_readiness(config),
-            tts: tts_readiness(config),
+            stt: stt_readiness(config).await,
+            tts: tts_readiness(config).await,
         }
     }
 }
@@ -125,7 +125,7 @@ impl DoctorCheck for VoiceCheck {
     }
 }
 
-fn stt_readiness(config: &Config) -> Result<(), VoiceIssue> {
+async fn stt_readiness(config: &Config) -> Result<(), VoiceIssue> {
     #[cfg(not(feature = "voice"))]
     {
         let _ = config;
@@ -151,12 +151,13 @@ fn stt_readiness(config: &Config) -> Result<(), VoiceIssue> {
             return Err(VoiceIssue::ProviderUnsupported);
         }
         provider_credential_present_read_only(config, slug)
+            .await
             .then_some(())
             .ok_or(VoiceIssue::CredentialMissing)
     }
 }
 
-fn tts_readiness(config: &Config) -> Result<(), VoiceIssue> {
+async fn tts_readiness(config: &Config) -> Result<(), VoiceIssue> {
     #[cfg(not(feature = "voice"))]
     {
         let _ = config;
@@ -193,6 +194,7 @@ fn tts_readiness(config: &Config) -> Result<(), VoiceIssue> {
             return Err(VoiceIssue::ProviderUnsupported);
         }
         provider_credential_present_read_only(config, slug)
+            .await
             .then_some(())
             .ok_or(VoiceIssue::CredentialMissing)
     }
@@ -202,12 +204,13 @@ fn is_hosted_slug(slug: &str) -> bool {
     matches!(slug.trim(), "cloud" | "openhuman" | "backend")
 }
 
-fn provider_credential_present_read_only(config: &Config, slug: &str) -> bool {
-    use crate::security::credentials::{profiles::AuthProfileKind, AuthService};
+async fn provider_credential_present_read_only(config: &Config, slug: &str) -> bool {
+    use crate::credentials::{profiles::AuthProfileKind, AuthService};
 
     let key = crate::inference::provider::factory::auth_key_for_slug(slug);
     for provider in [key.as_str(), slug] {
-        if let Ok(Some(profile)) = AuthService::get_profile_read_only(config, provider, None) {
+        if let Ok(Some(profile)) = AuthService::get_profile_read_only(config, provider, None).await
+        {
             let nonempty = match profile.kind {
                 AuthProfileKind::Token => profile
                     .token
@@ -227,9 +230,11 @@ fn provider_credential_present_read_only(config: &Config, slug: &str) -> bool {
     if slug == "openai" {
         if let Ok(Some(profile)) = AuthService::get_profile_read_only(
             config,
-            crate::security::credentials::openai_oauth::OPENAI_PROVIDER_KEY,
-            Some(crate::security::credentials::openai_oauth::OPENAI_OAUTH_PROFILE_NAME),
-        ) {
+            crate::credentials::openai_oauth::OPENAI_PROVIDER_KEY,
+            Some(crate::credentials::openai_oauth::OPENAI_OAUTH_PROFILE_NAME),
+        )
+        .await
+        {
             if let Some(tokens) = profile.token_set {
                 return !tokens.access_token.trim().is_empty()
                     && !tokens.is_expiring_within(std::time::Duration::from_secs(120));

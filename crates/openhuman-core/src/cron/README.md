@@ -3,8 +3,10 @@
 The cron domain exposes the `cron.*` RPC controllers and agent tools that
 create and manage scheduled jobs. The core service drives scheduler dispatch,
 publishes health transitions, and supplies the host job handlers and delivery
-callbacks. Agents reach it through the `cron` and `schedule` tools, and the
-desktop UI through the `cron` RPC namespace.
+callbacks. Agents reach it through the `scheduling` pack's per-operation
+tools (`cron_add`, `cron_list`, `cron_update`, `cron_remove`, `cron_run`,
+`cron_runs`; the collapsed `cron` stays registered, deferred) and the
+`schedule` tool, and the desktop UI through the `cron` RPC namespace.
 
 Scheduling itself is not in core. The `tinyflows` loadable module owns the
 scheduler runtime (poll pass, process-wide run claims, retry with backoff,
@@ -54,8 +56,20 @@ scope's config, security policy and `CoreContext`. The host drives the ticks
 rather than letting the module run its own loop so the poll interval, the
 transition-only `HealthChanged` signals and the live-agent reconcile stay in one
 place, and so a test or embedder can run one deterministic pass
-(`run_live_agent_pass`). Dropping a dispatcher stops its scheduler
-(`StopScheduler`) and unserves its object.
+(`run_live_agent_pass`). A host that decides when one agent's jobs run (it
+opens agents on demand, or hands due work to a queue) runs that agent's pass
+alone with `run_agent_pass(agent_id)`, which is `Ok(None)` when the agent is
+not live and errors when the agent's config, policy or job store is
+unavailable, or a run could not be executed or recorded (a job that ran and
+failed is in its run record, not the result). It runs one batch of at most
+`scheduler.max_tasks` jobs, so a host calls it again after a full batch, and it
+stops the agent's scheduler before returning. Such a host must not also run the
+scheduler loop over that agent: the loop's scheduler owns the agent's job scope
+and the pass is refused ("a scheduler already owns this scope"). Both are the
+loop's own run, so occurrence claims keep two processes' passes from running an
+occurrence twice.
+Dropping a dispatcher stops its scheduler (`StopScheduler`) and unserves its
+object.
 
 Health is published on transitions only, so an idle queue does not put a
 steady `healthy: true` event on the bus every poll. A successful tick after a
@@ -99,15 +113,18 @@ permanent-failure classification stay in the executor and are not pluggable.
 
 `shell` jobs run through `run_job_command_with_timeout`
 ([`scheduler/shell_job.rs`](./scheduler/shell_job.rs)). Before spawning anything,
-it checks `can_act`, `is_rate_limited`, the host security policy against command
-facts returned by TinyBox `AnalyzeCommand`, and `record_action` against the
-action budget. Missing module analysis fails closed; no local parser replaces
-it. Any refusal returns a string starting `blocked by security policy:`, which
-the retry loop treats as final. Execution uses TinyBox `StartExec` on a
-module-owned passthrough resource, preserving the action directory and the
-shell's default pipeline exit status. The command has a hard 120 second timeout
-(`SHELL_JOB_TIMEOUT_SECS`); timeout cancellation and output cleanup are
-acknowledged by TinyBox before the resource is closed. With the autonomy policy
+`authorize_shell_command` checks the command with TinySecurity
+(`check_command`, `CommandFlow::Scheduled`), which also reserves it against the
+action budget. A refusal the policy decided (protected path, read-only,
+allowlist, hidden execution, high risk, category, local-only, or a `Block`
+gate) returns a string starting `blocked by security policy:`
+(`POLICY_REFUSAL_PREFIX`), which the retry loop treats as final. An unavailable
+module (fail closed) or an exhausted action budget may recover, so those stay
+retryable. Execution runs on the host (`sandbox::shell_exec::run_host`), in the
+action directory and with the shell's default pipeline exit status, under a
+hard timeout of `[cron] shell_timeout_secs` (default 120 seconds, minimum 1;
+`CronConfig::shell_timeout`); a command that outlives it is killed and the run
+fails with `job timed out after <n>s`. With the autonomy policy
 disabled (the default), most policy checks are inert; see the project
 `CLAUDE.md`.
 
@@ -129,9 +146,111 @@ disabled (the default), most policy checks are inert; see the project
    `start_cron_turn_clean` sets `suppress_transcript_autoload`. A cron agent has
    no thread, so without this its first turn would resume whatever unthreaded
    transcript was newest for that agent name.
-6. The turn runs inside `security::turn_origin::with_origin` with the origin from
+6. The turn runs inside `core::runtime::turn_origin::with_origin` with the origin from
    `origin::turn_origin_for_job_run`. The morning briefing job also runs under a
    24 hour task-recency window so task-fetch tools only return recent tasks.
+
+### Scheduled actions (opt-in)
+
+A scheduled agent turn is read-only by default: the host security gate
+(`agent/tinyagents/host/security_gate/authorize.rs`) refuses `shell` and every
+acting or external-effect tool for a `TrustedAutomation { Cron }` turn, before
+any approval setting is consulted, and the approval engine refuses a cron
+external effect (`CallOrigin::Cron`).
+
+An agent definition can lift this for the cron jobs that run it:
+
+```toml
+# <workspace>/agents/builder/agent.toml (or AgentDefinitionSpec::scheduled_actions(true))
+id = "builder"
+when_to_use = "Writes code and runs tests on a schedule"
+scheduled_actions = true
+
+[tools]
+named = ["shell", "file_read", "file_write", "browser"]
+```
+
+`origin::scheduled_actions_enabled` grants it only when the job names the agent
+in `agent_id`, the definition sets `scheduled_actions = true`, its tools are
+`named` (a wildcard scope is refused with a warning) and the process is not in
+SaaS mode. The run then executes as `TrustedAutomation { CronActions }`, and
+`run_agent_job_for_run` marks the session it built
+(`OpenHumanSessionHost::enable_scheduled_actions`). The gate skips the
+read-only cron stage only when all three hold: the `CronActions` origin, a
+marked run, and a run depth of 0 or 1 (`current_run_depth()`). The approval
+engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so the
+root's tools run without a person's approval.
+
+A sub-agent the run spawns inherits the origin but not the mark, so it is
+read-only by default. The sub-agent runner re-marks one direct child
+(`agent/subagent_host/ops/scheduled_actions_grant.rs`) only when all of these
+hold:
+
+- its tree's root is the scheduled-actions run (`scheduled_actions_root` on the
+  run context) and the child is at depth 1;
+- the child's own definition passes the same definition checks as the root
+  (`scheduled_actions = true`, `named` tools, not SaaS);
+- the child's definition is `sandbox_mode = "sandboxed"`;
+- the child runs in the root's workspace: a spawn that hands it a different
+  workspace descriptor (a delegated worktree) is not granted. In practice the
+  root needs a `scheduled_workspace` (below). A root on the bare `action_dir`
+  carries no descriptor, and `spawn_subagent` then gives its child one for the
+  core's `workspace_dir`, which is not where the root works, so no child of
+  such a root is granted.
+
+A granted child runs its shell with the root's `sandbox_filesystem_only`
+setting, whatever its own definition says: files-only also gives the shell
+the host network, and a child must not get more of it than its root. Every
+later gate stage (autonomy
+tier, approvals, wallet policy, action budget) runs for it exactly as for the
+root. A grandchild (depth 2 or deeper) stays read-only even if it was somehow
+marked.
+
+```toml
+# <workspace>/agents/builder_worker/agent.toml: a child the builder may hand
+# acting work to.
+id = "builder_worker"
+when_to_use = "Runs one build step for the scheduled builder"
+scheduled_actions = true
+sandbox_mode = "sandboxed"
+
+[tools]
+named = ["shell", "file_read", "file_write"]
+```
+
+`CronActions` also counts as trusted automation for the wallet: its root run
+may call `wallet_balances` and `wallet_execute_prepared` (executes only when
+`[wallet_policy] automation_enabled` is set and the transfer fits the asset's
+caps), and x402 payments from `x402_request` / `http_request` are approved
+without a prompt within the per-request budget. A plain `Cron` turn is refused
+by both (it stays read-only, so `wallet_balances` still works).
+A job created from a channel conversation stays an `ExternalChannel` turn, so `wallet_execute_prepared` and x402 are refused for it too.
+
+Nothing else is lifted: the channel boundary, the autonomy tier
+(`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
+analysis and protected-path floor, the agent's `sandbox_mode`, the browser's
+allowed-websites list and its forced checkpoint before payment all still
+apply. (An agent whose `sandbox_mode = "sandboxed"` runs its shell in the
+kernel jail, where the lexical protected-path floor on command text is waived
+and the jail's grants are the boundary; see `security/policy/README.md`.) A job created from a channel conversation keeps running as that
+channel's `ExternalChannel` turn, opted-in agent or not.
+
+The browser's `[browser] unattended_actions` list is reachable from every cron
+turn, with or without this opt-in: the `browser` tool declares no external
+effect (its consequential actions are gated inside `execute`), so the cron
+stage lets the call through to `browser_unattended::allow`, which treats both
+`Cron` and `CronActions` as unattended. An agent whose definition sets
+`browser_view_only = true` (or any run below a view-only one) never reaches
+that pass for an acting action: `browser_view_only.rs` refuses it first, and
+its sessions open on a fresh profile, never the persistent one. See
+[`agent_registry/README.md`](../agent_registry/README.md#host-definition-fields).
+
+A job whose `agent_id` is not live is first offered to the host through
+`HostAgentResolver::open` (an embedding host sets it with
+`RuntimeBuilder::on_missing_agent`). If the host opens the agent the job runs as
+it, and the opened agent is held only for that run. If the host has no opener or
+declines, the job fails with a logged error; it never runs as the canonical
+orchestrator or any other agent.
 
 An agent failure is classified before anything is logged. The user sees a
 canned string from `classify_agent_anyhow_for_user`
@@ -147,6 +266,51 @@ publishes `DomainEvent::CronSystemJobDue` and awaits the registered handler;
 otherwise the command is a flow id and the sink calls
 `flows::bus::FlowTriggerSubscriber::dispatch_schedule_tick` directly, with no
 event in between.
+
+### Scheduled workspace
+
+A cron agent run works in the process-wide `action_dir` unless its agent
+definition names a root of its own:
+
+```toml
+scheduled_actions = true
+sandbox_mode = "sandboxed"
+# Relative to action_dir; resolved (symlinks followed) at every run.
+scheduled_workspace = "state/workbench"
+```
+
+`build_cron_agent` resolves it with `scheduler/workspace_root.rs` and sets it as
+the run's workspace descriptor (`set_workspace_descriptor`, the mechanism
+`agent.chat`'s `cwd` and sub-agent worktrees use). The shell and file tools then
+resolve relative paths there and grant it read-write
+(`FsGate::scoped_to_workspace`), and a sandboxed shell asks TinySecurity for that
+root instead of `action_dir`. This is what lets a deployment whose action dir
+holds the core workspace (a checkout with the brain inside it) run a sandboxed
+shell from cron at all: TinySecurity refuses any grant that overlaps
+`workspace_dir`, and then the plan fails with
+`PlanError::RootOverlapsWorkspace`, which names both paths.
+
+The run refuses to start, with an error naming the agent, when the root does
+not exist, is not a directory, overlaps the core workspace, or holds one of the
+core's credential stores (`credentials::credential_files`, or the
+`OPENHUMAN_KEYRING_MASTER_KEY_FILE`). It is authored in the definition, never
+taken from a job's prompt.
+
+**A files-only jail.** Where the host has no kernel jail (a container without
+user namespaces leaves only Landlock), TinySecurity refuses every sandboxed
+plan: Landlock enforces the file grants but no network rule and no process
+isolation. A definition whose shell already gets the host network may set
+`sandbox_filesystem_only = true`. Its shell then asks for a files-only plan
+(`SandboxPlanOptions2::filesystem_only`, TinySecurity contract 2.2;
+`sandbox::spawn_plan::files_only`): files jailed to the run's root, the host's
+network. The host sends it only for the operator's own agent spawn with the
+host network, and the module admits it only for a trusted operator source
+outside SaaS. Channel turns and text the host did not author keep the full
+requirements. A sub-agent's run carries its parent's setting, not its own
+definition's (the run context copies it into every child); a child granted
+scheduled actions runs files-only only when its parent's run does, so set the
+option on the root's definition; a child's own setting cannot enable it. Off
+unless the root's definition names it.
 
 ### After the run
 
@@ -170,12 +334,22 @@ alerts tab and run history.
 | Mode | What happens |
 | --- | --- |
 | `none` | Silent. Output lives in the job's `last_output` only. This is `DeliveryConfig::default()`. |
-| `proactive` | Publishes `ProactiveMessageRequested`. `channels::proactive::ProactiveMessageSubscriber` pushes to the in-app web stream and mirrors to `channels_config.active_channel` when set. Used for briefings and other desktop-first output. |
-| `announce` | Requires `channel` and `to`. Sends synchronously through `cron::channel_bridge::send_to_channel`; the run records `Delivered` only after the channel accepts the message, otherwise `Failed`. The `cron_add` tool checks `to` against the channel's `allowed_users`. |
+| `proactive` | Publishes `ProactiveMessageRequested` with the originating tenant. `web_chat::proactive::WebProactiveSubscriber` publishes to that tenant's in-app web stream; when configured, `channels::proactive::ProactiveMessageSubscriber` also sends to `channels_config.active_channel`. Used for briefings and other user-facing proactive output. |
+| `announce` | Requires `channel` and `to`. Sends synchronously through `cron::channel_bridge::announce_to_channel` (the provider's single configured account in the TinyChannels module); the run records `Delivered` only after the channel confirms the message, otherwise `Failed`. The `cron_add` tool checks `to` against the channel's `allowed_users`. |
 | `origin` | Sends the reply back into the conversation that created the job ([`scheduler/origin_delivery.rs`](./scheduler/origin_delivery.rs)). Requires `CronJob.origin`. |
 
-Origin delivery treats blank output or exactly `NO_REPLY` as `Suppressed`:
-nothing is sent and no alert is raised. For a web origin, the reply is stored in
+A run that has nothing to send is recorded as `Suppressed` in every delivering
+mode: nothing is sent and no alert is raised. That is blank output, or
+`NO_REPLY` (in any case, with `_`, `-` or a space, quoted or with trailing
+punctuation) from a job whose own prompt names the `NO_REPLY` token, such as
+"report new mail, otherwise reply NO_REPLY". Reminders and other jobs whose
+prompt does not name it must deliver: a run that answers `NO_REPLY` or nothing
+gets one corrective turn (the prompt again, plus "NO_REPLY is not allowed for
+this task"), and if that still yields no message the run delivers
+`Reminder: <job name>`. The token itself is never sent. Shell and flow output
+is not model-written, so those jobs may always answer `NO_REPLY`.
+
+For a web origin, the reply is stored in
 the origin thread under `run_reply_message_id("cron:<job>:<run>")`, the
 web-channel `proactive_message` event is emitted with that `thread_id` and
 `request_id`, and `append_to_origin_transcript` appends it to the thread's agent
@@ -188,8 +362,7 @@ chat's in-memory history.
 Independently of the mode, `push_cron_alert` writes an entry into the
 notifications store (the alerts tab) for any failed run, and for a non-empty
 successful run in a delivering mode (`proactive`, `announce`, `origin`). A
-`none`-mode success stays silent, and so does an origin run that chose
-`NO_REPLY`.
+`none`-mode success stays silent, and so does a suppressed run.
 
 ### Origin and session targets
 
@@ -214,7 +387,7 @@ The session target shapes the prompt:
 | Target | Prompt |
 | --- | --- |
 | `isolated` | `[cron:<id> <name>] <prompt>` |
-| `current` | An unattended-run preamble (the reply is delivered as-is; reply `NO_REPLY` to send nothing), then a tail of the origin conversation (last 10 messages, at most 1400 characters, newest kept), then the task. Web history comes from the thread store, channel history from `channel_bridge`. |
+| `current` | An unattended-run preamble, then a tail of the origin conversation (last 10 messages, at most 1400 characters, newest kept), then the task. Web history comes from the thread store, channel history from `channel_bridge`. The preamble says the reply is delivered as-is; only a job whose prompt names `NO_REPLY` is told it may answer `NO_REPLY` when its condition is not met, every other job is told to always reply with the message. |
 | `main` | Runs like `current`; it is not yet a distinct main session. |
 
 Trust follows the origin. A job with a channel origin runs under
@@ -267,7 +440,7 @@ current ones, `memory_background` and `memory_sources_sync` (every 15 minutes),
 handled in `memory::bus`. `ensure_memory_jobs` is idempotent: it creates a
 missing row, reschedules a drifted one, and removes the retired
 `memory_context_refresh` row. It runs from [`core/runtime/services.rs`](../core/runtime/services.rs) and from
-[`security/credentials/ops/user_scope.rs`](../security/credentials/ops/user_scope.rs).
+[`config/user_scope.rs`](../config/user_scope.rs).
 
 ### Storage
 
@@ -315,10 +488,10 @@ feature) nothing loads and every cron call answers `COMPONENT_DISABLED:tinyflows
 | `scheduler/run_delivery.rs` | `deliver` (delivery plus completion events) and `trigger` (flow schedule trigger, system jobs). |
 | `scheduler/failure_classification.rs` | Canned user messages and the permanent-failure classifiers that halt retries. |
 | `scheduler/shell_job.rs` | Security-gated shell execution with a timeout. |
-| `scheduler/agent_run.rs` | Agent-job turns, and `build_agent_for_cron_job`. |
+| `scheduler/agent_run.rs` | Agent-job turns (with the corrective turn for a disallowed `NO_REPLY`), and `build_agent_for_cron_job`. |
 | `scheduler/origin_context.rs` | `build_run_prompt`: the isolated prefix or the `current` preamble plus conversation tail. |
 | `scheduler/delivery.rs` | `deliver_run` and `deliver_job`, the mode switch, and `push_cron_alert`. |
-| `scheduler/origin_delivery.rs` | `deliver_to_origin`, `NO_REPLY` suppression, transcript append. |
+| `scheduler/origin_delivery.rs` | `deliver_to_origin`, the `NO_REPLY` rules (`is_no_reply`, `job_allows_no_reply`, `deliverable_reply`, `fallback_reminder`), transcript append. |
 | [`origin.rs`](./origin.rs) | `JobOrigin` capture from the live turn, the approval-gate exemption, and the turn origin a run executes under. |
 | [`job_builder.rs`](./job_builder.rs) | `create_agent_job`: origin-aware defaults and delivery validation shared by the `cron` and `schedule` tools. |
 | [`channel_bridge.rs`](./channel_bridge.rs) | Cron's handle on the channel runtime: per-chat history and live channels, registered by `start_channels`. |
@@ -338,6 +511,8 @@ feature) nothing loads and every cron call answers `COMPONENT_DISABLED:tinyflows
 - `AgentJobSpec`: the store's agent-job creation spec (from `tinyflows_bus::schedule`),
   used by `add_agent_job_from_spec`.
 - `scheduler::run(ctx, config)`: the service entry point.
+- `scheduler::run_agent_pass(agent_id)`: one live agent's due jobs, run to
+  completion.
 - `scheduler::run_job_now`: manual worker lifecycle owner used by Run Now and
   the run tool; `scheduler::execute_job_now` preserves the synchronous tuple
   adapter for existing host callers.
@@ -381,8 +556,9 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
   (output truncated to 512 characters). The completion event carries its
   optional tenant so notification subscribers keep the original profile and
   agent scope after a one-shot job is removed.
-- `ProactiveMessageRequested` (`proactive` delivery), consumed by
-  `channels::proactive`.
+- `ProactiveMessageRequested` (`proactive` delivery), consumed by the
+  always-registered `web_chat::proactive` subscriber and, when the channels
+  runtime is enabled, `channels::proactive` for external delivery.
 - `CronSystemJobDue`, consumed by `memory::bus`.
 
 ## Who calls in
@@ -391,7 +567,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
   service when `cron.enabled` is set, after flows reconcile their schedule
   triggers. It also calls `ensure_memory_jobs` and `prune_retired_jobs`.
 - `core/all.rs` registers the controllers.
-- [`tools/impl/system/schedule.rs`](../tools/impl/system/schedule.rs) is the `schedule` tool, built on the same
+- [`tools/schedule.rs`](./tools/schedule.rs) is the `schedule` tool, built on the same
   store functions and `create_agent_job`.
 - [`channels/runtime/startup/start_channels.rs`](../channels/runtime/startup/start_channels.rs) registers
   the channel bridge used by `announce` and origin delivery.
@@ -400,7 +576,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
   `find_flow_schedule_job`. These rows are never created by the `cron_add`
   tool, whose `job_type` is `shell` or `agent` only.
 - `config/ops/ui.rs` calls `seed_proactive_agents`;
-  `security/credentials/ops/user_scope.rs` calls `prune_retired_jobs` and
+  `config/user_scope.rs` calls `prune_retired_jobs` and
   `ensure_memory_jobs` on user-scope activation.
 
 ## Boundaries
@@ -421,7 +597,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
 
 - the LLM gate (`platform::llm_gate`) is not part of cron; it used to live here, but the poll loop does not
   consult it. Its consumers are `modules/memory_host.rs` and
-  [`security/credentials/`](../security/credentials/).
+  [`credentials/`](../credentials/).
 - Dispatch is non-blocking: the module spawns each due job, bounded by
   `scheduler.max_concurrent`, so one long job does not hold up the poll loop. A
   job is claimed (module-side, shared with Run Now) from dispatch until its run

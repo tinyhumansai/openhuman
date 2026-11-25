@@ -65,6 +65,29 @@ fn document_records_cannot_address_other_shared_or_graph_keys() {
             "{collection}"
         );
     }
+    for collection in [
+        "graph_checkpoints",
+        "graph_threads",
+        "graph_writes",
+        "delegation_graph_checkpoints",
+        "delegation_graph_threads",
+        "delegation_graph_writes",
+        "flows_graph_checkpoints",
+        "flows_graph_threads",
+        "flows_graph_writes",
+    ] {
+        assert!(allowed_collection(collection).is_ok(), "{collection}");
+    }
+    for (collection, id) in [
+        (
+            "tsd.migrations",
+            "graph/graph.checkpoints/checkpoints_flows_v2",
+        ),
+        ("graph.checkpoints", "graph/thread/checkpoint"),
+        ("graph.checkpoints", "delegation/thread/checkpoint"),
+    ] {
+        assert!(allowed_record(collection, id).is_ok(), "{collection}: {id}");
+    }
     for (collection, id) in [
         ("tsd.migrations", "other/definitions_v2"),
         ("tsd.migrations", "flows/unknown/migration"),

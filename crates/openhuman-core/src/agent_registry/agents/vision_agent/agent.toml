@@ -1,6 +1,5 @@
 id = "vision_agent"
 display_name = "Vision"
-delegate_name = "analyze_image"
 when_to_use = "Image-understanding specialist: describe, OCR, read charts, compare images, or locate UI elements when the primary model cannot accept the image. Forward workspace images with image_paths. Read-only."
 temperature = 0.3
 max_iterations = 6

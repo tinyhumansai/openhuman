@@ -17,10 +17,15 @@ fn render_installed_skills_lists_skills_and_names_the_hand_offs_it_is_given() {
     ];
     // #6302: the section names the hand-offs in the form the session can call
     // (`hand_off_route`), never a pack route or a tool it cannot see.
-    let out = render_installed_skills(&skills, Some("`run_workflow`"), Some("`setup_skills`"));
+    let out = render_installed_skills(
+        &skills,
+        Some("`run_workflow`"),
+        Some("`spawn_subagent` with agent_id `skill_setup`"),
+    );
     assert!(out.contains("## Installed Skills"));
     assert!(
-        out.contains("`run_workflow`") && out.contains("`setup_skills`"),
+        out.contains("`run_workflow`")
+            && out.contains("`spawn_subagent` with agent_id `skill_setup`"),
         "catalogue must name the run and install hand-offs it was given: {out}"
     );
     assert!(
@@ -63,7 +68,7 @@ fn render_installed_skills_lists_skills_and_names_the_hand_offs_it_is_given() {
     // No route: the section lists the skills and names no call at all.
     let unrouted = render_installed_skills(&skills, None, None);
     assert!(
-        !unrouted.contains("run_workflow") && !unrouted.contains("setup_skills"),
+        !unrouted.contains("run_workflow") && !unrouted.contains("skill_setup"),
         "with no route, no hand-off may be named: {unrouted}"
     );
 }
@@ -71,29 +76,28 @@ fn render_installed_skills_lists_skills_and_names_the_hand_offs_it_is_given() {
 #[test]
 fn render_installed_skills_empty_is_omitted() {
     assert_eq!(
-        render_installed_skills(&[], Some("`run_workflow`"), Some("`setup_skills`")),
+        render_installed_skills(
+            &[],
+            Some("`run_workflow`"),
+            Some("`spawn_subagent` with agent_id `skill_setup`"),
+        ),
         ""
     );
 }
 
 #[test]
-fn prompt_routes_result_gating_tasks_to_synchronous_delegation() {
-    // Regression for #4681: a "critique it before you finalize" task was
-    // dispatched via fire-and-forget `spawn_async_subagent`, so the turn
-    // finalized before the critique ran. The orchestrator prompt must
-    // explicitly route result-gating work to a synchronous/awaited path.
-    assert!(
-        ARCHETYPE.contains("A result that gates this reply needs a delegate with `blocking: true`"),
-        "orchestrator prompt must carry the result-gating delegation rule"
-    );
-    // The only primitive that returns inside the turn is a blocking
-    // `delegate_*` specialist. `spawn_async_subagent` has no `blocking`
-    // parameter, and the prompt used to claim it did; make sure that claim
-    // never comes back.
-    for line in ARCHETYPE.lines() {
+fn prompt_documents_the_single_always_async_spawn_contract() {
+    assert!(ARCHETYPE.contains("Calls are asynchronous; completed results arrive automatically."));
+    assert!(ARCHETYPE.contains("Reuse the same `task_key` to continue a worker"));
+    assert!(ARCHETYPE.contains("including a child paused for clarification"));
+    for retired in [
+        "blocking: true",
+        "continue_subagent",
+        "delegate_make_presentation",
+    ] {
         assert!(
-            !(line.contains("spawn_async_subagent") && line.contains("blocking: true")),
-            "spawn_async_subagent has no `blocking` argument: {line}"
+            !ARCHETYPE.contains(retired),
+            "retired dispatch contract leaked into prompt: {retired}"
         );
     }
 }

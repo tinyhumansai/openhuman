@@ -43,11 +43,16 @@ describe('useLoadThreadGoal', () => {
 
   it('primes the slice from the RPC on thread open', async () => {
     const goal = {
-      goal_id: 'g1',
+      threadId: 't1',
+      goalId: 'g1',
       objective: 'Ship it',
       status: 'active' as const,
-      tokens_used: 10,
-      time_used_seconds: 5,
+      tokensUsed: 10,
+      timeUsedSeconds: 5,
+      tokenBudget: null,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      timeUsedSubsecNanos: 0,
     };
     vi.mocked(threadApi.getGoal).mockResolvedValue(goal);
     const { store, wrapper } = setup();

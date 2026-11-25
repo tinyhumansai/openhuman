@@ -134,7 +134,7 @@ test("native injection allowances reject expanded or core compatibility exports"
 
 test("Embed preserves native persisted codecs without admitting core facades", () => {
   const codecs = [
-    "pub use tinyagents_graph::todos::TodoList;",
+    "pub use tinyagents_harness_tools::todos::TodoList;",
     "pub use tinyagents_harness::events::{AgentEvent, HarnessRunStatus};",
     "pub use tinyagents_harness::ids::ExecutionStatus;",
     "pub use tinyagents_harness::observability::AgentObservation;",

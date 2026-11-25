@@ -39,7 +39,8 @@ Each reply arrives on the caller's `GET /events?client_id=<client_id>` stream as
 }
 ```
 
-Replies are final messages only: the relay sink takes no streaming drafts or reactions.
+Replies and progress use the compiled TinyChannels progressive contract; the
+relay sink does not expose provider reactions.
 
 ## How a message runs
 

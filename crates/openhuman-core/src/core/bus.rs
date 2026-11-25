@@ -102,7 +102,8 @@ pub const EVENTS_INTERFACE: &str = "ai.tinyhumans.openhuman.Events";
 /// `CronJobCompleted` tenant ownership.
 /// `3.1.0` adds `InboundTurnCompleted` and `InboundTurnFailed` (additive): a
 /// pinned inbound source's batch ran on its agent.
-pub const EVENTS_VERSION: Version = Version::new(3, 1, 0);
+/// `3.2.0` adds connection token and nonce metadata to device tunnel frames.
+pub const EVENTS_VERSION: Version = Version::new(3, 2, 0);
 
 /// The bus. Initialised once by [`init`]; safe to touch before that.
 pub static BUS: OnceBus<DomainEvent> = OnceBus::new();
@@ -175,6 +176,11 @@ pub async fn init() -> tinybus::Result<()> {
 /// Registered once at startup by the channel runtime. It subscribes to every
 /// domain deliberately — its whole purpose is answering "was this event ever
 /// published", which a filtered subscriber cannot.
+///
+/// It logs the domain and variant name only, never the payload: events carry
+/// user content (a channel message, a dictated voice transcript, a committed
+/// turn, an agent error quoting either), which must not reach the log at any
+/// level.
 pub struct TracingSubscriber;
 
 #[async_trait::async_trait]
@@ -184,7 +190,11 @@ impl tinybus::EventHandler<DomainEvent> for TracingSubscriber {
     }
 
     async fn handle(&self, event: &DomainEvent) {
-        tracing::debug!(domain = event.domain(), "[bus] {event:?}");
+        tracing::debug!(
+            domain = event.domain(),
+            event = event.variant_name(),
+            "[bus] event published"
+        );
     }
 }
 

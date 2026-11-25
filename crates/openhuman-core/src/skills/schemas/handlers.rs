@@ -6,6 +6,7 @@
 //! intentionally thin.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use std::path::Path;
 
 use serde_json::{Map, Value};
@@ -21,7 +22,7 @@ use crate::skills::ops_install::ScanAcknowledgement;
 use crate::skills::runtime::spawn_workflow_run_background;
 use crate::skills::{registry, run_log};
 
-use super::helpers::{deserialize_params, resolve_config, resolve_workspace_dir, to_json};
+use super::helpers::{deserialize_params, resolve_config, resolve_workspace_dir};
 use super::wire_types::{
     WorkflowInputDescription, WorkflowSummary, WorkflowsCancelParams, WorkflowsCreateParams,
     WorkflowsCreateResult, WorkflowsDescribeParams, WorkflowsDescribeResult,
@@ -167,8 +168,8 @@ pub(super) fn handle_skills_run(ctx: DispatchCtx, params: Map<String, Value>) ->
         let payload = deserialize_params::<WorkflowsRunParams>(params)?;
         let origin = ctx
             .turn_origin_or_scoped()
-            .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::Cli);
-        let started = match crate::security::turn_origin::with_origin(
+            .unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::Cli);
+        let started = match crate::core::runtime::turn_origin::with_origin(
             origin.clone(),
             spawn_workflow_run_background(&ctx, payload.workflow_id, payload.inputs, Some(origin)),
         )

@@ -63,12 +63,12 @@ async fn agent_memory_needs_an_engine_and_follows_the_identity() {
     let identity = tinymemory_tools::layout::identity::Identity::team_member("acme", "writer")
         .resolve(&crate::memory::scope::identity_pins(&config));
     assert!(matches!(
-        agent_memory(&config, &identity),
+        agent_memory(&config, &identity).await,
         Err(Error::Off(_))
     ));
 
     bind_reference(&config);
-    let memory = agent_memory(&config, &identity).unwrap();
+    let memory = agent_memory(&config, &identity).await.unwrap();
     assert_eq!(memory.agent_id(), "writer");
     assert_eq!(memory.namespace().to_string(), "team:acme/agent:writer");
 
@@ -77,12 +77,14 @@ async fn agent_memory_needs_an_engine_and_follows_the_identity() {
         &tinymemory_tools::layout::identity::Identity::root(),
         Some("auditor"),
     )
+    .await
     .unwrap();
     assert_eq!(named.namespace().to_string(), "agent:auditor");
     let (current, resolved) = current_agent_memory(
         &config,
         &tinymemory_tools::layout::identity::Identity::root().child("planner"),
     )
+    .await
     .unwrap();
     assert_eq!(current.agent_id(), "planner");
     assert_eq!(resolved.agent_id, "planner");

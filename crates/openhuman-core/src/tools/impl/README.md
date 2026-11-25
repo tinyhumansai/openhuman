@@ -10,8 +10,15 @@ domain capability.
 
 `tools/mod.rs` mounts this directory as `#[path = "impl/mod.rs"] pub(crate) mod
 implementations` (`impl` is a keyword) and glob re-exports it, so tool structs
-are imported as `crate::tools::*`. `impl/mod.rs` gates [`document/`](./document/) and
-[`presentation/`](./presentation/) behind the `documents` Cargo feature; the other five families
+are imported as `crate::tools::*`. `impl/mod.rs` declares the families
+(`system/`, `browser/`, `network.rs`, and `ui/` behind `mcp`); feature gates
+inside a family are noted below. The filesystem and network tools' policy
+adapters (`FsGate`/`NetGate` for `SecurityPolicy`) live in
+[`security/tool_gates/`](../../security/tool_gates/), and the workspace
+descriptor grant in `security::policy::scoped_to_workspace`. The
+`generate_document` / `generate_presentation` tools are domain-owned and live in
+[`artifacts/tools/`](../../artifacts/tools/) behind the `documents` feature,
+built by `artifacts::tools::registered_tools`.
 
 See [`../README.md`](../README.md) for the registry, policy, and RPC layer this
 feeds, and [`../../security/README.md`](../../security/README.md) for the
@@ -26,24 +33,29 @@ tested but no production assembly site constructs it today.
 
 | Family | Tools | Registration gate |
 | --- | --- | --- |
-| [`system/`](./system/) | `ShellTool`, `InstallToolTool`, `DetectToolsTool`, `CurrentTimeTool`, `ResolveTimeTool`, `ScheduleTool`, `ProxyConfigTool`, `PushoverTool`, `LspTool`, update tools, workspace and retrieval helpers. |
-| [`filesystem/`](./filesystem/) | Host adapter only: `SecurityPolicy` implements `tinytools_std::filesystem::FsGate`. The tools (`FileReadTool`, `FileWriteTool`, `EditFileTool`, `ApplyPatchTool`, `GrepTool`, `GlobTool`, `ListFilesTool`, `ReadDiffTool`, `CsvExportTool`, `GitOperationsTool`, `RunLinterTool`, `RunTestsTool`, `UpdateMemoryMdTool`) live in `tinytools_std::filesystem` and are imported directly by `tools/ops.rs` | always registered, except `ReadDiffTool`, `RunLinterTool`, and `RunTestsTool`, which are exported, not registered |
-| [`browser/`](./browser/) | `BrowserTool` (TinyComputer browser members and tasks), `BrowserOpenTool` (simple TinyComputer navigation), `ImageInfoTool` | Both browser tools need `browser.enabled` and the `modules` feature, and are deferred until `tool_search`; `ImageInfoTool` remains direct. Browser navigation uses the shared `http_request.allowed_domains` policy, and the checksum-pinned TinyComputer release module. Consequential actions go through the forced approval gate; `browser_unattended.rs` lets trusted cron/background/approval-free workflow turns skip it for the kinds listed in `[browser] unattended_actions`. |
-| [`network/`](./network/) | `HttpRequestTool`, `WebFetchTool`, `CurlTool`, `GitbooksSearchTool`, `GitbooksGetPageTool`, `GmailUnsubscribeTool`, and under the `mcp` Cargo feature `McpListServersTool`, `McpListToolsTool`, `McpCallTool`; `url_guard.rs` is the shared SSRF/allowlist validator, not a tool | `http_request`, `web_fetch`, `curl`, `gmail_unsubscribe` always registered; `gitbooks_*` need `gitbooks.enabled` and, when the active profile sets an `mcp_allowlist`, an entry named `gitbooks`; `mcp_list_servers`/`mcp_list_tools`/`mcp_call_tool` register only when the static `[[mcp_client.servers]]` registry (after the profile allowlist) is non-empty |
-| [`document/`](./document/) (feature `documents`) | `DocumentTool` (`generate_document`) | always registered when compiled. Builds `.docx` bytes via the pure-Rust `engine` module (`docx-rs`, no subprocess) inside `spawn_blocking` + `tokio::time::timeout`; allocates the artifact with `artifacts::create_artifact` (kind `Document`), persists `args.json` next to it for the failed-card Retry path, then `finalize_artifact` or `fail_artifact` |
-| [`presentation/`](./presentation/) (feature `documents`) | `PresentationTool` (`generate_presentation`) | always registered when compiled. Same shape as `document/` with `ppt-rs` producing `.pptx` and kind `Presentation` |
+| [`system/`](./system/) | `ShellTool`, `InstallToolTool`, `DetectToolsTool`, `CurrentTimeTool`, `ResolveTimeTool`, `ProxyConfigTool`, `PushoverTool`, workspace and retrieval helpers. |
+| [`browser/`](./browser/) | `BrowserTool` (TinyComputer browser members and tasks), `BrowserOpenTool` (simple TinyComputer navigation), `ImageInfoTool` | Both browser tools need `browser.enabled` and the `modules` feature, and are deferred until `tool_search`; `ImageInfoTool` remains direct. Browser navigation uses the shared `http_request.allowed_domains` policy, and the checksum-pinned TinyComputer release module. Consequential actions go through the forced approval gate; `browser_unattended.rs` lets trusted cron/background/approval-free workflow turns skip it for the kinds listed in `[browser] unattended_actions`. `browser_view_only.rs` refuses every acting action, before both, for a run whose agent definition sets `browser_view_only` (or below one that does), and such a run's sessions open on a fresh profile pooled apart from the persistent one. |
+| [`network.rs`](./network.rs) | Host wiring for `HttpRequestTool`, `WebFetchTool`, `CurlTool` (from `tinyagents_harness_tools::net::network`): limits, TinyJuice HTML extraction, the per-turn `RoutedGate`, and with `web3` the x402 payment hook and `x402_request`. `url_guard` (in `tinyagents_harness`) is the shared SSRF/allowlist validator, not a tool | `http_request`, `web_fetch`, `curl` always registered |
+| [`ui/`](./ui/) (feature `mcp`) | `ShowUiTool` (`show_ui`) | always registered when compiled; deferred until `tool_search`. Reads `.html` only from the action dir, workspace, or user skill bundles, and renders through the `mcp::ui` widget frame |
+| `mcp/` (outside this folder) | `GitbooksSearchTool`, `GitbooksGetPageTool` (`mcp/gitbooks_tools.rs`), and under the `mcp` Cargo feature `McpListServersTool`, `McpListToolsTool`, `McpCallTool` (`mcp/tools/`) | `gitbooks_*` need `gitbooks.enabled` and, when the active profile sets an `mcp_allowlist`, an entry named `gitbooks`; `mcp_list_servers`/`mcp_list_tools`/`mcp_call_tool` register only when the static `[[mcp_client.servers]]` registry (after the profile allowlist) is non-empty |
 
 ## Notes
 
-- `document/` and `presentation/` are kept structurally parallel (validate
-  input, allocate artifact, generate bytes off the async runtime, finalize or
-  fail the artifact) so further artifact-producing tools follow the same shape.
-  tool surface, not a host capability.
-- [`system/mod.rs`](./system/mod.rs) (`security_for_tool_context`) and [`filesystem/gate.rs`](./filesystem/gate.rs)
-  (`security_scoped_to_root`, behind `FsGate::scoped_to_workspace`) each grant the run's TinyAgents workspace
-  descriptor as `action_dir` plus a `ReadWrite` trusted root on a per-call
-  clone of `SecurityPolicy`. They must stay in step; `is_always_forbidden` and
-  `is_workspace_internal_path` are evaluated before any trusted-root shortcut.
+- The update tools are owned and registered from [`platform/update/tools.rs`](../../platform/update/tools.rs), alongside the update domain they call.
+
+- The filesystem tools (`FileReadTool`, `FileWriteTool`, `EditFileTool`,
+  `ApplyPatchTool`, `GrepTool`, `GlobTool`, `ListFilesTool`, `ReadDiffTool`,
+  `CsvExportTool`, `GitOperationsTool`, `RunLinterTool`, `RunTestsTool`,
+  `UpdateMemoryMdTool`) live in `tinyagents_harness_tools::fs::filesystem` and
+  are imported directly by `tools/ops.rs`; they are always registered, except
+  `ReadDiffTool`, `RunLinterTool` and `RunTestsTool`, which are exported, not
+  registered. Their gate is [`security/tool_gates/fs.rs`](../../security/tool_gates/fs.rs).
+- [`security::policy::scoped_to_workspace`](../../security/policy/workspace_scope.rs)
+  owns workspace descriptor scoping: it grants the descriptor root as
+  `action_dir` plus a `ReadWrite` trusted root on a per-call clone of
+  `SecurityPolicy` (via `FsGate::scoped_to_workspace`); TinySecurity's
+  protected-path policy and internal-state reservations are evaluated before any
+  trusted-root shortcut.
 
 ## Further reading
 

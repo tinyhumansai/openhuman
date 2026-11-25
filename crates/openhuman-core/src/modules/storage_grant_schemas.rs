@@ -22,6 +22,7 @@ use std::sync::Arc;
 use super::storage_grants::StorageGrant;
 use super::storage_queue_manifest::QueueManifest;
 use crate::storage::schema::module_collections;
+use crate::storage::CollectionSpec;
 
 /// One module's row: its registry id, the schema owner that declares its
 /// storage, secret prefixes the schema cannot name, and the queue manifest the
@@ -49,7 +50,7 @@ pub(crate) struct QueueGrant {
 
 const ROWS: &[Row] = &[
     Row {
-        module: tinychannels::MODULE_ID,
+        module: "tinychannels",
         owner: "channels",
         secrets: &[],
         queues: None,
@@ -118,7 +119,7 @@ pub(super) async fn migrate_imported(ctx: &crate::core::runtime::DispatchCtx, mo
     };
     let result = async {
         let storage = backend.for_scope(&scope)?;
-        crate::storage::boot::prepare_scope(&storage).await
+        crate::storage::boot::prepare_scope(&storage, &scope).await
     }
     .await;
     if let Err(error) = result {
@@ -135,7 +136,14 @@ pub(super) async fn migrate_imported(ctx: &crate::core::runtime::DispatchCtx, mo
 pub(super) fn grant_for(module_id: &str) -> Option<StorageGrant> {
     let row = ROWS.iter().find(|row| row.module == module_id)?;
     let queues = row.queues.and_then(|source| source());
-    let collections = module_collections(row.owner);
+    let mut collections = module_collections(row.owner);
+    // A module may also read collections it does not provision: TinyConnectors'
+    // migration reads its v1 preferences, which its storage needs list.
+    for name in read_collections(row.owner) {
+        if !collections.iter().any(|spec| spec.name == name) {
+            collections.push(CollectionSpec::new(name));
+        }
+    }
     let secret_prefixes: Vec<String> = row.secrets.iter().map(|s| (*s).to_owned()).collect();
     // Collection declarations are now the owner contracts' only published
     // storage inventory. Stream/blob/secret grants remain explicit below
@@ -155,13 +163,26 @@ pub(super) fn grant_for(module_id: &str) -> Option<StorageGrant> {
     })
 }
 
+fn read_collections(owner: &str) -> Vec<String> {
+    match owner {
+        "connectors" => tinyconnectors_bus::storage::storage_needs().collections,
+        // TinyWallet's x402 ledger migrates its v1 budget holds on first open.
+        "wallet" => vec![tinywallet::LEGACY_BUDGET_COLLECTION.to_owned()],
+        _ => Vec::new(),
+    }
+}
+
 fn stream_prefixes(owner: &str) -> Vec<String> {
     match owner {
         "mcp" => vec![tinymcp_bus::storage::AUDIT_STREAM.to_owned()],
         "connectors" => tinyconnectors_bus::storage::storage_needs().stream_prefixes,
         // TinyWallet's module still reads and appends this released ledger
-        // stream while its bus contract currently declares collections only.
-        "wallet" => vec!["wallet.payments".to_owned()],
+        // stream while its bus contract currently declares collections only,
+        // and its x402 ledger migration reads the v1 stream the importer fills.
+        "wallet" => vec![
+            "wallet.payments".to_owned(),
+            tinywallet::PAYMENTS_STREAM.to_owned(),
+        ],
         _ => Vec::new(),
     }
 }
@@ -169,6 +190,8 @@ fn stream_prefixes(owner: &str) -> Vec<String> {
 fn blob_prefixes(owner: &str) -> Vec<String> {
     match owner {
         "juice" => vec![format!("{}/", tinyjuice_bus::storage::CCR_PREFIX)],
+        // The module persists scoped channel media bytes under this prefix.
+        "channels" => vec![tinychannels_bus::storage::MEDIA_BLOB_PREFIX.to_owned()],
         _ => Vec::new(),
     }
 }
@@ -193,6 +216,8 @@ pub(super) mod tinywallet {
     pub(crate) const MODULE_ID: &str = "tinywallet";
     /// The v1 payments stream the importer writes.
     pub(crate) const PAYMENTS_STREAM: &str = "x402.payments";
+    /// The v1 budget-hold collection the module's x402 ledger migration reads.
+    pub(crate) const LEGACY_BUDGET_COLLECTION: &str = "x402_budget";
 }
 
 pub(super) mod tinybox {

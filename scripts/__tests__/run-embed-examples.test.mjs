@@ -42,6 +42,8 @@ test("all example runs share the same required feature graph", () => {
 });
 
 
+const featureArgument = (args) => args[args.indexOf("--features") + 1];
+
 test("fleet measurements retain their declared release and minimal-feature invocation", () => {
   const examples = discoverExamples().filter(({name}) => name === "linux_fleet" || name === "mcp");
   const fleet = examples.find(({name}) => name === "linux_fleet");
@@ -55,10 +57,10 @@ test("fleet measurements retain their declared release and minimal-feature invoc
   }});
   assert.ok(calls.get("linux_fleet").includes("--release"));
   assert.ok(calls.get("linux_fleet").includes("--no-default-features"));
-  assert.equal(calls.get("linux_fleet").includes("--features"), false);
+  assert.equal(featureArgument(calls.get("linux_fleet")), "mcp,storage-sqlite");
   assert.equal(calls.get("mcp").includes("--release"), false);
   assert.equal(calls.get("mcp").includes("--no-default-features"), false);
-  assert.ok(calls.get("mcp").includes("mcp"));
+  assert.ok(featureArgument(calls.get("mcp")).split(",").includes("mcp"));
 });
 
 test("a forced dev profile builds release-declared measurements in the dev profile and keeps their feature graph", () => {
@@ -74,6 +76,6 @@ test("a forced dev profile builds release-declared measurements in the dev profi
     assert.equal(args.includes("--profile"), false);
   }
   assert.ok(calls.get("linux_fleet").includes("--no-default-features"));
-  assert.equal(calls.get("linux_fleet").includes("--features"), false);
-  assert.ok(calls.get("mcp").includes("mcp"));
+  assert.equal(featureArgument(calls.get("linux_fleet")), "mcp,storage-sqlite");
+  assert.ok(featureArgument(calls.get("mcp")).split(",").includes("mcp"));
 });

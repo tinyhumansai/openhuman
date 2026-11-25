@@ -14,7 +14,10 @@
 use std::sync::{Arc, LazyLock, Mutex, PoisonError, RwLock, Weak};
 
 use super::tenant_router::TenantSessionStores;
-use tinyagents_session::port::{AgentStorageFactory, AgentStores, SessionStoreProvider};
+use tinyagents_session::port::{
+    AgentStorageFactory, AgentStores, SessionStoreLease, SessionStoreLeaseError,
+    SessionStoreProvider,
+};
 use tinyagents_storage_kit::Blocking;
 use tinystoragedrivers::{StorageBackend, StorageError};
 
@@ -58,6 +61,12 @@ impl StoreRegistry {
             "[session_store] registry rebind finished"
         );
         live.len()
+    }
+
+    fn release_profile(&self, profile: &str) {
+        for stores in self.live() {
+            stores.release_profile(profile);
+        }
     }
 }
 
@@ -130,12 +139,23 @@ impl ReboundSessionStores {
             "[session_store] rebound to a new storage backend"
         );
     }
+
+    /// Drops cached session handles for a profile whose lease was released.
+    /// Handles already handed out remain tied to their original fence.
+    pub fn release_profile(&self, profile: &str) {
+        self.current().release_profile(profile);
+    }
 }
 
 /// Rebinds every live [`ReboundSessionStores`] of the process to `backend`;
 /// returns how many.
-pub fn rebind_all(backend: &Arc<dyn StorageBackend>) -> usize {
-    PROCESS.rebind(backend)
+pub fn rebind_all(backend: &Arc<dyn StorageBackend>) -> Result<usize, StorageError> {
+    Ok(PROCESS.rebind(backend))
+}
+
+/// Drops the cached provider for `profile` from every live process store.
+pub fn release_profile(profile: &str) {
+    PROCESS.release_profile(profile);
 }
 
 impl SessionStoreProvider for ReboundSessionStores {
@@ -145,6 +165,10 @@ impl SessionStoreProvider for ReboundSessionStores {
 
     fn try_for_agent(&self, agent_id: &str) -> Result<AgentStores, StorageError> {
         SessionStoreProvider::try_for_agent(self.current().as_ref(), agent_id)
+    }
+
+    fn lease_for_agent(&self, agent_id: &str) -> Result<SessionStoreLease, SessionStoreLeaseError> {
+        self.current().lease_for_agent(agent_id)
     }
 
     fn bind_actor(

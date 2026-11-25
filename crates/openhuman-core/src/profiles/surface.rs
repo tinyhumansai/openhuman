@@ -31,7 +31,6 @@ const SHARED_SAAS_METHODS: &[&str] = &["openhuman.doctor_report"];
 pub const USER_METHODS: &[&str] = &[
     // Detached-worker controls compare the original worker's captured profile.
     "openhuman.subagent_cancel",
-    "openhuman.subagent_steer",
     // Conversation threads: all state lives under the agent's workspace.
     "openhuman.threads_list",
     "openhuman.threads_upsert",
@@ -52,6 +51,7 @@ pub const USER_METHODS: &[&str] = &[
     "openhuman.threads_transcript_get",
     "openhuman.threads_goal_get",
     "openhuman.threads_todos_get",
+    "openhuman.threads_state_get",
     // Turns on a user's own threads. Their events carry the user's agent and
     // reach only that user's `/events` stream.
     "openhuman.threads_generate_title",

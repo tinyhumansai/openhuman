@@ -20,7 +20,7 @@ pub struct AutonomyConfig {
     /// allowlist, the approval gate, the hourly action budget, `workspace_only`,
     /// `forbidden_paths` and the workspace-internal boundary are all skipped.
     ///
-    /// `SecurityPolicy::is_always_forbidden` still applies either way —
+    /// TinySecurity's protected-path floor still applies either way —
     /// credential stores (`~/.ssh`, `~/.gnupg`, `~/.aws`) and system roots stay
     /// unreachable. Deliberate floor, documented on
     /// [`crate::security::SecurityPolicy::enabled`].
@@ -40,8 +40,6 @@ pub struct AutonomyConfig {
     pub forbidden_paths: Vec<String>,
     #[serde(default = "default_max_actions_per_hour")]
     pub max_actions_per_hour: u32,
-    #[serde(default = "default_max_cost_per_day_cents")]
-    pub max_cost_per_day_cents: u32,
     #[serde(default = "default_true")]
     pub require_approval_for_medium_risk: bool,
     #[serde(default = "default_true")]
@@ -56,7 +54,7 @@ pub struct AutonomyConfig {
     /// prompting the user — a blanket bypass of the interactive approval
     /// flow, not just the per-tool `auto_approve` allowlist above. An
     /// unlabelled call site is still hard-denied regardless of this flag (see `ApprovalGate::intercept_audited_inner`).
-    /// Hard security blocks (`is_always_forbidden`, `is_workspace_internal_path`,
+    /// Hard security blocks (TinySecurity's protected-path and internal-state reservations,
     /// `ToolPolicyMiddleware`) live on independent code paths inside the tool
     /// implementations themselves and are unaffected by this setting.
     ///
@@ -94,10 +92,6 @@ fn default_max_actions_per_hour() -> u32 {
     // ceiling above realistic per-hour traffic is functionally infinite;
     // u32::MAX lets the field stay a plain `u32` without a sentinel option.
     u32::MAX
-}
-
-fn default_max_cost_per_day_cents() -> u32 {
-    500
 }
 
 fn default_allowed_commands() -> Vec<String> {
@@ -198,7 +192,6 @@ impl Default for AutonomyConfig {
             allowed_commands: default_allowed_commands(),
             forbidden_paths: default_forbidden_paths(),
             max_actions_per_hour: default_max_actions_per_hour(),
-            max_cost_per_day_cents: default_max_cost_per_day_cents(),
             require_approval_for_medium_risk: default_true(),
             block_high_risk_commands: default_true(),
             auto_approve: default_auto_approve(),

@@ -4,7 +4,7 @@
 //! linked owner for its declarations and calls `ensure_collection` for each
 //! one. Owners retain control of their record shapes and migrations.
 
-use tinystoragedrivers::{CollectionSpec, StorageError};
+use tinystoragedrivers::{CollectionSpec, IndexSpec, StorageError};
 
 /// One linked crate's collection declarations.
 #[derive(Clone, Debug)]
@@ -37,8 +37,10 @@ fn declared_collections() -> Vec<CollectionOwner> {
             "tinyagents-session",
             tinyagents_session::port::collections(),
         ),
-        owner("tinyagents-graph", tinyagents_graph::storage::collections()),
-        owner("tinyagents-tasks", tinyagents_tasks::collections()),
+        owner(
+            "tinyagents-tasks",
+            tinyagents_tasks::storage_schema().collections(),
+        ),
         owner("openhuman-core", host_collections()),
     ];
 
@@ -54,10 +56,7 @@ fn declared_collections() -> Vec<CollectionOwner> {
             "tinymcp-bus",
             tinymcp_bus::storage::collection_specs(),
         ));
-        owners.push(owner(
-            "tinychannels-bus",
-            tinychannels_bus::storage::collections(),
-        ));
+        owners.push(owner("tinychannels-bus", channel_collection_specs()));
         owners.push(owner(
             "tinyconnectors-bus",
             tinyconnectors_bus::storage::collections()
@@ -65,7 +64,13 @@ fn declared_collections() -> Vec<CollectionOwner> {
                 .map(|collection| CollectionSpec::new(collection.name))
                 .collect(),
         ));
-        owners.push(owner("tinybox-bus", tinybox_bus::storage::collections()));
+        owners.push(owner(
+            "tinybox-bus",
+            tinybox_bus::storage::collections()
+                .into_iter()
+                .map(|collection| CollectionSpec::new(collection.name))
+                .collect(),
+        ));
         owners.push(owner(
             "tinyjuice-bus",
             tinyjuice_bus::storage::collections(),
@@ -81,17 +86,8 @@ fn declared_collections() -> Vec<CollectionOwner> {
             .collect(),
     ));
 
-    #[cfg(feature = "tinymemes")]
-    owners.push(owner(
-        "tinymemes-bus",
-        tinymemes_bus::storage::collections(),
-    ));
-
     #[cfg(feature = "inbound-queues")]
-    owners.push(owner(
-        "tinyeventqueues-bus",
-        tinyeventqueues_bus::storage::collection_specs(),
-    ));
+    owners.push(owner("tinyeventqueues-bus", event_queue_collection_specs()));
 
     owners
 }
@@ -112,6 +108,8 @@ fn host_collections() -> Vec<CollectionSpec> {
     collections.extend(super::journal_maintenance::collection_specs());
     #[cfg(feature = "inbound-queues")]
     collections.extend(crate::inbound::results::collection_specs());
+    #[cfg(feature = "inbound-queues")]
+    collections.extend(crate::inbound::claims::collection_specs());
     collections
 }
 
@@ -128,7 +126,7 @@ pub fn module_collections(owner: &str) -> Vec<CollectionSpec> {
     match owner {
         "mcp" => return module_owned_collections(tinymcp_bus::storage::collection_specs()),
         "channels" => {
-            return module_owned_collections(tinychannels_bus::storage::collections());
+            return module_owned_collections(channel_collection_specs());
         }
         "connectors" => {
             return module_owned_collections(
@@ -139,7 +137,12 @@ pub fn module_collections(owner: &str) -> Vec<CollectionSpec> {
             );
         }
         "box" => {
-            return module_owned_collections(tinybox_bus::storage::collections());
+            return module_owned_collections(
+                tinybox_bus::storage::collections()
+                    .into_iter()
+                    .map(|collection| CollectionSpec::new(collection.name))
+                    .collect(),
+            );
         }
         "juice" => return module_owned_collections(tinyjuice_bus::storage::collections()),
         _ => {}
@@ -153,16 +156,56 @@ pub fn module_collections(owner: &str) -> Vec<CollectionSpec> {
                 .collect(),
         );
     }
-    #[cfg(feature = "tinymemes")]
-    if owner == "memes" {
-        return module_owned_collections(tinymemes_bus::storage::collections());
-    }
     #[cfg(feature = "inbound-queues")]
     if owner == "teq" {
-        return module_owned_collections(tinyeventqueues_bus::storage::collection_specs());
+        return module_owned_collections(event_queue_collection_specs());
     }
     let _ = owner;
     Vec::new()
+}
+
+/// Convert TinyChannels' portable collection declarations into host storage
+/// driver types without changing indexes, expiry, or search metadata.
+fn channel_collection_specs() -> Vec<CollectionSpec> {
+    tinychannels_bus::storage::collections()
+        .into_iter()
+        .map(channel_collection_spec)
+        .collect()
+}
+
+fn channel_collection_spec(
+    declaration: tinychannels_bus::storage::CollectionSpec,
+) -> CollectionSpec {
+    let mut collection = CollectionSpec::new(declaration.name);
+    for index in declaration.indexes {
+        let unique = index.unique;
+        let index = IndexSpec::new(index.name, index.fields);
+        collection = collection.index(if unique { index.unique() } else { index });
+    }
+    if let Some(ttl_field) = declaration.ttl_field {
+        collection = collection.ttl(ttl_field);
+    }
+    if let Some(search) = declaration.search {
+        collection = collection.searchable(search.fields);
+    }
+    collection
+}
+
+/// Convert the event queue bus's portable declarations into host storage types.
+#[cfg(feature = "inbound-queues")]
+pub(crate) fn event_queue_collection_specs() -> Vec<CollectionSpec> {
+    tinyeventqueues_bus::storage::collection_specs()
+        .into_iter()
+        .map(|declaration| {
+            declaration.indexes.into_iter().fold(
+                CollectionSpec::new(declaration.name),
+                |collection, index| {
+                    let spec = IndexSpec::new(index.name, index.fields);
+                    collection.index(if index.unique { spec.unique() } else { spec })
+                },
+            )
+        })
+        .collect()
 }
 
 /// A module may receive its own collections, never TSD's host-managed records.

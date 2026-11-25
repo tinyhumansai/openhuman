@@ -69,17 +69,17 @@ fn contract_names() -> Vec<(&'static str, &'static str, &'static str)> {
         tinyvoice_bus::names::BUS_NAME,
         tinyvoice_bus::names::OBJECT_PATH,
     ));
+    #[cfg(feature = "security-module")]
+    names.push((
+        "tinysecurity",
+        tinysecurity_bus::names::INTERFACE,
+        tinysecurity_bus::names::OBJECT_PATH,
+    ));
     #[cfg(feature = "hosting")]
     names.push((
         "tinyhosts",
         tinyhosts_bus::BUS_NAME,
         tinyhosts_bus::OBJECT_PATH,
-    ));
-    #[cfg(feature = "tinymemes")]
-    names.push((
-        "tinymemes",
-        tinymemes_bus::STATE_INTERFACE,
-        tinymemes_bus::STATE_PATH,
     ));
     #[cfg(feature = "inbound-queues")]
     names.push((
@@ -121,8 +121,8 @@ fn a_drifted_contract_constant_is_reported_as_a_mismatch() {
     feature = "web3",
     feature = "voice",
     feature = "hosting",
-    feature = "tinymemes",
-    feature = "inbound-queues"
+    feature = "inbound-queues",
+    feature = "security-module"
 ))]
 #[test]
 fn a_product_feature_build_carries_all_fourteen_records() {
@@ -140,8 +140,8 @@ fn a_product_feature_build_carries_all_fourteen_records() {
         "tinychannels",
         "tinyflows",
         "tinyhosts",
-        "tinymemes",
         "tinyeventqueues",
+        "tinysecurity",
     ] {
         assert!(find(id).is_some(), "{id} missing from the registry");
     }
@@ -150,6 +150,12 @@ fn a_product_feature_build_carries_all_fourteen_records() {
 #[test]
 fn every_record_maps_to_a_real_component() {
     for record in ALL {
+        // TinySecurity has no product component yet; the global module switch
+        // is its only host gate until its callers move behind the bus.
+        if record.id == "tinysecurity" {
+            assert_eq!(component_for(record.id), None);
+            continue;
+        }
         let component = component_for(record.id)
             .unwrap_or_else(|| panic!("module '{}' has no component mapping", record.id));
         assert!(
@@ -163,12 +169,7 @@ fn every_record_maps_to_a_real_component() {
                 || !cfg!(feature = "modules")
                 || matches!(
                     *id,
-                    "tinydocs"
-                        | "tinywallet"
-                        | "tinyvoice"
-                        | "tinyhosts"
-                        | "tinymemes"
-                        | "tinyeventqueues"
+                    "tinydocs" | "tinywallet" | "tinyvoice" | "tinyhosts" | "tinyeventqueues"
                 ),
             "mapping for unknown module '{id}'"
         );
@@ -187,60 +188,60 @@ fn the_flows_record_serves_the_schedule_object() {
     assert_ne!(record.object_path, schedule::OBJECT_PATH);
     assert_ne!(schedule::INTERFACE, schedule::CALLBACK_INTERFACE);
     assert_ne!(schedule::INTERFACE, schedule::DOCUMENT_INTERFACE);
-    assert_eq!(schedule::CONTRACT_VERSION, 7, "the host speaks contract v7");
+    assert_eq!(schedule::CONTRACT_VERSION, 8, "the host speaks contract v8");
     assert_eq!(component_for("tinyflows"), Some("tinyflows"));
 }
 
-/// The pins are copied from the published v0.8.29 `checksum.toml`.
+/// The pins are copied from the published v0.9.5 `checksum.toml`.
 #[test]
 fn the_flows_record_pins_every_host_of_one_release() {
     let record = find("tinyflows").unwrap();
-    assert_eq!(record.version, "0.8.29");
+    assert_eq!(record.version, "0.9.5");
     assert_eq!(record.assets.len(), 11);
     let expected = [
         (
-            "tinyflows-module-0.8.29-macos-26-arm64.tar.gz",
-            "af1b942b4a23f764319d3378c23b3244844026f6832d7384a57a4adfc3879ca6",
+            "tinyflows-module-0.9.5-macos-26-arm64.tar.gz",
+            "c6e31c3c8654c28b8d0b6dfe91ca1971a00f19dae14bf9903242e769225ef9d1",
         ),
         (
-            "tinyflows-module-0.8.29-macos-26-x86_64.tar.gz",
-            "27916a9872608ea363421b8d4ff807c669203ee5e6546f04e33d507e2c5feb33",
+            "tinyflows-module-0.9.5-macos-26-x86_64.tar.gz",
+            "6531b27fddc55f8febee2113086b80ad12227aad4beeb48e0f47143da24271ed",
         ),
         (
-            "tinyflows-module-0.8.29-macos-15-arm64.tar.gz",
-            "997d5aaf21340362059edbe5f715d76c10df92823dd4c93cdfea8ad6d53c21ed",
+            "tinyflows-module-0.9.5-macos-15-arm64.tar.gz",
+            "2b98c6b44ed84a430d071592805f05891b1475653df4dacd96ff3f524a29a99f",
         ),
         (
-            "tinyflows-module-0.8.29-macos-15-x86_64.tar.gz",
-            "b2df10c5bf1f302eedf0466eebc44f92ef23c8fa8037b34183499b34b26ce614",
+            "tinyflows-module-0.9.5-macos-15-x86_64.tar.gz",
+            "d5fcafcaa1885276921d26a0e65fa0d60991ea7964a7007641de21b555dfb343",
         ),
         (
-            "tinyflows-module-0.8.29-ubuntu-24.04-x86_64.tar.gz",
-            "1c61b3925b366a0a9e610549249944901f90e3191be5639a9f68663af4eb4074",
+            "tinyflows-module-0.9.5-ubuntu-24.04-x86_64.tar.gz",
+            "f7c5e7438c64ce76c0249f81a75669b25f430250abfeff1d6831a782a2539a8b",
         ),
         (
-            "tinyflows-module-0.8.29-ubuntu-24.04-arm64.tar.gz",
-            "2ed13d6aa3e06a7bce361af9bd8ab0a2e4b2cf01d0c94fb98efd6f8a47f394c8",
+            "tinyflows-module-0.9.5-ubuntu-24.04-arm64.tar.gz",
+            "55779f03a89cd3c5d76bd5bb26e6d9837b2f5e3153c83f3aa11656222a4f4582",
         ),
         (
-            "tinyflows-module-0.8.29-ubuntu-22.04-x86_64.tar.gz",
-            "d607a01766039b99e3abdd9801ee3ea41991445dd828f3a1269d982268c7a1bb",
+            "tinyflows-module-0.9.5-ubuntu-22.04-x86_64.tar.gz",
+            "e6f96edfbab60421e3dc6db5d51fb49fb0da36d049cc359a5db5091b3b9861b6",
         ),
         (
-            "tinyflows-module-0.8.29-ubuntu-22.04-arm64.tar.gz",
-            "3c67ea6617b84e8b53ee7cf5dbe91cd133e5d5af6196625ab8b7db46d431ce6a",
+            "tinyflows-module-0.9.5-ubuntu-22.04-arm64.tar.gz",
+            "f09c8f4104cd17d00c5eb5f577c8048ba7b76a985e894146df5cc6b552b3e97a",
         ),
         (
-            "tinyflows-module-0.8.29-windows-2025-x86_64.zip",
-            "e26a33311840b9fbd3cbc0e2e5525a134b96a16970d14ed14f187d7110e90589",
+            "tinyflows-module-0.9.5-windows-2025-x86_64.zip",
+            "6221186d10e28a56ab8d5881e8d525f0db70cc4ccb0d5681f5893b11c7950920",
         ),
         (
-            "tinyflows-module-0.8.29-windows-2022-x86_64.zip",
-            "5f8734a5c4eeed7ab54400b896dd1f8318cc4d647954c2808b609af7b2181020",
+            "tinyflows-module-0.9.5-windows-2022-x86_64.zip",
+            "b8eec6404312c71286650132a41d33758af2efa49c611a131befd383b1c77aca",
         ),
         (
-            "tinyflows-module-0.8.29-windows-11-arm64.zip",
-            "ef9b65f044489cdca520eac70104cb3f3993d2df453c47906cc9b5a1c588f371",
+            "tinyflows-module-0.9.5-windows-11-arm64.zip",
+            "67d4b8c8ad87c4a7c416ddaff4c96c79bde0fc2e43624306b219e85c8c332587",
         ),
     ];
     for (asset, (archive, sha256)) in record.assets.iter().zip(expected) {

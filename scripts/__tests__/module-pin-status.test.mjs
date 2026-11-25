@@ -34,7 +34,11 @@ test("a gitlink on the registry tag is in sync", () => {
 });
 
 test("a gitlink commits past the pinned tag is ahead", () => {
-  const s = classifyStatus({ ...base, actual: "v0.2.0-3-gabcdef01", wantedIsAncestor: true });
+  const s = classifyStatus({
+    ...base,
+    actual: "v0.2.0-3-gabcdef01",
+    wantedIsAncestor: true,
+  });
   assert.equal(s.kind, "ahead");
   assert.match(s.message, /you're running a locally compiled module/);
   assert.ok(s.message.startsWith(AHEAD_MESSAGE));
@@ -45,7 +49,11 @@ test("a gitlink on a newer release than the registry is ahead", () => {
 });
 
 test("a gitlink on an older release than the registry is behind", () => {
-  const s = classifyStatus({ ...base, actual: "v0.1.9", wantedIsAncestor: true });
+  const s = classifyStatus({
+    ...base,
+    actual: "v0.1.9",
+    wantedIsAncestor: true,
+  });
   assert.equal(s.kind, "behind");
   assert.match(s.message, /behind\/diverged/);
 });
@@ -56,12 +64,24 @@ test("a registry tag that is not an ancestor is diverged", () => {
 });
 
 test("a declared exemption reports exempt only while the drift is unchanged", () => {
-  const exemption = { id: "tinyx", expect: "v0.1.17-159-gf95c461e", reason: "known" };
+  const exemption = {
+    id: "tinyx",
+    expect: "v0.1.17-159-gf95c461e",
+    reason: "known",
+  };
   assert.equal(kind({ actual: "v0.1.17-159-gf95c461e", exemption }), "exempt");
   // Drift moved: falls back to a real classification, and says why.
-  const moved = classifyStatus({ ...base, actual: "v0.1.17-200-g00000000", exemption, wantedIsAncestor: true });
+  const moved = classifyStatus({
+    ...base,
+    actual: "v0.1.17-200-g00000000",
+    exemption,
+    wantedIsAncestor: true,
+  });
   assert.equal(moved.kind, "behind");
-  assert.match(moved.message, /moved past its module-pin-exemptions\.json entry/);
+  assert.match(
+    moved.message,
+    /moved past its module-pin-exemptions\.json entry/,
+  );
   // Pins agree but the exemption lingers: in sync, flagged.
   const stale = classifyStatus({ ...base, actual: "v0.2.0", exemption });
   assert.equal(stale.kind, "in-sync");
@@ -70,7 +90,11 @@ test("a declared exemption reports exempt only while the drift is unchanged", ()
 
 test("aheadIds lists only ahead modules", () => {
   assert.deepEqual(
-    aheadIds([{ id: "a", kind: "ahead" }, { id: "b", kind: "in-sync" }, { id: "c", kind: "behind" }]),
+    aheadIds([
+      { id: "a", kind: "ahead" },
+      { id: "b", kind: "in-sync" },
+      { id: "c", kind: "behind" },
+    ]),
     ["a"],
   );
 });
@@ -78,11 +102,25 @@ test("aheadIds lists only ahead modules", () => {
 // ── CLI against a fixture tree ───────────────────────────────────────────────
 
 const git = (cwd, ...args) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "tag.gpgsign=false",
+      ...args,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ).trim();
 
 function record(name, id, version, sub) {
   return `
@@ -114,7 +152,10 @@ function fixture() {
       record("MISSING", "missing", "1.0.0", "missing"),
   );
   mkdirSync(join(root, "scripts/ci"), { recursive: true });
-  writeFileSync(join(root, "scripts/ci/module-pin-exemptions.json"), '{"exemptions":[]}');
+  writeFileSync(
+    join(root, "scripts/ci/module-pin-exemptions.json"),
+    '{"exemptions":[]}',
+  );
   for (const sub of ["synced", "ahead"]) {
     const dir = join(root, "vendor", sub);
     mkdirSync(dir, { recursive: true });
@@ -138,13 +179,50 @@ test("the CLI reports each fixture module and exports the ahead ids", () => {
     const text = lines.join("\n");
     assert.match(text, /synced\s+in-sync/);
     assert.match(text, /ahead\s+ahead\s+gitlink ahead of released pin/);
-    assert.match(text, /missing\s+unavailable\s+vendor\/missing is not checked out/);
+    assert.match(
+      text,
+      /missing\s+unavailable\s+vendor\/missing is not checked out/,
+    );
     assert.match(text, /OPENHUMAN_MODULE_PIN_AHEAD=ahead$/);
     assert.equal(code, 0, "advisory unless --strict");
     assert.equal(main(["--strict"], root).code, 1);
     const hint = main(["--hint"], root).lines.join("\n");
     assert.doesNotMatch(hint, /synced/);
     assert.match(hint, /release-and-repin\.mjs/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("module status ignores the parent hook repository environment", () => {
+  const root = fixture();
+  try {
+    git(root, "init", "-q");
+    writeFileSync(join(root, "host-marker"), "host");
+    git(root, "add", "host-marker");
+    git(root, "commit", "-qm", "host");
+    git(root, "tag", "v9.9.9");
+    const output = execFileSync(
+      process.execPath,
+      [
+        new URL("../modules/pin-status.mjs", import.meta.url).pathname,
+        "--root",
+        root,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GIT_DIR: join(root, ".git"),
+          GIT_COMMON_DIR: join(root, ".git"),
+          GIT_WORK_TREE: root,
+          GIT_INDEX_FILE: join(root, ".git/index"),
+        },
+      },
+    );
+    assert.match(output, /synced\s+in-sync/);
+    assert.match(output, /ahead\s+ahead\s+gitlink ahead of released pin/);
+    assert.doesNotMatch(output, /v9\.9\.9/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

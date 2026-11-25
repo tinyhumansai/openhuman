@@ -96,12 +96,18 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
     let backend: Arc<dyn StorageBackend> = Arc::clone(&fixture.backend);
     let (a, a_storage) = node(tmp.path(), "node-a", &backend);
     let alice = profile("alice");
+    let tenant_scope = crate::storage::scope_for_profile(alice.as_str())
+        .as_str()
+        .to_owned();
+    let agent_scope = crate::storage::scope_for_profile(alice.as_str())
+        .agent("default")
+        .unwrap()
+        .as_str()
+        .to_owned();
     a.provision(&alice).await.unwrap();
     let state = a.open(&alice).await.unwrap();
-    write(&a_storage, "profile:alice").await.unwrap();
-    write(&a_storage, "profile:alice/agent:default")
-        .await
-        .unwrap();
+    write(&a_storage, &tenant_scope).await.unwrap();
+    write(&a_storage, &agent_scope).await.unwrap();
 
     // Another node takes the profile over (by its clock the lease ran out).
     let thief = DocumentLeases::cluster(
@@ -117,9 +123,7 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
         .unwrap();
 
     // Node A's next write is refused at once, and the profile is latched.
-    let refused = write(&a_storage, "profile:alice/agent:default")
-        .await
-        .unwrap_err();
+    let refused = write(&a_storage, &agent_scope).await.unwrap_err();
     assert!(matches!(
         fence_error(&refused),
         Some(FenceError::Superseded { .. })
@@ -133,10 +137,10 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
     // writes) while the profile's state is still held.
     let report = renew_once(&a).await;
     assert_eq!(report.fenced, vec![alice.clone()]);
-    assert!(write(&a_storage, "profile:alice").await.is_err());
+    assert!(write(&a_storage, &tenant_scope).await.is_err());
     drop(state);
     // Nothing holds the fenced context any more: the tombstone is pruned.
-    write(&a_storage, "profile:alice").await.unwrap();
+    write(&a_storage, &tenant_scope).await.unwrap();
 }
 
 #[tokio::test]

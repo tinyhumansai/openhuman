@@ -1,7 +1,8 @@
 use super::{
     consume_approval, native_approval_matches_request, validate_module_endpoint_url,
-    web3_approval_matches_request, x402_approval_facts, x402_request_owner_matches, ApprovalKind,
-    ApprovalPermit,
+    web3_approval_matches_request, with_x402_rpc_permit, x402_approval_facts,
+    x402_request_owner_matches, x402_route, x402_rpc_permit_route, ApprovalKind, ApprovalPermit,
+    X402Route, X402RpcPermit, X402RpcPermitOutcome,
 };
 use tinywallet_bus::wire::{
     AuthorizeNativeWalletExecutionRequest, AuthorizeWeb3ExecutionRequest,
@@ -18,13 +19,14 @@ fn x402_approval_is_bound_to_the_exact_chat_owner_and_payment_facts() {
         asset: "0x1111111111111111111111111111111111111111".into(),
         recipient: "0x2222222222222222222222222222222222222222".into(),
         amount_atomic: 2500,
+        scheme: None,
         owner: Some(QuoteOwner {
             thread_id: "thread-1".into(),
             client_id: "client-1".into(),
         }),
     };
     let origin =
-        |thread: &str, client: &str| crate::security::turn_origin::AgentTurnOrigin::WebChat {
+        |thread: &str, client: &str| crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
             thread_id: thread.into(),
             client_id: client.into(),
             request_id: Some("request-1".into()),
@@ -44,7 +46,7 @@ fn x402_approval_is_bound_to_the_exact_chat_owner_and_payment_facts() {
     // Only a WebChat turn can own an x402 payment: another origin, or none, never matches.
     assert!(!x402_request_owner_matches(
         &request,
-        Some(&crate::security::turn_origin::AgentTurnOrigin::Cli)
+        Some(&crate::core::runtime::turn_origin::AgentTurnOrigin::Cli)
     ));
     assert!(!x402_request_owner_matches(&request, None));
 
@@ -303,6 +305,105 @@ fn native_solana_approval_rejects_an_unverified_signed_message() {
     drop(permit);
 }
 
+const TRON_USDT: &str = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+const TRON_RECIPIENT: &str = "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH";
+/// `transfer(TRON_RECIPIENT, 25)` without the selector.
+const TRC20_PAY_25: &str = "000000000000000000000000c8599111f29c1e1e061265b4af93ea1f274ad78a\
+                            0000000000000000000000000000000000000000000000000000000000000019";
+
+fn trc20_quote(quote_id: &str) -> PreparedTransaction {
+    PreparedTransaction {
+        chain: WalletChain::Tron,
+        kind: PreparedKind::TokenTransfer,
+        evm_network: None,
+        from_address: "TSender".into(),
+        to_address: TRON_RECIPIENT.into(),
+        asset_symbol: "USDT".into(),
+        amount_raw: "25".into(),
+        amount_formatted: "0.000025".into(),
+        token_address: Some(TRON_USDT.into()),
+        ..native_quote(quote_id)
+    }
+}
+
+fn trc20_request(
+    quote: PreparedTransaction,
+    expected_to: &str,
+    parameter_hex: &str,
+) -> AuthorizeNativeWalletExecutionRequest {
+    AuthorizeNativeWalletExecutionRequest {
+        quote_id: quote.quote_id.clone(),
+        operation: "transfer".into(),
+        quote,
+        intent: NativeWalletExecutionIntent::Transaction {
+            transaction: TransactionSpec::Tron {
+                raw_data_hex: "00".into(),
+                expected_to: expected_to.into(),
+                expected_txid: "txid".into(),
+                transfer: tinywallet_bus::TronTransfer::Trc20 {
+                    parameter_hex: parameter_hex.into(),
+                },
+            },
+        },
+    }
+}
+
+/// The module's TRC-20 intent targets the token contract, so the confirmed
+/// transfer must be accepted (it used to be refused against the recipient).
+#[test]
+fn native_trc20_approval_accepts_the_confirmed_token_recipient_and_amount() {
+    let quote = trc20_quote("trc20-valid");
+    let permit = ApprovalPermit::new(
+        ApprovalKind::Native,
+        &quote.quote_id,
+        Some(quote.clone()),
+        None,
+    );
+    let request = trc20_request(quote.clone(), TRON_USDT, TRC20_PAY_25);
+
+    assert!(native_approval_matches_request(&quote, &request));
+    drop(permit);
+}
+
+/// Any well-formed hex used to pass: a 25-unit quote approved any amount to
+/// anyone.
+#[test]
+fn native_trc20_approval_rejects_another_amount_recipient_or_token() {
+    let wrong_amount = TRC20_PAY_25.replace("019", "01a");
+    let wrong_recipient = TRC20_PAY_25.replace("c8599111", "c8599112");
+    for (case, expected_to, parameter_hex) in [
+        ("amount", TRON_USDT, wrong_amount.as_str()),
+        ("recipient", TRON_USDT, wrong_recipient.as_str()),
+        ("token", TRON_RECIPIENT, TRC20_PAY_25),
+        ("arbitrary hex", TRON_USDT, "deadbeef"),
+        ("empty", TRON_USDT, ""),
+    ] {
+        let quote = trc20_quote(&format!("trc20-{case}"));
+        let permit = ApprovalPermit::new(
+            ApprovalKind::Native,
+            &quote.quote_id,
+            Some(quote.clone()),
+            None,
+        );
+        let request = trc20_request(quote.clone(), expected_to, parameter_hex);
+
+        assert!(!native_approval_matches_request(&quote, &request), "{case}");
+        drop(permit);
+    }
+
+    let mut no_token = trc20_quote("trc20-no-token");
+    no_token.token_address = None;
+    let permit = ApprovalPermit::new(
+        ApprovalKind::Native,
+        &no_token.quote_id,
+        Some(no_token.clone()),
+        None,
+    );
+    let request = trc20_request(no_token.clone(), TRON_USDT, TRC20_PAY_25);
+    assert!(!native_approval_matches_request(&no_token, &request));
+    drop(permit);
+}
+
 fn native_quote(quote_id: &str) -> PreparedTransaction {
     PreparedTransaction {
         quote_id: quote_id.into(),
@@ -363,4 +464,237 @@ fn native_request(
             },
         },
     }
+}
+
+fn x402_request(amount_atomic: u64, owner: Option<QuoteOwner>) -> AuthorizeX402PaymentRequest {
+    AuthorizeX402PaymentRequest {
+        url: "https://api.example/credits".into(),
+        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1".into(),
+        asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".into(),
+        recipient: "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk".into(),
+        amount_atomic,
+        scheme: None,
+        owner,
+    }
+}
+
+fn automation(
+    source: crate::core::runtime::turn_origin::TrustedAutomationSource,
+) -> crate::core::runtime::turn_origin::AgentTurnOrigin {
+    crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
+        job_id: "job-1".into(),
+        source,
+    }
+}
+
+#[test]
+fn x402_from_trusted_automation_within_budget_is_approved_without_a_prompt() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    for source in [
+        TrustedAutomationSource::Background,
+        TrustedAutomationSource::CronActions,
+        TrustedAutomationSource::Workflow {
+            require_approval: false,
+        },
+    ] {
+        assert_eq!(
+            x402_route(
+                &x402_request(1_000_000, None),
+                Some(&automation(source)),
+                1_000_000
+            ),
+            X402Route::AutomationApproved
+        );
+    }
+}
+
+#[test]
+fn x402_from_trusted_automation_over_the_per_request_budget_is_refused() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    assert!(matches!(
+        x402_route(
+            &x402_request(1_000_001, None),
+            Some(&automation(TrustedAutomationSource::Background)),
+            1_000_000
+        ),
+        X402Route::Refused(_)
+    ));
+}
+
+#[test]
+fn x402_from_a_workflow_that_requires_approval_is_not_auto_approved() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    assert!(matches!(
+        x402_route(
+            &x402_request(1, None),
+            Some(&automation(TrustedAutomationSource::Workflow {
+                require_approval: true
+            })),
+            1_000_000
+        ),
+        X402Route::Refused(_)
+    ));
+}
+
+#[test]
+fn x402_from_an_external_channel_or_unlabelled_turn_is_refused() {
+    let channel = crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
+        channel: "telegram".into(),
+        sender: Some("u1".into()),
+        sender_name: None,
+        reply_target: "chat-1".into(),
+        message_id: "m1".into(),
+        history_key: None,
+        channel_session: None,
+    };
+    assert!(matches!(
+        x402_route(&x402_request(1, None), Some(&channel), u64::MAX),
+        X402Route::Refused(_)
+    ));
+    assert!(matches!(
+        x402_route(&x402_request(1, None), None, u64::MAX),
+        X402Route::Refused(_)
+    ));
+}
+
+#[test]
+fn x402_webchat_flow_is_unchanged_and_still_prompts_the_owning_chat() {
+    let owner = QuoteOwner {
+        thread_id: "thread-1".into(),
+        client_id: "client-1".into(),
+    };
+    let webchat = |thread: &str| crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
+        thread_id: thread.into(),
+        client_id: "client-1".into(),
+        request_id: None,
+    };
+    // The budget never short-circuits the human prompt in a chat.
+    assert_eq!(
+        x402_route(
+            &x402_request(5, Some(owner.clone())),
+            Some(&webchat("thread-1")),
+            0
+        ),
+        X402Route::PromptWebChat
+    );
+    assert!(matches!(
+        x402_route(
+            &x402_request(5, Some(owner)),
+            Some(&webchat("thread-2")),
+            u64::MAX
+        ),
+        X402Route::Refused(_)
+    ));
+}
+
+#[test]
+fn x402_from_scheduled_actions_cron_is_budgeted_and_plain_cron_is_refused() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let actions = automation(TrustedAutomationSource::CronActions);
+    assert_eq!(
+        x402_route(&x402_request(1_000_000, None), Some(&actions), 1_000_000),
+        X402Route::AutomationApproved
+    );
+    assert!(matches!(
+        x402_route(&x402_request(1_000_001, None), Some(&actions), 1_000_000),
+        X402Route::Refused(_)
+    ));
+    assert!(matches!(
+        x402_route(
+            &x402_request(1, None),
+            Some(&automation(TrustedAutomationSource::Cron)),
+            1_000_000
+        ),
+        X402Route::Refused(_)
+    ));
+}
+
+fn x402_request_for(url: &str, amount_atomic: u64) -> AuthorizeX402PaymentRequest {
+    AuthorizeX402PaymentRequest {
+        url: url.into(),
+        ..x402_request(amount_atomic, None)
+    }
+}
+
+#[test]
+fn x402_rpc_permit_approves_a_payment_within_the_caller_cap() {
+    let url = "https://rpc-permit.example/within-cap";
+    let permit = X402RpcPermit::new(url, 500);
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(url, 500), 1_000),
+        Some(X402Route::RpcPermitApproved)
+    );
+    assert_eq!(permit.finish(), X402RpcPermitOutcome::Approved);
+}
+
+#[test]
+fn x402_rpc_permit_refuses_a_payment_over_the_caller_cap() {
+    let url = "https://rpc-permit.example/over-cap";
+    let permit = X402RpcPermit::new(url, 500);
+    assert!(matches!(
+        x402_rpc_permit_route(&x402_request_for(url, 501), u64::MAX),
+        Some(X402Route::Refused(_))
+    ));
+    assert!(matches!(permit.finish(), X402RpcPermitOutcome::Refused(_)));
+}
+
+#[test]
+fn x402_rpc_permit_refuses_a_payment_over_the_per_request_budget() {
+    let url = "https://rpc-permit.example/over-budget";
+    let permit = X402RpcPermit::new(url, 1_000);
+    assert!(matches!(
+        x402_rpc_permit_route(&x402_request_for(url, 500), 499),
+        Some(X402Route::Refused(_))
+    ));
+    assert!(matches!(permit.finish(), X402RpcPermitOutcome::Refused(_)));
+}
+
+#[test]
+fn x402_without_a_matching_rpc_permit_keeps_the_existing_refusal() {
+    let permitted = "https://rpc-permit.example/permitted";
+    let other = "https://rpc-permit.example/other";
+    let permit = X402RpcPermit::new(permitted, u64::MAX);
+    // A permit for one URL never authorizes another; routing falls through.
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(other, 1), u64::MAX),
+        None
+    );
+    assert!(matches!(
+        x402_route(&x402_request_for(other, 1), None, u64::MAX),
+        X402Route::Refused(_)
+    ));
+    assert_eq!(permit.finish(), X402RpcPermitOutcome::Unused);
+    // No permit at all: nothing is approved for a plain RPC caller.
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(permitted, 1), u64::MAX),
+        None
+    );
+}
+
+#[test]
+fn x402_rpc_permit_is_consumed_by_the_first_authorization() {
+    let url = "https://rpc-permit.example/consumed-once";
+    let permit = X402RpcPermit::new(url, 10);
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(url, 1), 10),
+        Some(X402Route::RpcPermitApproved)
+    );
+    assert_eq!(x402_rpc_permit_route(&x402_request_for(url, 1), 10), None);
+    assert_eq!(permit.finish(), X402RpcPermitOutcome::Approved);
+}
+
+#[tokio::test]
+async fn x402_rpc_permit_is_active_only_while_its_future_runs() {
+    let url = "https://rpc-permit.example/scoped";
+    let (route, outcome) = with_x402_rpc_permit(url, 10, async {
+        x402_rpc_permit_route(&x402_request_for(url, 10), 10)
+    })
+    .await;
+    assert_eq!(route, Some(X402Route::RpcPermitApproved));
+    assert_eq!(outcome, X402RpcPermitOutcome::Approved);
+    assert_eq!(x402_rpc_permit_route(&x402_request_for(url, 1), 10), None);
+
+    let ((), unused) = with_x402_rpc_permit(url, 10, async {}).await;
+    assert_eq!(unused, X402RpcPermitOutcome::Unused);
+    assert_eq!(x402_rpc_permit_route(&x402_request_for(url, 1), 10), None);
 }

@@ -2,8 +2,8 @@ use super::*;
 
 // --- DomainSet tool classifier (#4796) ----------------------------------
 
-#[test]
-fn tool_group_classifies_gate_and_harness_families() {
+#[tokio::test]
+async fn tool_group_classifies_gate_and_harness_families() {
     use crate::core::all::DomainGroup;
 
     // Gate families → their gate group (dropped under harness()).
@@ -77,14 +77,7 @@ fn tool_group_classifies_gate_and_harness_families() {
     }
     assert_eq!(tool_group("learning_list_facets"), DomainGroup::Agent);
     assert_eq!(tool_group("spawn_subagent"), DomainGroup::Agent);
-    for name in [
-        "ask_user_clarification",
-        "wait",
-        "wait_loop",
-        "delegate",
-        "todo",
-        "spawn_parallel_agents",
-    ] {
+    for name in ["ask_user_clarification", "wait", "wait_loop", "todo"] {
         assert_eq!(tool_group(name), DomainGroup::Agent);
     }
     assert_eq!(tool_group("config_snapshot"), DomainGroup::Config);
@@ -115,8 +108,8 @@ fn tool_group_classifies_gate_and_harness_families() {
     assert_eq!(tool_group("file_read"), DomainGroup::Platform);
 }
 
-#[test]
-fn tool_group_gate_families_dropped_under_harness_not_full() {
+#[tokio::test]
+async fn tool_group_gate_families_dropped_under_harness_not_full() {
     use crate::core::runtime::DomainSet;
 
     let full = DomainSet::full();
@@ -136,8 +129,8 @@ fn tool_group_gate_families_dropped_under_harness_not_full() {
     // The previously-misclassified gate-family tools now drop under harness.
 }
 
-#[test]
-fn no_gate_family_tool_silently_defaults_to_platform() {
+#[tokio::test]
+async fn no_gate_family_tool_silently_defaults_to_platform() {
     use crate::core::all::DomainGroup;
     // #4808 maintainer review: a future tool in a prefix-gated family must NOT
     // fall through to Platform — otherwise it would stay callable under a custom
@@ -231,8 +224,8 @@ fn default_tools_omits_flows_tools_when_feature_off() {
 /// mapping. `REPRESENTATIVE` names are asserted to be real tool names by
 /// `representative_tool_names_are_real` below, so this cannot rot into testing
 /// strings that no longer exist.
-#[test]
-fn every_domain_group_is_accounted_for_in_tool_group() {
+#[tokio::test]
+async fn every_domain_group_is_accounted_for_in_tool_group() {
     use crate::core::all::DomainGroup;
 
     for g in DomainGroup::ALL {
@@ -256,10 +249,10 @@ fn every_domain_group_is_accounted_for_in_tool_group() {
 
 /// The `memory` tool is registered only while memory has a usable engine: a
 /// signed-out, key-less core is not offered a tool that can only fail.
-#[test]
-fn memory_tool_is_absent_while_memory_is_off() {
+#[tokio::test]
+async fn memory_tool_is_absent_while_memory_is_off() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     assert!(
         !names.iter().any(|n| n == crate::memory::MEMORY_TOOL_NAME),
         "the memory tool must not be registered with memory off; got: {names:?}"
@@ -280,8 +273,8 @@ fn memory_tool_is_absent_while_memory_is_off() {
 }
 
 /// With an engine bound, exactly one `memory` tool is registered.
-#[test]
-fn memory_tool_is_registered_once_memory_is_on() {
+#[tokio::test]
+async fn memory_tool_is_registered_once_memory_is_on() {
     let tmp = TempDir::new().unwrap();
     let cfg = test_config(&tmp);
     crate::memory::test_fixtures::bind_reference(&cfg);
@@ -296,13 +289,13 @@ fn memory_tool_is_registered_once_memory_is_on() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
     assert_eq!(
         names
@@ -316,8 +309,8 @@ fn memory_tool_is_registered_once_memory_is_on() {
 
 /// `[components] memory = false` unregisters the tool even with an engine
 /// installed, and the component's own RPC family answers `COMPONENT_DISABLED`.
-#[test]
-fn memory_tool_is_absent_when_the_memory_component_is_off() {
+#[tokio::test]
+async fn memory_tool_is_absent_when_the_memory_component_is_off() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = test_config(&tmp);
     crate::memory::test_fixtures::bind_reference(&cfg);
@@ -333,13 +326,13 @@ fn memory_tool_is_absent_when_the_memory_component_is_off() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
     assert!(
         !names.iter().any(|n| n == crate::memory::MEMORY_TOOL_NAME),
@@ -351,8 +344,8 @@ fn memory_tool_is_absent_when_the_memory_component_is_off() {
 
 /// The memory tool classifies as the Memory family (kept under `harness()`),
 /// and the old `memory_`/`goals_` prefixes no longer claim anything.
-#[test]
-fn memory_tool_classifies_as_memory_family() {
+#[tokio::test]
+async fn memory_tool_classifies_as_memory_family() {
     use crate::core::all::DomainGroup;
     use crate::core::runtime::DomainSet;
     assert_eq!(tool_group("memory"), DomainGroup::Memory);
@@ -368,7 +361,8 @@ async fn full_domain_set_keeps_platform_tools() {
 
     let tmp = TempDir::new().unwrap();
     let ctx = CoreContext::for_test(DomainSet::full(), None);
-    let names = CoreContext::scope(ctx, async { tool_names(&expansion_tools_for(&tmp)) }).await;
+    let names =
+        CoreContext::scope(ctx, async { tool_names(&expansion_tools_for(&tmp).await) }).await;
     for name in ["shell", "file_read", "file_write", "todo"] {
         assert!(names.iter().any(|n| n == name), "missing `{name}`");
     }

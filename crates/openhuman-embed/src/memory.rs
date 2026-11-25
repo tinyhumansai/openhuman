@@ -163,8 +163,8 @@ impl Memory {
     }
 
     /// Whether memory is on, and with what.
-    pub fn status(&self) -> MemoryStatus {
-        match engine::resolve(&self.config) {
+    pub async fn status(&self) -> MemoryStatus {
+        match engine::resolve(&self.config).await {
             Binding::On(bound) => MemoryStatus {
                 root: self.root(),
                 on: true,
@@ -187,8 +187,8 @@ impl Memory {
     }
 
     /// Whether an engine is bound.
-    pub fn is_on(&self) -> bool {
-        engine::is_on(&self.config)
+    pub async fn is_on(&self) -> bool {
+        engine::is_on(&self.config).await
     }
 
     /// The agents with logged turns under the root, most first.

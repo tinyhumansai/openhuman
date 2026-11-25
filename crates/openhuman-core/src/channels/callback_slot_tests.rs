@@ -22,9 +22,9 @@ fn answering(
     move |_, _| {
         let value = value.clone();
         Box::pin(async move {
-            Ok(ChannelBackendResult::ProgressiveTransport(
+            Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
                 ProgressiveTransportResult::Success(value),
-            ))
+            )))
         })
     }
 }
@@ -58,8 +58,12 @@ async fn a_registered_callback_serves_the_progressive_transport_before_the_refus
     let served = backend.dispatch_callback(typing("web")).await;
     unregister_channel_callback("test");
 
-    match served.expect("callback answers") {
-        ChannelBackendResult::ProgressiveTransport(ProgressiveTransportResult::Success(value)) => {
+    let ChannelBackendResult::ProgressiveTransport(served) = served.expect("callback answers")
+    else {
+        panic!("expected the registered callback's result");
+    };
+    match *served {
+        ProgressiveTransportResult::Success(value) => {
             assert_eq!(value, serde_json::json!({"ok": true}));
         }
         _ => panic!("expected the registered callback's result"),
@@ -73,9 +77,9 @@ async fn the_callback_is_told_the_config_it_serves() {
     register_channel_callback("ctx", move |ctx, _| {
         *sink.lock().unwrap() = Some(ctx.config.api_url.clone());
         Box::pin(async {
-            Ok(ChannelBackendResult::ProgressiveTransport(
+            Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
                 ProgressiveTransportResult::Failed,
-            ))
+            )))
         })
     });
     let config = Config {

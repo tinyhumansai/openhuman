@@ -28,7 +28,12 @@ fn whoami(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
             .await
             .map_err(|e| e.to_string())?
         };
-        Ok(json!({ "bound": bound, "workspace": workspace, "spawned": spawned }))
+        Ok(json!({
+            "bound": bound,
+            "workspace": workspace,
+            "spawned": spawned,
+            "headless_agent_chat": ctx.is_headless_agent_chat(),
+        }))
     })
 }
 
@@ -58,11 +63,33 @@ async fn handler_receives_the_context_the_caller_dispatched_with() {
     .expect("handler succeeds");
     assert_eq!(value["bound"], json!(true));
     assert_eq!(value["workspace"], json!("/tmp/ctx-probe-a"));
+    assert_eq!(value["headless_agent_chat"], json!(false));
     assert_eq!(
         value["spawned"],
         json!("/tmp/ctx-probe-a"),
         "a spawned task is handed the context explicitly"
     );
+}
+
+#[tokio::test]
+async fn registered_dispatch_preserves_headless_marker_when_binding_scoped_core() {
+    register_probe();
+    let scoped = CoreContext::for_test(DomainSet::full(), Some("/tmp/ctx-probe-headless".into()));
+    let value = CoreContext::scope(scoped, async {
+        try_invoke_registered_rpc(
+            DispatchCtx::unbound().with_headless_agent_chat(),
+            "openhuman.ext_ctx_probe_whoami",
+            Map::new(),
+        )
+        .await
+    })
+    .await
+    .expect("probe is registered")
+    .expect("probe handler succeeds");
+
+    assert_eq!(value["bound"], json!(true));
+    assert_eq!(value["workspace"], json!("/tmp/ctx-probe-headless"));
+    assert_eq!(value["headless_agent_chat"], json!(true));
 }
 
 /// Two tenants dispatched at once, interleaving at an await point, each see only

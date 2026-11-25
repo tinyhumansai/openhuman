@@ -72,6 +72,37 @@ describe('<SystemDiagnostics /> doctor report', () => {
     expect(screen.getByText('The core is ready.')).toBeInTheDocument();
   });
 
+  it('shows the error state when a report arrives without a findings array', async () => {
+    callCoreRpc.mockResolvedValueOnce({ result: { ...report, findings: undefined }, logs: [] });
+    renderDiagnostics();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run doctor' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/something went wrong/i);
+    expect(screen.getByTestId('doctor-diagnostics')).toBeInTheDocument();
+  });
+
+  it('renders a finding with an unknown severity under a neutral badge', async () => {
+    callCoreRpc.mockResolvedValueOnce({
+      result: {
+        ...report,
+        findings: [
+          { ...report.findings[1], severity: 'critical', message: 'From a newer core.' },
+          { ...report.findings[1], severity: 'constructor', message: 'Prototype-named severity.' },
+        ],
+      },
+      logs: [],
+    });
+    renderDiagnostics();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run doctor' }));
+
+    expect(await screen.findByText('From a newer core.')).toBeInTheDocument();
+    expect(screen.getByText('critical')).toBeInTheDocument();
+    expect(screen.getByText('Prototype-named severity.')).toBeInTheDocument();
+    expect(screen.getByText('constructor')).toBeInTheDocument();
+  });
+
   it('requests the live tier only after the user confirms the token warning', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderDiagnostics();

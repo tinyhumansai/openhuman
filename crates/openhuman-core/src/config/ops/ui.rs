@@ -103,7 +103,7 @@ pub async fn apply_browser_settings(
     if let Some(learn) = update.learn_from_tasks {
         crate::modules::site_memory_host::note_switch(&config.workspace_dir, learn);
     }
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -154,7 +154,7 @@ pub async fn apply_analytics_settings(
         config.observability.analytics_enabled = enabled;
     }
     config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -182,7 +182,7 @@ pub async fn apply_user_timezone(
     // and report a stored change as failed; a failed save restores the
     // caller's config to what is on disk.
     let previous = std::mem::replace(&mut config.user_timezone, next);
-    let snapshot = match snapshot_config_json(config) {
+    let snapshot = match snapshot_config_json(config).await {
         Ok(snapshot) => snapshot,
         Err(error) => {
             config.user_timezone = previous;
@@ -231,47 +231,6 @@ pub async fn load_and_apply_analytics_settings(
     apply_analytics_settings(&mut config, update).await
 }
 
-/// Resolves a workspace onboarding flag, creating or checking its existence.
-pub async fn workspace_onboarding_flag_resolve(
-    ctx: &DispatchCtx,
-    flag_name: Option<String>,
-    default_name: &str,
-) -> Result<Outcome<bool>, String> {
-    let name = flag_name.unwrap_or_else(|| default_name.to_string());
-    let trimmed = name.trim();
-    if trimmed.is_empty()
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || trimmed.contains("..")
-    {
-        return Err("Invalid onboarding flag name".to_string());
-    }
-    let workspace_dir = match ctx.load_config().await {
-        Ok(cfg) => cfg.workspace_dir,
-        Err(_) => fallback_workspace_dir(),
-    };
-    workspace_onboarding_flag_exists(workspace_dir, trimmed)
-}
-
-/// Checks if a specific onboarding flag file exists in the workspace.
-pub fn workspace_onboarding_flag_exists(
-    workspace_dir: std::path::PathBuf,
-    flag_name: &str,
-) -> Result<Outcome<bool>, String> {
-    let trimmed = flag_name.trim();
-    if trimmed.is_empty()
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || trimmed.contains("..")
-    {
-        return Err("Invalid onboarding flag name".to_string());
-    }
-    Ok(Outcome::single_log(
-        workspace_dir.join(trimmed).is_file(),
-        "onboarding flag checked",
-    ))
-}
-
 /// Creates or removes an onboarding flag file in the workspace.
 pub async fn workspace_onboarding_flag_set(
     ctx: &DispatchCtx,
@@ -309,7 +268,6 @@ pub async fn workspace_onboarding_flag_set(
         "onboarding flag updated",
     ))
 }
-
 /// Returns whether the onboarding process has been marked as completed.
 pub async fn get_onboarding_completed(ctx: &DispatchCtx) -> Result<Outcome<bool>, String> {
     let config = ctx.load_config().await?;

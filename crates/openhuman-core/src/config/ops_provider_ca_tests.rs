@@ -25,7 +25,7 @@ async fn provider_ca_cert_is_scoped_to_its_slug_and_removed_with_provider() {
     .await
     .unwrap();
     assert_eq!(cfg.cloud_provider_ca_certs["team-gateway"], pem);
-    let snapshot = crate::config::ops::loader::client_config_json(&cfg);
+    let snapshot = crate::config::ops::loader::client_config_json(&cfg).await;
     assert_eq!(snapshot["cloud_providers"][0]["ca_cert_pem"], pem);
 
     apply_model_settings(

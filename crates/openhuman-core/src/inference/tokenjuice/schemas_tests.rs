@@ -1,11 +1,15 @@
 use super::*;
+use crate::core::all::{assert_schema_controller_parity, expect_schema_fields};
 use crate::core::runtime::DispatchCtx;
 
 #[test]
-fn all_schemas_have_namespace() {
-    for s in all_controller_schemas() {
-        assert_eq!(s.namespace, "tokenjuice");
-    }
+fn tokenjuice_schema_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "tokenjuice");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "compress",
+    );
 }
 
 /* Module-backed behavior is covered by TinyJuice's loader E2E. */
@@ -26,26 +30,18 @@ fn compress_hint_carries_every_caller_supplied_field() {
     p.insert("explicit".into(), Value::from("search"));
 
     let hint = compress_hint_from_params(&p).expect("a well-formed hint must parse");
-    assert_eq!(
-        hint.source_tool.as_deref(),
-        Some("grep"),
-        "`tool_name` was the only field the old handler read"
-    );
-    assert_eq!(
-        hint.mime.as_deref(),
-        Some("text/html"),
-        "`mime` must reach the router; it was dropped before #6088"
-    );
-    assert_eq!(
-        hint.extension.as_deref(),
-        Some("rs"),
-        "`extension` must reach the router; it was dropped before #6088"
-    );
-    assert_eq!(
-        hint.query.as_deref(),
-        Some("needle"),
-        "`query` must reach the router — the search compressor ranks by it"
-    );
+    for (field, actual, expected) in [
+        ("tool_name", hint.source_tool.as_deref(), "grep"),
+        ("mime", hint.mime.as_deref(), "text/html"),
+        ("extension", hint.extension.as_deref(), "rs"),
+        ("query", hint.query.as_deref(), "needle"),
+    ] {
+        assert_eq!(
+            actual,
+            Some(expected),
+            "caller-supplied {field} must reach the router"
+        );
+    }
     assert_eq!(
         hint.explicit,
         Some(ContentKind::Search),
@@ -97,38 +93,17 @@ fn compress_hint_accepts_the_documented_plain_text_spelling() {
 
 #[test]
 fn compress_schema_declares_all_five_hint_inputs() {
-    let s = schemas("compress");
-    for field in [
-        "content",
-        "tool_name",
-        "mime",
-        "extension",
-        "query",
-        "explicit",
-    ] {
-        assert!(
-            s.inputs.iter().any(|f| f.name == field),
-            "`compress` must declare `{field}`; a hint field the schema does not \
-             name is one a caller cannot discover"
-        );
-    }
-    assert!(
-        s.inputs
-            .iter()
-            .find(|f| f.name == "content")
-            .is_some_and(|f| f.required),
-        "only `content` is required"
+    expect_schema_fields(
+        &schemas("compress"),
+        &[
+            ("content", Some(true)),
+            ("tool_name", Some(false)),
+            ("mime", Some(false)),
+            ("extension", Some(false)),
+            ("query", Some(false)),
+            ("explicit", Some(false)),
+        ],
     );
-    for optional in ["tool_name", "mime", "extension", "query", "explicit"] {
-        assert!(
-            !s.inputs
-                .iter()
-                .find(|f| f.name == optional)
-                .unwrap()
-                .required,
-            "`{optional}` must stay optional"
-        );
-    }
 }
 
 /// `/schema` is what generators and model-facing tool definitions read. Declaring

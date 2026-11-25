@@ -15,7 +15,12 @@ const routes: RouteCheck[] = [
   { hash: '/channels', markers: ['Channels', 'Connections', 'Telegram', 'Discord'] },
   { hash: '/notifications', markers: ['Notifications', 'Alerts', 'No alerts yet'] },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
+  { hash: '/settings/memory-data', markers: ['Documents', 'Memory'] },
+  { hash: '/settings/agent-chat', markers: ['LLM Providers'] },
+  { hash: '/settings/local-model-debug', markers: ['LLM Providers'] },
+  { hash: '/flows', markers: ['Flows', 'New'] },
   { hash: '/settings/notifications-hub', markers: ['Notifications'] },
+  { hash: '/connections?tab=brain', markers: ['Engine', 'Ask', 'Documents', 'Memory'] },
   // Home folded into the unified chat surface — /home redirects to /chat.
   { hash: '/home', markers: ['Your assistant is ready', 'Reasoning'] },
 ];

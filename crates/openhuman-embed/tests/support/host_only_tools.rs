@@ -123,16 +123,19 @@ fn host_only_spec(id: &str, provider: &MockServer, calls: Arc<AtomicUsize>) -> A
                 .tools(ToolScopeSpec::HostOnly),
         )
         .tools(move |_| {
-            HostTurnTools::advertised(vec![
-                Box::new(HostTool {
-                    name: "read_file",
-                    calls: calls.clone(),
-                }),
-                Box::new(HostTool {
-                    name: "find_documents",
-                    calls: calls.clone(),
-                }),
-            ])
+            let calls = calls.clone();
+            Box::pin(async move {
+                HostTurnTools::advertised(vec![
+                    Box::new(HostTool {
+                        name: "read_file",
+                        calls: calls.clone(),
+                    }),
+                    Box::new(HostTool {
+                        name: "find_documents",
+                        calls,
+                    }),
+                ])
+            })
         })
 }
 
@@ -165,7 +168,10 @@ pub fn host_only_advertises_exactly_the_host_tools_under_a_bare_prompt() {
                 .backend_url(backend.uri())
                 .build()
                 .await
-                .expect("runtime");
+                .unwrap_or_else(|error| {
+                    eprintln!("host-only advertise runtime build failed: {error:?}");
+                    panic!("runtime");
+                });
             let calls = Arc::new(AtomicUsize::new(0));
             let agent = runtime
                 .agent(host_only_spec("analyst", &provider, calls))
@@ -179,6 +185,8 @@ pub fn host_only_advertises_exactly_the_host_tools_under_a_bare_prompt() {
             advertised.sort();
             assert_eq!(advertised, vec!["find_documents", "read_file"]);
             assert_eq!(system_text(&requests[0]), BARE_PROMPT);
+            runtime.remove_agent("analyst").await.unwrap();
+            drop(agent);
         })
         .await
         .expect("test task");
@@ -213,7 +221,10 @@ pub fn host_only_refuses_builtin_tools_the_model_names() {
                 .backend_url(backend.uri())
                 .build()
                 .await
-                .expect("runtime");
+                .unwrap_or_else(|error| {
+                    eprintln!("host-only refusal runtime build failed: {error:?}");
+                    panic!("runtime");
+                });
             let calls = Arc::new(AtomicUsize::new(0));
             let agent = runtime
                 .agent(host_only_spec("refuser", &provider, calls.clone()))
@@ -242,6 +253,8 @@ pub fn host_only_refuses_builtin_tools_the_model_names() {
             assert!(results.contains("read_file-host-result"), "{results}");
             assert!(results.contains("unknown tool `shell`"), "{results}");
             assert!(results.contains("unknown tool `write_file`"), "{results}");
+            runtime.remove_agent("refuser").await.unwrap();
+            drop(agent);
         })
         .await
         .expect("test task");
@@ -262,7 +275,10 @@ pub fn host_only_forces_read_only_access_and_sandbox() {
                 .backend_url(backend.uri())
                 .build()
                 .await
-                .expect("runtime");
+                .unwrap_or_else(|error| {
+                    eprintln!("host-only readonly runtime build failed: {error:?}");
+                    panic!("runtime");
+                });
             let agent = runtime
                 .agent(host_only_spec(
                     "readonly",
@@ -276,6 +292,8 @@ pub fn host_only_forces_read_only_access_and_sandbox() {
             );
             assert!(agent.access().turn_origin().is_none());
             assert!(agent.config().autonomy.trusted_roots.is_empty());
+            runtime.remove_agent("readonly").await.unwrap();
+            drop(agent);
         })
         .await
         .expect("test task");

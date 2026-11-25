@@ -7,8 +7,6 @@
 //! the run never applied. The loop is upstream; this module supplies the host
 //! seams:
 //!
-//! - [`QueuedMessage`] for [`QueuedTurn`] (text/id accessors and how a recovered
-//!   steer is re-created),
 //! - [`queue_feed`], whose event sink publishes
 //!   [`DomainEvent::RunQueueMessageDelivered`] /
 //!   [`DomainEvent::RunQueueSteerRequeued`] on the event bus,
@@ -18,9 +16,7 @@
 use std::sync::Arc;
 
 use tinyagents_harness::ids::TaskId;
-use tinyagents_harness::run_queue::{
-    ForwardEvent, ForwardEventSink, QueuedMessage, RunQueue, RunQueueHandle,
-};
+use tinyagents_harness::run_queue::{ForwardEvent, ForwardEventSink, RunQueue, RunQueueHandle};
 use tinyagents_harness::steering::SteeringHandle;
 use tinyagents_runtime::turn_driver::{
     MessageRunQueueFeed, RunQueueFeed, SteeringFeed, SteeringRegistrar,
@@ -31,29 +27,6 @@ use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 
 use super::host::steering::shared_steering_registry;
-
-impl QueuedMessage for QueuedTurn {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn text(&self) -> &str {
-        &self.text
-    }
-
-    fn requeued(id: String, text: String, thread_label: &str, queued_at_ms: u64) -> Self {
-        QueuedTurn {
-            id,
-            text,
-            client_id: String::new(),
-            thread_id: thread_label.to_string(),
-            queued_at_ms,
-            model_override: None,
-            temperature: None,
-            locale: None,
-        }
-    }
-}
 
 /// Publish forwarder notifications as `RunQueue*` domain events.
 fn event_bus_sink() -> ForwardEventSink {
@@ -119,15 +92,15 @@ impl SteeringRegistrar for SharedSteeringRegistrar {
 /// interactive/channel parent turn reads the turn origin.
 pub(super) fn thread_label(
     subagent_scope: Option<&crate::agent::tinyagents::observability::SubagentScope>,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> String {
     subagent_scope
         .map(|s| s.task_id.clone())
         .or_else(|| match origin {
-            Some(crate::security::turn_origin::AgentTurnOrigin::WebChat { thread_id, .. }) => {
-                Some(thread_id.clone())
-            }
-            Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+            Some(crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
+                thread_id, ..
+            }) => Some(thread_id.clone()),
+            Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
                 reply_target,
                 ..
             }) => Some(reply_target.clone()),

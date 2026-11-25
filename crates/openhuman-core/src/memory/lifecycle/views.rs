@@ -165,7 +165,7 @@ pub async fn pack_preview(
     params: PackPreviewParams,
 ) -> Result<PackPreviewView> {
     let (memory, identity) =
-        super::named_agent_memory(config, identity, params.agent_id.as_deref())?;
+        super::named_agent_memory(config, identity, params.agent_id.as_deref()).await?;
     let preview = memory
         .preview(params.query.as_deref(), params.thread_id.as_deref())
         .await?;
@@ -209,7 +209,7 @@ pub async fn agents_list(
     config: &Config,
     identity: &tinymemory_tools::layout::identity::Identity,
 ) -> Result<AgentsView> {
-    let (memory, identity) = super::current_agent_memory(config, identity)?;
+    let (memory, identity) = super::current_agent_memory(config, identity).await?;
     let agents = memory
         .agents()
         .await?

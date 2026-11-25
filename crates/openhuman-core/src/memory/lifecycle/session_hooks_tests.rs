@@ -6,14 +6,15 @@ use tinyinference_llm::ToolCall;
 fn external_channel_origin(
     channel: &str,
     message_id: &str,
-) -> crate::security::turn_origin::AgentTurnOrigin {
-    crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+) -> crate::core::runtime::turn_origin::AgentTurnOrigin {
+    crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         channel: channel.into(),
         sender: None,
         sender_name: None,
         reply_target: "chat".into(),
         message_id: message_id.into(),
         history_key: None,
+        channel_session: None,
     }
 }
 
@@ -31,7 +32,7 @@ fn logged_channel_keeps_normalized_custom_external_provider_ids() {
 
 #[test]
 fn logged_channel_is_none_for_non_channel_origins_none_and_cron_replays() {
-    use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
     assert_eq!(logged_channel(None), None);
     assert_eq!(logged_channel(Some(&AgentTurnOrigin::Cli)), None);
@@ -55,6 +56,7 @@ fn logged_channel_is_none_for_non_channel_origins_none_and_cron_replays() {
 
 #[tokio::test]
 async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_labels() {
+    crate::agent::session_host::test_support::install_model_fixture();
     use crate::memory::test_fixtures::stored;
     use tinyagents_runtime::{
         CommitReceipt, ResumeMode, SessionTurnOutcome, TranscriptTurnOptions,
@@ -65,7 +67,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
         prelude: &mut OpenHumanTurnPrelude,
         engine: &tinymemory_api::conformance::ReferenceEngine,
         thread_id: &str,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         expected_channel: Option<&str>,
     ) {
         prelude.thread_id = Some(thread_id.into());
@@ -102,7 +104,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
             },
             transcript: None,
         };
-        prelude.memory_post_turn(&receipt);
+        prelude.memory_post_turn(&receipt, None);
 
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
@@ -143,7 +145,9 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
         ..Default::default()
     };
     config.memory.conversations.enabled = true;
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let engine = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
     crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
 
@@ -152,6 +156,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
         &config,
         "orchestrator",
     )
+    .await
     .expect("host");
     host.ensure_runtime_session().expect("runtime session");
     let mut prelude = host
@@ -174,7 +179,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
     )
     .await;
 
-    use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
     log_turn(
         &mut prelude,
         &engine,
@@ -309,7 +314,10 @@ async fn deferred_memory_commit_survives_the_turn_scope_without_pinning_the_prof
                 .as_deref(),
             Some(id.as_str())
         );
-        let binding = crate::memory::engine::resolve(&config).engine().unwrap();
+        let binding = crate::memory::engine::resolve(&config)
+            .await
+            .engine()
+            .unwrap();
         binding
             .engine
             .store(StoreItem::learning(
@@ -404,5 +412,98 @@ async fn failed_profile_capture_is_denied_but_ordinary_desktop_work_still_runs()
     assert!(
         ran,
         "ordinary desktop work retains its existing deferred behavior"
+    );
+}
+
+#[tokio::test]
+async fn omit_memory_log_keeps_a_helper_agents_turns_out_of_memory() {
+    crate::agent::session_host::test_support::install_model_fixture();
+    use crate::memory::test_fixtures::stored;
+    use tinyagents_runtime::{
+        CommitReceipt, ResumeMode, SessionTurnOutcome, TranscriptTurnOptions,
+    };
+    use tinymemory_api::{ItemKind, MetaFilter};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Default::default()
+    };
+    config.memory.conversations.enabled = true;
+    config.secrets.encrypt = false;
+    std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
+    let engine = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
+    crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
+
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .await
+    .expect("host");
+    host.ensure_runtime_session().expect("runtime session");
+    let mut prelude = host
+        .runtime_state
+        .lock()
+        .expect("runtime state")
+        .prelude
+        .clone()
+        .expect("turn prelude");
+    prelude.runtime_config = Some(Arc::new(config.clone()));
+    prelude.omit_memory_log = true;
+
+    let thread_id = "helper-thread";
+    prelude.thread_id = Some(thread_id.into());
+    prelude
+        .mutable
+        .lock()
+        .expect("prelude state")
+        .pending_user_text = Some("draft me a post".into());
+    assert!(
+        prelude.memory_pre_turn(&[], 0, None, None).await.is_none(),
+        "a helper's turn gets no memory turn"
+    );
+    // Deterministic gate: the omission must return before any pending memory
+    // turn is recorded or any background pre-turn write is queued.
+    assert!(
+        prelude
+            .mutable
+            .lock()
+            .expect("prelude state")
+            .pending_memory_turn
+            .is_none(),
+        "a helper's turn records no pending memory turn"
+    );
+    let receipt = CommitReceipt {
+        outcome: SessionTurnOutcome {
+            history: vec![],
+            output: Some("a draft".into()),
+            interrupted: false,
+        },
+        options: TranscriptTurnOptions {
+            request_id: None,
+            thread_id: Some(thread_id.into()),
+            stream: false,
+            resume: ResumeMode::Never,
+            context: crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+        },
+        transcript: None,
+    };
+    prelude.memory_post_turn(&receipt, None);
+    let items = stored(
+        &engine,
+        MetaFilter {
+            thread_id: Some(thread_id.into()),
+            ..MetaFilter::kinds([ItemKind::Conversation])
+        },
+    )
+    .await;
+    assert!(
+        items.is_empty(),
+        "nothing of the helper's turn is logged: {items:?}"
     );
 }

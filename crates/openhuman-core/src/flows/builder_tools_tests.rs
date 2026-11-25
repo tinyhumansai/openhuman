@@ -183,5 +183,7 @@ mod dry_run_tests;
 mod reads_and_catalog_tests;
 #[path = "builder_tools_save_and_edit_tests.rs"]
 mod save_and_edit_tests;
+#[path = "builder_tools_save_disarm_tests.rs"]
+mod save_disarm_tests;
 #[path = "builder_tools_validate_and_create_tests.rs"]
 mod validate_and_create_tests;

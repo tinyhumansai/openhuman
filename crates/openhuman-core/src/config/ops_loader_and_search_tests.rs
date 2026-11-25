@@ -315,14 +315,16 @@ fn set_browser_allow_all_disable_does_not_require_operator_override() {
 
 // ── snapshot_config_json ───────────────────────────────────────
 
-#[test]
-fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
+#[tokio::test]
+async fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
     let tmp = tempdir().unwrap();
     let mut cfg = Config::default();
     cfg.workspace_dir = tmp.path().join("workspace");
     cfg.config_path = tmp.path().join("config.toml");
 
-    let snap = snapshot_config_json(&cfg).expect("snapshot should succeed");
+    let snap = snapshot_config_json(&cfg)
+        .await
+        .expect("snapshot should succeed");
     assert!(snap.get("config").is_some());
     assert!(snap.get("workspace_dir").is_some());
     assert!(snap.get("config_path").is_some());
@@ -331,8 +333,8 @@ fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
     assert!(ws.contains(tmp.path().to_str().unwrap_or("")));
 }
 
-#[test]
-fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
+#[tokio::test]
+async fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
     let mut cfg = Config::default();
     cfg.search.max_results = 13;
     cfg.search.parallel.api_key = Some("parallel-sentinel".into());
@@ -342,7 +344,7 @@ fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
     cfg.search.tavily.api_key = Some("tavily-sentinel".into());
     cfg.search.gemini.api_key = Some("gemini-sentinel".into());
     cfg.seltz.api_key = Some("seltz-sentinel".into());
-    let snapshot = snapshot_config_json(&cfg).unwrap();
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
     let serialized = snapshot.to_string();
     assert!(!serialized.contains("-sentinel"));
     assert_eq!(snapshot["config"]["search"]["max_results"], 13);
@@ -352,11 +354,27 @@ fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
     assert!(snapshot["config"]["seltz"]["api_key"].is_null());
 }
 
-#[test]
-fn snapshot_config_json_redacts_the_storage_url_credentials() {
+#[tokio::test]
+async fn snapshot_config_json_redacts_browser_upstream_proxy_credentials() {
+    let mut cfg = Config::default();
+    cfg.browser.upstream_proxies = vec![crate::config::schema::BrowserUpstreamProxy {
+        domains: vec!["reddit.com".into()],
+        url: "http://resi-user:hunter2@gate.example:7000".into(),
+    }];
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
+    let serialized = snapshot.to_string();
+    assert!(!serialized.contains("hunter2"));
+    assert!(!serialized.contains("resi-user"));
+    let proxy = &snapshot["config"]["browser"]["upstream_proxies"][0];
+    assert_eq!(proxy["domains"][0], "reddit.com");
+    assert!(proxy["url"].as_str().unwrap().contains("gate.example"));
+}
+
+#[tokio::test]
+async fn snapshot_config_json_redacts_the_storage_url_credentials() {
     let mut cfg = Config::default();
     cfg.storage.url = Some("mongodb://app:hunter2@db.internal/openhuman".into());
-    let snapshot = snapshot_config_json(&cfg).unwrap();
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
     assert!(!snapshot.to_string().contains("hunter2"));
     assert_eq!(
         snapshot["config"]["storage"]["url"],
@@ -364,11 +382,11 @@ fn snapshot_config_json_redacts_the_storage_url_credentials() {
     );
 }
 
-#[test]
-fn snapshot_config_json_redacts_the_inbound_queue_url_credentials() {
+#[tokio::test]
+async fn snapshot_config_json_redacts_the_inbound_queue_url_credentials() {
     let mut cfg = Config::default();
     cfg.inbound.queue_url = Some("amqp://app:hunter2@broker.internal/vhost".into());
-    let snapshot = snapshot_config_json(&cfg).unwrap();
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
     assert!(!snapshot.to_string().contains("hunter2"));
     assert_eq!(
         snapshot["config"]["inbound"]["queue_url"],
@@ -376,8 +394,8 @@ fn snapshot_config_json_redacts_the_inbound_queue_url_credentials() {
     );
 }
 
-#[test]
-fn client_config_json_exposes_oci_settings_only_on_oci_entries() {
+#[tokio::test]
+async fn client_config_json_exposes_oci_settings_only_on_oci_entries() {
     use crate::config::schema::cloud_providers::{
         AuthStyle, CloudProviderCreds, OciAuthMode, OciProviderSettings,
     };
@@ -400,7 +418,7 @@ fn client_config_json_exposes_oci_settings_only_on_oci_entries() {
             ..Default::default()
         },
     ];
-    let value = client_config_json(&cfg);
+    let value = client_config_json(&cfg).await;
     let providers = value["cloud_providers"]
         .as_array()
         .expect("cloud_providers");
@@ -618,4 +636,51 @@ async fn apply_search_settings_rejects_unknown_search_engine() {
     .expect_err("unknown engine should be rejected");
 
     assert!(err.contains("unknown search engine"), "{err}");
+}
+
+#[tokio::test]
+async fn reset_local_data_refuses_the_shared_root_of_a_legacy_layout() {
+    let temp = tempdir().unwrap();
+    let default_openhuman_dir = temp.path().join("default-openhuman");
+    // Legacy single-user layout: the config dir IS the shared root, which also
+    // holds every signed-in account under `users/`.
+    let sibling_file = default_openhuman_dir.join("users/other-user/config.toml");
+    let user_marker = crate::config::active_user_marker_path(&default_openhuman_dir);
+    tokio::fs::create_dir_all(sibling_file.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&sibling_file, "api_key = 'sibling'\n")
+        .await
+        .unwrap();
+    tokio::fs::write(&user_marker, "user_id = 'other-user'\n")
+        .await
+        .unwrap();
+
+    let err = reset_local_data_for_paths(&default_openhuman_dir, &default_openhuman_dir)
+        .await
+        .unwrap_err();
+
+    assert!(err.contains("legacy"), "{err}");
+    // A refusal changes nothing: not the root, not a sibling, not a marker.
+    assert!(sibling_file.exists());
+    assert!(user_marker.exists());
+}
+
+#[tokio::test]
+async fn reset_local_data_refuses_a_target_outside_users() {
+    let temp = tempdir().unwrap();
+    let default_openhuman_dir = temp.path().join("default-openhuman");
+    for target in [
+        temp.path().join("elsewhere"),
+        default_openhuman_dir.join("users"),
+        default_openhuman_dir.join("users").join(".."),
+        default_openhuman_dir.join("users/a/b"),
+    ] {
+        tokio::fs::create_dir_all(&target).await.unwrap();
+        let err = reset_local_data_for_paths(&target, &default_openhuman_dir)
+            .await
+            .unwrap_err();
+        assert!(err.contains("refusing"), "{target:?}: {err}");
+        assert!(target.exists(), "{target:?} was deleted");
+    }
 }

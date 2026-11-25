@@ -8,7 +8,7 @@ async fn provisioning_with_a_new_root_replaces_a_dead_higher_epoch_fence() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "profiles::host::tests::provisioning_with_a_new_root_replaces_a_dead_higher_epoch_fence",
+                "profiles::host::tests::migration_fence_tests::provisioning_with_a_new_root_replaces_a_dead_higher_epoch_fence",
                 "--nocapture",
             ])
             .env(CHILD, "1")
@@ -25,7 +25,7 @@ async fn provisioning_with_a_new_root_replaces_a_dead_higher_epoch_fence() {
             stdout.contains("running 1 test"),
             "child selected no test: {stdout}"
         );
-        assert!(stdout.contains("test profiles::host::tests::provisioning_with_a_new_root_replaces_a_dead_higher_epoch_fence"), "expected child test did not run: {stdout}");
+        assert!(stdout.contains("test profiles::host::tests::migration_fence_tests::provisioning_with_a_new_root_replaces_a_dead_higher_epoch_fence"), "expected child test did not run: {stdout}");
         assert!(
             stdout.contains("test result: ok. 1 passed"),
             "child did not pass exactly one test: {stdout}"
@@ -79,7 +79,7 @@ async fn opening_replaces_a_dropped_hosts_fence_before_cron_reconciliation() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "profiles::host::tests::opening_replaces_a_dropped_hosts_fence_before_cron_reconciliation",
+                "profiles::host::tests::migration_fence_tests::opening_replaces_a_dropped_hosts_fence_before_cron_reconciliation",
                 "--nocapture",
             ])
             .env(CHILD, "1")
@@ -96,7 +96,7 @@ async fn opening_replaces_a_dropped_hosts_fence_before_cron_reconciliation() {
             stdout.contains("running 1 test"),
             "child selected no test: {stdout}"
         );
-        assert!(stdout.contains("test profiles::host::tests::opening_replaces_a_dropped_hosts_fence_before_cron_reconciliation"), "expected child test did not run: {stdout}");
+        assert!(stdout.contains("test profiles::host::tests::migration_fence_tests::opening_replaces_a_dropped_hosts_fence_before_cron_reconciliation"), "expected child test did not run: {stdout}");
         assert!(
             stdout.contains("test result: ok. 1 passed"),
             "child did not pass exactly one test: {stdout}"

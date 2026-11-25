@@ -7,6 +7,7 @@ fn session(updated_at: &str) -> DurableSubagentSession {
         subagent_session_id: "session-1".into(),
         parent_session: "parent-1".into(),
         parent_thread_id: Some("thread-1".into()),
+        parent_epoch: None,
         worker_thread_id: Some("worker-1".into()),
         agent_id: "researcher".into(),
         display_name: None,

@@ -42,7 +42,9 @@ fn hanging_backend() -> u16 {
 }
 
 /// The lease scenario on one storage configuration: `storage_url` shared by
-/// both cores (cluster leases), or `None` (file locks on the shared root).
+/// both cores (cluster leases), or a deployment-local SQLite backend when
+/// omitted. File-lease behavior is covered directly by the profile/storage
+/// unit tests; SaaS turn tests need a session backend either way.
 fn one_core_at_a_time(storage_url: Option<&str>) {
     let d = deployment(true);
     let storage_url =

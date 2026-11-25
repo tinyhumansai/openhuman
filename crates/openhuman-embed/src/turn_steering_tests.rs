@@ -53,16 +53,7 @@ fn a_steer_put_back_after_the_turn_ended_is_still_taken() {
     drop(SteeringScope::new(Some(steering.clone())));
     steering.queue().push_now(
         QueueLane::Steer,
-        QueuedTurn {
-            id: "late".into(),
-            text: "requeued late".into(),
-            client_id: String::new(),
-            thread_id: String::new(),
-            queued_at_ms: 0,
-            model_override: None,
-            temperature: None,
-            locale: None,
-        },
+        steer_message("late", "requeued late", "", ""),
     );
     assert_eq!(steering.take_unapplied(), ["requeued late"]);
 }

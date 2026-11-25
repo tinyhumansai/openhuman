@@ -37,22 +37,22 @@ async fn spawn_mock(app: Router) -> String {
     format!("http://127.0.0.1:{}", addr.port())
 }
 
-fn config_with_backend(tmp: &TempDir, base: String) -> Config {
+async fn config_with_backend(tmp: &TempDir, base: String) -> Config {
     crate::install(crate::InstallOptions::default().hosted_controllers(false))
         .expect("install SDK backend transport for referral mock");
     let mut c = test_config(tmp);
     c.api_url = Some(base);
-    store_session_token(&c, "test-session-token");
+    store_session_token(&c, "test-session-token").await;
     c
 }
 
 // ── credential resolution ────────────────────────────────
 
-#[test]
-fn hosted_client_errors_without_stored_session() {
+#[tokio::test]
+async fn hosted_client_errors_without_stored_session() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let err = HostedClient::from_config(&config).err().unwrap();
+    let err = HostedClient::from_config(&config).await.err().unwrap();
     assert!(err.contains("no backend session token"));
 }
 
@@ -71,8 +71,8 @@ async fn get_stats_sends_trimmed_bearer() {
     );
     let base = spawn_mock(app).await;
     let tmp = TempDir::new().unwrap();
-    let config = config_with_backend(&tmp, base);
-    store_session_token(&config, "  tok  ");
+    let config = config_with_backend(&tmp, base).await;
+    store_session_token(&config, "  tok  ").await;
     let out = get_stats(&config).await.unwrap();
     assert_eq!(out.value["auth"], json!("Bearer tok"));
 }
@@ -95,7 +95,7 @@ async fn get_stats_returns_backend_payload_with_log() {
     );
     let base = spawn_mock(app).await;
     let tmp = TempDir::new().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     let out = get_stats(&config).await.unwrap();
     assert_eq!(out.value["referrals"], json!(3));
     assert!(out
@@ -122,7 +122,7 @@ async fn claim_referral_posts_trimmed_code_and_drops_whitespace_fingerprint() {
     );
     let base = spawn_mock(app).await;
     let tmp = TempDir::new().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     // Code is trimmed; whitespace-only fingerprint must be dropped.
     let out = claim_referral(&config, "  ABC-123  ", Some("   "))
@@ -147,7 +147,7 @@ async fn claim_referral_forwards_non_empty_device_fingerprint_trimmed() {
     );
     let base = spawn_mock(app).await;
     let tmp = TempDir::new().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     let out = claim_referral(&config, "CODE", Some("  fp-1  "))
         .await
         .unwrap();

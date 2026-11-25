@@ -1,6 +1,12 @@
 //! Agent-facing browser backed by the TinyComputer module's browser and task members.
+#[path = "browser_capture.rs"]
+mod capture;
 #[path = "browser_lifecycle.rs"]
 mod cleanup;
+#[path = "browser_keychain.rs"]
+mod keychain;
+#[path = "browser_offsite.rs"]
+mod offsite;
 #[path = "browser_pending.rs"]
 mod pending;
 #[path = "browser_session_pool.rs"]
@@ -9,10 +15,11 @@ mod session_pool;
 mod task_actions;
 #[path = "browser_unattended.rs"]
 mod unattended;
+#[path = "browser_view_only.rs"]
+mod view_only;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::modules::browser::BrowserClient;
 use crate::security::approval::{ApprovalGate, GateOutcome};
-use crate::security::turn_origin::AgentTurnOrigin;
-use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use pending::{approval_target, needs_host_confirmation, Pending};
 use serde_json::{json, Value};
@@ -112,32 +119,53 @@ async fn approve_browser_action(
 }
 
 pub struct BrowserTool {
-    security: Arc<SecurityPolicy>,
     client: Arc<BrowserClient>,
     session: Mutex<Option<SessionId>>,
     bound_origin: Mutex<Option<String>>,
     pending: Mutex<Option<Pending>>,
     thread_key: StdMutex<Option<String>>,
     max_steps: usize,
+    /// Set once this tool typed a keychain password: from then on it takes
+    /// no picture at all (`capture`), whatever the page seems to show.
+    password_typed: std::sync::atomic::AtomicBool,
+    /// Serves the calls of a run whose agent's browser is view-only
+    /// (`AgentExt::browser_view_only`): its own sessions, opened on a fresh
+    /// profile and pooled under their own keys. `None` on that tool itself.
+    view_only_tool: Option<Box<BrowserTool>>,
 }
 
 impl BrowserTool {
-    pub fn new(
-        security: Arc<SecurityPolicy>,
-        client: Arc<BrowserClient>,
-        max_steps: usize,
-    ) -> Self {
+    pub fn new(client: Arc<BrowserClient>, max_steps: usize) -> Self {
+        let view_only = Self::serving(Arc::new(client.with_fresh_profile()), max_steps, None);
+        Self::serving(client, max_steps, Some(Box::new(view_only)))
+    }
+
+    fn serving(client: Arc<BrowserClient>, max_steps: usize, view_only: Option<Box<Self>>) -> Self {
         Self {
-            security,
             client,
             session: Mutex::new(None),
             bound_origin: Mutex::new(None),
             pending: Mutex::new(None),
             thread_key: StdMutex::new(None),
             max_steps: max_steps.clamp(1, 100),
+            password_typed: std::sync::atomic::AtomicBool::new(false),
+            view_only_tool: view_only,
         }
     }
 
+    /// The tool that serves a run: the view-only one when its browser is.
+    fn for_run(&self, view_only: bool) -> &BrowserTool {
+        match &self.view_only_tool {
+            Some(tool) if view_only => tool,
+            _ => self,
+        }
+    }
+
+    fn is_view_only(&self) -> bool {
+        self.view_only_tool.is_none()
+    }
+
+    #[cfg(test)]
     async fn session(&self) -> anyhow::Result<SessionId> {
         self.session_for_url(None).await
     }
@@ -172,6 +200,10 @@ impl BrowserTool {
             }
             if let Some(value) = sessions.get_mut(&key) {
                 value.last_used = now;
+                if value.password_typed {
+                    self.password_typed
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 *held = Some(value.id.clone());
                 *bound = value.bound_origin.clone();
                 return Ok(value.id.clone());
@@ -193,6 +225,7 @@ impl BrowserTool {
                     last_used: now,
                     config_fingerprint,
                     bound_origin: requested_origin.clone(),
+                    password_typed: false,
                 },
             );
             *held = Some(id.clone());
@@ -226,8 +259,54 @@ impl BrowserTool {
         })
     }
 
+    /// Marks this tool, and the pooled session it holds for its
+    /// conversation, as having typed a keychain password.
+    async fn mark_password_typed(&self) {
+        self.password_typed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let thread_key = self.thread_key.lock().ok().and_then(|key| key.clone());
+        if let Some(key) = thread_key {
+            if let Some(entry) = thread_sessions().lock().await.get_mut(&key) {
+                entry.password_typed = true;
+            }
+        }
+    }
+
+    /// A picture of the page for the host's sinks, unless this tool typed a
+    /// keychain password: such a session is never pictured again, since no
+    /// scan of a page can prove a password is not drawn somewhere in it.
+    async fn capture(&self, id: &SessionId, after: &str) {
+        if self
+            .password_typed
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tracing::debug!(
+                after,
+                "[browser-capture] skipped: this session typed a keychain password"
+            );
+            return;
+        }
+        capture::capture(&self.client, id, after).await;
+    }
+
     async fn close(&self) -> anyhow::Result<Value> {
         let thread_key = self.thread_key.lock().ok().and_then(|key| key.clone());
+        // The last picture, taken while the session is still owned here, so a
+        // call cancelled during it leaves the session to the next close.
+        let showing = match self.session.lock().await.clone() {
+            Some(id) => Some(id),
+            None => match thread_key.as_ref() {
+                Some(key) => thread_sessions()
+                    .lock()
+                    .await
+                    .get(key)
+                    .map(|entry| entry.id.clone()),
+                None => None,
+            },
+        };
+        if let Some(id) = showing {
+            self.capture(&id, "close").await;
+        }
         let mut held = self.session.lock().await;
         *self.bound_origin.lock().await = None;
         *self.pending.lock().await = None;
@@ -398,6 +477,14 @@ impl BrowserTool {
     /// allow-listed action may skip the forced approval gate.
     async fn run(&self, args: &Value, origin: Option<&AgentTurnOrigin>) -> anyhow::Result<Value> {
         let verb = required(args, "action")?;
+        if let Some(refusal) = self
+            .is_view_only()
+            .then(|| view_only::view_only_refusal(verb, args))
+            .flatten()
+        {
+            tracing::debug!("[tool.browser] view-only run refused an acting action");
+            anyhow::bail!(refusal);
+        }
         if verb == "close" {
             return self.close().await;
         }
@@ -414,11 +501,22 @@ impl BrowserTool {
         };
         let id = self.session_for_url(starting_url).await?;
         match verb {
-            "open" => Ok(serde_json::to_value(
-                self.client
+            "open" => {
+                let page = match self
+                    .client
                     .navigate(&id, NavigateRequest::new(required(args, "url")?))
-                    .await?,
-            )?),
+                    .await
+                {
+                    Ok(page) => page,
+                    // A redirect to another site: say where, never fail the turn.
+                    Err(error) => match offsite::left_for(&error) {
+                        Some(url) => return Ok(offsite::left_reply("open", &url)),
+                        None => return Err(error.into()),
+                    },
+                };
+                self.capture(&id, "open").await;
+                Ok(serde_json::to_value(page)?)
+            }
             "snapshot" => Ok(serde_json::to_value(
                 self.client
                     .snapshot(
@@ -488,11 +586,45 @@ impl BrowserTool {
                 Ok(serde_json::to_value(d)?)
             }
             _ => {
-                let action = direct_action(args)?;
+                let mut action = direct_action(args)?;
+                // The gate sees the placeholder, never the password.
                 approve_browser_action(&self.client, &id, &action, false, origin).await?;
-                Ok(serde_json::to_value(
-                    self.client.perform(&id, action).await?,
-                )?)
+                let kind = serde_json::to_value(&action)?["action"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let secret = keychain::substitute(&self.client, &id, &mut action).await?;
+                if secret.is_some() {
+                    // Before the password goes out: a call cancelled while
+                    // it is being typed still leaves the session unpictured.
+                    self.mark_password_typed().await;
+                }
+                let done = self.client.perform(&id, action).await;
+                if secret.is_none() && done.is_ok() && capture::follows(&kind) {
+                    self.capture(&id, &kind).await;
+                }
+                if let Err(error) = &done {
+                    if let Some(url) = offsite::left_for(error) {
+                        let reply = offsite::left_reply(&kind, &url);
+                        return Ok(match &secret {
+                            Some(secret) => keychain::redact_value(reply, secret),
+                            None => reply,
+                        });
+                    }
+                }
+                match secret {
+                    None => Ok(serde_json::to_value(done?)?),
+                    Some(secret) => match done {
+                        Ok(outcome) => Ok(keychain::redact_value(
+                            serde_json::to_value(outcome)?,
+                            &secret,
+                        )),
+                        Err(error) => Err(anyhow::anyhow!(keychain::redact(
+                            &error.to_string(),
+                            &secret
+                        ))),
+                    },
+                }
             }
         }
     }
@@ -521,7 +653,8 @@ impl Tool for BrowserTool {
             "input values; TinyComputer runs it in its own browser session, and a failed step is ",
             "handed to its rescue model before the task fails. The reply's status says what it needs: ",
             "running (call task_continue with task_id to keep following it), needs_input (task_continue ",
-            "with inputs), needs_human (ask the user, then task_continue with answer=done), needs_approval ",
+            "with inputs), needs_human (TinyComputer already tried any captcha it could; ask the user, ",
+            "then task_continue with answer=done), needs_approval ",
             "(returns a pending token; use confirm_pending only through the host approval mechanism), ",
             "checkpoint (always before payment), done, or failed with a hint. task_cancel stops it. ",
             "Direct consequential clicks and key presses also require host approval. For downloads, inspect list_downloads and call wait_download; ",
@@ -560,15 +693,17 @@ impl Tool for BrowserTool {
         _options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
+        use crate::agent::tinyagents::host::run_context::browser_view_only_for_tool;
+        let tool = self.for_run(browser_view_only_for_tool(context));
         if let Some(thread_id) = context.and_then(ToolRunContext::thread_id) {
-            let scope = crate::core::runtime::agent_scope_dir(self.client.config());
-            let key = format!("{}:{thread_id}", scope.display());
-            if let Ok(mut held) = self.thread_key.lock() {
+            let scope = crate::core::runtime::agent_scope_dir(tool.client.config());
+            let key = view_only::pool_key(&scope, thread_id, tool.is_view_only());
+            if let Ok(mut held) = tool.thread_key.lock() {
                 *held = Some(key);
             }
         }
         let origin = crate::agent::tinyagents::host::run_context::turn_origin_for_tool(context);
-        self.execute_with_origin(args, origin).await
+        tool.execute_with_origin(args, origin).await
     }
 }
 
@@ -578,20 +713,15 @@ impl BrowserTool {
     async fn execute_with_origin(
         &self,
         args: Value,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> anyhow::Result<ToolResult> {
-        if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "[policy-blocked] Action blocked: autonomy is read-only",
-            ));
-        }
-        // A task counts once here; its own steps are bounded by max_actions.
-        if !self.security.record_action() {
-            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
-        }
+        // Whatever the browser read back, a password the keychain typed
+        // into a page never reaches the model.
         match self.run(&args, origin.as_ref()).await {
-            Ok(v) => Ok(ToolResult::success(serde_json::to_string_pretty(&v)?)),
-            Err(e) => Ok(ToolResult::error(e.to_string())),
+            Ok(v) => Ok(ToolResult::success(keychain::redact_filled(
+                &serde_json::to_string_pretty(&v)?,
+            ))),
+            Err(e) => Ok(ToolResult::error(keychain::redact_filled(&e.to_string()))),
         }
     }
 }

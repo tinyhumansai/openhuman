@@ -393,7 +393,7 @@ for (const platform of ["Linux", "Darwin", "MINGW64_NT-10.0", "Windows_NT"]) {
       [
         `if target_expected_in_coverage composio_list_tools_stack_overflow_regression '${platform}'; then exit 11; fi`,
         `if target_expected_in_coverage windows_sandbox_env_e2e '${platform}'; then ${windows ? ":" : "exit 12"}; else ${windows ? "exit 13" : ":"}; fi`,
-        `target_expected_in_coverage json_rpc_e2e '${platform}'`,
+        `target_expected_in_coverage json_rpc_threads_e2e '${platform}'`,
         `target_expected_in_coverage future_empty_suite '${platform}'`,
       ].join("\n"),
     );

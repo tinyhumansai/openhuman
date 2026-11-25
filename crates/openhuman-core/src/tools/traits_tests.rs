@@ -47,12 +47,6 @@ async fn a_tool_written_against_this_path_satisfies_the_shared_trait() {
 }
 
 #[test]
-fn a_tool_carrying_no_host_extension_has_no_delegation_target() {
-    let tool = DummyTool;
-    assert!(delegation_target(&tool).is_none());
-}
-
-#[test]
 fn spec_uses_tool_metadata_and_schema() {
     let spec = DummyTool.spec();
     assert_eq!(spec.name, "dummy_tool");

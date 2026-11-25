@@ -9,6 +9,7 @@
 //! | Piece | Embed option |
 //! |---|---|
 //! | the hosted RPC proxies ([`hosted::extension`](crate::hosted::extension)) | `controller_extension` |
+//! | provider OAuth RPCs ([`provider_oauth::extension`](crate::provider_oauth::extension)) | `controller_extension` |
 //! | the Jev `tool_search` ranker (`jev` feature) | `tool_ranker` |
 //!
 //! Every other method forwards to the embed builder unchanged. Start from a
@@ -263,9 +264,9 @@ impl RuntimeBuilder {
     }
 
     /// The embed builder with the TinyHumans connection applied: product
-    /// identity set, the shared SDK transport built, the hosted proxies added as a
-    /// controller extension and the Jev ranker as the tool ranker. For entry
-    /// points that take an embed builder rather than this one.
+    /// identity set, the shared SDK transport built, provider OAuth and hosted
+    /// controllers added as extensions, and the Jev ranker installed. For
+    /// entry points that take an embed builder rather than this one.
     pub fn connect(self) -> Result<openhuman_embed::RuntimeBuilder, InstallError> {
         let Self { inner, install } = self;
         let mut wiring_result = None;
@@ -275,6 +276,7 @@ impl RuntimeBuilder {
         let wiring = wiring_result.expect("core extensions are configured synchronously")?;
         log::debug!("[tinyhumans] connecting embed builder: {wiring:?}");
         let mut inner = inner;
+        inner = inner.controller_extension(wiring.provider_oauth);
         if let Some(extension) = wiring.controllers {
             inner = inner.controller_extension(extension);
         }

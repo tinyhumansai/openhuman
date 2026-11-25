@@ -10,13 +10,22 @@ use std::sync::Arc;
 use serde::{de::DeserializeOwned, Serialize};
 use tinycomputer_bus::agent::Capabilities;
 use tinycomputer_bus::browser::{
-    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, NavigateRequest, PageState,
-    PageText, ReadRequest, SessionId, SessionInfo, SessionOptions, SessionRef, SessionRequest,
-    Snapshot, SnapshotRequest, Viewport,
+    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, EvaluateRequest,
+    NavigateRequest, OutputChunk, OutputRef, OutputRequest, PageState, PageText, ReadOutputRequest,
+    ReadRequest, ScreenshotRequest, SessionId, SessionInfo, SessionOptions, SessionRef,
+    SessionRequest, Snapshot, SnapshotRequest, Viewport,
 };
 use tinycomputer_bus::DesktopResponse;
 
 use crate::config::Config;
+
+#[path = "browser_never_open.rs"]
+pub(crate) mod never_open;
+#[path = "browser_output.rs"]
+mod output;
+#[path = "browser_profile.rs"]
+mod profile;
+use output::{append_output_chunk, check_output_size, finish_output, ReleaseOnDrop};
 
 pub const MODULE_ID: &str = super::desktop::MODULE_ID;
 
@@ -126,11 +135,33 @@ impl BrowserCallError {
 #[derive(Clone)]
 pub struct BrowserClient {
     config: Arc<Config>,
+    /// Sessions open on a fresh profile whatever `[browser] profile_mode` says.
+    fresh_profile: bool,
 }
 
 impl BrowserClient {
     pub fn new(config: Arc<Config>) -> Self {
-        Self { config }
+        Self {
+            config,
+            fresh_profile: false,
+        }
+    }
+
+    /// This client with every session it opens on a fresh, throwaway profile,
+    /// whatever `[browser] profile_mode` says: what a view-only run's browser
+    /// uses (`AgentExt::browser_view_only`). It never claims, waits for or
+    /// attaches to the persistent profile.
+    pub fn with_fresh_profile(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            fresh_profile: true,
+        }
+    }
+
+    /// The profile folder a session this client opens asks for; `None` is a
+    /// fresh, throwaway profile.
+    pub fn session_profile(&self) -> Option<String> {
+        profile::session_profile(&self.config.browser, self.fresh_profile)
     }
 
     pub fn config(&self) -> &Config {
@@ -181,7 +212,8 @@ impl BrowserClient {
             ));
         }
         let browser = &self.config.browser;
-        if browser.profile_mode == "persistent"
+        if !self.fresh_profile
+            && browser.profile_mode == "persistent"
             && !browser
                 .profile_path
                 .as_ref()
@@ -203,11 +235,7 @@ impl BrowserClient {
         options.headless = browser.headless;
         options.viewport = Viewport::desktop(browser.viewport_width, browser.viewport_height);
         options.executable = browser.chrome_path.clone();
-        options.user_data_dir = if browser.profile_mode == "persistent" {
-            browser.profile_path.clone()
-        } else {
-            None
-        };
+        options.user_data_dir = self.session_profile();
         let claimed = claim_profile(
             &self.config,
             &mut options,
@@ -336,6 +364,106 @@ impl BrowserClient {
         .await
     }
 
+    /// A picture of the session's page, as the bytes of `request.format`.
+    pub async fn screenshot(
+        &self,
+        session: &SessionId,
+        request: ScreenshotRequest,
+    ) -> Result<Vec<u8>, BrowserCallError> {
+        Ok(self
+            .screenshot_checked(session, request, || async { Ok(true) })
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// A picture of the session's page, kept only when `keep` (run right
+    /// after the module took it, before a byte of it is read) says yes;
+    /// `None` when it says no.
+    ///
+    /// The module holds the image and answers a handle ([`OutputRef`]); the
+    /// bytes are pulled in chunks, checked against the handle's size and
+    /// SHA-256, and the held output is released whether or not that worked,
+    /// a cancelled call included.
+    pub(crate) async fn screenshot_checked<F, Fut>(
+        &self,
+        session: &SessionId,
+        request: ScreenshotRequest,
+        keep: F,
+    ) -> Result<Option<Vec<u8>>, BrowserCallError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<bool, BrowserCallError>>,
+    {
+        let held: OutputRef = self
+            .call(
+                names::methods::SCREENSHOT,
+                SessionRequest::new(session.clone(), request),
+            )
+            .await?;
+        let mut release = ReleaseOnDrop {
+            client: Some(self.clone()),
+            output: held.id.clone(),
+            ctx: crate::core::runtime::DispatchCtx::ambient(),
+        };
+        let read = match keep().await {
+            Ok(true) => self.read_output(&held).await.map(Some),
+            Ok(false) => Ok(None),
+            Err(error) => Err(error),
+        };
+        // The guard stays armed until the release has gone through.
+        let _released: Result<serde_json::Value, _> = self
+            .call(
+                names::methods::RELEASE_OUTPUT,
+                OutputRequest {
+                    output: held.id.clone(),
+                },
+            )
+            .await;
+        release.client = None;
+        read
+    }
+
+    async fn read_output(&self, held: &OutputRef) -> Result<Vec<u8>, BrowserCallError> {
+        check_output_size(held)?;
+        let mut bytes = Vec::new();
+        loop {
+            let chunk: OutputChunk = self
+                .call(
+                    names::methods::READ_OUTPUT,
+                    ReadOutputRequest {
+                        offset: bytes.len() as u64,
+                        ..ReadOutputRequest::new(held.id.clone())
+                    },
+                )
+                .await?;
+            append_output_chunk(held, &mut bytes, &chunk)?;
+            if chunk.eof {
+                finish_output(held, &bytes)?;
+                return Ok(bytes);
+            }
+        }
+    }
+
+    /// Runs `expression` in the session's page and returns its value. For the
+    /// host's own checks only; never offered to a model.
+    pub(crate) async fn evaluate(
+        &self,
+        session: &SessionId,
+        expression: &str,
+    ) -> Result<serde_json::Value, BrowserCallError> {
+        self.call(
+            names::methods::EVALUATE,
+            SessionRequest::new(
+                session.clone(),
+                EvaluateRequest {
+                    expression: expression.to_owned(),
+                    ..EvaluateRequest::default()
+                },
+            ),
+        )
+        .await
+    }
+
     pub async fn close_session(&self, session: &SessionId) -> Result<(), BrowserCallError> {
         let _closed: serde_json::Value = self
             .call(names::methods::CLOSE_SESSION, session_ref(session))
@@ -374,6 +502,11 @@ impl BrowserClient {
             return Err(BrowserCallError::Policy(format!(
                 "local/private host '{host}' is blocked"
             )));
+        }
+        // The operator's never-open list holds whatever allow-all says; a
+        // list that cannot be read refuses every page (fails closed).
+        if let Some(reason) = never_open::refusal(url.as_str()) {
+            return Err(BrowserCallError::Policy(reason));
         }
         if !allow_all
             && !self.allows_any_site()
@@ -562,6 +695,23 @@ fn browser_allow_all() -> bool {
     )
 }
 
+/// Whether `raw` is an https URL on a public host (no userinfo, no private
+/// or local address): what the browser may be asked to open at all.
+pub(crate) fn is_public_https(raw: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw) else {
+        return false;
+    };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Ipv6(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Domain(host)) => !private_or_local(host),
+        None => false,
+    }
+}
+
 fn private_or_local(host: &str) -> bool {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
@@ -573,9 +723,9 @@ fn private_or_local(host: &str) -> bool {
         // `is_non_global_v4` already covers 0.0.0.0/8; the explicit octet check
         // keeps that local-host range visibly blocked at this call site too.
         Ok(std::net::IpAddr::V4(ip)) => {
-            tinytools_std::url_guard::is_non_global_v4(ip) || ip.octets()[0] == 0
+            tinyagents_harness::url_guard::is_non_global_v4(ip) || ip.octets()[0] == 0
         }
-        Ok(std::net::IpAddr::V6(ip)) => tinytools_std::url_guard::is_non_global_v6(ip),
+        Ok(std::net::IpAddr::V6(ip)) => tinyagents_harness::url_guard::is_non_global_v6(ip),
         Err(_) => false,
     }
 }

@@ -1,20 +1,20 @@
 use super::*;
 use crate::config::{BrowserConfig, Config};
-use crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
-use crate::security::AuditLogger;
+use crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+use crate::security::AuditSink;
 use crate::tools::ops::{all_tools, tool_group};
-use std::collections::HashMap;
 use tempfile::TempDir;
-use tinytools::ToolContent;
-use tinytools::ToolResult;
 
 fn test_config(tmp: &TempDir) -> Config {
-    Config {
+    let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
-    }
+    };
+    // Catalog tests use fake tokens, including builds without TinySecurity.
+    config.secrets.encrypt = false;
+    config
 }
 
 fn tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {
@@ -30,14 +30,7 @@ fn assert_contains_all(names: &[String], expected: &[&str]) {
     }
 }
 
-fn only_json_content(result: &ToolResult) -> &serde_json::Value {
-    match result.content.as_slice() {
-        [ToolContent::Json { data }] => data,
-        other => panic!("expected a single JSON content block, got {other:?}"),
-    }
-}
-
-fn store_test_session_token(config: &Config) {
+async fn store_test_session_token(config: &Config) {
     AuthService::from_config(config)
         .store_provider_token(
             APP_SESSION_PROVIDER,
@@ -46,6 +39,7 @@ fn store_test_session_token(config: &Config) {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store test session token");
 }
 
@@ -53,26 +47,25 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     let mut cfg = test_config(tmp);
     cfg.api_url = Some(backend_url.to_string());
     cfg.integrations.google_places.enabled = true;
-    cfg.integrations.parallel.enabled = true;
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg
 }
 
-fn integration_tools_for_config(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool>> {
+async fn integration_tools_for_config(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool>> {
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
     let http = crate::config::HttpRequestConfig::default();
     all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         cfg,
     )
+    .await
 }
 
 fn find_tool<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
@@ -93,7 +86,7 @@ fn find_tool<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
 
 /// Build the full tool registry with a disabled browser and a tmp-scoped
 /// workspace — enough to exercise the expansion tools end-to-end.
-fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
+async fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig {
         enabled: false,
@@ -106,18 +99,21 @@ fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
     all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
     )
+    .await
 }
 
 // ── Theme: Task & workflow productivity ─────────────────────────────────────
 
 const PRODUCTIVITY_TOOLS: &[&str] = &[
+    // The `task_source_*` family is absent while no provider can fetch
+    // (senamakel/openhuman#324); see
+    // `task_source_tools_are_not_offered_while_no_provider_can_fetch`.
     // NOTE: the old `agent_workflow_*` tools were removed when the
     // `agent_workflows` domain was dissolved into `workflows`; workflow
     // discovery/run tools now live under the Knowledge theme
@@ -127,45 +123,18 @@ const PRODUCTIVITY_TOOLS: &[&str] = &[
     "update_artifact",
     "list_artifacts",
     "delete_artifact",
-    "task_source_list",
-    "task_source_get",
-    "task_source_fetch",
-    "task_source_list_tasks",
-    "task_source_preview_filter",
-    "task_source_status",
-    "task_source_add",
-    "task_source_update",
-    "task_source_remove",
 ];
 
-const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &[
-    "delete_artifact",
-    "task_source_add",
-    "task_source_update",
-    "task_source_remove",
-];
+const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &["delete_artifact"];
 
 const PRODUCTIVITY_ALWAYS_ON: &[&str] = &[
     "create_artifact",
     "read_artifact",
     "update_artifact",
     "list_artifacts",
-    "task_source_fetch",
-    "task_source_status",
 ];
 
 // ── Theme: Knowledge & memory ───────────────────────────────────────────────
-
-const KNOWLEDGE_TOOLS: &[&str] = &[
-    "list_workflows",
-    "describe_workflow",
-    "read_workflow_resource",
-    "list_workflow_runs",
-    "read_workflow_run_log",
-    "create_skill",
-    "install_workflow_from_url",
-    "uninstall_workflow",
-];
 
 fn knowledge_default_off() -> Vec<&'static str> {
     let mut tools: Vec<&'static str> = Vec::new();
@@ -309,7 +278,7 @@ const DESKTOP_ALWAYS_ON: &[&str] = &[
 const REPRESENTATIVE: &[(&str, crate::core::all::DomainGroup)] = {
     use crate::core::all::DomainGroup as G;
     &[
-        ("delegate", G::Agent),
+        ("spawn_subagent", G::Agent),
         ("memory", G::Memory),
         ("goal_get", G::Threads),
         ("mcp_list_servers", G::Mcp),

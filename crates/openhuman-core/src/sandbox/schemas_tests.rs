@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::all::assert_schema_controller_parity;
 use crate::core::runtime::context::CoreContext;
 use crate::core::runtime::DispatchCtx;
 use crate::core::runtime::DomainSet;
@@ -11,20 +12,13 @@ fn scoped_ctx(config: crate::config::Config) -> std::sync::Arc<CoreContext> {
 }
 
 #[test]
-fn all_schemas_are_in_sandbox_namespace() {
-    for schema in all_controller_schemas() {
-        assert_eq!(schema.namespace, "sandbox");
-    }
-}
-
-#[test]
-fn registered_controllers_match_schemas() {
-    let schemas = all_controller_schemas();
-    let controllers = all_registered_controllers();
-    assert_eq!(schemas.len(), controllers.len());
-    for (s, c) in schemas.iter().zip(controllers.iter()) {
-        assert_eq!(s.function, c.schema.function);
-    }
+fn sandbox_schema_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "sandbox");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "status",
+    );
 }
 
 #[tokio::test]
@@ -179,12 +173,14 @@ async fn handle_resolve_policy_uses_loaded_action_dir() {
 
 fn docker_policy_params(workspace: &str) -> Map<String, Value> {
     let policy = super::super::types::SandboxPolicy {
+        filesystem_only: false,
         backend: super::super::types::SandboxBackendKind::Docker,
         workspace_root: std::path::PathBuf::from(workspace),
         state_dir: std::path::PathBuf::from("/tmp/state"),
         read_only_mounts: vec![],
         read_write_mounts: vec![],
         allow_network: false,
+        mount_workspace: true,
         env_passthrough: vec![],
         docker_overrides: None,
     };

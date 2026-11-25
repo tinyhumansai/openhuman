@@ -20,8 +20,9 @@ pub struct TokenjuiceConfig {
     /// a `⟦tj:<hash>⟧` retrieval footer. Disabling makes compaction one-way.
     #[serde(default = "default_true")]
     pub ccr_enabled: bool,
-    /// Persist CCR originals to disk under `<workspace>/.tokenjuice/ccr` so
-    /// retrieval survives memory eviction (written by the core only).
+    /// Request durable CCR storage through the host-granted TinyJuice storage
+    /// backend. The legacy `<workspace>/.tokenjuice/ccr` directory is read
+    /// only as migration input; the key is retained for config compatibility.
     #[serde(default)]
     pub ccr_disk_enabled: bool,
     /// Store a large result behind a handle and show the model a stats line, a

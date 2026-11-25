@@ -161,7 +161,8 @@ function read(file) {
 }
 
 /**
- * Every `"openhuman.x_y"` string literal appearing in a `tests/**\/*_e2e.rs`.
+ * Every `"openhuman.x_y"` string literal appearing in a Rust test under
+ * `tests/**`, regardless of whether its filename ends in `_e2e.rs`.
  *
  * KNOWN LIMITATION, left in place deliberately. This is a text match, so a
  * method named anywhere in such a file counts as covered — including in a
@@ -175,7 +176,7 @@ function read(file) {
  *  - Ignoring bare list entries: not separable by line shape. rustfmt puts a
  *    long call's method argument on its own line, so an invocation and a list
  *    element look identical (`"openhuman.flows_create",` is a list entry by
- *    shape and a real `post_json_rpc` argument at `json_rpc_e2e.rs:11049`).
+ *    shape and a real `post_json_rpc` argument in the JSON-RPC E2E targets).
  *    Telling them apart needs an AST, which is a different tool than this.
  *
  * So: a method credited here is *named* by an e2e target, not provably invoked
@@ -184,12 +185,12 @@ function read(file) {
 function collectInvokedMethods() {
   const methods = new Set();
   const testsDir = path.join(ROOT, 'tests');
-  const files = walk(testsDir, (file) => file.endsWith('_e2e.rs'));
+  const files = walk(testsDir, (file) => file.endsWith('.rs'));
 
   for (const file of files) {
     const text = read(file);
     // A file the compiler throws away cannot invoke anything. 52 of the 115
-    // e2e files open with `#![cfg(any())]` pending the #6382 migration, and
+    // test files open with `#![cfg(any())]` pending the #6382 migration, and
     // crediting them put 176 controllers in the covered column that no build
     // has compiled since the day they were switched off — the largest single
     // source of false coverage this gate had.
@@ -753,7 +754,7 @@ const totalCovered = [...rows.values()].reduce(
 );
 console.log('');
 console.log(
-  `Discovered ${totalExpected} controllers across ${rows.size} namespaces; ${totalCovered} invoked by a tests/**/*_e2e.rs target.`,
+  `Discovered ${totalExpected} controllers across ${rows.size} namespaces; ${totalCovered} invoked by a Rust target under tests/**.`,
 );
 
 if (excluded.length > 0) {

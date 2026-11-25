@@ -150,7 +150,6 @@ export const LIVE_TURN_STEPS: SocketStep[] = [
 export const DONE_EVENT = {
   ...base,
   full_response: FINAL_ANSWER,
-  rounds_used: 3,
   total_input_tokens: 10,
   total_output_tokens: 10,
 };

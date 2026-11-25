@@ -27,12 +27,12 @@
 pub mod agents;
 pub mod blob_sweep;
 pub mod boot;
+mod claim_bound;
 pub mod config;
 pub mod documents;
 pub mod fence;
 pub mod fenced_backend;
 mod fenced_ports;
-mod host_importers;
 pub mod import;
 pub mod import_state;
 mod inspection;
@@ -61,19 +61,19 @@ pub use scope::{
 };
 
 use std::future::Future;
-use std::sync::{mpsc, Arc, LazyLock, Mutex, OnceLock, RwLock};
+#[cfg(test)]
+use std::sync::Mutex;
+use std::sync::{mpsc, Arc, LazyLock, OnceLock, RwLock};
 
-/// SQLite bindings re-exported by the storage driver crate, for the two
+/// SQLite bindings re-exported by the storage driver crate, for the
 /// consumers that open a SQLite file that is not a storage backend: the
 /// read-only legacy importers ([`import`], which open the old per-domain files
-/// on a scratch copy) and the vault watcher's per-machine mtime table
-/// (`config/workspace/state.rs`). `SqliteNative` cannot stand in for either: it
+/// on a scratch copy). `SqliteNative` cannot stand in for them: it
 /// opens the driver's own database with the driver's schema, not an arbitrary
 /// foreign file, and its `run_blocking` hands the closure a `rusqlite`
 /// connection anyway. The core has no `rusqlite` dependency of its own,
 /// tinystoragedrivers owns the one copy; the re-export goes when the importers
-/// do (the one-time legacy import window closes). Re-checked for #7768: both
-/// consumers are still present, so it stays.
+/// do (the one-time legacy import window closes).
 pub use tinystoragedrivers::{
     CollectionSpec, Precondition, StorageBackend, StorageConfig as StorageUrl, StorageError,
 };
@@ -180,12 +180,16 @@ impl Blocking {
             ));
         }
         let (reply, result) = mpsc::sync_channel(1);
+        // Spawn rather than `block_on` on the owner thread: a request may
+        // await work on another runtime (a module's) that itself makes a
+        // bridge call from a thread outside this runtime. Serialising requests
+        // on the owner thread would queue that call behind the request waiting
+        // for it and deadlock. Workers carry the re-entrancy guard.
         self.tasks
             .send(Box::new(move |runtime| {
-                ON_STORAGE_RUNTIME.with(|active| active.set(true));
-                let outcome = runtime.block_on(future);
-                ON_STORAGE_RUNTIME.with(|active| active.set(false));
-                let _ = reply.send(outcome);
+                runtime.spawn(async move {
+                    let _ = reply.send(future.await);
+                });
             }))
             .map_err(|error| StorageError::backend(format!("storage bridge stopped: {error}")))?;
         result
@@ -200,25 +204,86 @@ use crate::config::Config;
 /// The environment variable that overrides `[storage] url`.
 pub const STORAGE_URL_VAR: &str = "OPENHUMAN_STORAGE_URL";
 
+/// An installed backend with what the host said about it. The three change
+/// together under the [`Slot`]'s lock, so a reader never pairs one backend
+/// with another's URL or driver.
+struct Installed {
+    backend: Arc<dyn StorageBackend>,
+    /// The URL it was opened from, when installed by URL ([`install_for_url`]).
+    /// [`rebind`] compares against it; a backend installed without one (a
+    /// test's, an embedder's own) is never rebound.
+    url: Option<String>,
+    /// Its driver name, when the host said which one it installed. Unlike
+    /// `url` it is also known for a backend installed with
+    /// [`install_with_driver`], and it never makes [`rebind`] manage the
+    /// backend.
+    driver: Option<String>,
+}
+
 /// A holder for one backend. The process has exactly one ([`BACKEND`]);
 /// tests make their own, so they never change what other tests in the same
 /// process see.
 #[derive(Default)]
-struct Slot(RwLock<Option<Arc<dyn StorageBackend>>>);
+struct Slot(RwLock<Option<Installed>>);
 
 impl Slot {
-    fn install(&self, backend: Arc<dyn StorageBackend>) -> Option<Arc<dyn StorageBackend>> {
-        self.0
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(backend)
+    /// Replaces the backend, its URL and its driver in one write.
+    fn install_described(
+        &self,
+        backend: Arc<dyn StorageBackend>,
+        url: Option<String>,
+        driver: Option<String>,
+    ) -> Option<Arc<dyn StorageBackend>> {
+        self.install_described_at_checkpoint(backend, url, driver, || {})
     }
 
-    fn installed(&self) -> Option<Arc<dyn StorageBackend>> {
+    fn install_described_at_checkpoint(
+        &self,
+        backend: Arc<dyn StorageBackend>,
+        url: Option<String>,
+        driver: Option<String>,
+        checkpoint: impl FnOnce(),
+    ) -> Option<Arc<dyn StorageBackend>> {
+        let mut installed = self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        checkpoint();
+        installed
+            .replace(Installed {
+                backend,
+                url,
+                driver,
+            })
+            .map(|previous| previous.backend)
+    }
+
+    fn read<T>(&self, field: impl FnOnce(&Installed) -> Option<T>) -> Option<T> {
         self.0
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .as_ref()
+            .and_then(field)
+    }
+
+    fn installed(&self) -> Option<Arc<dyn StorageBackend>> {
+        self.read(|installed| Some(Arc::clone(&installed.backend)))
+    }
+
+    fn installed_url(&self) -> Option<String> {
+        self.read(|installed| installed.url.clone())
+    }
+
+    fn installed_driver(&self) -> Option<String> {
+        self.read(|installed| installed.driver.clone())
+    }
+
+    #[cfg(test)]
+    fn try_installed_url(&self) -> Result<Option<String>, ()> {
+        self.0
+            .try_read()
+            .map(|slot| slot.as_ref().and_then(|installed| installed.url.clone()))
+            .map_err(|_| ())
     }
 
     fn clear(&self) -> bool {
@@ -232,24 +297,69 @@ impl Slot {
 
 static BACKEND: LazyLock<Slot> = LazyLock::new(Slot::default);
 
-/// The URL the installed backend was opened from, when the host installed it
-/// by URL ([`install_for_url`]). [`rebind`] compares against it; a backend
-/// installed without one (a test's, an embedder's own) is never rebound.
-static INSTALLED_URL: Mutex<Option<String>> = Mutex::new(None);
+/// The libtest thread (named after its test) that installed the slot, under
+/// `cfg(test)`. Unit tests share one process and run in parallel; without this,
+/// a backend one test installs becomes every concurrent test's storage
+/// ([`local::backend_for`] prefers the slot), and their rows mix and vanish
+/// when the installer restores it (MAIN-57).
+#[cfg(test)]
+static SLOT_OWNER: Mutex<Option<String>> = Mutex::new(None);
 
-fn set_installed_url(url: Option<String>) {
-    *INSTALLED_URL
+#[cfg(test)]
+fn set_slot_owner(owner: Option<String>) {
+    *SLOT_OWNER
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = url;
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = owner;
+}
+
+/// Whether the installed slot belongs to the calling test. A slot a test
+/// installed is hidden from the other tests' threads; one installed off a test
+/// thread (a runtime worker, the storage bridge) stays visible to all, as in
+/// production.
+#[cfg(test)]
+fn slot_visible_here() -> bool {
+    let owner = SLOT_OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let Some(owner) = owner.filter(|owner| is_test_thread(owner)) else {
+        return true;
+    };
+    match std::thread::current().name() {
+        Some(name) if is_test_thread(name) => name == owner,
+        _ => true,
+    }
+}
+
+/// libtest names each test's thread after its path (`module::tests::name`).
+///
+/// Assumes no other thread is named with `::`: runtime workers, the storage
+/// bridge and the module runtime are not. A test that spawns a helper thread
+/// with such a name makes it a "different test", so the helper stops seeing
+/// the slot its installer test set, and that installer test fails.
+#[cfg(test)]
+fn is_test_thread(name: &str) -> bool {
+    name.contains("::")
 }
 
 /// The URL the installed backend was opened from, if the host installed it by
 /// URL.
 pub fn installed_url() -> Option<String> {
-    INSTALLED_URL
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    #[cfg(test)]
+    if !slot_visible_here() {
+        return None;
+    }
+    BACKEND.installed_url()
+}
+
+/// The driver name of the installed backend (`mongodb`, `sqlite`, `memory`,
+/// `file`), when the host said which one it installed.
+pub fn installed_driver() -> Option<String> {
+    #[cfg(test)]
+    if !slot_visible_here() {
+        return None;
+    }
+    BACKEND.installed_driver()
 }
 
 /// The storage URL a host opens at startup: [`STORAGE_URL_VAR`], else
@@ -297,17 +407,72 @@ pub async fn open(url: &str) -> Result<Arc<dyn StorageBackend>, StorageError> {
     );
     // Every opened backend checks the process's lease fences on write; with
     // no fence registered (every single-user host) that is a pass-through.
-    let backend = tinystoragedrivers::open(&parsed).await?;
-    // Prepare each linked crate's collection declarations before installing lease fences.
-    // Legacy physical-source migration is handled separately by importers.
+    let backend =
+        connect_on_storage_runtime(move || async move { tinystoragedrivers::open(&parsed).await })
+            .await??;
     boot::prepare_and_migrate(&backend).await?;
     Ok(fenced_backend::wrap(backend))
 }
 
+/// The process's storage runtime: two worker threads that live as long as the
+/// process. A driver connected here starts its connection-time background tasks
+/// (MongoDB's connection pool and monitors) here, off the host runtime, so
+/// callers parked on [`block_on`] cannot starve them. Cleanup tasks registered
+/// by later object drops can run on the internal [`block_on`] runtime instead.
+fn storage_runtime() -> Result<&'static tokio::runtime::Runtime, StorageError> {
+    static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_name("openhuman-storage")
+                .enable_all()
+                .build()
+                .map_err(|error| format!("cannot build the storage runtime: {error}"))
+        })
+        .as_ref()
+        .map_err(|error| StorageError::backend(error.clone()))
+}
+
+/// Runs `connect` on the storage runtime and returns what it built.
+///
+/// # Errors
+///
+/// When the storage runtime cannot start or `connect` panics.
+pub(crate) async fn connect_on_storage_runtime<F, Fut, T>(connect: F) -> Result<T, StorageError>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let runtime = storage_runtime()?;
+    tracing::debug!(
+        target: "openhuman::storage",
+        "[storage] connecting on the storage runtime"
+    );
+    runtime
+        .spawn(async move { connect().await })
+        .await
+        .map_err(|error| {
+            StorageError::backend(format!("connecting on the storage runtime failed: {error}"))
+        })
+}
+
 /// Makes `backend` the process's storage backend; returns the previous one.
 pub fn install(backend: Arc<dyn StorageBackend>) -> Option<Arc<dyn StorageBackend>> {
-    set_installed_url(None);
-    let previous = BACKEND.install(backend);
+    install_described(backend, None, None)
+}
+
+/// [`install`] with the URL and driver recorded in the same write as the
+/// backend, so a concurrent [`rebind`] never sees the backend without its URL.
+fn install_described(
+    backend: Arc<dyn StorageBackend>,
+    url: Option<String>,
+    driver: Option<String>,
+) -> Option<Arc<dyn StorageBackend>> {
+    #[cfg(test)]
+    set_slot_owner(std::thread::current().name().map(str::to_owned));
+    let previous = BACKEND.install_described(backend, url, driver);
     // What was recorded described the previous backend.
     agents::reset_recorded();
     // Agents derived before the backend existed still need recording.
@@ -321,21 +486,38 @@ pub fn install_for_url(
     url: &str,
     backend: Arc<dyn StorageBackend>,
 ) -> Option<Arc<dyn StorageBackend>> {
-    let previous = install(backend);
-    set_installed_url(Some(url.to_string()));
-    previous
+    let driver = StorageUrl::parse(url).ok().map(|u| u.driver().to_string());
+    install_described(backend, Some(url.to_string()), driver)
+}
+
+/// [`install`] for a backend `driver` opened, remembering the driver name so
+/// [`installed_is_shared`] can tell whether other processes may write to it.
+/// Use it when the backend was opened from a URL the host does not want
+/// [`rebind`] to manage; [`install_for_url`] records the driver from its URL.
+pub fn install_with_driver(
+    driver: &str,
+    backend: Arc<dyn StorageBackend>,
+) -> Option<Arc<dyn StorageBackend>> {
+    install_described(backend, None, Some(driver.to_string()))
 }
 
 /// The installed backend, when the host configured one.
 pub fn installed() -> Option<Arc<dyn StorageBackend>> {
+    #[cfg(test)]
+    if !slot_visible_here() {
+        return None;
+    }
     BACKEND.installed()
 }
 
 /// Removes the installed backend; returns whether there was one.
 pub fn clear() -> bool {
-    set_installed_url(None);
     agents::reset_recorded();
-    BACKEND.clear()
+    let cleared = BACKEND.clear();
+    // Only after the backend is gone, so other tests never see it in between.
+    #[cfg(test)]
+    set_slot_owner(None);
+    cleared
 }
 
 /// The storage scope of the current call: the tenant's profile
@@ -397,7 +579,10 @@ pub fn current_scoped() -> Result<Option<Storage>, StorageError> {
 ///
 /// For domain stores whose API is synchronous (most of the core's), so they
 /// can call the async storage ports without `block_in_place` — which would
-/// panic on a current-thread runtime.
+/// panic on a current-thread runtime. The backend [`open`] returns runs on the
+/// storage runtime, so `future` depends only on that thread and the storage
+/// runtime, never on the caller's: however many callers are parked here, the
+/// host runtime cannot be left without the threads the backend needs.
 ///
 /// # Errors
 ///
@@ -468,12 +653,11 @@ pub fn driver_has_cross_process_cas(driver: &str) -> bool {
 }
 
 /// Whether the installed backend may be shared with other processes; `false`
-/// when none is installed. See [`driver_is_shared`].
+/// when none is installed or its driver is unknown. Judged by the driver the
+/// host recorded at install ([`install_for_url`], [`install_with_driver`]), so
+/// it holds however the backend was opened. See [`driver_is_shared`].
 pub fn installed_is_shared() -> bool {
-    installed_url()
-        .as_deref()
-        .and_then(|url| StorageUrl::parse(url).ok())
-        .is_some_and(|config| driver_is_shared(config.driver()))
+    installed_driver().as_deref().is_some_and(driver_is_shared)
 }
 
 /// A stable key for a legacy import source (a workspace directory), for the

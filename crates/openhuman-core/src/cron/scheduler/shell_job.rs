@@ -1,62 +1,38 @@
 //! Execution of `JobType::Shell` jobs under the security policy and a hard
-//! timeout.
+//! timeout (`[cron] shell_timeout_secs`, default 120 s).
 
 use crate::config::Config;
 use crate::security::SecurityPolicy;
 use tinyflows_bus::schedule::types::CronJob;
 use tokio::time::Duration;
 
-pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
+/// Prefix the retry loop (`executor.rs#classify_failure`) reads as final.
+pub(super) const POLICY_REFUSAL_PREFIX: &str = "blocked by security policy:";
 
-/// Check a scheduled shell command using the parser facts from the pinned
-/// TinyBox module. The host owns the allowlist and protected-path decisions;
-/// a missing module is a refusal, never a request to parse locally.
+/// Check and reserve a scheduled shell command through TinySecurity.
+///
+/// A refusal that waiting cannot change (the policy said no) carries
+/// [`POLICY_REFUSAL_PREFIX`], so the job fails without spending its retries.
+/// An unavailable module or an exhausted action budget may recover, so those
+/// stay retryable.
 pub(crate) async fn authorize_shell_command(
-    config: &Config,
+    _config: &Config,
     security: &SecurityPolicy,
     command: &str,
 ) -> Result<(), String> {
-    #[cfg(feature = "modules")]
-    {
-        let analysis = match crate::modules::tinybox::analyze_command(config, command.to_owned())
-            .await
-        {
-            Ok(analysis) => analysis,
-            Err(e) => {
-                tracing::warn!(error = %e, "[cron:shell] command analysis unavailable");
-                #[cfg(test)]
-                {
-                    if !config.modules.enabled {
-                        return Err("Command analysis is unavailable.".to_owned());
-                    }
-                    // Scheduler unit tests exercise process and retry behavior
-                    // without loading a native artifact. Production has no
-                    // parser fallback and fails closed below.
-                    security
-                        .check_gated_command(command)
-                        .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-                    if !security.is_command_allowed(command) {
-                        return Err("blocked by security policy: command not allowed".to_owned());
-                    }
-                    return Ok(());
-                }
-                #[cfg(not(test))]
-                return Err("Command analysis is unavailable.".to_owned());
-            }
-        };
-        security
-            .check_gated_command_analysis(&analysis)
-            .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-        if !security.is_command_allowed_analysis(&analysis) {
-            return Err("blocked by security policy: command not allowed".to_owned());
-        }
-        Ok(())
+    let verdict = security
+        .check_command(crate::security::policy::CommandQuery {
+            command,
+            declared: None,
+            flow: crate::security::policy::CommandFlow::Scheduled,
+            stage: crate::security::policy::CommandStage::Execute,
+        })
+        .await
+        .map_err(refusal_output)?;
+    if verdict.gate == crate::security::policy::GateDecision::Block {
+        return Err(format!("{POLICY_REFUSAL_PREFIX} command rejected"));
     }
-    #[cfg(not(feature = "modules"))]
-    {
-        let _ = (config, security, command);
-        Err("Command analysis is unavailable.".to_owned())
-    }
+    Ok(())
 }
 
 pub(super) async fn run_job_command(
@@ -65,14 +41,22 @@ pub(super) async fn run_job_command(
     security: &SecurityPolicy,
     job: &CronJob,
 ) -> (bool, String) {
-    run_job_command_with_timeout(
-        ctx,
-        config,
-        security,
-        job,
-        Duration::from_secs(SHELL_JOB_TIMEOUT_SECS),
-    )
-    .await
+    let timeout: Duration = config.cron.shell_timeout();
+    tracing::debug!(
+        job_id = %job.id,
+        timeout_secs = timeout.as_secs(),
+        "[cron:shell] running scheduled shell job"
+    );
+    run_job_command_with_timeout(ctx, config, security, job, timeout).await
+}
+
+/// The job output for a refused command: final unless it may recover.
+fn refusal_output(reason: crate::security::policy::Refusal) -> String {
+    use crate::security::policy::Refusal;
+    match reason {
+        Refusal::Unavailable | Refusal::RateLimit => reason.to_string(),
+        _ => format!("{POLICY_REFUSAL_PREFIX} {reason}"),
+    }
 }
 
 pub(super) async fn run_job_command_with_timeout(
@@ -82,29 +66,8 @@ pub(super) async fn run_job_command_with_timeout(
     job: &CronJob,
     timeout: Duration,
 ) -> (bool, String) {
-    if !security.can_act() {
-        return (
-            false,
-            "blocked by security policy: autonomy is read-only".to_string(),
-        );
-    }
-
-    if security.is_rate_limited() {
-        return (
-            false,
-            "blocked by security policy: rate limit exceeded".to_string(),
-        );
-    }
-
     if let Err(reason) = authorize_shell_command(config, security, &job.command).await {
         return (false, reason);
-    }
-
-    if !security.record_action() {
-        return (
-            false,
-            "blocked by security policy: action budget exhausted".to_string(),
-        );
     }
 
     // Cron keeps host execution semantics (the host's own network, no jail)
@@ -123,7 +86,14 @@ pub(super) async fn run_job_command_with_timeout(
     .await
     {
         Ok(output) => output,
-        Err(_) => return (false, "Command execution is unavailable.".to_owned()),
+        Err(error) => {
+            tracing::warn!(
+                job_id = %job.id,
+                error = %format!("{error:#}"),
+                "[cron:shell] command could not run"
+            );
+            return (false, "Command execution is unavailable.".to_owned());
+        }
     };
     if output.timed_out {
         return (
@@ -139,3 +109,7 @@ pub(super) async fn run_job_command_with_timeout(
     );
     (output.success(), combined)
 }
+
+#[cfg(test)]
+#[path = "shell_job_tests.rs"]
+mod tests;

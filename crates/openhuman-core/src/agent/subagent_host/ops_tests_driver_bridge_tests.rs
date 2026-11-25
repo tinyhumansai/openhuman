@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::subagent_host::{spawn_async_via_driver_tool_with_jobs, SubagentRunStatus};
 
 #[tokio::test]
 async fn prepared_subagent_runs_through_driver_jobs_dispatcher() {
@@ -16,14 +17,31 @@ async fn prepared_subagent_runs_through_driver_jobs_dispatcher() {
             .with_thread("driver-spawn-thread"),
     );
 
-    let (outcome, job_id) = run_subagent_via_driver_tool(
+    let jobs = tinyagents_orchestration::subagent::SubAgentJobRegistry::new();
+    let (completed_tx, completed_rx) = tokio::sync::oneshot::channel();
+    let completed_tx = Arc::new(std::sync::Mutex::new(Some(completed_tx)));
+    let task_id = spawn_async_via_driver_tool_with_jobs(
         &parent,
         make_def_named_tools(&[]),
         "return the requested result".into(),
         options,
+        jobs.clone(),
+        move |_target, result, effects| {
+            let completed_tx = Arc::clone(&completed_tx);
+            Box::pin(async move {
+                if let Some(sender) = completed_tx.lock().unwrap().take() {
+                    let _ = sender.send((result, effects));
+                }
+            })
+        },
     )
     .await
-    .expect("driver-backed spawn should complete");
+    .expect("detached driver spawn should register");
+    let (outcome, _effects) = tokio::time::timeout(std::time::Duration::from_secs(5), completed_rx)
+        .await
+        .expect("detached driver should complete")
+        .expect("completion callback sends the host result");
+    let outcome = outcome.expect("driver-backed child should complete");
 
     assert!(matches!(outcome.status, SubagentRunStatus::Completed));
     assert_eq!(outcome.output, "driver result");
@@ -32,10 +50,7 @@ async fn prepared_subagent_runs_through_driver_jobs_dispatcher() {
         "host must retain generated task ID"
     );
     assert_eq!(provider.captured.lock().len(), 1, "child provider must run");
-    let jobs = crate::core::runtime::slot_for::<
-        tinyagents_orchestration::subagent::SubAgentJobRegistry,
-    >(&parent.data.dispatch_ctx());
-    let job = jobs.get(&job_id).expect("driver tool registered the job");
+    let job = jobs.get(&task_id).expect("driver tool registered the job");
     assert_eq!(job.agent, "test");
     assert_eq!(
         job.status,
@@ -335,6 +350,7 @@ async fn closing_a_durable_driver_session_cancels_only_its_registered_child() {
             task_title: "Close driver lifecycle".into(),
             current_task_id: Some("close-driver-task".into()),
             lifecycle_key: Some(task_key),
+            parent_epoch: None,
             status: DurableSubagentStatus::Running,
             reusable: true,
             latest_history: None,
@@ -384,40 +400,6 @@ async fn closing_a_durable_driver_session_cancels_only_its_registered_child() {
     );
     let owner_scope: std::sync::Arc<dyn Fn(u64) -> String + Send + Sync> =
         std::sync::Arc::new(move |_| owner.clone());
-    let message_store: std::sync::Arc<dyn TinySessionStore> = std::sync::Arc::new(port.clone());
-    let message_dispatch: crate::agent::tinyagents::tool_registration::RegisteredToolDispatch =
-        std::sync::Arc::new(
-            tinyagents_harness_tools::subagents::SubAgentMessageTool::new(jobs.clone())
-                .with_tool_name("steer_subagent")
-                .with_argument_fields("task_id", "subagent_session_id", "message", "__request_id")
-                .with_lane_field("mode")
-                .with_owner_scope(owner_scope.clone())
-                .with_sessions(message_store, |_| "test-session".to_owned()),
-        );
-    let message_dispatch =
-        crate::agent::tinyagents::tool_registration::TaskFirstSessionMessageDispatch::new(
-            message_dispatch,
-        );
-    let steered = tinyagents_harness::tool::ToolDispatch::execute(
-        &message_dispatch,
-        &(),
-        tinyagents_harness::CallId::new("steer-raw-task-id"),
-        serde_json::json!({
-            "task_id": "close-driver-task",
-            "subagent_session_id": "foreign-session-must-not-win",
-            "message": "please continue after this note",
-            "mode": "collect"
-        }),
-        tinytools::ToolCallOptions::default(),
-        &parent,
-    )
-    .await
-    .expect("TaskFirst host adapter resolves raw task ID via the owned session port");
-    let steered_payload: serde_json::Value =
-        serde_json::from_str(&steered.output()).expect("message dispatch returns JSON");
-    assert_eq!(steered_payload["job_id"].as_str(), Some(job_id.as_str()));
-    assert_eq!(steered_payload["status"], "message_queued");
-
     assert!(port
         .close("close-driver-session")
         .await
@@ -533,15 +515,33 @@ async fn closing_a_durable_driver_session_cancels_only_its_registered_child() {
     sibling_options.run_context = parent.data.clone();
     let mut sibling = make_def_named_tools(&[]);
     sibling.id = "live-sibling".into();
-    let sibling = run_subagent_via_driver_tool(
+    let (sibling_tx, sibling_rx) = tokio::sync::oneshot::channel();
+    let sibling_tx = Arc::new(std::sync::Mutex::new(Some(sibling_tx)));
+    spawn_async_via_driver_tool_with_jobs(
         &parent,
         sibling,
         "complete independently".into(),
         sibling_options,
+        tinyagents_orchestration::subagent::SubAgentJobRegistry::new(),
+        move |_target, result, effects| {
+            let sibling_tx = Arc::clone(&sibling_tx);
+            Box::pin(async move {
+                if let Some(sender) = sibling_tx.lock().unwrap().take() {
+                    let _ = sender.send((result, effects));
+                }
+            })
+        },
     )
     .await
     .expect("sibling driver remains usable");
-    assert!(matches!(sibling.0.status, SubagentRunStatus::Completed));
+    let (sibling, _effects) = tokio::time::timeout(std::time::Duration::from_secs(5), sibling_rx)
+        .await
+        .expect("sibling driver should complete")
+        .expect("sibling completion callback sends the result");
+    assert!(matches!(
+        sibling.expect("sibling child completes").status,
+        SubagentRunStatus::Completed
+    ));
     assert_eq!(provider.captured.lock().len(), 2);
 }
 
@@ -566,11 +566,13 @@ async fn stopped_parent_thread_rejects_a_new_driver_spawn_before_execution() {
         "stopped-driver-thread",
     );
 
-    let result = run_subagent_via_driver_tool(
+    let result = spawn_async_via_driver_tool_with_jobs(
         &parent,
         make_def_named_tools(&[]),
         "return the requested result".into(),
         options,
+        tinyagents_orchestration::subagent::SubAgentJobRegistry::new(),
+        |_target, _result, _effects| Box::pin(async {}),
     )
     .await;
 
@@ -619,7 +621,7 @@ async fn detached_driver_spawn_repairs_replayed_host_outcome_without_reexecution
     .await
     .expect("first detached driver spawn should register");
     let (first_result, first_effects) =
-        tokio::time::timeout(std::time::Duration::from_secs(20), first_rx)
+        tokio::time::timeout(std::time::Duration::from_secs(5), first_rx)
             .await
             .expect("first completion callback should not be skipped")
             .expect("first completion callback");
@@ -652,7 +654,7 @@ async fn detached_driver_spawn_repairs_replayed_host_outcome_without_reexecution
     .await
     .expect("replayed detached driver spawn should register");
     let (replay_result, replay_effects) =
-        tokio::time::timeout(std::time::Duration::from_secs(20), replay_rx)
+        tokio::time::timeout(std::time::Duration::from_secs(5), replay_rx)
             .await
             .expect("replay repair callback should run")
             .expect("replay repair callback");

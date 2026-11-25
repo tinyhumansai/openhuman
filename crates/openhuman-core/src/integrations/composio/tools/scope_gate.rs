@@ -72,11 +72,19 @@ pub(crate) fn action_mutates_external_state(slug: &str) -> bool {
 /// Decide whether a Composio action slug should be visible / executable
 /// for the current user.
 ///
+/// The preference applied when the stored one cannot be read: no scope on.
+pub(super) const NOTHING_ALLOWED: UserScopePref = UserScopePref {
+    read: false,
+    write: false,
+    admin: false,
+};
+
 /// Asks the connector module which curated actions the user's stored scope
 /// preference exposes for the slug's toolkit (`ListVisibleTools`), so the
 /// preference and the catalog are read from the module that enforces them.
-/// A module that cannot be reached answers as the default preference would,
-/// which is what the host did before the preference moved.
+/// A module that cannot be reached fails closed: every scope is treated as
+/// off, so nothing is allowed. The default preference (`read+write`) would
+/// widen a user's `write=false`.
 pub(super) async fn evaluate_tool_visibility(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
@@ -98,11 +106,11 @@ pub(super) async fn evaluate_tool_visibility(
     {
         Ok(visible) => decide_from_visible(slug, &visible),
         Err(error) => {
-            tracing::debug!(
+            tracing::warn!(
                 toolkit = %toolkit,
-                "[composio][scopes] list_visible_tools failed, using the default preference: {error}"
+                "[composio][scopes] list_visible_tools failed, failing closed: {error}"
             );
-            decide_visibility(&toolkit, slug, UserScopePref::default())
+            decide_visibility(&toolkit, slug, NOTHING_ALLOWED)
         }
     }
 }
@@ -169,9 +177,26 @@ fn decide_visibility(toolkit: &str, slug: &str, pref: UserScopePref) -> ToolDeci
 /// toggles the scope in the Connections UI. The agent has no tool to
 /// flip scopes (see the note above the removed `ComposioEnableScopeTool`
 /// for why) — it can only describe the gate and point at the UI.
-pub(super) fn scope_error_message(slug: &str, scope: ToolScope, pref: UserScopePref) -> String {
+///
+/// `pref` is `None` when the stored preference could not be read. The scope
+/// may well be on, and the Connections toggles are disabled until the read
+/// works again, so that message reports the outage instead of the unlock path.
+pub(super) fn scope_error_message(
+    slug: &str,
+    scope: ToolScope,
+    pref: Option<UserScopePref>,
+) -> String {
     let toolkit = toolkit_from_slug(slug).unwrap_or_default();
     let scope_str = scope.as_str();
+    let Some(pref) = pref else {
+        return format!(
+            "composio_execute: action `{slug}` was not run because the user's scope \
+             preferences for `{toolkit}` could not be read right now. This is a \
+             temporary storage problem, not a disabled `{scope_str}` scope: tell the \
+             user the action is unavailable for the moment and to try again shortly. \
+             Do not tell them to change their Connections settings.",
+        );
+    };
     format!(
         "composio_execute: action `{slug}` is classified `{scope_str}` and is \
          disabled in the user's current scope preferences for `{toolkit}` \

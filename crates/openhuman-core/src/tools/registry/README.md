@@ -60,7 +60,7 @@ No owned persistence. `diagnostics()` reads the MCP write-audit log through `cra
 - `crates/openhuman-core/src/core/all.rs`: registers controllers/schemas and routes the `tool_registry` namespace.
 - `crates/openhuman-core/src/agent/tinyagents/middleware/tool_policy.rs`: calls `tinytools::registry::denials::record(...)` when a tool call is denied or requires approval.
 - `crates/openhuman-core/src/platform/about_app/catalog_conversation_intelligence.rs`: the `intelligence.tool_registry` capability entry points users at `openhuman.tool_registry_list` / `openhuman.tool_registry_get`.
-- `tests/raw_coverage/tool_registry_approval_raw_coverage_e2e.rs` and siblings: exercise `denials`, `ops::diagnostics_for_config`, and the provider registry directly.
+- `tests/raw_coverage/tool_registry_approval_e2e.rs` and siblings: exercise `denials`, `ops::diagnostics_for_config`, and the provider registry directly.
 
 ## Notes / gotchas
 

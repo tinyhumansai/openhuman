@@ -8,8 +8,9 @@ redaction, URL normalization, JSON-RPC param decoding and the platform TLS choic
 ## How it works
 
 There is no flow here, only a rule about direction. Domains depend on `util`;
-`util` depends on no domain. No file in this folder has a `use crate::` line.
-A helper that needs a `Config`, a `Tool`, a workspace or security policy
+`util` depends on no domain. The one `use crate::` line is in
+[`params.rs`](./params.rs), which imports `Outcome`, `FieldSchema` and
+`TypeSchema` from `crate::core`, the kernel those types live in. A helper that needs a `Config`, a `Tool`, a workspace or security policy
 belongs in the domain that owns those things. Domains import LLM-facing text
 sanitization directly from `tinytools::sanitize`.
 
@@ -19,18 +20,17 @@ sanitization directly from `tinytools::sanitize`.
       +-----+------+--------+--------+----------+--------+
                               |
                               v
-                        crate::util            (no `use crate::`)
+                        crate::util            (only `crate::core` kernel types)
                               |
                               v
-        external crates: serde_json, sha2, url, reqwest, tokio,
+        external crates: serde_json, url, reqwest, tokio,
                          tracing, anyhow
 ```
 
 `util` is kernel surface, so it also sits under the dependency-floor ratchet
 in `scripts/kernel-floor.limits` (checked by `scripts/check-kernel-floor.sh`).
 Adding an external crate here raises the floor of every build. That is why
-`redact` is a few lines of SHA-256 rather than a link to the memory engine's
-copy.
+URL redaction stays here as a small logging helper.
 
 ## Layout
 
@@ -38,9 +38,9 @@ copy.
 | --- | --- |
 | [`text.rs`](./text.rs) | Char-count truncation (`truncate_with_ellipsis`, `truncate_with_suffix`), byte-capped truncation with an ellipsis (`truncate_at_byte_boundary`), and byte-index rounding to a char boundary (`floor_char_boundary`, `ceil_char_boundary`, `utf8_safe_prefix_at_byte_boundary`). |
 | [`retry.rs`](./retry.rs) | `retry_with_backoff` (sync, `std::thread::sleep`) and `retry_with_backoff_async` (`tokio::time::sleep`), plus `is_transient_fs_error`. |
-| [`redact.rs`](./redact.rs) | `redact` hashes a string to 8 hex chars for log lines. `redact_url_for_log` replaces URL userinfo with `redacted`. |
+| [`redact.rs`](./redact.rs) | `redact_url_for_log` replaces URL userinfo with `redacted`. |
 | [`url.rs`](./url.rs) | `normalize_api_base_url`, `normalize_backend_api_base_url`, `join_url`, `host_is_local`. |
-| [`params.rs`](./params.rs) | `read_required` and `read_optional`, the shared param decoders for controller handlers. |
+| [`params.rs`](./params.rs) | The shared controller-schema helpers: param decoders (`read_required`, `read_optional`, `read_optional_u32`, `type_name`, `opt_trimmed_str_arg`), outcome conversion (`to_json`, `value_to_json`, `outcome_value_to_json`), `new_correlation_id`, and the `FieldSchema` builders `json_output`, `required_string` and `optional_string`. |
 | [`types.rs`](./types.rs) | `MaybeSet<T>` (`Set`, `Unset`, `Null`). |
 | [`tls/`](tls/README.md) | `tls_client_builder()`, the platform-conditional TLS backend for `reqwest` clients. |
 
@@ -73,15 +73,9 @@ helpers run `f` once.
 
 ### Redaction
 
-`redact(s)` returns the first 4 bytes of the SHA-256 digest as 8 hex chars.
-It is stable across runs, so a developer holding the raw value can grep for
-it. Use it for source ids, entity ids and content paths, which can embed
-email addresses. `tinymemory_core::util::redact` is an identical, independent
-copy; the two never need to agree because neither reads the other's output.
-
-`redact_url_for_log(raw)` parses the URL (assuming `http://` when the scheme
-is missing), replaces any username and password with `redacted`, and strips a
-trailing slash. An unparseable input comes back trimmed and unchanged.
+`redact_url_for_log(raw)` uses TinySecurity's `Endpoint` mode, which removes
+credentials, query parameters and fragments. If the module is unavailable, it
+returns the fixed suppression marker.
 
 ### URLs
 
@@ -99,8 +93,20 @@ classifies loopback, unspecified, RFC 1918 IPv4 and `localhost` /
 
 `read_required::<T>(params, key)` fails with `missing required param '<key>'`
 or `invalid '<key>': <serde error>`. `read_optional` treats an absent key and
-`null` the same (`Ok(None)`). Domain `schemas.rs` files use these so the error
-wording stays one contract.
+`null` the same (`Ok(None)`). `read_optional_u32` is the stricter variant
+whose errors name the JSON type (`invalid '<key>': expected number, got
+string`, or `invalid '<key>': expected u32`); `type_name` gives that type name.
+Domain `schemas.rs` files use these so the error wording stays one contract.
+
+`to_json(outcome)` is `Outcome::into_cli_compatible_json` (a bare value, or
+`{result, logs}` when there are logs), and `value_to_json(value)` does the
+same for a bare value. `outcome_value_to_json(outcome, err_prefix)` serializes
+`outcome.value` alone and drops the logs; its serde error is
+`"{err_prefix}{e}"`, so `mcp_clients` passes `""` and the voice controllers
+pass `"serialize error: "`. `json_output`, `required_string` and
+`optional_string` build the three common `FieldSchema`s. The hosted
+controllers in `openhuman-tinyhumans` reach the ones they use through
+`openhuman_embed::__host::util::params`.
 
 ### Sanitization
 
@@ -121,7 +127,7 @@ null" (`Null`) in partial-update payloads. The caller today is
 [`mod.rs`](./mod.rs) re-exports `read_optional`, `read_required`, `redact_url_for_log`,
 the `retry` functions, the `text` functions and `MaybeSet` at the module root,
 so `crate::util::truncate_with_ellipsis` works without naming the submodule.
-`redact::redact`, `url::*` and `tls::tls_client_builder` are
+`url::*` and `tls::tls_client_builder` are
 reached through their submodule path. From outside the crate the library name
 is `openhuman_core`, which is the path the `truncate_with_ellipsis` doctest
 uses.
@@ -133,12 +139,12 @@ uses.
   to `crates/openhuman-tinyhumans`, which publishes the result on
   `Config.resolved_endpoints` (`config::register_enricher`). [`url.rs`](./url.rs) only does string and URL shape work.
 - Secret scrubbing for logs and Sentry lives in `core::log_redaction` and
-  `core::observability`. `redact` is only a stable hash for identifiers.
+  `core::observability`.
 
 ## Gotchas
 
-- Do not add `use crate::` here. If a helper needs domain types, it belongs in
-  that domain.
+- Do not add `use crate::` here beyond the `crate::core` kernel types in
+  `params.rs`. If a helper needs domain types, it belongs in that domain.
 - Do not add external dependencies casually. The kernel-floor ratchet only
   goes down, and raising it needs a written justification.
 - `retry_with_backoff` blocks the thread while it sleeps. Call
@@ -149,7 +155,7 @@ uses.
 ## Tests
 
 Tests sit beside each file ([`text_tests.rs`](./text_tests.rs), [`retry_tests.rs`](./retry_tests.rs),
-[`redact_tests.rs`](./redact_tests.rs), [`url_tests.rs`](./url_tests.rs), [`params_tests.rs`](./params_tests.rs)). Run them with
+[`url_tests.rs`](./url_tests.rs), [`params_tests.rs`](./params_tests.rs)). Run them with
 `cargo test -p openhuman util::` or `pnpm debug rust util::`. The
 `truncate_with_ellipsis` doctest runs under `cargo test -p openhuman --doc`.
 

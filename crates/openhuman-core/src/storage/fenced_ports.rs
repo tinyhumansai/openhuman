@@ -14,9 +14,10 @@ use tinystoragedrivers_api::{
 };
 use tinystoragedrivers_types::{
     Blob, BlobMeta, Capabilities, Capability, CollectionSpec, Cursor, DeadLetter, Delivery,
-    Enqueued, Filter, NewMessage, Page, Precondition, Query, QueueFeatures, QueueSpec, QueueStats,
-    ReadCheck, Receipt, Result, Retry, SealOutcome, SearchHit, Sort, StreamEntry, StreamInfo,
-    TreeEntry, TreeFile, Version, Versioned, WatchOptions, WriteOp, WriteOptions, WriteResult,
+    Enqueued, ErrorKind, Filter, NewMessage, Page, Precondition, Query, QueueFeatures, QueueSpec,
+    QueueStats, ReadCheck, Receipt, Result, Retry, SealOutcome, SearchHit, Sort, StreamEntry,
+    StreamInfo, TreeEntry, TreeFile, Version, Versioned, WatchOptions, WriteOp, WriteOptions,
+    WriteResult,
 };
 
 use super::{
@@ -30,10 +31,37 @@ fn check(fence: &LeaseFence, clock: &FenceRegistry) -> Result<()> {
         .map_err(|error| error.into_storage())
 }
 
-pub(super) fn wrap(storage: Storage, fence: Arc<LeaseFence>, clock: Arc<FenceRegistry>) -> Storage {
+async fn classify_driver_refusal<T>(
+    result: Result<T>,
+    fence: &LeaseFence,
+    clock: &FenceRegistry,
+) -> Result<T> {
+    match result {
+        Err(error) if error.kind() == ErrorKind::Conflict => {
+            match fence.check(clock.now_ms()).await {
+                Err(fence_error) => Err(fence_error.into_storage()),
+                Ok(()) => Err(error),
+            }
+        }
+        other => other,
+    }
+}
+
+/// `storage` guarded by `fence`. Collection declarations go through
+/// `declarations`, a handle without the lease's driver condition: a
+/// declaration is idempotent schema metadata, and drivers disagree on
+/// whether a conditioned handle may make one (MongoDB refuses, #8422). They
+/// still pass the fence's local lease check first.
+pub(super) fn wrap(
+    storage: Storage,
+    declarations: Arc<dyn DocumentStore>,
+    fence: Arc<LeaseFence>,
+    clock: Arc<FenceRegistry>,
+) -> Storage {
     Storage::new(
         Arc::new(GuardedDocuments {
             inner: Arc::clone(storage.documents()),
+            declarations,
             fence: Arc::clone(&fence),
             clock: Arc::clone(&clock),
         }),
@@ -63,6 +91,8 @@ pub(super) fn wrap(storage: Storage, fence: Arc<LeaseFence>, clock: Arc<FenceReg
 
 struct GuardedDocuments {
     inner: Arc<dyn DocumentStore>,
+    /// Collection declarations only, without the lease's driver condition.
+    declarations: Arc<dyn DocumentStore>,
     fence: Arc<LeaseFence>,
     clock: Arc<FenceRegistry>,
 }
@@ -81,17 +111,22 @@ impl DocumentStore for GuardedDocuments {
     }
     async fn ensure_collection(&self, s: &CollectionSpec) -> Result<()> {
         check(&self.fence, &self.clock)?;
-        self.inner.ensure_collection(s).await
+        classify_driver_refusal(
+            self.declarations.ensure_collection(s).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn validate_collection_spec(&self, s: &CollectionSpec) -> Result<()> {
-        self.inner.validate_collection_spec(s).await
+        self.declarations.validate_collection_spec(s).await
     }
     async fn get(&self, c: &str, id: &str) -> Result<Option<Versioned<Value>>> {
         self.inner.get(c, id).await
     }
     async fn put(&self, c: &str, id: &str, v: Value, p: Precondition) -> Result<Version> {
         check(&self.fence, &self.clock)?;
-        self.inner.put(c, id, v, p).await
+        classify_driver_refusal(self.inner.put(c, id, v, p).await, &self.fence, &self.clock).await
     }
     async fn put_with(
         &self,
@@ -102,11 +137,16 @@ impl DocumentStore for GuardedDocuments {
         o: WriteOptions,
     ) -> Result<Version> {
         check(&self.fence, &self.clock)?;
-        self.inner.put_with(c, id, v, p, o).await
+        classify_driver_refusal(
+            self.inner.put_with(c, id, v, p, o).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn delete(&self, c: &str, id: &str, p: Precondition) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete(c, id, p).await
+        classify_driver_refusal(self.inner.delete(c, id, p).await, &self.fence, &self.clock).await
     }
     async fn query(&self, c: &str, q: &Query) -> Result<Page<Versioned<Value>>> {
         self.inner.query(c, q).await
@@ -116,7 +156,12 @@ impl DocumentStore for GuardedDocuments {
     }
     async fn delete_where(&self, c: &str, f: &Filter) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete_where(c, f).await
+        classify_driver_refusal(
+            self.inner.delete_where(c, f).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn claim(
         &self,
@@ -126,11 +171,11 @@ impl DocumentStore for GuardedDocuments {
         p: &Value,
     ) -> Result<Option<Versioned<Value>>> {
         check(&self.fence, &self.clock)?;
-        self.inner.claim(c, f, s, p).await
+        classify_driver_refusal(self.inner.claim(c, f, s, p).await, &self.fence, &self.clock).await
     }
     async fn atomic_batch(&self, o: Vec<WriteOp>) -> Result<Vec<WriteResult>> {
         check(&self.fence, &self.clock)?;
-        self.inner.atomic_batch(o).await
+        classify_driver_refusal(self.inner.atomic_batch(o).await, &self.fence, &self.clock).await
     }
     async fn atomic_batch_checked(
         &self,
@@ -138,14 +183,24 @@ impl DocumentStore for GuardedDocuments {
         o: Vec<WriteOp>,
     ) -> Result<Vec<WriteResult>> {
         check(&self.fence, &self.clock)?;
-        self.inner.atomic_batch_checked(c, o).await
+        classify_driver_refusal(
+            self.inner.atomic_batch_checked(c, o).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn search(&self, c: &str, t: &str, l: usize) -> Result<Vec<SearchHit>> {
         self.inner.search(c, t, l).await
     }
     async fn drop_collection(&self, c: &str) -> Result<()> {
         check(&self.fence, &self.clock)?;
-        self.inner.drop_collection(c).await
+        classify_driver_refusal(
+            self.inner.drop_collection(c).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn collections(&self, p: &str) -> Result<Vec<String>> {
         self.inner.collections(p).await
@@ -169,15 +224,25 @@ impl StreamStore for GuardedStreams {
     }
     async fn append(&self, s: &str, v: Value) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.append(s, v).await
+        classify_driver_refusal(self.inner.append(s, v).await, &self.fence, &self.clock).await
     }
     async fn append_batch(&self, s: &str, v: Vec<Value>) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.append_batch(s, v).await
+        classify_driver_refusal(
+            self.inner.append_batch(s, v).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn append_batch_if_offset(&self, s: &str, o: u64, v: Vec<Value>) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.append_batch_if_offset(s, o, v).await
+        classify_driver_refusal(
+            self.inner.append_batch_if_offset(s, o, v).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn read_window(&self, s: &str, f: u64, l: usize) -> Result<Vec<StreamEntry>> {
         self.inner.read_window(s, f, l).await
@@ -187,22 +252,32 @@ impl StreamStore for GuardedStreams {
     }
     async fn truncate_before(&self, s: &str, o: u64) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.truncate_before(s, o).await
+        classify_driver_refusal(
+            self.inner.truncate_before(s, o).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn delete_stream(&self, s: &str) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete_stream(s).await
+        classify_driver_refusal(self.inner.delete_stream(s).await, &self.fence, &self.clock).await
     }
     async fn streams(&self, p: &str) -> Result<Vec<String>> {
         self.inner.streams(p).await
     }
     async fn seal(&self, s: &str) -> Result<SealOutcome> {
         check(&self.fence, &self.clock)?;
-        self.inner.seal(s).await
+        classify_driver_refusal(self.inner.seal(s).await, &self.fence, &self.clock).await
     }
     async fn delete_sealed_stream(&self, s: &str, t: i64) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete_sealed_stream(s, t).await
+        classify_driver_refusal(
+            self.inner.delete_sealed_stream(s, t).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn info(&self, s: &str) -> Result<Option<StreamInfo>> {
         self.inner.info(s).await
@@ -229,22 +304,27 @@ impl KvStore for GuardedKv {
     }
     async fn put(&self, k: &str, v: Value) -> Result<Version> {
         check(&self.fence, &self.clock)?;
-        self.inner.put(k, v).await
+        classify_driver_refusal(self.inner.put(k, v).await, &self.fence, &self.clock).await
     }
     async fn cas(&self, k: &str, v: Value, e: Precondition) -> Result<Version> {
         check(&self.fence, &self.clock)?;
-        self.inner.cas(k, v, e).await
+        classify_driver_refusal(self.inner.cas(k, v, e).await, &self.fence, &self.clock).await
     }
     async fn delete(&self, k: &str, e: Precondition) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete(k, e).await
+        classify_driver_refusal(self.inner.delete(k, e).await, &self.fence, &self.clock).await
     }
     async fn list(&self, p: &str, c: Option<Cursor>, l: usize) -> Result<Page<Versioned<Value>>> {
         self.inner.list(p, c, l).await
     }
     async fn put_with_ttl(&self, k: &str, v: Value, t: Duration) -> Result<Version> {
         check(&self.fence, &self.clock)?;
-        self.inner.put_with_ttl(k, v, t).await
+        classify_driver_refusal(
+            self.inner.put_with_ttl(k, v, t).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
 }
 
@@ -271,7 +351,7 @@ impl BlobStore for GuardedBlobs {
     }
     async fn put(&self, k: &str, b: Vec<u8>, c: Option<&str>) -> Result<BlobMeta> {
         check(&self.fence, &self.clock)?;
-        self.inner.put(k, b, c).await
+        classify_driver_refusal(self.inner.put(k, b, c).await, &self.fence, &self.clock).await
     }
     async fn put_stream(
         &self,
@@ -281,7 +361,12 @@ impl BlobStore for GuardedBlobs {
         c: Option<&str>,
     ) -> Result<BlobMeta> {
         check(&self.fence, &self.clock)?;
-        self.inner.put_stream(k, r, n, c).await
+        classify_driver_refusal(
+            self.inner.put_stream(k, r, n, c).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn put_expiring(
         &self,
@@ -291,7 +376,12 @@ impl BlobStore for GuardedBlobs {
         t: Duration,
     ) -> Result<BlobMeta> {
         check(&self.fence, &self.clock)?;
-        self.inner.put_expiring(k, b, c, t).await
+        classify_driver_refusal(
+            self.inner.put_expiring(k, b, c, t).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn put_stream_expiring(
         &self,
@@ -302,7 +392,12 @@ impl BlobStore for GuardedBlobs {
         t: Duration,
     ) -> Result<BlobMeta> {
         check(&self.fence, &self.clock)?;
-        self.inner.put_stream_expiring(k, r, n, c, t).await
+        classify_driver_refusal(
+            self.inner.put_stream_expiring(k, r, n, c, t).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn get(&self, k: &str) -> Result<Option<Blob>> {
         self.inner.get(k).await
@@ -318,14 +413,19 @@ impl BlobStore for GuardedBlobs {
     }
     async fn delete(&self, k: &str) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete(k).await
+        classify_driver_refusal(self.inner.delete(k).await, &self.fence, &self.clock).await
     }
     async fn list(&self, p: &str) -> Result<Vec<BlobMeta>> {
         self.inner.list(p).await
     }
     async fn put_sealed(&self, k: &str, b: Vec<u8>, c: Option<&str>) -> Result<BlobMeta> {
         check(&self.fence, &self.clock)?;
-        self.inner.put_sealed(k, b, c).await
+        classify_driver_refusal(
+            self.inner.put_sealed(k, b, c).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn get_sealed(&self, k: &str) -> Result<Option<Blob>> {
         self.inner.get_sealed(k).await
@@ -335,7 +435,7 @@ impl BlobStore for GuardedBlobs {
     }
     async fn delete_sealed(&self, k: &str) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete_sealed(k).await
+        classify_driver_refusal(self.inner.delete_sealed(k).await, &self.fence, &self.clock).await
     }
     async fn list_sealed(&self, p: &str) -> Result<Vec<BlobMeta>> {
         self.inner.list_sealed(p).await
@@ -350,7 +450,7 @@ impl BlobStore for GuardedBlobs {
     }
     async fn sweep_expired(&self) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.sweep_expired().await
+        classify_driver_refusal(self.inner.sweep_expired().await, &self.fence, &self.clock).await
     }
     async fn presign_get(&self, k: &str, t: Duration) -> Result<String> {
         self.inner.presign_get(k, t).await
@@ -367,11 +467,11 @@ impl BlobStore for GuardedBlobs {
     }
     async fn put_tree(&self, d: &str, f: Vec<TreeFile>) -> Result<Vec<BlobMeta>> {
         check(&self.fence, &self.clock)?;
-        self.inner.put_tree(d, f).await
+        classify_driver_refusal(self.inner.put_tree(d, f).await, &self.fence, &self.clock).await
     }
     async fn delete_tree(&self, d: &str) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.delete_tree(d).await
+        classify_driver_refusal(self.inner.delete_tree(d).await, &self.fence, &self.clock).await
     }
 }
 
@@ -396,27 +496,37 @@ impl QueueStore for GuardedQueues {
     }
     async fn ensure_queue(&self, q: &str, s: &QueueSpec) -> Result<()> {
         check(&self.fence, &self.clock)?;
-        self.inner.ensure_queue(q, s).await
+        classify_driver_refusal(
+            self.inner.ensure_queue(q, s).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn enqueue(&self, q: &str, m: &[NewMessage]) -> Result<Vec<Enqueued>> {
         check(&self.fence, &self.clock)?;
-        self.inner.enqueue(q, m).await
+        classify_driver_refusal(self.inner.enqueue(q, m).await, &self.fence, &self.clock).await
     }
     async fn receive(&self, q: &str, n: u32, v: u64, c: &str) -> Result<Vec<Delivery>> {
         check(&self.fence, &self.clock)?;
-        self.inner.receive(q, n, v, c).await
+        classify_driver_refusal(
+            self.inner.receive(q, n, v, c).await,
+            &self.fence,
+            &self.clock,
+        )
+        .await
     }
     async fn ack(&self, q: &str, r: &Receipt) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.ack(q, r).await
+        classify_driver_refusal(self.inner.ack(q, r).await, &self.fence, &self.clock).await
     }
     async fn nack(&self, q: &str, r: &Receipt, retry: Retry) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.nack(q, r, retry).await
+        classify_driver_refusal(self.inner.nack(q, r, retry).await, &self.fence, &self.clock).await
     }
     async fn extend(&self, q: &str, r: &Receipt, v: u64) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.extend(q, r, v).await
+        classify_driver_refusal(self.inner.extend(q, r, v).await, &self.fence, &self.clock).await
     }
     async fn stats(&self, q: &str) -> Result<QueueStats> {
         self.inner.stats(q).await
@@ -426,10 +536,10 @@ impl QueueStore for GuardedQueues {
     }
     async fn redrive(&self, q: &str, id: &str) -> Result<bool> {
         check(&self.fence, &self.clock)?;
-        self.inner.redrive(q, id).await
+        classify_driver_refusal(self.inner.redrive(q, id).await, &self.fence, &self.clock).await
     }
     async fn purge(&self, q: &str) -> Result<u64> {
         check(&self.fence, &self.clock)?;
-        self.inner.purge(q).await
+        classify_driver_refusal(self.inner.purge(q).await, &self.fence, &self.clock).await
     }
 }

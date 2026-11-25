@@ -131,13 +131,17 @@ pub(crate) async fn set_credential_on(
     expires_at: Option<&str>,
 ) -> Result<Outcome<CredentialResult>, String> {
     let profile_id = ProfileId::parse(profile_id)?;
+    let token = token.to_string();
+    let expires_at = expires_at.map(str::to_string);
     // From the layout, not `open`: installing or revoking a credential must
     // work even when every profile slot is busy. Under the profile's
     // lifecycle lock, so it cannot land in a profile being archived, and
     // under its own scope, so a storage-backed secret store files the
     // credential under that profile.
     host.with_records(&profile_id, |config| {
-        credentials::store(config, kind, token, expires_at)
+        Box::pin(
+            async move { credentials::store(config, kind, &token, expires_at.as_deref()).await },
+        )
     })
     .await?;
     log::info!("[profiles] credential installed kind={kind:?}");
@@ -160,7 +164,9 @@ pub(crate) async fn clear_credential_on(
     profile_id: &str,
 ) -> Result<Outcome<CredentialResult>, String> {
     let profile_id = ProfileId::parse(profile_id)?;
-    let removed = host.with_records(&profile_id, credentials::clear).await?;
+    let removed = host
+        .with_records(&profile_id, |config| Box::pin(credentials::clear(config)))
+        .await?;
     log::info!("[profiles] credential cleared removed={removed}");
     let log = if removed {
         "credential cleared"

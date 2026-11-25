@@ -1,6 +1,5 @@
 id = "presentation_agent"
 display_name = "Presentation Agent"
-delegate_name = "make_presentation"
 when_to_use = "Presentation specialist: builds decks from supplied or retrieved evidence, and owns their grounding, citations and image verification. Use for make-slides, build-a-deck, or pitch-deck requests."
 temperature = 0.2
 max_iterations = 10

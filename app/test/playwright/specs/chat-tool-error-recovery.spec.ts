@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { inFlightThreadKey } from '../helpers/chat-transcript';
 import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
@@ -117,7 +118,10 @@ test.describe('Chat Tool Error Recovery', () => {
       JSON.stringify([
         {
           keyword: 'Please try again with a fresh answer.',
-          streamScript: [{ text: `Recovery successful: ${RECOVERY_CANARY}` }, { finish: 'stop' }],
+          streamScript: [
+            { text: `Recovery successful: ${RECOVERY_CANARY}`, delayMs: 500 },
+            { finish: 'stop' },
+          ],
         },
         {
           keyword: 'Tell me something important.',
@@ -129,6 +133,7 @@ test.describe('Chat Tool Error Recovery', () => {
     await openChat(page);
     const threadId = await createNewThread(page);
     await sendMessage(page, 'Tell me something important.');
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeTruthy();
 
     // A new thread starts with a null lifecycle too. Waiting only for null can
     // therefore race ahead of the first turn and let the retry overlap it.
@@ -154,11 +159,14 @@ test.describe('Chat Tool Error Recovery', () => {
         return lifecycle;
       })
       .toBeNull();
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeUndefined();
 
     const composer = page.getByTestId('chat-message-input');
     await expect(composer).toBeEnabled();
 
     await sendMessage(page, 'Please try again with a fresh answer.');
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeTruthy();
     await expect(page.getByText(RECOVERY_CANARY)).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeUndefined();
   });
 });

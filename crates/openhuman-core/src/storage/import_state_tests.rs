@@ -166,55 +166,32 @@ fn completion_is_an_immutable_host_owned_record_in_the_scope() {
 }
 
 #[test]
-fn a_legacy_marker_row_is_honoured_and_removed() {
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryBackend::new());
-    let scoped = backend.for_scope(&Scope::local()).unwrap();
-    let owned = scoped.clone();
-    crate::storage::block_on(async move {
-        let docs = owned.documents();
-        docs.ensure_collection(&CollectionSpec::new("storage_import"))
-            .await?;
-        docs.put(
-            "storage_import",
-            "approval@abcd",
-            serde_json::json!({ "version": 1, "domain": "approval" }),
-            Precondition::Absent,
-        )
-        .await?;
-        docs.put(
-            "storage_import",
-            "approval@abcd#claim",
-            serde_json::json!({ "claimed_at_ms": 1 }),
-            Precondition::Absent,
-        )
-        .await?;
-        let moved = migrate_legacy_markers(&owned).await?;
-        assert_eq!(moved, 1);
-        assert!(
-            done(
-                &owned,
-                "storage",
-                &step_id("storage_import", "approval@abcd")
-            )
-            .await?
-        );
-        assert!(!done(&owned, "storage", &step_id("storage_import", "other@x")).await?);
-        assert!(docs
-            .query_all("storage_import", &tinystoragedrivers::Query::all())
-            .await?
-            .is_empty());
-        assert_eq!(migrate_legacy_markers(&owned).await?, 0);
-        assert!(
-            done(
-                &owned,
-                "storage",
-                &step_id("storage_import", "approval@abcd")
-            )
-            .await?
-        );
-        Ok::<_, StorageError>(())
-    })
-    .unwrap();
+fn try_claim_returns_at_once_while_another_holder_is_live() {
+    let repo = repo();
+    let (started_tx, started_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let holder_repo = repo.clone();
+    let holder = std::thread::spawn(move || {
+        with_claim(&holder_repo, OWNER, "m", |_| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+        .unwrap()
+    });
+    started_rx.recv().unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let rival_repo = repo.clone();
+    std::thread::spawn(move || {
+        let _ = done_tx.send(try_claim(&rival_repo, OWNER, "m", |_| Ok(())).unwrap());
+    });
+    let attempt = done_rx.recv_timeout(Duration::from_secs(2));
+    release_tx.send(()).unwrap();
+    assert!(
+        matches!(attempt, Ok(None)),
+        "a live rival claim must not make the caller wait: {attempt:?}"
+    );
+    assert_eq!(holder.join().unwrap(), Some(()));
 }
 
 #[test]

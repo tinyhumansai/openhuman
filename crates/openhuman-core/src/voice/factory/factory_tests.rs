@@ -16,10 +16,11 @@ fn cfg() -> Config {
 /// The bundled whisper.cpp engine is gone, so `"whisper"` is no longer a
 /// sentinel: it falls through to the slug lookup and errors by name. A silent
 /// remap to cloud would hide an unmigrated config instead of surfacing it.
-#[test]
-fn stt_factory_removed_local_engine_errors_rather_than_falling_back() {
+#[tokio::test]
+async fn stt_factory_removed_local_engine_errors_rather_than_falling_back() {
     for removed in ["whisper", "local"] {
         let err = create_stt_provider(removed, "", &cfg())
+            .await
             .err()
             .unwrap_or_else(|| panic!("`{removed}` must not resolve to a provider"))
             .to_string();
@@ -31,9 +32,10 @@ fn stt_factory_removed_local_engine_errors_rather_than_falling_back() {
     }
 }
 
-#[test]
-fn stt_factory_slug_without_registry_errors() {
+#[tokio::test]
+async fn stt_factory_slug_without_registry_errors() {
     let err = create_stt_provider("deepgram", "nova-2", &cfg())
+        .await
         .err()
         .expect("deepgram without registry entry must error");
     let msg = err.to_string();
@@ -44,8 +46,8 @@ fn stt_factory_slug_without_registry_errors() {
     );
 }
 
-#[test]
-fn stt_factory_slug_colon_model_resolves_with_registry() {
+#[tokio::test]
+async fn stt_factory_slug_colon_model_resolves_with_registry() {
     let mut config = cfg();
     config
         .voice_providers
@@ -56,12 +58,14 @@ fn stt_factory_slug_colon_model_resolves_with_registry() {
             stt_api_style: SttApiStyle::Deepgram,
             ..Default::default()
         });
-    let p = create_stt_provider("deepgram:nova-2", "", &config).unwrap();
+    let p = create_stt_provider("deepgram:nova-2", "", &config)
+        .await
+        .unwrap();
     assert_eq!(p.name(), "external");
 }
 
-#[test]
-fn stt_factory_bare_slug_resolves_with_registry() {
+#[tokio::test]
+async fn stt_factory_bare_slug_resolves_with_registry() {
     let mut config = cfg();
     config
         .voice_providers
@@ -72,13 +76,13 @@ fn stt_factory_bare_slug_resolves_with_registry() {
             default_stt_model: Some("whisper-1".into()),
             ..Default::default()
         });
-    let p = create_stt_provider("openai", "", &config).unwrap();
+    let p = create_stt_provider("openai", "", &config).await.unwrap();
     assert_eq!(p.name(), "external");
     assert_eq!(p.configured_model(), Some("whisper-1"));
 }
 
-#[test]
-fn stt_factory_tts_only_provider_rejects() {
+#[tokio::test]
+async fn stt_factory_tts_only_provider_rejects() {
     let mut config = cfg();
     config
         .voice_providers
@@ -89,28 +93,32 @@ fn stt_factory_tts_only_provider_rejects() {
             ..Default::default()
         });
     let err = create_stt_provider("elevenlabs", "model", &config)
+        .await
         .err()
         .expect("TTS-only provider must reject STT");
     assert!(err.to_string().contains("does not support STT"));
 }
 
-#[test]
-fn stt_factory_empty_string_errors() {
+#[tokio::test]
+async fn stt_factory_empty_string_errors() {
     let err = create_stt_provider("", "model", &cfg())
+        .await
         .err()
         .expect("empty provider must error");
     assert!(err.to_string().contains("no voice provider"));
 }
 
-#[test]
-fn tts_factory_piper_branch() {
-    let p = create_tts_provider("piper", "en_US-lessac-medium", &cfg()).unwrap();
+#[tokio::test]
+async fn tts_factory_piper_branch() {
+    let p = create_tts_provider("piper", "en_US-lessac-medium", &cfg())
+        .await
+        .unwrap();
     assert_eq!(p.name(), "piper");
 }
 
-#[test]
-fn tts_factory_piper_empty_voice_uses_default() {
-    let p = create_tts_provider("piper", "", &cfg()).unwrap();
+#[tokio::test]
+async fn tts_factory_piper_empty_voice_uses_default() {
+    let p = create_tts_provider("piper", "", &cfg()).await.unwrap();
     assert_eq!(p.name(), "piper");
 }
 
@@ -200,8 +208,8 @@ fn tts_voice_resolution_tolerates_untrimmed_provider() {
     );
 }
 
-#[test]
-fn tts_factory_slug_empty_voice_uses_registry_default() {
+#[tokio::test]
+async fn tts_factory_slug_empty_voice_uses_registry_default() {
     // End-to-end through the factory: with no voice anywhere, the registry
     // entry's `default_tts_voice` must be what the provider is built with —
     // previously pre-empted by the Piper id. Asserting the voice (not just
@@ -217,7 +225,7 @@ fn tts_factory_slug_empty_voice_uses_registry_default() {
             default_tts_voice: Some("alloy".into()),
             ..Default::default()
         });
-    let p = create_tts_provider("openai", "", &config).unwrap();
+    let p = create_tts_provider("openai", "", &config).await.unwrap();
     assert_eq!(p.name(), "external");
     assert_eq!(
         p.configured_voice(),
@@ -226,17 +234,17 @@ fn tts_factory_slug_empty_voice_uses_registry_default() {
     );
 }
 
-#[test]
-fn tts_factory_piper_empty_voice_carries_bundled_voice() {
+#[tokio::test]
+async fn tts_factory_piper_empty_voice_carries_bundled_voice() {
     // The other half of the guarantee: Piper — and only Piper — still gets the
     // bundled voice id when the caller supplies none.
-    let p = create_tts_provider("piper", "", &cfg()).unwrap();
+    let p = create_tts_provider("piper", "", &cfg()).await.unwrap();
     assert_eq!(p.name(), "piper");
     assert_eq!(p.configured_voice(), Some(DEFAULT_PIPER_VOICE));
 }
 
-#[test]
-fn tts_factory_slug_colon_voice_reaches_provider() {
+#[tokio::test]
+async fn tts_factory_slug_colon_voice_reaches_provider() {
     // `slug:voice` must beat the registry default end-to-end.
     let mut config = cfg();
     config
@@ -248,13 +256,16 @@ fn tts_factory_slug_colon_voice_reaches_provider() {
             default_tts_voice: Some("alloy".into()),
             ..Default::default()
         });
-    let p = create_tts_provider("openai:shimmer", "", &config).unwrap();
+    let p = create_tts_provider("openai:shimmer", "", &config)
+        .await
+        .unwrap();
     assert_eq!(p.configured_voice(), Some("shimmer"));
 }
 
-#[test]
-fn tts_factory_slug_without_registry_errors() {
+#[tokio::test]
+async fn tts_factory_slug_without_registry_errors() {
     let err = create_tts_provider("kokoro", "af_bella", &cfg())
+        .await
         .err()
         .expect("kokoro without registry entry must error");
     let msg = err.to_string();
@@ -265,8 +276,8 @@ fn tts_factory_slug_without_registry_errors() {
     );
 }
 
-#[test]
-fn tts_factory_slug_colon_voice_resolves_with_registry() {
+#[tokio::test]
+async fn tts_factory_slug_colon_voice_resolves_with_registry() {
     let mut config = cfg();
     config
         .voice_providers
@@ -277,12 +288,14 @@ fn tts_factory_slug_colon_voice_resolves_with_registry() {
             default_tts_voice: Some("alloy".into()),
             ..Default::default()
         });
-    let p = create_tts_provider("openai:shimmer", "", &config).unwrap();
+    let p = create_tts_provider("openai:shimmer", "", &config)
+        .await
+        .unwrap();
     assert_eq!(p.name(), "external");
 }
 
-#[test]
-fn tts_factory_stt_only_provider_rejects() {
+#[tokio::test]
+async fn tts_factory_stt_only_provider_rejects() {
     let mut config = cfg();
     config
         .voice_providers
@@ -293,6 +306,7 @@ fn tts_factory_stt_only_provider_rejects() {
             ..Default::default()
         });
     let err = create_tts_provider("deepgram", "voice", &config)
+        .await
         .err()
         .expect("STT-only provider must reject TTS");
     assert!(err.to_string().contains("does not support TTS"));
@@ -402,22 +416,27 @@ fn effective_tts_defaults_to_cloud() {
 
 /// With no hosted speech provider registered, the default routing strings are
 /// an expected "unavailable" state (filtered from Sentry), not a bad slug.
-#[test]
-fn default_speech_slugs_without_a_registered_provider_are_backend_unavailable() {
+#[tokio::test]
+async fn default_speech_slugs_without_a_registered_provider_are_backend_unavailable() {
     use crate::core::observability::is_backend_unavailable_message;
     for slug in ["cloud", "openhuman", "backend"] {
         let stt = create_stt_provider(slug, "", &cfg())
+            .await
             .err()
             .unwrap_or_else(|| panic!("`{slug}` has no provider registered"));
         assert!(is_backend_unavailable_message(&stt.to_string()), "{stt}");
     }
     for slug in ["cloud", "openhuman"] {
         let tts = create_tts_provider(slug, "", &cfg())
+            .await
             .err()
             .unwrap_or_else(|| panic!("`{slug}` has no provider registered"));
         assert!(is_backend_unavailable_message(&tts.to_string()), "{tts}");
     }
     // A genuinely unknown slug keeps the misconfiguration wording.
-    let unknown = create_stt_provider("nonesuch", "", &cfg()).err().unwrap();
+    let unknown = create_stt_provider("nonesuch", "", &cfg())
+        .await
+        .err()
+        .unwrap();
     assert!(!is_backend_unavailable_message(&unknown.to_string()));
 }

@@ -3,9 +3,8 @@
 //! Where the core keeps durable state that has moved onto the
 //! `tinystoragedrivers` ports. Empty (the default) is `sqlite:<workspace>/storage`,
 //! one SQLite database per workspace, which is what the desktop app uses; the
-//! per-domain files older installs wrote are imported into it once. The retired
-//! `classic` opt-out is read as unset. A URL points the process at one backend
-//! instead:
+//! per-domain files older installs wrote are imported into it once. A URL
+//! points the process at one backend instead:
 //!
 //! ```toml
 //! [storage]
@@ -79,15 +78,22 @@ impl std::fmt::Debug for StorageConfig {
 /// query string and fragment dropped (they can carry tokens, such as MongoDB's
 /// `authMechanismProperties`).
 pub fn redact_url(url: &str) -> String {
-    let end = url.find(['?', '#']).unwrap_or(url.len());
-    let (base, trimmed) = (&url[..end], end < url.len());
-    let mut out = match (base.find("://"), base.rfind('@')) {
-        (Some(scheme), Some(at)) if at > scheme => {
-            format!("{}://***@{}", &base[..scheme], &base[at + 1..])
-        }
-        _ => base.to_string(),
+    // Userinfo follows `//` (with or without a scheme) and ends at the LAST
+    // `@`, so an unencoded `?`, `#` or `/` in the password can't end it early.
+    // A `?` or `#` before that `@` could as well be a query holding an `@`:
+    // everything after `//` is hidden then.
+    let (head, rest) = url.find("//").map_or(("", url), |at| url.split_at(at + 2));
+    let (userinfo, host) = match rest.rsplit_once('@') {
+        Some((userinfo, host)) => (Some(userinfo), host),
+        None => (None, rest),
     };
-    if trimmed {
+    if userinfo.is_some_and(|userinfo| userinfo.contains(['?', '#'])) {
+        return format!("{head}***");
+    }
+    let end = host.find(['?', '#']).unwrap_or(host.len());
+    let mask = if userinfo.is_some() { "***@" } else { "" };
+    let mut out = format!("{head}{mask}{}", &host[..end]);
+    if end < host.len() {
         out.push_str("?***");
     }
     out

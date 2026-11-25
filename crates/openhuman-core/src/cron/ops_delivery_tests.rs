@@ -3,41 +3,19 @@ use crate::cron;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
-use tinychannels_bus::{Channel, ChannelMessage, SendMessage};
 use tinyflows_bus::schedule::types::{DeliveryConfig, DeliveryStatus};
 use tokio::sync::mpsc;
 
-struct FailingTelegram;
-
-#[async_trait]
-impl Channel for FailingTelegram {
-    fn name(&self) -> &str {
-        "telegram"
-    }
-
-    async fn send(&self, _message: &SendMessage) -> anyhow::Result<()> {
-        anyhow::bail!("mock telegram send failed")
-    }
-
-    async fn listen(&self, _tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
+/// Register a channel bridge with no module objects, so announcing to any
+/// channel fails as "channel not available".
 pub(super) fn install_failing_telegram_bridge() {
     crate::cron::channel_bridge::register_channel_bridge(
-        Arc::new(Mutex::default()),
-        Arc::new(std::collections::HashMap::from([(
-            "telegram".to_string(),
-            Arc::new(FailingTelegram) as Arc<dyn Channel>,
-        )])),
-        crate::cron::channel_bridge::MAX_HISTORY_MESSAGES,
+        Arc::new(std::collections::HashMap::new()),
     );
 }
 
 #[tokio::test]
 async fn run_job_now_keeps_best_effort_failure_successful_and_records_failed_delivery() {
-    let _bridge_lock = crate::cron::channel_bridge::TEST_BRIDGE_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     let mut config = tests::test_config(&tmp);
     config.channels_config.telegram = Some(crate::config::TelegramConfig {

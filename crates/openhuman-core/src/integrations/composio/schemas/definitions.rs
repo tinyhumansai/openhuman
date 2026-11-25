@@ -291,7 +291,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description:
                 "Read the per-toolkit user scope preference (read/write/admin) used to gate \
                  composio_execute. Defaults to {read:true, write:true, admin:false} when no \
-                 pref is stored.",
+                 pref is stored; errors (rather than answering the default) when the stored \
+                 pref cannot be read.",
             inputs: vec![FieldSchema {
                 name: "toolkit",
                 ty: TypeSchema::String,

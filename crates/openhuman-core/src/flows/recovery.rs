@@ -40,13 +40,32 @@ pub(crate) async fn expire_parked_runs(ctx: &DispatchCtx, config: &Config) -> us
 /// returns only rows it changed; the runs adapter handles event projection and
 /// releases retained callback state for those rows.
 pub(crate) async fn sweep_orphaned_runs_on_boot(ctx: &DispatchCtx, config: &Config) -> usize {
-    crate::storage::agents::for_each_scope(ctx, "flows boot sweep", |scope_ctx| async move {
-        sweep_one_scope(&scope_ctx, config).await
-    })
+    sweep_scopes(
+        ctx,
+        crate::storage::installed_is_shared(),
+        |scope_ctx| async move { sweep_one_scope(&scope_ctx, config).await },
+    )
     .await
-    .into_iter()
-    .map(|(_, swept)| swept)
-    .sum()
+}
+
+/// Visit every storage scope with `sweep_one`, unless the backend is shared:
+/// the module would skip each scope anyway, but registering a scope's storage
+/// callback first prepares its collections, which on a host with many agents
+/// is the whole cost of boot.
+async fn sweep_scopes<F, Fut>(ctx: &DispatchCtx, shared: bool, sweep_one: F) -> usize
+where
+    F: Fn(DispatchCtx) -> Fut,
+    Fut: std::future::Future<Output = usize>,
+{
+    if shared {
+        tracing::info!(target: "flows", "[flows] boot sweep skipped: the storage backend is shared");
+        return 0;
+    }
+    crate::storage::agents::for_each_scope(ctx, "flows boot sweep", sweep_one)
+        .await
+        .into_iter()
+        .map(|(_, swept)| swept)
+        .sum()
 }
 
 async fn sweep_one_scope(ctx: &DispatchCtx, config: &Config) -> usize {
@@ -70,3 +89,7 @@ async fn sweep_one_scope(ctx: &DispatchCtx, config: &Config) -> usize {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod tests;

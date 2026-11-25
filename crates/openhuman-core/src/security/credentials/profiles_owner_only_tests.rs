@@ -25,8 +25,8 @@ fn mode_of(path: &std::path::Path) -> u32 {
 /// Compiled on every platform so the store API usage is type-checked
 /// everywhere; only the assertion is unix-gated, since Windows has no mode to
 /// look at.
-#[test]
-fn a_saved_store_file_is_owner_only() {
+#[tokio::test]
+async fn a_saved_store_file_is_owner_only() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -42,7 +42,7 @@ fn a_saved_store_file_is_owner_only() {
             scope: None,
         },
     );
-    store.upsert_profile(profile, true).unwrap();
+    store.upsert_profile(profile, true).await.unwrap();
 
     let path = store.path();
     assert!(path.exists(), "the save must have produced a store file");
@@ -56,8 +56,8 @@ fn a_saved_store_file_is_owner_only() {
 }
 
 #[cfg(unix)]
-#[test]
-fn a_new_credential_file_is_owner_only() {
+#[tokio::test]
+async fn a_new_credential_file_is_owner_only() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("auth-profiles.json.tmp");
     write_owner_only(&path, b"{}").expect("write");
@@ -69,8 +69,8 @@ fn a_new_credential_file_is_owner_only() {
 }
 
 #[cfg(unix)]
-#[test]
-fn a_leftover_world_readable_tmp_is_repaired() {
+#[tokio::test]
+async fn a_leftover_world_readable_tmp_is_repaired() {
     // `.mode()` only applies at creation, so an interrupted save that left a
     // 0644 tmp behind would otherwise keep it and carry it through `rename`.
     use std::os::unix::fs::PermissionsExt as _;
@@ -85,8 +85,8 @@ fn a_leftover_world_readable_tmp_is_repaired() {
     assert_eq!(mode_of(&path), 0o600);
 }
 
-#[test]
-fn the_contents_are_written_and_truncated() {
+#[tokio::test]
+async fn the_contents_are_written_and_truncated() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("auth-profiles.json.tmp");
     write_owner_only(&path, b"aaaaaaaaaaaaaaaaaaaa").expect("write long");

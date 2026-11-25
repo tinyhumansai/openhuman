@@ -8,7 +8,7 @@ use {
     tinyflows_bus::schedule::types::Schedule, tinyflows_bus::schedule::types::SessionTarget,
 };
 
-fn config(tmp: &tempfile::TempDir) -> Config {
+pub(super) fn config(tmp: &tempfile::TempDir) -> Config {
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -19,7 +19,7 @@ fn config(tmp: &tempfile::TempDir) -> Config {
     config
 }
 
-fn job(origin: Option<JobOrigin>) -> CronJob {
+pub(super) fn job(origin: Option<JobOrigin>) -> CronJob {
     CronJob {
         claim_generation: 0,
         policy: Default::default(),
@@ -74,18 +74,108 @@ fn seed_thread(config: &Config, id: &str) {
     .unwrap();
 }
 
+fn conditional(origin: Option<JobOrigin>) -> CronJob {
+    let mut j = job(origin);
+    j.prompt = Some("Check the inbox; reply NO_REPLY if nothing changed".into());
+    j
+}
+
+fn thread_messages(cfg: &Config, thread: &str) -> Vec<String> {
+    conversations::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        cfg.workspace_dir.clone(),
+        thread,
+    )
+    .unwrap()
+    .into_iter()
+    .map(|m| m.content)
+    .collect()
+}
+
 #[test]
-fn suppressed_output_is_blank_or_exactly_no_reply() {
-    for s in ["", "  \n", "NO_REPLY", "  NO_REPLY\n"] {
-        assert!(is_suppressed_output(s), "{s:?}");
+fn no_reply_is_recognised_in_its_common_spellings() {
+    for s in [
+        "NO_REPLY",
+        " no_reply ",
+        "No_reply.",
+        "`NO_REPLY`",
+        "**NO_REPLY**",
+        "NO REPLY",
+        "no-reply!",
+        "\"NO_REPLY\"",
+    ] {
+        assert!(is_no_reply(s), "{s:?}");
     }
-    for s in ["no_reply", "NO_REPLY please", "Drink water!"] {
-        assert!(!is_suppressed_output(s), "{s:?}");
+    for s in [
+        "",
+        "Drink water!",
+        "NO_REPLY please",
+        "No reply needed, here's your newsletter: three stories today.",
+    ] {
+        assert!(!is_no_reply(s), "{s:?}");
     }
 }
 
+#[test]
+fn only_a_prompt_that_names_the_token_allows_no_reply() {
+    assert!(!job_allows_no_reply(&job(None)));
+    assert!(job_allows_no_reply(&conditional(None)));
+    let mut lower = job(None);
+    lower.prompt = Some("summarise new mail, otherwise reply no_reply".into());
+    assert!(job_allows_no_reply(&lower));
+    let mut shell = job(None);
+    shell.job_type = JobType::Shell;
+    shell.prompt = None;
+    assert!(
+        job_allows_no_reply(&shell),
+        "shell output is not model-written"
+    );
+}
+
+#[test]
+fn fallback_reminder_names_the_job_or_its_prompt() {
+    assert_eq!(fallback_reminder(&job(None)), "Reminder: water");
+    let mut unnamed = job(None);
+    unnamed.name = None;
+    assert_eq!(fallback_reminder(&unnamed), "Reminder: drink water");
+    unnamed.prompt = None;
+    assert_eq!(fallback_reminder(&unnamed), "Reminder");
+}
+
+#[test]
+fn deliverable_reply_suppresses_only_blank_or_an_allowed_no_reply() {
+    assert_eq!(deliverable_reply(&job(None), "  \n"), None);
+    assert_eq!(deliverable_reply(&conditional(None), " NO_REPLY "), None);
+    assert_eq!(
+        deliverable_reply(&job(None), "No_reply."),
+        Some("Reminder: water".into())
+    );
+    assert_eq!(
+        deliverable_reply(&job(None), "  Drink water!  "),
+        Some("Drink water!".into())
+    );
+}
+
 #[tokio::test]
-async fn no_reply_is_suppressed_without_writing_anything() {
+async fn an_allowed_no_reply_is_suppressed_without_writing_anything() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cfg = config(&tmp);
+    seed_thread(&cfg, "t-1");
+    let status = deliver_to_origin(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &cfg,
+        &conditional(Some(web("t-1"))),
+        "run-1",
+        " NO_REPLY ",
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, DeliveryStatus::Suppressed);
+    assert!(thread_messages(&cfg, "t-1").is_empty());
+}
+
+#[tokio::test]
+async fn a_disallowed_no_reply_delivers_the_fallback_never_the_token() {
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = config(&tmp);
     seed_thread(&cfg, "t-1");
@@ -94,18 +184,12 @@ async fn no_reply_is_suppressed_without_writing_anything() {
         &cfg,
         &job(Some(web("t-1"))),
         "run-1",
-        " NO_REPLY ",
+        "No_reply.",
     )
     .await
     .unwrap();
-    assert_eq!(status, DeliveryStatus::Suppressed);
-    assert!(conversations::get_messages(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        cfg.workspace_dir.clone(),
-        "t-1"
-    )
-    .unwrap()
-    .is_empty());
+    assert_eq!(status, DeliveryStatus::Delivered);
+    assert_eq!(thread_messages(&cfg, "t-1"), vec!["Reminder: water"]);
 }
 
 #[tokio::test]
@@ -193,7 +277,7 @@ async fn origin_mode_without_an_origin_is_an_error() {
     .is_err());
 }
 
-fn meta() -> TranscriptMeta {
+pub(super) fn meta() -> TranscriptMeta {
     TranscriptMeta {
         session_id: None,
         parent_session_id: None,
@@ -207,6 +291,7 @@ fn meta() -> TranscriptMeta {
         updated: "2026-10-06T00:00:00Z".into(),
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -299,7 +384,7 @@ async fn transcript_append_waits_for_a_live_turn() {
         append_to_origin_transcript(
             locator.as_ref(),
             &TranscriptAppend {
-                thread_id: "t-1",
+                session_key: "t-1",
                 agent_id: "orchestrator",
                 text: "hi",
                 idempotency_key: "cron:job-1:run-1",
@@ -354,7 +439,7 @@ async fn transcript_append_lands_in_the_tenants_store() {
         .unwrap();
 
     let append = TranscriptAppend {
-        thread_id: "t-p",
+        session_key: "t-p",
         agent_id: "orchestrator",
         text: "Ping!",
         idempotency_key: "cron:job-p:run-1",

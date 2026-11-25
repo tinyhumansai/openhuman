@@ -24,10 +24,17 @@ import SecurityPanel from '../SecurityPanel';
 
 const mockRetryKeyringProbe = vi.fn();
 const mockDecideKeyringConsent = vi.fn();
+const mockFetchToolTrust = vi.fn();
+const mockRevokeToolTrust = vi.fn();
 
 vi.mock('../../../../services/keyringApi', () => ({
   retryKeyringProbe: (...args: unknown[]) => mockRetryKeyringProbe(...args),
   decideKeyringConsent: (...args: unknown[]) => mockDecideKeyringConsent(...args),
+}));
+
+vi.mock('../../../../services/api/approvalApi', () => ({
+  fetchToolTrust: (...args: unknown[]) => mockFetchToolTrust(...args),
+  revokeToolTrust: (...args: unknown[]) => mockRevokeToolTrust(...args),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
@@ -104,6 +111,34 @@ describe('SecurityPanel — storage mode badge (lines 11, 27)', () => {
     setupState(makeKeyringStatus({ activeMode: 'consent_pending' }));
     renderWithProviders(<SecurityPanel />);
     expect(screen.getByText('Not configured')).toBeInTheDocument();
+  });
+});
+
+describe('SecurityPanel — whole-tool grants', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchToolTrust.mockResolvedValue([]);
+    mockRevokeToolTrust.mockResolvedValue(true);
+  });
+
+  it('loads current whole-tool grants and revokes the selected grant', async () => {
+    mockFetchToolTrust.mockResolvedValueOnce([
+      { tool: 'shell', request_id: 'grant-1', granted_at_ms: 1234 },
+    ]);
+    setupState(makeKeyringStatus());
+    renderWithProviders(<SecurityPanel />);
+
+    expect(await screen.findByText('shell')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Revoke'));
+
+    await waitFor(() => expect(mockRevokeToolTrust).toHaveBeenCalledWith('grant-1'));
+    await waitFor(() => expect(screen.queryByText('shell')).not.toBeInTheDocument());
+  });
+
+  it('renders an empty state when no whole-tool grants exist', async () => {
+    setupState(makeKeyringStatus());
+    renderWithProviders(<SecurityPanel />);
+    expect(await screen.findByText('No tools are always allowed.')).toBeInTheDocument();
   });
 });
 

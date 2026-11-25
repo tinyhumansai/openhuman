@@ -216,3 +216,40 @@ async fn concurrent_renewals_of_one_grant_have_one_winner() {
     // The heartbeat's next renewal, from the grant the winner returned, holds.
     assert!(a.holder("k").await.unwrap().unwrap().is_live(150));
 }
+
+#[tokio::test]
+async fn doctor_inspection_refuses_a_legacy_leases_collection() {
+    // Only the pre-rename `leases` collection exists: its records are not
+    // read as "no holder", the doctor is told a migration is needed.
+    let storage = memory_backend();
+    let leases = DocumentLeases::cluster(storage.as_ref(), "d", None, TTL).unwrap();
+    storage
+        .for_scope(&Scope::new(CLUSTER_SCOPE).unwrap())
+        .unwrap()
+        .documents()
+        .ensure_collection(&CollectionSpec::new("leases"))
+        .await
+        .unwrap();
+
+    let error = leases.holder_readonly("alice").await.unwrap_err();
+    assert!(
+        error.to_string().contains("explicit storage migration"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn doctor_inspection_reports_a_live_foreign_holder() {
+    let storage = crate::storage::test_support::sqlite_backend().unwrap();
+    let grant = node(&storage, "a").acquire("alice", 0).await.unwrap();
+
+    let record = node(&storage, "d")
+        .holder_readonly("alice")
+        .await
+        .unwrap()
+        .expect("the live holder's record");
+    assert_eq!(record.owner, "a");
+    assert_eq!(record.epoch, grant.epoch);
+    assert!(record.is_live(500), "inside its TTL the holder is live");
+    assert!(!record.is_live(1_000), "at its deadline it no longer is");
+}

@@ -163,7 +163,7 @@ fn an_unchanged_update_writes_nothing_and_returns_its_result() {
 #[test]
 fn the_import_marker_is_a_migrations_entry_and_stops_a_second_import() {
     let storage = crate::storage::test_support::sqlite_backend().unwrap();
-    let docs = docs_in(&storage.backend, &Scope::local());
+    let docs = Docs::on_backend(&storage.backend, &Scope::local()).unwrap();
     assert!(!docs.legacy_imported(path()).unwrap());
     assert!(docs
         .import_if_absent(path(), serde_json::json!({ "gmail": 5 }))
@@ -171,39 +171,4 @@ fn the_import_marker_is_a_migrations_entry_and_stops_a_second_import() {
     assert!(docs.legacy_imported(path()).unwrap());
     let loaded: BTreeMap<String, u32> = docs.load(path()).unwrap();
     assert_eq!(loaded["gmail"], 5);
-}
-
-#[tokio::test]
-async fn v1_state_documents_move_into_kv_without_replacing_a_newer_value() {
-    use tinystoragedrivers::Precondition;
-    let storage = memory_backend();
-    let scoped = storage.for_scope(&Scope::local()).unwrap();
-    let raw = scoped.documents();
-    raw.ensure_collection(&tinystoragedrivers::CollectionSpec::new("composio_state"))
-        .await
-        .unwrap();
-    for (name, value) in [("a.json", 1), ("b.json", 2)] {
-        raw.put(
-            "composio_state",
-            name,
-            serde_json::json!({ "value": { "n": value } }),
-            Precondition::Absent,
-        )
-        .await
-        .unwrap();
-    }
-    let kv = StateKv::over(&scoped, "composio", "state");
-    kv.put("b.json", &serde_json::json!({ "n": 99 })).unwrap();
-
-    assert_eq!(migrate_legacy_state(&scoped).await.unwrap(), 1);
-    assert_eq!(
-        kv.get::<serde_json::Value>("a.json").unwrap(),
-        Some(serde_json::json!({ "n": 1 }))
-    );
-    assert_eq!(
-        kv.get::<serde_json::Value>("b.json").unwrap(),
-        Some(serde_json::json!({ "n": 99 })),
-        "a value already in kv is newer"
-    );
-    assert_eq!(migrate_legacy_state(&scoped).await.unwrap(), 0);
 }

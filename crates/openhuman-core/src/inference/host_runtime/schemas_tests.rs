@@ -1,12 +1,16 @@
 use super::*;
+use crate::agent_runs::agent_chat::params::AgentChatParams;
+use crate::core::all::assert_schema_controller_parity;
+use crate::core::Outcome;
 
 #[test]
-fn all_schemas_use_inference_namespace_and_have_descriptions() {
-    for s in all_controller_schemas() {
-        assert_eq!(s.namespace, "inference", "function {}", s.function);
-        assert!(!s.description.is_empty(), "function {} desc", s.function);
-        assert!(!s.outputs.is_empty(), "function {} outputs", s.function);
-    }
+fn runtime_schema_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "inference");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "transcribe",
+    );
 }
 
 #[test]
@@ -40,6 +44,22 @@ fn download_and_installer_controllers_are_not_registered() {
         );
         assert_eq!(schemas(removed).function, "unknown");
     }
+}
+
+#[test]
+fn deserialize_params_parses_valid_object() {
+    let mut m = Map::new();
+    m.insert("message".into(), Value::String("hi".into()));
+    let p: AgentChatParams = deserialize_params(m).expect("parse");
+    assert_eq!(p.message, "hi");
+}
+
+#[test]
+fn deserialize_params_errors_on_invalid_shape() {
+    let mut m = Map::new();
+    m.insert("message".into(), Value::Bool(true));
+    let err = deserialize_params::<AgentChatParams>(m).unwrap_err();
+    assert!(err.contains("invalid params"));
 }
 
 #[test]

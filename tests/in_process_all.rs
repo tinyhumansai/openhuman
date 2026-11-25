@@ -25,6 +25,8 @@
 
 #![allow(dead_code)]
 
+#[path = "support/config_auth_harness.rs"]
+pub mod config_auth_harness;
 #[path = "support/env_guard.rs"]
 pub mod env_guard;
 #[path = "support/rpc_auth.rs"]
@@ -33,6 +35,8 @@ pub mod rpc_auth;
 pub mod rpc_harness;
 #[path = "support/scripted_stack.rs"]
 pub mod scripted_stack;
+#[path = "support/storage_case.rs"]
+pub mod storage_case;
 #[path = "support/tinyhumans_boot.rs"]
 pub mod tinyhumans_boot;
 

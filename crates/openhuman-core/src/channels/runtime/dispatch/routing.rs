@@ -8,12 +8,12 @@
 
 use crate::agent_registry::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use crate::config::Config;
+use crate::integrations::composio::orchestrator_actions;
 use crate::integrations::composio::{
     cached_active_integrations, fetch_connected_integrations_status,
     FetchConnectedIntegrationsStatus,
 };
 use crate::integrations::ConnectedIntegration;
-use crate::tools::orchestrator_tools;
 use std::collections::HashSet;
 use std::time::Duration;
 use tinyagents_definition::ToolScope;
@@ -145,14 +145,14 @@ pub(super) async fn resolve_target_agent(channel: &str) -> AgentScoping {
         // A transient backend failure must preserve the last-known connected
         // integrations rather than collapse tool-calling to an empty set.
         // The credential-scoped cache has no idle-time expiry.
-        let connected = connected_with_fallback(fetched, cached_active_integrations(&config));
+        let connected = connected_with_fallback(fetched, cached_active_integrations(&config).await);
         tracing::debug!(
             channel = %channel,
             target_agent = target_id,
             connected_integration_count = connected.len(),
             "[dispatch::routing] fetched connected integrations for delegation expansion"
         );
-        orchestrator_tools::collect_orchestrator_tools(definition, &registry, &connected)
+        orchestrator_actions::collect_orchestrator_tools(definition, &connected)
     } else {
         Vec::new()
     };

@@ -2,9 +2,40 @@
 
 use super::*;
 use tinyagents_tasks::{
-    CompletionRouterPool, CompletionStoreReplaceOutcome, DriverCompletionStore,
-    InMemoryCompletionStore, DEFAULT_MAX_ATTEMPTS,
+    open_driver_completion_store_or_memory, CompletionRouterPool, CompletionStoreFallback,
+    CompletionStoreReplaceOutcome, InMemoryCompletionStore, DEFAULT_MAX_ATTEMPTS,
 };
+
+/// Presents OpenHuman's configured backend through TinyAgents' storage-kit
+/// adapter while preserving native conditional writes.
+struct CompletionBackend(Arc<dyn crate::storage::StorageBackend>);
+
+impl tinyagents_storage_kit::StorageBackend for CompletionBackend {
+    fn for_scope(
+        &self,
+        scope: &tinyagents_storage_kit::Scope,
+    ) -> tinyagents_storage_kit::error::Result<tinyagents_storage_kit::ScopedStorage> {
+        let host_scope = crate::storage::Scope::new(scope.as_str())?;
+        let storage = self.0.for_scope(&host_scope)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(
+            storage,
+            scope.clone(),
+        ))
+    }
+
+    fn for_scope_conditioned(
+        &self,
+        scope: &tinyagents_storage_kit::Scope,
+        condition: &tinyagents_storage_kit::WriteCondition,
+    ) -> tinyagents_storage_kit::error::Result<tinyagents_storage_kit::ScopedStorage> {
+        let host_scope = crate::storage::Scope::new(scope.as_str())?;
+        let storage = self.0.for_scope_conditioned(&host_scope, condition)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(
+            storage,
+            scope.clone(),
+        ))
+    }
+}
 
 pub(in crate::agent::orchestration) fn router_scope_for(
     ctx: &DispatchCtx,
@@ -27,17 +58,41 @@ pub(in crate::agent::orchestration) fn router_scope(workspace_dir: &Path) -> Rou
 }
 
 /// The durable completion queue of `workspace_dir` in the storage backend,
-/// under the calling tenant's scope.
+/// under the calling tenant's profile scope.
+///
+/// The agent is left out, as in [`router_scope_for`]: profile-less embed
+/// agents share the workspace's router, thread keys and boot recovery, so
+/// their records must live in the store those reopen, not in whichever
+/// agent's scope happened to open it first (#7687).
 pub(in crate::agent::orchestration) fn open_driver_store(
     ctx: &DispatchCtx,
     workspace_dir: &Path,
 ) -> anyhow::Result<Arc<dyn CompletionStore>> {
     with_storage_context(ctx, || {
-        let opened = crate::storage::local::open("background_completions", workspace_dir)?;
-        let scoped = opened.scoped()?;
-        let store = DriverCompletionStore::new(Arc::clone(scoped.documents()))
-            .map_err(|error| anyhow::anyhow!("start the completion store bridge: {error}"))?;
-        Ok(Arc::new(store) as Arc<dyn CompletionStore>)
+        // The scope first: a SaaS call with no profile fails closed without
+        // creating a workspace database as a side effect.
+        let profile = ctx
+            .tenant()
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .profile;
+        let scope =
+            crate::storage::scope_from(profile.as_deref(), None, crate::core::runtime::is_saas())
+                .map_err(|error| {
+                anyhow::anyhow!("[background_completions] resolve the storage scope: {error}")
+            })?;
+        let backend = crate::storage::local::backend_for(workspace_dir)?;
+        let fallback = if crate::storage::installed_is_shared() {
+            CompletionStoreFallback::FailClosed
+        } else {
+            CompletionStoreFallback::LocalMemory
+        };
+        let scope = tinyagents_storage_kit::Scope::new(scope.as_str())?;
+        open_driver_completion_store_or_memory(
+            Arc::new(CompletionBackend(backend)),
+            scope,
+            fallback,
+        )
+        .map_err(|error| anyhow::anyhow!("open the completion store: {error}"))
     })
 }
 
@@ -151,7 +206,11 @@ pub(in crate::agent::orchestration) fn degrade_to_memory(
     let replacement: Arc<dyn CompletionStore> = Arc::new(InMemoryCompletionStore::new());
     match failed.replace_store_if_current(&previous, replacement) {
         Ok(CompletionStoreReplaceOutcome::Replaced(store)) => {
-            state().stores.insert(scope, store.clone());
+            {
+                let mut st = state();
+                st.degraded_scopes.insert(scope.clone());
+                st.stores.insert(scope, store.clone());
+            }
             log::error!(
                 "[background_completions] degraded to an in-memory queue workspace_dir={}",
                 workspace_dir.display()

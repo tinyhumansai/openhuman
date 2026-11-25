@@ -1,17 +1,24 @@
-//! [`redact_composio_outcome`]: keep a Composio API key out of what a
-//! Composio tool returns to the model.
+//! Composio's per-call exact credentials are redacted by TinySecurity `RedactWith`.
 
-use serde_json::Value;
-use tinytools::{ToolContent, ToolResult};
+use tinytools::ToolResult;
 
 use crate::config::Config;
+use crate::integrations::composio::types::ComposioExecuteResponse;
 
-const REDACTED: &str = "[REDACTED]";
 const MIN_SECRET_LEN: usize = 8;
 
 /// The Composio keys `config` can resolve to: a host-pinned key, the inline
-/// `composio.api_key`, and in unpinned direct mode the stored key.
-pub(crate) fn composio_secrets(config: &Config) -> Vec<String> {
+/// `composio.api_key`, and in unpinned direct mode the stored key. Common
+/// encoded forms are included because the provider may echo a key in a URL or
+/// encoded identifier.
+pub(crate) async fn composio_secrets(config: &Config) -> Vec<String> {
+    collect_secrets(config, false).await.unwrap_or_default()
+}
+
+/// [`composio_secrets`], or `Err` when `fail_closed` and the stored key
+/// cannot be read: a key that dispatch may have sent but redaction cannot
+/// see must not let a result through.
+async fn collect_secrets(config: &Config, fail_closed: bool) -> Result<Vec<String>, String> {
     let composio = &config.composio;
     let mut secrets: Vec<String> = Vec::new();
     if let Some(pinned) = composio.host_credential.as_ref() {
@@ -23,118 +30,164 @@ pub(crate) fn composio_secrets(config: &Config) -> Vec<String> {
     if composio.host_credential.is_none()
         && composio.mode.trim() == crate::config::schema::COMPOSIO_MODE_DIRECT
     {
-        if let Ok(Some(stored)) = crate::security::credentials::get_composio_api_key(config) {
-            secrets.push(stored);
+        match crate::integrations::composio::get_composio_api_key(config).await {
+            Ok(Some(stored)) => secrets.push(stored),
+            Ok(None) => {}
+            Err(error) if fail_closed => {
+                tracing::debug!("[composio][redact] stored key unreadable, failing closed");
+                return Err(format!(
+                    "failed to read the stored composio api key: {error}"
+                ));
+            }
+            Err(_) => {}
         }
+    }
+    let originals = secrets.clone();
+    for secret in originals {
+        secrets.push(url::form_urlencoded::byte_serialize(secret.as_bytes()).collect());
+        secrets.push(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &secret,
+        ));
+        secrets.push(hex::encode(secret.as_bytes()));
     }
     secrets.retain(|s| s.len() >= MIN_SECRET_LEN);
     secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
     secrets.dedup();
-    secrets
+    Ok(secrets)
 }
 
-pub(crate) fn redact_text(text: &str, secrets: &[String]) -> String {
-    secrets.iter().fold(text.to_string(), |acc, secret| {
-        acc.replace(secret.as_str(), REDACTED)
-    })
-}
-
-fn redact_value(value: &mut Value, secrets: &[String]) {
-    match value {
-        Value::String(s) => {
-            if secrets.iter().any(|secret| s.contains(secret.as_str())) {
-                *s = redact_text(s, secrets);
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(|v| redact_value(v, secrets)),
-        Value::Object(map) => {
-            let entries = std::mem::take(map);
-            for (mut key, mut value) in entries {
-                redact_value(&mut value, secrets);
-                if secrets.iter().any(|secret| key.contains(secret.as_str())) {
-                    key = redact_text(&key, secrets);
-                }
-                if map.contains_key(&key) {
-                    let base = key;
-                    let mut suffix = 2;
-                    loop {
-                        key = format!("{base} ({suffix})");
-                        if !map.contains_key(&key) {
-                            break;
-                        }
-                        suffix += 1;
-                    }
-                }
-                map.insert(key, value);
-            }
-        }
-        _ => {}
+async fn redact_exact(config: &Config, text: &str, secrets: &[String]) -> Result<String, String> {
+    #[cfg(feature = "security-module")]
+    {
+        crate::modules::security::ensure_loaded(config)
+            .await
+            .map_err(|error| error.to_string())?;
+        return crate::modules::security::text::redact_with(
+            config,
+            tinysecurity_bus::RedactMode::CredentialsOnly,
+            text,
+            secrets,
+        )
+        .await;
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = (config, text, secrets);
+        Err("TinySecurity is not built into this host".into())
     }
 }
 
-fn redact_content(content: &mut ToolContent, secrets: &[String]) {
-    match content {
-        ToolContent::Text { text } => *text = redact_text(text, secrets),
-        ToolContent::Json { data } => redact_value(data, secrets),
-        _ => {}
-    }
-}
-
-pub(crate) fn redact_result(mut result: ToolResult, secrets: &[String]) -> ToolResult {
-    if secrets.is_empty() {
-        return result;
-    }
-    result
-        .content
-        .iter_mut()
-        .for_each(|c| redact_content(c, secrets));
-    result
-        .follow_up
-        .iter_mut()
-        .for_each(|c| redact_content(c, secrets));
-    if let Some(md) = result.markdown_formatted.as_mut() {
-        *md = redact_text(md, secrets);
-    }
-    if let Some(meta) = result.metadata.as_mut() {
-        redact_value(meta, secrets);
-    }
-    result
-}
-
-/// Redact every Composio secret `config` resolves to from `rendered`, report
-/// the redacted copy via
-/// [`report_composio_op_error`](super::super::ops::report_composio_op_error),
-/// and return that same redacted copy for the caller's own error text.
-pub(crate) fn redact_and_report(config: &Config, operation: &str, rendered: &str) -> String {
-    let secrets = composio_secrets(config);
-    let redacted = if secrets.is_empty() {
-        rendered.to_string()
+/// Redact every Composio key from a diagnostic before reporting it. The
+/// original diagnostic is never returned if the module cannot answer. With
+/// security disabled (`crate::security::switch`) it is reported unredacted.
+pub(crate) async fn redact_and_report(config: &Config, operation: &str, rendered: &str) -> String {
+    let redacted = if crate::security::switch::disabled_for(Some(config)).is_some() {
+        rendered.to_owned()
     } else {
-        redact_text(rendered, &secrets)
+        redact_known_secrets(config, rendered).await
     };
     super::super::ops::report_composio_op_error(operation, &redacted);
     redacted
 }
 
-/// Redact every Composio key `config` resolves to from a tool's result or
-/// error before it reaches the model.
-pub(crate) fn redact_composio_outcome(
+async fn redact_known_secrets(config: &Config, rendered: &str) -> String {
+    let secrets = composio_secrets(config).await;
+    if secrets.is_empty() {
+        rendered.to_owned()
+    } else {
+        redact_exact(config, rendered, &secrets)
+            .await
+            .unwrap_or_else(|_| crate::core::log_redaction::SUPPRESSED.to_owned())
+    }
+}
+
+/// Withheld in place of anything the redactor could not clean.
+const WITHHELD: &str = "Composio result withheld by security redactor";
+
+/// `value` with every key in `secrets` removed, round-tripped through its JSON
+/// form. `Err` when the module cannot answer or the result no longer parses.
+async fn redact_serialized<T>(config: &Config, value: &T, secrets: &[String]) -> Result<T, ()>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let encoded = serde_json::to_string(value).map_err(|_| {
+        tracing::debug!("[composio][redact] withheld: result does not encode");
+    })?;
+    let redacted = redact_exact(config, &encoded, secrets)
+        .await
+        .map_err(|_| tracing::debug!("[composio][redact] withheld: TinySecurity did not redact"))?;
+    serde_json::from_str(&redacted).map_err(|_| {
+        tracing::debug!("[composio][redact] withheld: redacted result does not decode");
+    })
+}
+
+/// The Composio keys an Execute on `config` may send, read just before the
+/// call: pass them to [`redact_composio_response`] with its result. `Err`
+/// when the stored key cannot be read, which dispatch would refuse too.
+pub(crate) async fn composio_call_keys(config: &Config) -> Result<Vec<String>, String> {
+    if crate::security::switch::disabled_for(Some(config)).is_some() {
+        return Ok(Vec::new());
+    }
+    collect_secrets(config, true).await
+}
+
+/// Redact an Execute response before it leaves the host through an RPC or a
+/// flow, as the agent tools' results are, with the keys read before the call
+/// (`before`, from [`composio_call_keys`]) and again now. Dispatch reads the
+/// key between the two, so a key rotated during a slow call is still covered.
+/// A module failure or an unreadable stored key withholds it. With security
+/// disabled it is returned as is.
+pub(crate) async fn redact_composio_response(
+    config: &Config,
+    before: Vec<String>,
+    response: ComposioExecuteResponse,
+) -> Result<ComposioExecuteResponse, String> {
+    if crate::security::switch::disabled_for(Some(config)).is_some() {
+        return Ok(response);
+    }
+    let mut secrets = collect_secrets(config, true)
+        .await
+        .map_err(|_| WITHHELD.to_owned())?;
+    secrets.extend(before);
+    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    secrets.dedup();
+    if secrets.is_empty() {
+        return Ok(response);
+    }
+    redact_serialized(config, &response, &secrets)
+        .await
+        .map_err(|()| WITHHELD.to_owned())
+}
+
+/// Redact a tool result or error with call-specific credentials before it
+/// reaches the model. A malformed result or module failure is withheld. With
+/// security disabled the outcome is returned unredacted.
+pub(crate) async fn redact_composio_outcome(
     config: &Config,
     outcome: anyhow::Result<ToolResult>,
 ) -> anyhow::Result<ToolResult> {
-    let secrets = composio_secrets(config);
+    if crate::security::switch::disabled_for(Some(config)).is_some() {
+        return outcome;
+    }
+    let secrets = composio_secrets(config).await;
     if secrets.is_empty() {
         return outcome;
     }
     match outcome {
-        Ok(result) => Ok(redact_result(result, &secrets)),
+        Ok(result) => redact_serialized(config, &result, &secrets)
+            .await
+            .map_err(|()| anyhow::anyhow!(WITHHELD)),
         Err(error) => {
             let rendered = format!("{error:#}");
-            if secrets.iter().any(|s| rendered.contains(s.as_str())) {
-                tracing::debug!("[composio] redacted a credential from a tool error");
-                Err(anyhow::anyhow!(redact_text(&rendered, &secrets)))
-            } else {
-                Err(error)
+            match redact_exact(config, &rendered, &secrets).await {
+                Ok(redacted) => {
+                    tracing::debug!("[composio] redacted credentials from a tool error");
+                    Err(anyhow::anyhow!(redacted))
+                }
+                Err(_) => Err(anyhow::anyhow!(
+                    "Composio operation failed; details withheld"
+                )),
             }
         }
     }

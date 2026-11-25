@@ -18,7 +18,7 @@ Scheduling is a built-in capability. The agent can set up recurring jobs ("every
 | `cron_run`    | Runs a job once, right now, whatever its schedule.                    |
 | `cron_runs`   | Shows recent run history: when, how long and what it produced.        |
 
-For "do this once at time T" cases that don't need a recurring entry, there is also a one-shot `schedule` tool in [System and utilities](system-and-utilities.md).
+For one-shot or recurring scheduled tasks, there is also a `schedule` tool in [System and utilities](system-and-utilities.md).
 
 Agent jobs run a full model turn each time they fire, so they must be at least five minutes apart. `cron_add` and `cron_update` reject a tighter cron expression or `every_ms` for an agent job, and they say which two runs would be too close. For example, `*/7 * * * *` fires at :56 and again at :00. Shell jobs have no such limit.
 

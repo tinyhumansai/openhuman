@@ -257,7 +257,15 @@ pub async fn update_run(ctx: &DispatchCtx) -> Outcome<Value> {
         );
     }
 
-    let applied = match update::download_and_stage(&download_url, &asset_name, None).await {
+    let applied = match update::download_and_stage_with_version(
+        &download_url,
+        &asset_name,
+        None,
+        None,
+        info.asset_size,
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             log::error!("[update:rpc] update_run apply failed: {e}");

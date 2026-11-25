@@ -18,9 +18,6 @@ fn tinyagents_snapshot_contains_all_known_rows() {
     assert_eq!(snapshot.schema_version, 1);
     assert_eq!(snapshot.currency, "USD");
     assert_eq!(snapshot.unit, "token");
-    // Unified snapshot is a superset (crate seed + OpenHuman overlay), so it
-    // is at least as large as the OpenHuman table and carries every
-    // OpenHuman row with its authoritative pricing/window.
     assert!(snapshot.models.len() >= KNOWN_MODEL_PRICING.len());
     for price in KNOWN_MODEL_PRICING {
         let entry = snapshot
@@ -37,7 +34,6 @@ fn tinyagents_snapshot_contains_all_known_rows() {
             Some(price.input_per_mtok_usd / 1_000_000.0)
         );
     }
-    // OpenHuman provenance is recorded alongside any crate-seed sources.
     assert!(snapshot
         .sources
         .iter()
@@ -124,12 +120,9 @@ fn minimax_rows_and_vision_normalization() {
         lookup("minimax/minimax-m3").unwrap().context_window,
         1_000_000
     );
-    assert_eq!(
-        lookup("minimax-m2.7-highspeed")
-            .unwrap()
-            .output_per_mtok_usd,
-        2.40
-    );
+    assert_eq!(lookup("MiniMax-M3").unwrap().output_per_mtok_usd, 1.20);
+    // Retired upstream; it must not borrow M3's rates.
+    assert!(lookup("minimax-m2.7-highspeed").is_none());
     assert!(model_accepts_image_input("MiniMax/minimax-m3:latest"));
     assert!(default_registry_entries()
         .iter()

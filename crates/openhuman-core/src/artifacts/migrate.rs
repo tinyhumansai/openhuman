@@ -131,16 +131,14 @@ pub(crate) async fn migrate_with(
 /// The legacy on-disk bytes of an unmigrated record, when present and inside
 /// its own artifact directory.
 fn legacy_bytes(root: &Path, artifact_dir: &Path, meta: &ArtifactMeta) -> Option<PathBuf> {
-    let rel = Path::new(&meta.path);
-    if rel.is_absolute()
-        || rel
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return None;
-    }
-    let candidate = root.join(rel);
-    (candidate.starts_with(artifact_dir) && candidate.is_file()).then_some(candidate)
+    let candidate = root.join(&meta.path);
+    // The escape guard also refuses a symlink that leads out of the directory.
+    // Check against `root` too: when `artifact_dir` is itself a symlink, both
+    // sides of the inner check resolve through it.
+    (super::files::check_within(root, &candidate).is_ok()
+        && super::files::check_within(artifact_dir, &candidate).is_ok()
+        && candidate.is_file())
+    .then_some(candidate)
 }
 
 /// For a migrated record, every regular file in its artifact directory other

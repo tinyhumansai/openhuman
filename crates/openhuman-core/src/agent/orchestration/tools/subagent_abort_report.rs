@@ -1,6 +1,6 @@
 //! Report a detached sub-agent that was aborted before it could report itself.
 //!
-//! A background sub-agent (`spawn_async_subagent`) sends its own terminal
+//! A background sub-agent (`spawn_subagent`) sends its own terminal
 //! `SubagentCompleted` / `SubagentFailed` on the parent's progress channel, and
 //! that one event settles everything downstream: the web bridge emits
 //! `subagent_failed` to the chat card, the turn-state mirror marks the saved

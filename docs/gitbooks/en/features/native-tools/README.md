@@ -35,7 +35,7 @@ A plugin-only model puts tools in separate processes, behind RPC, each with its 
 | [Memory tools](memory-tools.md) | Recall, fetch, learn and forget through the single `memory` tool. |
 | [Third-party integrations](integrations.md) | The agent's view of your [connected services](../integrations/README.md). |
 | [Agent coordination](agent-coordination.md) | Spawn subagents, delegate to skills, plan, ask the user. |
-| [System and utilities](system-and-utilities.md) | Shell, node, SQL, current time, push notifications, LSP. |
+| [System and utilities](system-and-utilities.md) | Shell, node, SQL, current time and push notifications. |
 
 ## See also
 

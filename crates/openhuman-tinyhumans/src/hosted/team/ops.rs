@@ -47,7 +47,7 @@ fn clamp_u32(value: Option<u64>, field: &str) -> Result<Option<u32>, String> {
 /// the core's `BACKEND_UNAVAILABLE:` sentinel without a request and without
 /// opening a backoff streak (Sentry 36649).
 pub async fn get_usage(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let backend_key = effective_backend_api_url(&config.api_url);
     budget_gate::usage_with_failure_backoff(&backend_key, || async {
         client.finish_value(
@@ -60,7 +60,7 @@ pub async fn get_usage(config: &Config) -> Result<Outcome<Value>, String> {
 
 pub async fn list_members(config: &Config, team_id: &str) -> Result<Outcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /teams/{teamId}/members",
         client.sdk().teams().list_members(&team_id).await,
@@ -72,14 +72,14 @@ pub async fn list_members(config: &Config, team_id: &str) -> Result<Outcome<Valu
 }
 
 pub async fn list_teams(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value("GET /teams", client.sdk().teams().list_teams().await)?;
     Ok(Outcome::single_log(data, "teams fetched from backend"))
 }
 
 pub async fn get_team(config: &Config, team_id: &str) -> Result<Outcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /teams/{teamId}",
         client.sdk().teams().get_team(&team_id).await,
@@ -118,7 +118,10 @@ async fn legacy_authed_value(
     body: Option<Value>,
 ) -> Result<Value, String> {
     let credential =
-        openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential(config)?;
+        openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential(
+            config,
+        )
+        .await?;
     let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendClient::new(&api_url).map_err(|e| format!("{e:#}"))?;
     client
@@ -137,7 +140,7 @@ pub async fn update_team(
     if let Some(name) = name.map(str::trim).filter(|value| !value.is_empty()) {
         body.insert("name".to_string(), Value::String(name.to_string()));
     }
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "PUT /teams/{teamId}",
         client
@@ -159,7 +162,7 @@ pub async fn delete_team(config: &Config, team_id: &str) -> Result<Outcome<Value
 
 pub async fn switch_team(config: &Config, team_id: &str) -> Result<Outcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /teams/{teamId}/switch",
         client.sdk().teams().switch_team(&team_id).await,
@@ -172,7 +175,7 @@ pub async fn switch_team(config: &Config, team_id: &str) -> Result<Outcome<Value
 
 pub async fn leave_team(config: &Config, team_id: &str) -> Result<Outcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /teams/{teamId}/leave",
         client.sdk().teams().leave_team(&team_id).await,
@@ -185,7 +188,7 @@ pub async fn join_team(config: &Config, code: &str) -> Result<Outcome<Value>, St
     if trimmed.is_empty() {
         return Err("code is required".to_string());
     }
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let request = CodeRequest {
         code: trimmed.to_string(),
     };
@@ -207,7 +210,7 @@ pub async fn create_invite(
         max_uses: clamp_u32(max_uses, "maxUses")?,
         expires_in_days: clamp_u32(expires_in_days, "expiresInDays")?,
     };
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /teams/{teamId}/invites",
         client.sdk().teams().create_invite(&team_id, &request).await,
@@ -222,7 +225,7 @@ pub async fn remove_member(
 ) -> Result<Outcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
     let user_id = normalize_id(user_id, "userId")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "DELETE /teams/{teamId}/members/{userId}",
         client.sdk().teams().remove_member(&team_id, &user_id).await,
@@ -239,7 +242,7 @@ pub async fn change_member_role(
     let team_id = normalize_id(team_id, "teamId")?;
     let user_id = normalize_id(user_id, "userId")?;
     let role = normalize_id(role, "role")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "PUT /teams/{teamId}/members/{userId}/role",
         client
@@ -257,7 +260,7 @@ pub async fn change_member_role(
 /// List all active invites for a team (`GET /teams/:teamId/invites`).
 pub async fn list_invites(config: &Config, team_id: &str) -> Result<Outcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /teams/{teamId}/invites",
         client.sdk().teams().list_invites(&team_id).await,
@@ -276,7 +279,7 @@ pub async fn revoke_invite(
 ) -> Result<Outcome<Value>, String> {
     let team_id = normalize_id(team_id, "teamId")?;
     let invite_id = normalize_id(invite_id, "inviteId")?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "DELETE /teams/{teamId}/invites/{inviteId}",
         client

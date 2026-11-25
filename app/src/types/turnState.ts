@@ -1,246 +1,28 @@
-/**
- * Wire shape of the per-thread agent-turn snapshot persisted by the
- * Rust core (`crates/openhuman-core/src/threads/turn_state/types.rs`). The UI uses
- * these payloads to rehydrate `chatRuntimeSlice` on thread switch and
- * to surface interrupted turns left behind by a previous core process.
- */
+/** TypeScript aliases generated from the persisted Rust session record schemas. */
+import type { ThreadWireTypes } from './threadWire.generated';
 
-export type PersistedTurnLifecycle = 'started' | 'streaming' | 'interrupted' | 'completed';
+export type PersistedTurnState = NonNullable<ThreadWireTypes['getTurnState']['turnState']>;
+export type PersistedTurnLifecycle = PersistedTurnState['lifecycle'];
+export type PersistedTurnPhase = NonNullable<PersistedTurnState['phase']>;
+export type PersistedToolTimelineEntry = PersistedTurnState['toolTimeline'][number];
+export type PersistedToolStatus = PersistedToolTimelineEntry['status'];
+export type PersistedToolFailure = NonNullable<PersistedToolTimelineEntry['failure']>;
+export type PersistedTranscriptItem = NonNullable<PersistedTurnState['transcript']>[number];
+export type PersistedSubagentActivity = NonNullable<PersistedToolTimelineEntry['subagent']>;
+export type PersistedSubagentToolCall = PersistedSubagentActivity['toolCalls'][number];
+export type PersistedSubagentTranscriptItem = NonNullable<
+  PersistedSubagentActivity['transcript']
+>[number];
 
-export type PersistedTurnPhase = 'thinking' | 'tool_use' | 'subagent';
+export type GetTurnStateResponse = ThreadWireTypes['getTurnState'];
+export type ListTurnStatesResponse = ThreadWireTypes['listTurnStates'];
+export type ClearTurnStateResponse = ThreadWireTypes['clearTurnState'];
 
-export type PersistedToolStatus = 'running' | 'success' | 'error';
-
-export interface PersistedSubagentToolCall {
-  callId: string;
-  toolName: string;
-  status: PersistedToolStatus;
-  iteration?: number;
-  elapsedMs?: number;
-  outputChars?: number;
-  /** Server-computed human label for this child call (from `Tool::display_label`). */
-  displayName?: string;
-  /** Server-computed contextual detail (path / recipient / query). */
-  detail?: string;
-  /** Size-capped arguments the child invoked the tool with, so a rehydrated
-   *  row shows what the sub-agent did and not just which tool it reached for
-   *  (#5987). Mirrors the live `subagent_tool_call` event's `args`; an
-   *  oversized payload arrives as a truncated string. Absent when the child's
-   *  arguments were never materialised and on snapshots written before this
-   *  field. Deliberately not repeated on {@link PersistedSubagentTranscriptItem}
-   *  — like `output` and `failure` it is grafted onto the transcript item by
-   *  `callId` in `subagentActivityFromPersisted`. */
-  args?: unknown;
-  /** Plain-language failure explanation for a FAILED child call (#4459).
-   *  Mirrors the parent {@link PersistedToolTimelineEntry.failure}; absent on
-   *  successful rows and on snapshots written before this field. */
-  failure?: PersistedToolFailure;
-  /** Size-capped child tool result text. Absent while running and on
-   *  snapshots written before this field. */
-  output?: string;
-}
-
-/**
- * One ordered item in the parent turn's processing transcript — the
- * interleaved record of narration, reasoning, and tool calls used to render
- * the "View processing" panel (mirrors the Rust `TranscriptItem`). `seq` is a
- * monotonic per-turn ordering key; a `toolCall` item points at a row in
- * {@link PersistedTurnState.toolTimeline} by `callId`.
- */
-export type PersistedTranscriptItem =
-  | { kind: 'narration'; round: number; seq: number; text: string }
-  | {
-      kind: 'thinking';
-      round: number;
-      seq: number;
-      text: string;
-      /** Epoch ms of the block's first delta (absent on pre-timing rows). */
-      startedAt?: number;
-      /** Epoch ms of the block's latest delta (absent on pre-timing rows). */
-      endedAt?: number;
-    }
-  | { kind: 'toolCall'; round: number; seq: number; callId: string };
-
-/**
- * One ordered item in a sub-agent's processing transcript (mirrors the Rust
- * `SubagentTranscriptItem`). Unlike the parent transcript there is no `seq` —
- * order is the array order. Persisting these lets the inline sub-agent thoughts
- * survive a settled turn / reload.
- */
-export type PersistedSubagentTranscriptItem =
-  | { kind: 'thinking'; iteration?: number; text: string }
-  | { kind: 'text'; iteration?: number; text: string }
-  | {
-      kind: 'tool';
-      iteration?: number;
-      callId: string;
-      toolName: string;
-      status: PersistedToolStatus;
-      elapsedMs?: number;
-      outputChars?: number;
-      displayName?: string;
-      detail?: string;
-      /** Plain-language failure explanation for a FAILED child tool call
-       *  (#4459); mirrors {@link PersistedSubagentToolCall.failure}. */
-      failure?: PersistedToolFailure;
-    };
-
-export interface PersistedSubagentActivity {
-  taskId: string;
-  agentId: string;
-  status?: string;
-  mode?: string;
-  dedicatedThread?: boolean;
-  childIteration?: number;
-  childMaxIterations?: number;
-  iterations?: number;
-  elapsedMs?: number;
-  outputChars?: number;
-  /** Persistent worker sub-thread id backing this delegation (camelCase from core). */
-  workerThreadId?: string;
-  toolCalls: PersistedSubagentToolCall[];
-  /** Ordered reasoning/narration/tool transcript for this sub-agent — what the
-   *  inline thoughts render from. Absent on snapshots written before this
-   *  field; the UI then falls back to rebuilding tool-only items. */
-  transcript?: PersistedSubagentTranscriptItem[];
-}
-
-/**
- * Human-readable failure explanation persisted alongside a FAILED tool row
- * (#4254). Mirrors the socket `failure` object; carried in the snapshot so a
- * settled/reloaded turn keeps its "why + what to do next" explanation. Absent
- * on successful rows and on snapshots written before this field.
- */
-export interface PersistedToolFailure {
-  class: string;
-  category: string;
-  recoverable: boolean;
-  causePlain: string;
-  nextAction: string;
-}
-
-export interface PersistedToolTimelineEntry {
-  id: string;
-  name: string;
-  round: number;
-  status: PersistedToolStatus;
-  argsBuffer?: string;
-  displayName?: string;
-  detail?: string;
-  sourceToolName?: string;
-  subagent?: PersistedSubagentActivity;
-  failure?: PersistedToolFailure;
-  /** Size-capped tool result text. Absent while running and on snapshots
-   *  written before this field. */
-  output?: string;
-  /** Per-turn monotonic ordering key stamped when the row is first created, so
-   *  a rehydrated timeline orders rows identically to the live stream (shares
-   *  the per-turn ordering space with {@link PersistedTranscriptItem.seq}).
-   *  Absent on snapshots written before this field. */
-  seq?: number;
-}
-
-export interface PersistedTurnState {
-  threadId: string;
-  requestId: string;
-  lifecycle: PersistedTurnLifecycle;
-  iteration: number;
-  maxIterations: number;
-  phase?: PersistedTurnPhase;
-  activeTool?: string;
-  activeSubagent?: string;
-  streamingText: string;
-  thinking: string;
-  toolTimeline: PersistedToolTimelineEntry[];
-  /** Ordered narration/thinking/tool transcript for the processing panel.
-   *  Absent on snapshots written before this field. */
-  transcript?: PersistedTranscriptItem[];
-  startedAt: string;
-  updatedAt: string;
-}
-
-export interface GetTurnStateResponse {
-  turnState?: PersistedTurnState | null;
-}
-
-export interface ListTurnStatesResponse {
-  turnStates: PersistedTurnState[];
-  count: number;
-}
-
-export interface ClearTurnStateResponse {
-  cleared: boolean;
-}
-
-export type AgentRunKind =
-  | 'subagent'
-  | 'worker_thread'
-  | 'background_agent'
-  | 'team_member'
-  | 'workflow_child';
-
-export type AgentRunStatus =
-  | 'pending'
-  | 'running'
-  | 'awaiting_user'
-  | 'paused'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'interrupted';
-
-export interface RunTelemetry {
-  runId: string;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  costUsd: number;
-  elapsedMs?: number | null;
-  toolCount: number;
-  model?: string | null;
-  provider?: string | null;
-  error?: string | null;
-  updatedAt?: string | null;
-}
-
-export interface AgentRun {
-  id: string;
-  kind: AgentRunKind;
-  parentRunId?: string | null;
-  parentThreadId?: string | null;
-  agentId?: string | null;
-  status: AgentRunStatus;
-  promptRef?: string | null;
-  workerThreadId?: string | null;
-  checkpointPath?: string | null;
-  checkpoint?: Record<string, unknown> | null;
-  summary?: string | null;
-  error?: string | null;
-  metadata: Record<string, unknown>;
-  telemetry?: RunTelemetry | null;
-  startedAt: string;
-  updatedAt: string;
-  completedAt?: string | null;
-}
-
-export interface RunEvent {
-  runId: string;
-  sequence: number;
-  eventType: string;
-  payload: Record<string, unknown>;
-  timestamp: string;
-}
-
-export interface AgentRunListResponse {
-  runs: AgentRun[];
-  count: number;
-}
-
-export interface AgentRunGetResponse {
-  run?: AgentRun | null;
-}
-
-export interface RunEventListResponse {
-  events: RunEvent[];
-  count: number;
-}
+export type AgentRun = ThreadWireTypes['agentRun'];
+export type AgentRunKind = AgentRun['kind'];
+export type AgentRunStatus = AgentRun['status'];
+export type RunTelemetry = NonNullable<AgentRun['telemetry']>;
+export type RunEvent = ThreadWireTypes['runEvent'];
+export type AgentRunListResponse = ThreadWireTypes['agentRunList'];
+export type AgentRunGetResponse = ThreadWireTypes['agentRunGet'];
+export type RunEventListResponse = ThreadWireTypes['runEventList'];

@@ -433,6 +433,42 @@ describe('coreRpcClient', () => {
     }
   });
 
+  test.each([200, 503])('bounds body consumption after HTTP %s headers arrive', async status => {
+    vi.useFakeTimers();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let signal: AbortSignal | undefined;
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementationOnce(async (_url, init) => {
+      signal = init?.signal as AbortSignal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+          signal!.addEventListener(
+            'abort',
+            () => controller.error(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true }
+          );
+        },
+      });
+      return new Response(body, { status });
+    });
+    const pending = callCoreRpc({ method: 'openhuman.cost_get_dashboard' }).catch(error => error);
+
+    try {
+      await vi.advanceTimersByTimeAsync(CORE_RPC_TIMEOUT_MS + 1);
+
+      expect(signal?.aborted).toBe(true);
+      const error = (await pending) as CoreRpcError;
+      expect(error).toBeInstanceOf(CoreRpcError);
+      expect(error.kind).toBe('timeout');
+      expect(error.message).toContain(`timed out after ${CORE_RPC_TIMEOUT_MS}ms`);
+    } finally {
+      bodyController?.error(new Error('test cleanup'));
+      await pending;
+      vi.useRealTimers();
+    }
+  });
+
   test('does not trigger the timeout path when fetch resolves promptly', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({
@@ -521,7 +557,7 @@ describe('coreRpcClient', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  test('caches a missing token result after the first Tauri lookup failure', async () => {
+  test('looks the token up again after a failed Tauri lookup', async () => {
     vi.resetModules();
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -540,7 +576,7 @@ describe('coreRpcClient', () => {
     const tokenCalls = vi
       .mocked(invoke)
       .mock.calls.filter(([cmd]) => cmd === 'core_rpc_endpoint').length;
-    expect(tokenCalls).toBe(1);
+    expect(tokenCalls).toBe(2);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -782,6 +818,16 @@ describe('coreRpcClient', () => {
 describe('classifyRpcError', () => {
   test.each([
     ['GET /teams failed (401 Unauthorized): {"success":false}', undefined, 'auth_expired'],
+    [
+      'GET /teams failed (500 Internal Server Error): {"status":401,"error":"Unauthorized"}',
+      undefined,
+      'provider_auth',
+    ],
+    [
+      'GET /teams failed (500 Internal Server Error): {"error":"upstream failed (401 Unauthorized)"}',
+      undefined,
+      'provider_auth',
+    ],
     ['Session expired. Please log in again.', undefined, 'auth_expired'],
     ['some prefix Session expired suffix', undefined, 'auth_expired'],
     [

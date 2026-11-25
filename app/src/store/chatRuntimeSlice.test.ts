@@ -34,9 +34,19 @@ function makeRun(id: string, status: AgentRunStatus): AgentRun {
     kind: 'subagent',
     status,
     agentId: 'research_agent',
+    checkpoint: {},
+    checkpointPath: null,
+    completedAt: null,
+    error: null,
     metadata: { displayName: 'Research Agent' },
+    parentRunId: null,
+    parentThreadId: null,
+    promptRef: null,
     startedAt: '2026-06-23T00:00:00Z',
+    summary: null,
+    telemetry: null,
     updatedAt: '2026-06-23T00:00:00Z',
+    workerThreadId: null,
   };
 }
 

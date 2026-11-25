@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { connectCoreSocket, createCoreSocket } from '../coreSocket';
+import { connectCoreSocket, createCoreSocket, lastHandshakeToken } from '../coreSocket';
 
 const hoisted = vi.hoisted(() => ({
   ioMock: vi.fn(() => ({ on: vi.fn(), id: 'mock-sid' })),
@@ -25,49 +25,77 @@ const ioMock = hoisted.ioMock;
 const getCoreRpcTokenMock = hoisted.getCoreRpcTokenMock;
 const resolveCoreSocketEndpointMock = hoisted.resolveCoreSocketEndpointMock;
 
+/** Runs the `auth` callback the way socket.io-client does on each handshake. */
+function handshake(auth: unknown): Promise<Record<string, unknown>> {
+  return new Promise(resolve =>
+    (auth as (cb: (data: Record<string, unknown>) => void) => void)(resolve)
+  );
+}
+
 describe('createCoreSocket', () => {
   beforeEach(() => {
     ioMock.mockClear();
+    // No resolvable bearer: the handshake falls back to the caller's token.
+    getCoreRpcTokenMock.mockReset();
+    getCoreRpcTokenMock.mockResolvedValue(null);
   });
 
-  it('passes the core bearer through the auth payload', () => {
+  it('passes the core bearer through the auth payload', async () => {
     createCoreSocket('http://127.0.0.1:7788', { coreToken: 'core-bearer-xyz' });
     expect(ioMock).toHaveBeenCalledTimes(1);
-    const call = ioMock.mock.calls[0] as unknown as [string, { auth: { token: string } }];
+    const call = ioMock.mock.calls[0] as unknown as [string, { auth: unknown }];
     expect(call[0]).toBe('http://127.0.0.1:7788');
-    expect(call[1].auth.token).toBe('core-bearer-xyz');
+    expect((await handshake(call[1].auth)).token).toBe('core-bearer-xyz');
   });
 
-  it('substitutes empty string when no core token is available', () => {
+  it('substitutes empty string when no core token is available', async () => {
     createCoreSocket('http://127.0.0.1:7788', { coreToken: null });
-    const call = ioMock.mock.calls[0] as unknown as [string, { auth: { token: string } }];
-    expect(call[1].auth.token).toBe('');
+    const call = ioMock.mock.calls[0] as unknown as [string, { auth: unknown }];
+    expect((await handshake(call[1].auth)).token).toBe('');
   });
 
-  it('merges authExtras alongside the token slot', () => {
+  it('merges authExtras alongside the token slot', async () => {
     createCoreSocket('http://127.0.0.1:7788', {
       coreToken: 'core',
       authExtras: { session: 'jwt-abc' },
     });
-    const call = ioMock.mock.calls[0] as unknown as [
-      string,
-      { auth: { token: string; session: string } },
-    ];
-    expect(call[1].auth.token).toBe('core');
-    expect(call[1].auth.session).toBe('jwt-abc');
+    const call = ioMock.mock.calls[0] as unknown as [string, { auth: unknown }];
+    const payload = await handshake(call[1].auth);
+    expect(payload.token).toBe('core');
+    expect(payload.session).toBe('jwt-abc');
   });
 
-  it('honours overrides without dropping the auth payload', () => {
+  it('re-reads the core bearer on every handshake, so a reconnect after a core restart uses the new one', async () => {
+    createCoreSocket('http://127.0.0.1:7788', { coreToken: 'launch-1-bearer' });
+    const call = ioMock.mock.calls[0] as unknown as [string, { auth: unknown }];
+    getCoreRpcTokenMock.mockResolvedValue('launch-1-bearer');
+    expect((await handshake(call[1].auth)).token).toBe('launch-1-bearer');
+    getCoreRpcTokenMock.mockResolvedValue('launch-2-bearer');
+    expect((await handshake(call[1].auth)).token).toBe('launch-2-bearer');
+  });
+
+  it('falls back to its own bearer when resolveToken declines (another core is active)', async () => {
+    const socket = createCoreSocket('http://127.0.0.1:7788', {
+      coreToken: 'core-a-bearer',
+      resolveToken: async () => null,
+    });
+    getCoreRpcTokenMock.mockResolvedValue('core-b-bearer');
+    const call = ioMock.mock.calls[0] as unknown as [string, { auth: unknown }];
+    expect((await handshake(call[1].auth)).token).toBe('core-a-bearer');
+    expect(lastHandshakeToken(socket as never)).toBe('core-a-bearer');
+  });
+
+  it('honours overrides without dropping the auth payload', async () => {
     createCoreSocket('http://127.0.0.1:7788', {
       coreToken: 'core',
       overrides: { reconnectionAttempts: 5, forceNew: false, timeout: 4000 },
     });
     const call = ioMock.mock.calls[0] as unknown as [
       string,
-      { auth: { token: string }; reconnectionAttempts: number; forceNew: boolean; timeout: number },
+      { auth: unknown; reconnectionAttempts: number; forceNew: boolean; timeout: number },
     ];
     const opts = call[1];
-    expect(opts.auth.token).toBe('core');
+    expect((await handshake(opts.auth)).token).toBe('core');
     expect(opts.reconnectionAttempts).toBe(5);
     expect(opts.forceNew).toBe(false);
     expect(opts.timeout).toBe(4000);
@@ -93,9 +121,9 @@ describe('connectCoreSocket', () => {
     expect(getBaseUrl).toHaveBeenCalledTimes(1);
     expect(getCoreRpcTokenMock).toHaveBeenCalledTimes(1);
     expect(ioMock).toHaveBeenCalledTimes(1);
-    const call = ioMock.mock.calls[0] as unknown as [string, { auth: { token: string } }];
+    const call = ioMock.mock.calls[0] as unknown as [string, { auth: unknown }];
     expect(call[0]).toBe('http://127.0.0.1:7788');
-    expect(call[1].auth.token).toBe('mock-core-bearer');
+    expect((await handshake(call[1].auth)).token).toBe('mock-core-bearer');
   });
 
   it('short-circuits to null when disposed flips before token resolves', async () => {
@@ -131,18 +159,18 @@ describe('connectCoreSocket', () => {
     });
     const call = ioMock.mock.calls[0] as unknown as [
       string,
-      { auth: { token: string; session: string }; reconnectionAttempts: number },
+      { auth: unknown; reconnectionAttempts: number },
     ];
-    expect(call[1].auth.session).toBe('jwt-xyz');
+    expect((await handshake(call[1].auth)).session).toBe('jwt-xyz');
     expect(call[1].reconnectionAttempts).toBe(7);
   });
 
   it('passes empty token through when getCoreRpcToken resolves to null', async () => {
-    getCoreRpcTokenMock.mockResolvedValueOnce(null);
+    getCoreRpcTokenMock.mockResolvedValue(null);
     const getBaseUrl = vi.fn().mockResolvedValue('http://127.0.0.1:7788');
     await connectCoreSocket({ getBaseUrl });
-    const call = ioMock.mock.calls[0] as unknown as [string, { auth: { token: string } }];
-    expect(call[1].auth.token).toBe('');
+    const call = ioMock.mock.calls[0] as unknown as [string, { auth: unknown }];
+    expect((await handshake(call[1].auth)).token).toBe('');
   });
 
   it('uses the private-LAN shell relay and forces WebSocket transport', async () => {

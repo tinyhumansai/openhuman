@@ -3,7 +3,7 @@ import type { TooltipRenderProps } from 'react-joyride';
 import { useT } from '../../lib/i18n/I18nContext';
 
 /** Emoji accents per walkthrough step. */
-const STEP_ICONS = ['💬', '👋', '🗨️', '🧩', '📱', '⚙️', '💬', '👤', '🧠', '🌐', '🔌', '✉️', '🎉'];
+const STEP_ICONS = ['🗨️', '🧩', '📱', '⚙️', '💬', '🌐', '🎉'];
 
 /**
  * Premium tooltip for the post-onboarding Joyride walkthrough.

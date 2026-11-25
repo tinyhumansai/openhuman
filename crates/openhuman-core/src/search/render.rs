@@ -8,6 +8,7 @@
 
 use serde_json::{json, Value};
 use tinysearch_bus::labels::provider_label;
+use tinysearch_bus::render::RenderOptions;
 use tinysearch_bus::{render as bus_render, ExecuteToolResponse, SearchStatus};
 use tinytools::ToolResult;
 
@@ -15,6 +16,16 @@ use tinytools::ToolResult;
 const METADATA_EXCERPT_CHARS: usize = 300;
 
 pub use tinysearch_bus::render::subject;
+
+/// The rendering `[search] compact_results` asks for: the compact rendering
+/// when on, the module's original output when off.
+pub fn render_options(compact: bool) -> RenderOptions {
+    if compact {
+        RenderOptions::compact()
+    } else {
+        RenderOptions::default()
+    }
+}
 
 /// Build the tool result: text for the model, optional markdown, and the
 /// structured payload for the UI.
@@ -24,11 +35,37 @@ pub fn render(
     max_results: usize,
     prefer_markdown: bool,
 ) -> ToolResult {
+    render_with(
+        response,
+        subject,
+        max_results,
+        prefer_markdown,
+        &RenderOptions::default(),
+    )
+}
+
+/// [`render`] with explicit [`RenderOptions`] for the model's text.
+pub fn render_with(
+    response: &ExecuteToolResponse,
+    subject: &str,
+    max_results: usize,
+    prefer_markdown: bool,
+    options: &RenderOptions,
+) -> ToolResult {
     let provider = provider_label(&response.provider);
-    let mut result = ToolResult::success(bus_render::render_text(response, subject, max_results));
+    let mut result = ToolResult::success(bus_render::render_text_with(
+        response,
+        subject,
+        max_results,
+        options,
+    ));
     if prefer_markdown {
-        result.markdown_formatted =
-            Some(bus_render::render_markdown(response, subject, max_results));
+        result.markdown_formatted = Some(bus_render::render_markdown_with(
+            response,
+            subject,
+            max_results,
+            options,
+        ));
     }
     result.metadata = Some(metadata(response, subject, &provider, max_results));
     result

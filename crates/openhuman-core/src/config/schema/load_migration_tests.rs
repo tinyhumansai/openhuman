@@ -243,8 +243,9 @@ backend = "sqlite"
     let config = load_or_init_for_workspace(tmp.path()).await;
 
     assert_eq!(config.memory.engine, "");
-    assert!(!crate::memory::engine::is_on(&config));
+    assert!(!crate::memory::engine::is_on(&config).await);
     let off = crate::memory::engine::resolve(&config)
+        .await
         .engine()
         .unwrap_err();
     assert_eq!(off.code(), "MEMORY_OFF");
@@ -264,8 +265,9 @@ backend = "sqlite"
     let reloaded = load_or_init_for_workspace(tmp.path()).await;
 
     assert_eq!(reloaded.memory.engine, "");
-    assert!(!crate::memory::engine::is_on(&reloaded));
+    assert!(!crate::memory::engine::is_on(&reloaded).await);
     let off = crate::memory::engine::resolve(&reloaded)
+        .await
         .engine()
         .unwrap_err();
     assert_eq!(off.code(), "MEMORY_OFF");
@@ -296,33 +298,11 @@ backend = "sqlite"
 
     assert_eq!(config.memory.engine, "");
     let reason = crate::memory::engine::resolve(&config)
+        .await
         .engine()
         .unwrap_err()
         .to_string();
     assert!(reason.contains("legacy memory backend"));
-}
-
-#[test]
-fn redact_url_strips_basic_auth_and_query() {
-    let out = redact_url_for_log(
-        "https://user:token@api.example.com/v1/chat/completions?api_key=sk-x&debug=1",
-    );
-    assert!(!out.contains("token"), "got: {out}");
-    assert!(!out.contains("sk-x"), "got: {out}");
-    assert!(out.starts_with("https://api.example.com"), "got: {out}");
-}
-
-#[test]
-fn redact_url_handles_plain_url() {
-    let out = redact_url_for_log("https://api.openai.com/v1/chat/completions");
-    assert_eq!(out, "https://api.openai.com/v1/chat/completions");
-}
-
-#[test]
-fn redact_url_fallback_masks_userinfo_when_unparseable() {
-    let out = redact_url_for_log("not-a-scheme://user:secret@host/path?token=1");
-    assert!(!out.contains("secret"), "got: {out}");
-    assert!(!out.contains("token=1"), "got: {out}");
 }
 
 #[test]

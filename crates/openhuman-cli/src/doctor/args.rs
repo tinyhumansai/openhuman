@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 
 /// Parsed options for the host-owned doctor command.
 pub(super) struct DoctorArgs {
+    pub(super) help: bool,
     pub(super) json: bool,
     pub(super) lint: bool,
     pub(super) severity_min: String,
@@ -25,6 +26,7 @@ impl DoctorArgs {
 
 pub(super) fn parse_args(args: &[String]) -> Result<DoctorArgs, String> {
     let mut options = DoctorArgs {
+        help: false,
         json: false,
         lint: false,
         severity_min: "error".into(),
@@ -37,6 +39,7 @@ pub(super) fn parse_args(args: &[String]) -> Result<DoctorArgs, String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--help" | "-h" | "help" => options.help = true,
             "--json" => options.json = true,
             "--lint" => options.lint = true,
             "--live" => options.tier = "live".into(),
@@ -81,3 +84,20 @@ fn argument_value<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'
         .map(String::as_str)
         .ok_or_else(|| format!("missing value for {flag}"))
 }
+
+/// Usage text for `doctor --help`.
+pub(super) const USAGE: &str = "\
+Usage: openhuman-core doctor [options]
+
+Run the OpenHuman health checks and print a report.
+
+Options:
+  --json                    Print the report as JSON
+  --live                    Also run live checks (may use your session or API key)
+  --lint                    Exit 1 when a finding reaches --severity-min
+  --severity-min <level>    info, warn or error (default: error)
+  --only <check-id>         Run only this check (repeatable)
+  --skip <check-id>         Skip this check (repeatable)
+  --profile <name>          Use this desktop profile
+  -h, --help                Show this help
+";

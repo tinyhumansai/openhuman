@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use tinyagents_harness::runtime::RunPolicy;
 use tinyagents_registry::{DiagnosticSeverity, RegistryDiagnostic};
 use tinyagents_runtime::turn_driver::{SharedToolSet, TurnPlan, TurnPlanner};
-use tinyagents_runtime::{DriverRequest, RuntimeError};
+use tinyagents_runtime::{DriverRequest, NestedSpawnDepth, RuntimeError};
 use tinyinference_llm::model::ErrorSlotModel;
 
 use crate::agent::tinyagents::host::OpenHumanRunContext;
@@ -125,6 +125,10 @@ impl TurnPlanner<(), OpenHumanRunContext> for OpenHumanTurnPlanner {
             self.has_thread,
             &self.session_deferred,
             &request.run_context.data,
+            NestedSpawnDepth::try_new(
+                request.run_context.config.depth(),
+                request.run_context.config.max_depth(),
+            ),
         );
         // A turn driven outside a `Session` has no frozen tool declaration to
         // compare against; the registration above is the authority.

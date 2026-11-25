@@ -2,7 +2,7 @@
 //! override. The deadline itself (`close_budget`
 //! included) is `tinyagents_harness::turn_deadline::TurnDeadline`.
 //!
-//! A web-chat turn runs under an outer backstop (`web_chat::ops::turn_guards`)
+//! A web-chat turn runs under an outer backstop (`web_chat::turn_events`)
 //! that drops the turn future when it elapses. Dropping it discards
 //! everything the turn did. Production showed ~55 orchestrator turns a week
 //! dying this way at exactly 900s, after 50–98 model calls, with nothing

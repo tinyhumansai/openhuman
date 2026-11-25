@@ -427,6 +427,32 @@ async fn current_user_rejection_signs_out_and_emits_expired() {
     assert!(!state.core.is_authenticated);
 }
 
+/// Only a 401 expires the session: a 402/403/404 from `/auth/me` is a refusal
+/// (plan, WAF, proxy) and the stored session survives it.
+#[tokio::test]
+async fn current_user_refusal_keeps_the_session() {
+    for status in [402, 403, 404] {
+        let backend = Backend::start(vec![MeAnswer::Ok(me_user()), MeAnswer::Status(status)]).await;
+        let core = FakeCore::new(&backend.url);
+        let m = manager(&core);
+        m.login_with_token("tok").await.unwrap();
+        let mut rx = m.subscribe();
+        let cached = m.current_user(true).await;
+        assert!(
+            matches!(&cached, Ok(c) if c.stale),
+            "{status}: expected the stored user served stale, got {cached:?}"
+        );
+        assert!(core.session().is_some(), "{status} cleared the session");
+        assert!(
+            !drain(&mut rx)
+                .await
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Expired { .. })),
+            "{status} emitted Expired"
+        );
+    }
+}
+
 /// Linking a second provider to the same account is a session refresh, not a
 /// different user (matrix 1.2.2).
 ///

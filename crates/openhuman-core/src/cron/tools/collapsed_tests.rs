@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::{ComponentSet, CoreContext, DomainSet};
-use crate::security::turn_origin::AgentTurnOrigin;
 use tinyagents_harness::{context::RunConfig, ids::CallId, tool::ToolExecutionContext};
 
 fn tool() -> CronTool {
@@ -86,15 +86,17 @@ async fn an_unknown_action_is_an_error_result_naming_the_valid_ones() {
 }
 
 #[test]
-fn every_member_is_hidden_so_the_collapse_actually_saves_something() {
-    // The load-bearing assertion. Adding an action to the table while
-    // leaving its member `Direct` would ship both surfaces and save
-    // nothing, and nothing else in the build would notice.
+fn the_collapsed_tool_is_deferred_and_its_members_are_advertised() {
+    // The load-bearing assertion. Shipping both the collapsed `cron` and its
+    // members up front would put every scheduler schema on the wire twice;
+    // the pack advertises the members, so `cron` itself waits for
+    // `tool_search`.
+    assert_eq!(tool().exposure(), ToolExposure::Deferred);
     for entry in tool().actions() {
         assert_eq!(
             entry.tool.exposure(),
-            ToolExposure::Hidden,
-            "`{}` is still advertised alongside the collapsed `cron` tool",
+            ToolExposure::Direct,
+            "`{}` is not advertised; the scheduling pack lists it",
             entry.tool.name()
         );
     }
@@ -153,6 +155,27 @@ async fn run_uses_the_explicit_core_context_and_preserves_markdown_options() {
         .is_some_and(|md| md.contains("status")));
 }
 
+/// The trusted durable-session identity a channel turn carries. Jobs created
+/// from a channel conversation record it; a turn without one has no
+/// conversation to bind a job to.
+fn channel_session(reply_target: &str) -> tinyflows_bus::schedule::ChannelSessionIdentity {
+    tinyflows_bus::schedule::ChannelSessionIdentity {
+        tenant_key: "profile:alice".into(),
+        agent_id: "orchestrator".into(),
+        session_key: format!("main:telegram:bot-a:dm:{reply_target}"),
+        provider: "telegram".into(),
+        account_id: Some("telegram:bot-a".into()),
+        conversation: tinyflows_bus::schedule::ChannelConversationIdentity {
+            kind: "dm".into(),
+            id: reply_target.into(),
+            scope_id: None,
+            parent_id: None,
+            thread_id: None,
+            topic_id: None,
+        },
+    }
+}
+
 #[tokio::test]
 async fn add_uses_the_explicit_channel_origin_without_ambient_turn_state() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -173,6 +196,7 @@ async fn add_uses_the_explicit_channel_origin_without_ambient_turn_state() {
         reply_target: "42".into(),
         message_id: "message-1".into(),
         history_key: Some("telegram-alice-42".into()),
+        channel_session: Some(channel_session("42")),
     };
     let mut run = OpenHumanRunContext::new();
     run.origin = Some(origin);
@@ -204,7 +228,7 @@ async fn add_uses_the_explicit_channel_origin_without_ambient_turn_state() {
             history_key: "telegram-alice-42".into(),
             sender: Some("alice".into()),
             thread_id: None,
-            session_identity: None,
+            channel_session: Some(Box::new(channel_session("42"))),
         })
     );
     assert_eq!(jobs[0].delivery.mode, "origin");

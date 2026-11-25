@@ -197,14 +197,10 @@ export function classifyRpcError(
   // Fix for issue #2286: only match when the message starts with an HTTP verb
   // followed by a path — this excludes "Discord API error:", "OpenAI API error:", etc.
   // HEAD and OPTIONS intentionally excluded — authed_json only uses these five verbs.
-  // Aligned with Rust is_session_expired_error: starts-with-verb check + separate
-  // contains checks for "401" and "unauthorized" (case-insensitive).
-  if (
-    /^(GET|POST|PUT|DELETE|PATCH)\s+\//.test(message) &&
-    /401/.test(message) &&
-    /unauthorized/i.test(message)
-  )
-    return 'auth_expired';
+  // Aligned with Rust is_session_expired_error: anchored on the status in the
+  // `{METHOD} /path failed ({status}` header, so a 500 whose body mentions a 401
+  // is not an expired session.
+  if (/^(GET|POST|PUT|DELETE|PATCH) \/\S* failed \(401/.test(message)) return 'auth_expired';
   // Everything above matched an explicit backend marker in the message. What
   // is left, if the transport gave us a 401, is the LOCAL core's bearer gate
   // (`crates/openhuman-core/src/core/auth.rs` — "Missing or invalid Authorization header"), never the
@@ -539,13 +535,14 @@ export async function getCoreRpcToken(): Promise<string | null> {
     try {
       const endpoint = await resolveShellEndpoint();
       resolvedCoreRpcToken = endpoint?.token?.trim() || null;
-      didResolveCoreRpcToken = true;
+      // Only a real token is cached: a missing one (core still starting, or a
+      // failed lookup) is looked up again on the next call.
+      didResolveCoreRpcToken = resolvedCoreRpcToken !== null;
       coreRpcLog('core RPC token loaded');
       return resolvedCoreRpcToken;
     } catch (err) {
       coreRpcError('failed to load core RPC token', err);
       resolvedCoreRpcToken = null;
-      didResolveCoreRpcToken = true;
       return null;
     } finally {
       resolvingCoreRpcToken = null;
@@ -827,6 +824,7 @@ export async function callCoreRpc<T>({
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     let response: Response;
+    let responseBody: JsonRpcResponse<T> | string;
     try {
       if (isTauri() && rpcUrlNeedsShellRelay(rpcUrl)) {
         // Self-hosted runtime on a LAN IP — the secure `tauri://localhost`
@@ -851,6 +849,9 @@ export async function callCoreRpc<T>({
           signal: controller.signal,
         });
       }
+      responseBody = response.ok
+        ? ((await response.json()) as JsonRpcResponse<T>)
+        : await response.text();
     } catch (fetchErr) {
       if (controller.signal.aborted) {
         // Throw a fully-classified `CoreRpcError` here so the outer catch
@@ -869,7 +870,7 @@ export async function callCoreRpc<T>({
     }
 
     if (!response.ok) {
-      const text = await response.text();
+      const text = responseBody as string;
       const httpMessage = `Core RPC HTTP ${response.status}: ${text || response.statusText}`;
       const kind = classifyRpcError(text || response.statusText, response.status);
       // The local core rejected our bearer. `getCoreRpcToken` caches the
@@ -903,7 +904,7 @@ export async function callCoreRpc<T>({
       throw new CoreRpcError(httpMessage, kind, response.status);
     }
 
-    const json = (await response.json()) as JsonRpcResponse<T>;
+    const json = responseBody as JsonRpcResponse<T>;
 
     if (json.error) {
       coreRpcError('HTTP error response', {

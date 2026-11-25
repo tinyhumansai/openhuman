@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useAppSelector } from '../../../store/hooks';
 import {
@@ -79,6 +79,27 @@ function measure(el: HTMLElement | null): MascotBox | null {
  * [ui-flow] chat-mascot-overlay: docked ⇄ staged (rAF travel, TRANSITION_MS)
  */
 const ChatMascotOverlay = () => {
+  const [replayViseme, setReplayViseme] = useState<string | null>(null);
+  const replayOwnerRef = useRef<string | null>(null);
+  useEffect(() => {
+    const onPlayback = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ owner: string; active: boolean; viseme: string; claim: boolean }>
+      ).detail;
+      if (!detail?.owner) return;
+      if (detail.active && detail.claim) {
+        replayOwnerRef.current = detail.owner;
+        setReplayViseme(detail.viseme);
+      } else if (detail.active && replayOwnerRef.current === detail.owner) {
+        setReplayViseme(detail.viseme);
+      } else if (replayOwnerRef.current === detail.owner) {
+        replayOwnerRef.current = null;
+        setReplayViseme(null);
+      }
+    };
+    window.addEventListener('voice-note-mascot', onPlayback);
+    return () => window.removeEventListener('voice-note-mascot', onPlayback);
+  }, []);
   const { dockRef, stageRef, liveAudioRef } = useChatMascot();
   const dockNode = useDockNode();
   const expanded = useAppSelector(selectChatMascotExpanded);
@@ -103,8 +124,8 @@ const ChatMascotOverlay = () => {
   // While the live agent is speaking its own audio drives the mouth (amplitude
   // lip-sync); the rAF loop only exists while it speaks.
   const liveLipsync = useAmplitudeLipsync(liveAudioRef, livePhase === 'speaking');
-  const face = liveLipsync.active ? 'speaking' : classicFace;
-  const visemeCode = liveLipsync.active ? liveLipsync.visemeCode : classicViseme;
+  const face = liveLipsync.active || replayViseme !== null ? 'speaking' : classicFace;
+  const visemeCode = liveLipsync.active ? liveLipsync.visemeCode : (replayViseme ?? classicViseme);
 
   const mascotColor = useAppSelector(selectMascotColor);
   const customPrimary = useAppSelector(selectCustomPrimaryColor);

@@ -8,7 +8,7 @@ use crate::core::runtime::DispatchCtx;
 /// A memory citation attached to a chat reply so the UI can show where an
 /// answer came from. `key` is the item kind, `namespace` its source kind,
 /// `timestamp` when it was observed, and `snippet` a short excerpt.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct TurnCitation {
     /// Item id.
     pub id: String,

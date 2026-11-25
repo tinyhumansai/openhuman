@@ -36,7 +36,7 @@ pub(crate) fn register(_options: &InstallOptions) {
         },
     );
     let read_only_factory: ReadOnlyEngineFactory =
-        Arc::new(|config| Box::pin(async move { engine::build_read_only_engine(&config) }));
+        Arc::new(|config| Box::pin(async move { engine::build_read_only_engine(&config).await }));
     register_read_only_engine_factory(TINYHUMANS_ENGINE, read_only_factory);
     register_memory_health_probe(TINYHUMANS_ENGINE, Arc::new(read_only_health_probe));
     log::debug!("[tinyhumans] memory: hosted engine registered as '{TINYHUMANS_ENGINE}'");
@@ -49,7 +49,7 @@ fn read_only_health_probe(
     config: openhuman_embed::__host::config::Config,
 ) -> openhuman_embed::__host::memory_engines::EngineFuture<EngineHealth> {
     Box::pin(async move {
-        match engine::build_read_only_engine(&config) {
+        match engine::build_read_only_engine(&config).await {
             Ok(engine) => engine.health().await,
             Err(reason) => EngineHealth::Down(reason.safe_message().to_owned()),
         }

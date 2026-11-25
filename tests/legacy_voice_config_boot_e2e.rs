@@ -125,6 +125,8 @@ fn legacy_voice_settings_boot_without_starting_retired_listeners() {
         .env("OPENHUMAN_DOTENV_PATH", &dotenv_path)
         .env("OPENHUMAN_CORE_TOKEN", TOKEN)
         .env("OPENHUMAN_KEYRING_BACKEND", "file")
+        // Installing the credential encrypts it; a hermetic child cannot rely on an OS keychain.
+        .env("OPENHUMAN_KEYRING_MASTER_KEY", "5a".repeat(32))
         .env("RUST_LOG", "info")
         .env("BACKEND_URL", backend_url)
         .env_remove("OPENHUMAN_BACKEND_API_KEY")

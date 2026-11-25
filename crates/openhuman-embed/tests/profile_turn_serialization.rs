@@ -83,7 +83,7 @@ async fn scenario() {
         .mount(&inference)
         .await;
     PointedInference::install(&inference.uri());
-    openhuman_core::storage::install(Arc::new(openhuman_core::storage::MemoryStorage::new()));
+    openhuman_core::storage::install(Arc::new(tinystoragedrivers_testkit::MemoryBackend::new()));
 
     let root = tempfile::tempdir().unwrap();
     let runtime = ProfileRuntime::builder(SaasConfig::new(root.path()))
@@ -102,7 +102,7 @@ async fn scenario() {
                 "fixture-key",
             )
             .await
-            .unwrap();
+            .expect("profile credential is stored");
         handles.push(runtime.open(user).await.unwrap());
     }
     let (alice, bob) = (handles.remove(0), handles.remove(0));

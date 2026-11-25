@@ -262,6 +262,6 @@ pub fn join(base: &Path, rel: &str) -> PathBuf {
         .fold(base.to_path_buf(), |p, part| p.join(part))
 }
 
-#[cfg(all(test, feature = "storage-sqlite"))]
+#[cfg(all(test, feature = "storage-sqlite", feature = "legacy-import"))]
 #[path = "plan_tests.rs"]
 mod tests;

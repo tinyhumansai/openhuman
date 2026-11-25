@@ -109,6 +109,7 @@ async fn tool_call_events_use_the_tool_s_own_display_label_and_detail() {
         input: Some(serde_json::json!({"to": "steven@example.com"})),
         output: Some(serde_json::Value::String("sent".to_string())),
         duration_ms: Some(5),
+        input_bytes: None,
         output_bytes: Some(4),
         error: None,
         metadata: None,

@@ -1,7 +1,9 @@
 //! Unit tests for the Composio bus subscribers.
 
 use super::connection_created_subscriber::WaitError;
-use super::trigger_subscriber::{triage_disabled, TRIAGE_DISABLED_ENV};
+use super::trigger_subscriber::{
+    is_direct_mode, triage_disabled, triage_skip_reason, TRIAGE_DISABLED_ENV,
+};
 use super::*;
 use crate::core::events::DomainEvent;
 use serde_json::json;
@@ -24,7 +26,8 @@ async fn ignores_non_composio_events() {
 }
 
 #[tokio::test]
-async fn handles_trigger_event_without_panic() {
+async fn handling_a_trigger_with_triage_disabled_is_a_smoke_test() {
+    // Smoke only: the gate decisions are pinned on `triage_skip_reason`.
     // `ComposioTriggerSubscriber::handle` calls
     // `config_rpc::load_config_with_timeout()` at the very top (the
     // direct-mode trigger gate, `bus.rs`), *before* the
@@ -86,19 +89,14 @@ fn triage_disabled_flag_parser() {
 }
 
 #[test]
-fn direct_mode_constant_matches_trigger_drop_check() {
-    // The ComposioTriggerSubscriber drops events when
-    // `config.composio.mode == COMPOSIO_MODE_DIRECT`. If the schema
-    // constant ever drifts from the string "direct" the drop becomes
-    // a silent no-op and backend-tenant ghosts would leak through
-    // into a direct-mode user's triage pipeline. Pin both sides.
-    use crate::config::ComposioConfig;
-    assert_eq!(crate::config::schema::COMPOSIO_MODE_DIRECT, "direct");
-    let cfg = ComposioConfig {
-        mode: "direct".into(),
-        ..Default::default()
-    };
-    assert_eq!(cfg.mode, crate::config::schema::COMPOSIO_MODE_DIRECT);
+fn direct_mode_drops_backend_tenant_triggers() {
+    // Pinned against the literal: if the schema constant drifted from what the
+    // config file holds, the drop would silently become a no-op.
+    let mut config = crate::config::Config::default();
+    config.composio.mode = "direct".into();
+    assert!(is_direct_mode(&config));
+    config.composio.mode = "backend".into();
+    assert!(!is_direct_mode(&config));
 }
 
 #[test]
@@ -116,64 +114,20 @@ fn composio_config_triage_disabled_default() {
 }
 
 #[test]
-fn composio_config_triage_disabled_toolkit_match() {
-    use crate::config::ComposioConfig;
-    let cfg = ComposioConfig {
-        triage_disabled_toolkits: vec!["GMAIL".to_string(), "slack".to_string()],
-        ..Default::default()
-    };
-    let toolkit = "gmail";
-    let toolkit_lower = toolkit.to_ascii_lowercase();
-    assert!(
-        cfg.triage_disabled_toolkits
-            .iter()
-            .any(|t| t.to_ascii_lowercase() == toolkit_lower),
-        "case-insensitive match against gmail should fire"
-    );
-    assert!(
-        !cfg.triage_disabled_toolkits
-            .iter()
-            .any(|t| t.eq_ignore_ascii_case("github")),
-        "github should not match"
-    );
-}
+fn triage_skip_reason_applies_the_kill_switch_and_config_gates() {
+    let mut config = crate::config::Config::default();
+    assert_eq!(triage_skip_reason(Some(&config), "gmail", false), None);
+    // The env kill-switch wins even when the config would allow triage.
+    assert!(triage_skip_reason(Some(&config), "gmail", true).is_some());
 
-#[tokio::test]
-async fn trigger_subscriber_skips_triage_when_env_disabled() {
-    // Same rationale as `handles_trigger_event_without_panic`: the
-    // direct-mode trigger gate in `ComposioTriggerSubscriber::handle`
-    // calls `load_config_with_timeout()` before the env kill-switch, so
-    // this test must isolate `OPENHUMAN_WORKSPACE` under `TEST_ENV_LOCK`
-    // (acquired before `TRIAGE_ENV_GUARD`).
-    use crate::config::{Config, TEST_ENV_LOCK};
-    let _env_lock = TEST_ENV_LOCK.lock().await;
-    let _guard = TRIAGE_ENV_GUARD.lock().await;
+    config.composio.triage_disabled_toolkits = vec!["GMAIL".into()];
+    assert!(triage_skip_reason(Some(&config), "gmail", false).is_some());
+    assert_eq!(triage_skip_reason(Some(&config), "github", false), None);
 
-    let tmp = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    }
-    let mut config = Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
-    config.save().await.expect("save fake config to disk");
-
-    std::env::set_var(TRIAGE_DISABLED_ENV, "1");
-    let sub = ComposioTriggerSubscriber::new();
-    // Should complete without panicking (env gate fires, triage skipped).
-    sub.handle(&DomainEvent::ComposioTriggerReceived {
-        toolkit: "gmail".into(),
-        trigger: "GMAIL_NEW_GMAIL_MESSAGE".into(),
-        metadata_id: "trig-env".into(),
-        metadata_uuid: "uuid-env".into(),
-        payload: json!({ "subject": "env gate test" }),
-    })
-    .await;
-    std::env::remove_var(TRIAGE_DISABLED_ENV);
-
-    unsafe {
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-    }
+    config.composio.triage_disabled = true;
+    assert!(triage_skip_reason(Some(&config), "github", false).is_some());
+    // An unreadable config fails open.
+    assert_eq!(triage_skip_reason(None, "github", false), None);
 }
 
 #[tokio::test]

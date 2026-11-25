@@ -14,11 +14,10 @@ use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::core::Outcome;
 use crate::security::{SecurityPolicy, ToolOperation};
+use tinymcp_bus::ui::{is_ui_uri, resource_from_contents, UiResource};
 
 use super::cache;
 use super::port::UiServerPort;
-use super::resolve::{is_ui_uri, resource_from_contents};
-use super::types::UiResource;
 
 fn require(value: Option<String>, field: &str) -> Result<String, String> {
     value
@@ -150,7 +149,9 @@ pub async fn tool_call(
     } else {
         ToolOperation::Act
     };
-    security.enforce_tool_operation(operation, &format!("mcp_ui:{server_id}/{tool_name}"))?;
+    security
+        .enforce_tool_operation(operation, &format!("mcp_ui:{server_id}/{tool_name}"))
+        .await?;
 
     let start = Instant::now();
     let result = port.call_tool(&server_id, &tool_name, arguments).await;

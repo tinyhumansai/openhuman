@@ -1,4 +1,12 @@
 # Repo-level Cargo configuration.
+
+# Agent turns can nest large async futures and use 20 MiB worker stacks in
+# production. Rust's test harness otherwise runs each test on a 2 MiB thread,
+# which aborts several orchestration and scheduler tests before their assertions
+# run. Match the test-thread floor to the runtime stack used by those turns.
+[env]
+RUST_MIN_STACK = { value = "20971520", force = false }
+
 #
 # ────────────────────────────────────────────────────────────────────────────
 # Faster linking (OPT-IN)
@@ -33,3 +41,10 @@
 #
 # [target.x86_64-apple-darwin]
 # rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/opt/llvm/bin/ld64.lld"]
+
+# TinySecurity's password cipher requires POLYVAL's zeroizing software
+# dispatcher. Cargo ignores a path dependency's `.cargo/config.toml`, so the
+# host workspace must propagate its fail-closed native build requirement.
+[target.'cfg(all())']
+rustflags = ["--cfg", "polyval_force_soft"]
+

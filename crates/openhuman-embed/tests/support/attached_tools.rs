@@ -4,10 +4,11 @@ use crate::common;
 use common::{chat_completion, chat_requests, offline_config, runtime, stub_backend};
 use openhuman_embed::session_store::SessionRef;
 use openhuman_embed::{
-    AgentDefinitionSpec, AgentSpec, HostTools, HostTurnTools, InMemorySessionStores, Provider,
-    Runtime, SessionStoreProvider, Tool, ToolScopeSpec, Workspace,
+    AgentDefinitionSpec, AgentSpec, HostTools, HostTurnTools, Provider, Runtime,
+    SessionStoreProvider, Tool, ToolScopeSpec, Workspace,
 };
 use std::sync::Arc;
+use tinyagents_session::InMemorySessionStores;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 // Runtime is process-wide. Keep the guard on the synchronous test caller;
@@ -87,13 +88,22 @@ pub fn attached_tools_survive_clones_and_session_resume() {
                 .unwrap();
             let original_config = agent.config().clone();
             assert!(agent
-                .attach_tools("", Arc::new(|_| HostTurnTools::default()))
+                .attach_tools(
+                    "",
+                    Arc::new(|_| Box::pin(async { HostTurnTools::default() }))
+                )
+                .await
                 .is_err());
             assert!(agent
                 .attach_tools(
                     "builtin-collision",
-                    Arc::new(|_| HostTurnTools::advertised(vec![Box::new(Marker("shell"))]))
+                    Arc::new(|_| {
+                        Box::pin(async {
+                            HostTurnTools::advertised(vec![Box::new(Marker("shell"))])
+                        })
+                    })
                 )
+                .await
                 .is_err());
             let peer = runtime.agent(AgentSpec::new("peer")).unwrap();
             assert!(!agent.same_agent(&peer));
@@ -101,20 +111,31 @@ pub fn attached_tools_survive_clones_and_session_resume() {
             let clone = agent.clone();
             assert!(agent.same_agent(&clone));
             assert_eq!(agent.runtime_id(), clone.runtime_id());
-            let factory: HostTools =
-                Arc::new(|_| HostTurnTools::advertised(vec![Box::new(Marker("hivemind_message"))]));
-            agent.attach_tools("tinyhivemind", factory.clone()).unwrap();
-            clone.attach_tools("tinyhivemind", factory).unwrap();
+            let factory: HostTools = Arc::new(|_| {
+                Box::pin(async {
+                    HostTurnTools::advertised(vec![Box::new(Marker("hivemind_message"))])
+                })
+            });
+            agent
+                .attach_tools("tinyhivemind", factory.clone())
+                .await
+                .unwrap();
+            clone.attach_tools("tinyhivemind", factory).await.unwrap();
             assert!(clone
-                .attach_tools("tinyhivemind", Arc::new(|_| HostTurnTools::default()))
+                .attach_tools(
+                    "tinyhivemind",
+                    Arc::new(|_| Box::pin(async { HostTurnTools::default() }))
+                )
+                .await
                 .is_err());
             assert!(clone
                 .attach_tools(
                     "collision",
-                    Arc::new(|_| HostTurnTools::advertised(vec![Box::new(Marker(
-                        "hivemind_message"
-                    ))]))
+                    Arc::new(|_| Box::pin(async {
+                        HostTurnTools::advertised(vec![Box::new(Marker("hivemind_message"))])
+                    }))
                 )
+                .await
                 .is_err());
             let first = agent
                 .turn("first user")
@@ -142,9 +163,12 @@ pub fn attached_tools_survive_clones_and_session_resume() {
                 .attach_tools(
                     "second",
                     Arc::new(|_| {
-                        HostTurnTools::advertised(vec![Box::new(Marker("hivemind_list"))])
+                        Box::pin(async {
+                            HostTurnTools::advertised(vec![Box::new(Marker("hivemind_list"))])
+                        })
                     }),
                 )
+                .await
                 .unwrap();
             // A resumed session restores the exact tool prefix it committed.
             // The newly attached tool is available to sessions started after
@@ -278,6 +302,8 @@ pub fn attached_tools_survive_clones_and_session_resume() {
                     );
                 }
             }
+            runtime.remove_agent("attached").await.unwrap();
+            runtime.remove_agent("peer").await.unwrap();
         })
         .await
         .unwrap();
@@ -327,8 +353,10 @@ pub fn attaching_before_first_turn_preserves_and_executes_native_tools() {
                 .provider(Provider::openai_compatible(format!("{}/v1",provider.uri()),"fixture").model("fixture"))
                 .definition(AgentDefinitionSpec::new().system_prompt("ORIGINAL_FRESH_HOST_PROMPT")
                     .tools(ToolScopeSpec::Wildcard))).unwrap();
-            let attachment: HostTools = Arc::new(|_| HostTurnTools::advertised(vec![Box::new(Marker("hivemind_message"))]));
-            agent.attach_tools("hivemind", attachment).unwrap();
+            let attachment: HostTools = Arc::new(|_| Box::pin(async {
+                HostTurnTools::advertised(vec![Box::new(Marker("hivemind_message"))])
+            }));
+            agent.attach_tools("hivemind", attachment).await.unwrap();
             agent.run("Run the native tool").await.unwrap();
             let requests = chat_requests(&provider).await;
             assert_eq!(requests.len(), 2);
@@ -343,6 +371,8 @@ pub fn attaching_before_first_turn_preserves_and_executes_native_tools() {
                     text.contains("native-wildcard-survived") && !text.contains("unknown tool"))),
                 "the native executor must actually run: {second}");
             assert!(first["messages"].to_string().contains("ORIGINAL_FRESH_HOST_PROMPT"));
+            runtime.remove_agent("fresh-attached").await.unwrap();
+            drop(agent);
         }).await.unwrap();
     });
 }

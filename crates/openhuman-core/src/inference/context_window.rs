@@ -88,7 +88,13 @@ async fn resolve_context_window_inner(
     extensions: Option<Option<&crate::core::slots::Extensions>>,
 ) -> ResolvedWindow {
     let local_kind = tinyinference_local::profile::kind_from_provider_string(provider);
-    let route = route_input(role, provider, model, config, extensions, local_kind);
+    let mut route = route_input(role, provider, model, config, extensions, local_kind);
+    route.discovery = match extensions {
+        Some(Some(extensions)) => {
+            model_limits_request_for(role, provider, model, config, Some(extensions)).await
+        }
+        _ => model_limits_request(role, provider, model, config).await,
+    };
     #[cfg(test)]
     {
         resolver()
@@ -148,7 +154,8 @@ pub(crate) async fn resolve_context_window_with(
     config: &Config,
 ) -> ResolvedWindow {
     let local_kind = tinyinference_local::profile::kind_from_provider_string(provider);
-    let route = route_input(role, provider, model, config, None, local_kind);
+    let mut route = route_input(role, provider, model, config, None, local_kind);
+    route.discovery = model_limits_request(role, provider, model, config).await;
     resolver()
         .resolve_for_route_with_fetcher(
             provider,
@@ -164,8 +171,8 @@ pub(crate) async fn resolve_context_window_with(
 /// Host-owned route facts shared by async resolution and synchronous
 /// projections. The native resolver owns the fallback order and URL handling.
 fn route_input(
-    role: &str,
-    provider: &str,
+    _role: &str,
+    _provider: &str,
     model: &str,
     config: &Config,
     extensions: Option<Option<&crate::core::slots::Extensions>>,
@@ -176,14 +183,6 @@ fn route_input(
     route.local_window = local_kind.and_then(|kind| {
         tinyinference_local::profile::context_window_with_local_fallback(model, None, Some(kind))
     });
-    route.discovery = match local_kind {
-        None => match extensions {
-            Some(extensions) => model_limits_request_for(role, provider, model, config, extensions),
-            None => model_limits_request(role, provider, model, config),
-        },
-        Some(LocalProviderKind::Ollama) => None,
-        Some(_) => None,
-    };
     if local_kind == Some(LocalProviderKind::Ollama) {
         route.endpoint = Some(tinyinference_local::ollama::ollama_base_url_from_override(
             config.local_ai.base_url.as_deref(),
@@ -196,17 +195,17 @@ fn route_input(
 /// TinyInference's provider registry to construct its native listing request.
 /// The host supplies only policy it owns: managed catalog selection, stored
 /// cloud credentials, and hosted-auth routing.
-pub(crate) fn model_limits_request(
+pub(crate) async fn model_limits_request(
     role: &str,
     provider: &str,
     model: &str,
     config: &Config,
 ) -> Option<DiscoveryRequest> {
     let extensions = crate::core::runtime::CoreContext::current_extensions();
-    model_limits_request_for(role, provider, model, config, extensions.as_ref())
+    model_limits_request_for(role, provider, model, config, extensions.as_ref()).await
 }
 
-pub(crate) fn model_limits_request_for(
+pub(crate) async fn model_limits_request_for(
     role: &str,
     provider: &str,
     model: &str,
@@ -235,12 +234,23 @@ pub(crate) fn model_limits_request_for(
             config,
             &crate::security::egress::EgressLedger::none(),
         );
-        return crate::inference::registry::catalog_for(
+        let limits = crate::inference::registry::catalog_for(
             extensions,
             crate::inference::provider::factory::PROVIDER_OPENHUMAN,
         )
-        .and_then(|entry| entry.limits)
-        .and_then(|limits| limits(model, &context));
+        .and_then(|entry| entry.limits);
+        return match limits {
+            Some(limits) => {
+                limits(
+                    tinyinference_llm::providers::overrides::CatalogLimitsRequest {
+                        model: model.to_owned(),
+                        context,
+                    },
+                )
+                .await
+            }
+            None => None,
+        };
     }
 
     let route = route?;
@@ -264,12 +274,23 @@ pub(crate) fn model_limits_request_for(
             config,
             &crate::security::egress::EgressLedger::none(),
         );
-        return crate::inference::registry::catalog_for(
+        let limits = crate::inference::registry::catalog_for(
             extensions,
             crate::inference::provider::factory::PROVIDER_OPENHUMAN,
         )
-        .and_then(|entry| entry.limits)
-        .and_then(|limits| limits(model, &context));
+        .and_then(|entry| entry.limits);
+        return match limits {
+            Some(limits) => {
+                limits(
+                    tinyinference_llm::providers::overrides::CatalogLimitsRequest {
+                        model: model.to_owned(),
+                        context,
+                    },
+                )
+                .await
+            }
+            None => None,
+        };
     }
     let resolution = crate::inference::provider::factory::resolve_cloud_slug_for(
         role,
@@ -278,6 +299,7 @@ pub(crate) fn model_limits_request_for(
         config,
         extensions,
     )
+    .await
     .ok()?;
     if resolution.codex.using_oauth || resolution.entry.auth_style == AuthStyle::OpenhumanJwt {
         return None;

@@ -92,8 +92,8 @@ async function selectThreadAction(page: Page, threadId: string, action: 'Rename'
 }
 
 test.describe('Chat thread list — create, deep link, rename, delete', () => {
-  test.beforeEach(async (fixtures, testInfo) => {
-    void fixtures;
+  test.beforeEach(async ({ page }, testInfo) => {
+    void page;
     await resetMock();
     const title = testInfo.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     userId = `${USER_ID_PREFIX}-${title}`;

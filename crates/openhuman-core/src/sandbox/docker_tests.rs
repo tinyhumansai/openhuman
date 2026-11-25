@@ -4,12 +4,14 @@ use std::path::PathBuf;
 
 fn test_policy() -> SandboxPolicy {
     SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: PathBuf::from("/tmp/test-workspace"),
         state_dir: PathBuf::from("/tmp/state"),
         read_only_mounts: vec![],
         read_write_mounts: vec![],
         allow_network: false,
+        mount_workspace: true,
         env_passthrough: vec!["PATH".into(), "HOME".into()],
         docker_overrides: None,
     }
@@ -90,6 +92,7 @@ fn docker_backend_handle_maps_module_status_truthfully() {
 #[test]
 fn host_network_and_dangerous_mounts_reach_the_module_unfiltered() {
     let mut policy = test_policy();
+    policy.allow_network = true;
     policy.workspace_root = PathBuf::from("/etc");
     policy.read_only_mounts = vec![PathBuf::from("/var/run/docker.sock")];
     policy.docker_overrides = Some(DockerOverrides {
@@ -108,5 +111,31 @@ fn host_network_and_dangerous_mounts_reach_the_module_unfiltered() {
     assert_eq!(
         run.read_only_mounts,
         vec!["/var/run/docker.sock".to_owned()]
+    );
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn disabled_network_policy_overrides_configured_docker_network() {
+    let mut policy = test_policy();
+    policy.allow_network = false;
+    policy.docker_overrides = Some(DockerOverrides {
+        network: Some("bridge".into()),
+        ..DockerOverrides::default()
+    });
+
+    let request = SandboxExecRequest {
+        command: "true".into(),
+        working_dir: PathBuf::from("/workspace"),
+        env: Default::default(),
+        timeout: std::time::Duration::from_secs(1),
+    };
+
+    assert_eq!(
+        build_docker_request(&policy, &request)
+            .unwrap()
+            .network
+            .as_deref(),
+        Some("none")
     );
 }

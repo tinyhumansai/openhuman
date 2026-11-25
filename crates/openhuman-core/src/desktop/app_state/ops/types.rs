@@ -37,7 +37,7 @@ pub struct StoredAppState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStateSnapshot {
-    pub auth: crate::security::credentials::responses::AuthStateResponse,
+    pub auth: crate::credentials::responses::AuthStateResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

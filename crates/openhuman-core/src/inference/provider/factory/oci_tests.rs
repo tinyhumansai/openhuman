@@ -366,9 +366,9 @@ fn stored_key_is_required_only_for_api_key_mode() {
     assert!(entry_requires_stored_key(&bearer));
 }
 
-#[test]
-fn oci_slug_routes_through_the_cloud_slug_factory() {
-    let _guard = crate::inference::inference_test_guard();
+#[tokio::test]
+async fn oci_slug_routes_through_the_cloud_slug_factory() {
+    let _guard = crate::inference::inference_test_guard_async().await;
     let (_dir, config_file) = oci_dir();
     let mut config = Config::default();
     config.cloud_providers.push(oci_entry(profile_settings(
@@ -384,14 +384,15 @@ fn oci_slug_routes_through_the_cloud_slug_factory() {
             true,
             &crate::security::egress::EgressLedger::none(),
         )
+        .await
         .expect("oci slug is a configured cloud provider")
         .expect("model builds from a session-token profile");
     assert_eq!(model_id, "cohere.command-a-03-2025");
 }
 
-#[test]
-fn oci_slug_with_a_missing_compartment_fails_through_the_factory() {
-    let _guard = crate::inference::inference_test_guard();
+#[tokio::test]
+async fn oci_slug_with_a_missing_compartment_fails_through_the_factory() {
+    let _guard = crate::inference::inference_test_guard_async().await;
     let mut settings = api_key_settings();
     settings.transport = OciTransportKind::NativeGeneric;
     let mut config = Config::default();
@@ -404,6 +405,7 @@ fn oci_slug_with_a_missing_compartment_fails_through_the_factory() {
             true,
             &crate::security::egress::EgressLedger::none(),
         )
+        .await
         .expect("oci slug is a configured cloud provider")
         {
             Err(error) => error.to_string(),
@@ -412,9 +414,9 @@ fn oci_slug_with_a_missing_compartment_fails_through_the_factory() {
     assert!(error.contains("oci.compartment_id"), "{error}");
 }
 
-#[test]
-fn inspection_records_the_oci_wire_identity() {
-    let _guard = crate::inference::inference_test_guard();
+#[tokio::test]
+async fn inspection_records_the_oci_wire_identity() {
+    let _guard = crate::inference::inference_test_guard_async().await;
     let (_dir, config_file) = oci_dir();
     let mut config = Config::default();
     config.cloud_providers.push(oci_entry(profile_settings(
@@ -423,6 +425,13 @@ fn inspection_records_the_oci_wire_identity() {
         "SESSION",
     )));
     let mut identity = None;
+    // What the doctor's inspection path pre-resolves for a keyless OCI
+    // profile: `lookup_key_for_slug_read_only` finds no stored key.
+    let credential = super::super::credentials::ReadOnlyCloudCredential {
+        key: String::new(),
+        is_oauth: false,
+        account_id: None,
+    };
     super::super::cloud_slug::try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         "chat",
         "oci:cohere.command-a-03-2025",
@@ -431,8 +440,10 @@ fn inspection_records_the_oci_wire_identity() {
         &crate::security::egress::EgressLedger::none(),
         None,
         super::super::credentials::CredentialAccess::Inspection,
+        Some(&credential),
         Some(&mut identity),
     )
+    .await
     .expect("oci slug is a configured cloud provider")
     .expect("model builds from a session-token profile");
     let (endpoint, credential, model, _) = identity.expect("the OCI route records its identity");

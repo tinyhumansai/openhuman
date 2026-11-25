@@ -1324,9 +1324,10 @@ Declare a host executor's requirements with `Tool::policy`, for example `ToolPol
                     .tools(ToolScopeSpec::HostOnly),
             )
             .tools(move |_| {
-                openhuman_embed::HostTurnTools::advertised(vec![Box::new(Ping(
-                    recorded_calls.clone(),
-                ))])
+                let recorded_calls = recorded_calls.clone();
+                Box::pin(async move {
+                    openhuman_embed::HostTurnTools::advertised(vec![Box::new(Ping(recorded_calls))])
+                })
             }),
     )?;
     assert_eq!(agent.run("Ping").await?.reply, "pong complete");
@@ -1418,7 +1419,9 @@ No local path is read, so attachments are accepted whatever the turn's origin, i
 
 The stream example checks that deltas precede the final result and that collected and streaming replies agree. A cancellation token passed to a turn is preserved by streaming; cancellation unblocks forwarding even when the consumer has stopped draining a full buffer.
 
-The harness derives transcript paths from the thread and agent IDs without a timestamp. Resumed sessions reuse their recorded system prompt and tool declarations; edits to prompts, skills or integrations apply to new sessions. An agent built with `AgentDefinitionSpec::refresh_prompt_on_resume(true)` sends a resumed thread its current prompt instead: when the prompt changed, the thread's transcript generation is sealed and its conversation carries into the next, at the cost of one uncached prompt per change, and that turn's message opens with a one-time note that the instructions changed, so the model does not hold to what it said under the old ones. Compaction seals a generation and opens a child instead of erasing history. See [observability](observability.md) for session IDs versus per-call turn IDs, and [API reference](../api-reference.md) for the session-store port.
+The harness derives transcript paths from the thread and agent IDs without a timestamp. Resumed sessions reuse their recorded system prompt and tool declarations; edits to prompts, skills or integrations apply to new sessions. An agent built with `AgentDefinitionSpec::refresh_prompt_on_resume(true)` sends a resumed thread its current prompt instead: when the prompt changed, the thread's transcript generation is sealed and its conversation carries into the next, at the cost of one uncached prompt per change, and that turn's message opens with a one-time note that the instructions changed, so the model does not hold to what it said under the old ones. Compaction seals a generation and opens a child instead of erasing history.
+
+A host can also compact a thread while its user is idle, so the next turn resends a summary instead of the whole history: `agent.compact_thread(&thread_id, CompactOptions { min_tokens, keep_recent_tokens }).await` returns `CompactOutcome::Compacted { tokens_before, tokens_after }`, `Skipped { tokens }` (below `min_tokens`, or nothing to fold; nothing written) or `Empty`. It runs the agent's own compaction (`[context] compaction_strategy` and the `summarizer_*` settings), places the summary as a user message after the system prompt, keeps the system prompt and tool declarations byte-identical (a memory block is rendered afresh for the new generation), and holds the session's turn lock, so a turn sent on the same thread meanwhile waits for it. See [observability](observability.md) for session IDs versus per-call turn IDs, and [API reference](../api-reference.md) for the session-store port.
 
 <!-- Source: docs/gitbooks/en/developing/embed/faq.md -->
 ---
@@ -1684,9 +1687,10 @@ The shared support module uses loopback Wiremock servers for backend and inferen
                     .tools(ToolScopeSpec::HostOnly),
             )
             .tools(move |_| {
-                openhuman_embed::HostTurnTools::advertised(vec![Box::new(Ping(
-                    recorded_calls.clone(),
-                ))])
+                let recorded_calls = recorded_calls.clone();
+                Box::pin(async move {
+                    openhuman_embed::HostTurnTools::advertised(vec![Box::new(Ping(recorded_calls))])
+                })
             }),
     )?;
     assert_eq!(agent.run("Ping").await?.reply, "pong complete");
@@ -2236,7 +2240,6 @@ The SQLite example sets `config.storage.url` to a `sqlite:` URL under a temporar
         .build()
         .await?;
     let storage = runtime.storage().expect("configured SQLite backend");
-    assert_eq!(storage.driver(), "sqlite");
     let scoped = storage.for_scope(&Scope::local())?;
     let documents = scoped.documents();
     documents
@@ -2285,7 +2288,11 @@ Run `cargo run -p openhuman-embed --example storage --features storage-sqlite`. 
     // An explicit environment variable is the only path to a live database.
     if let Ok(url) = std::env::var("OPENHUMAN_EXAMPLE_MONGODB_URL") {
         let live = RuntimeBuilder::library().storage(url).build().await?;
-        assert_eq!(live.storage().expect("MongoDB backend").driver(), "mongodb");
+        assert!(live.storage().is_some(), "MongoDB backend");
+        assert_eq!(
+            live.capabilities().storage.driver.as_deref(),
+            Some("mongodb")
+        );
     }
 ```
 
@@ -2690,17 +2697,17 @@ Run: `cargo run -p openhuman-embed --example lean_headless`
 
 Measure retained runtime-owned agents using loopback inference and two worker threads.
 
-[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements.
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements. · feature: mcp,storage-sqlite
 
-Run: `cargo run -p openhuman-embed --release --example linux_fleet --no-default-features`
+Run: `cargo run -p openhuman-embed --release --example linux_fleet --no-default-features --features mcp,storage-sqlite`
 
 ## Connect an actual MCP protocol stub over loopback
 
 Connect an actual MCP protocol stub over loopback.
 
-[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/mcp.rs) · offline with loopback stubs; no live path. · feature: mcp
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/mcp.rs) · offline with loopback stubs; no live path. · feature: mcp,storage-sqlite
 
-Run: `cargo run -p openhuman-embed --example mcp --features mcp`
+Run: `cargo run -p openhuman-embed --example mcp --features mcp,storage-sqlite`
 
 ## Tenant scoped memory facade with an in-memory engine
 
@@ -2714,9 +2721,9 @@ Run: `cargo run -p openhuman-embed --example memory`
 
 SaaS profiles isolate conversation history.
 
-[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/profiles.rs) · offline with loopback stubs; no live path. · feature: channels
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/profiles.rs) · offline with loopback stubs; no live path. · feature: channels,storage-sqlite
 
-Run: `cargo run -p openhuman-embed --example profiles --features channels`
+Run: `cargo run -p openhuman-embed --example profiles --features channels,storage-sqlite`
 
 ## Hello agent: a prompt in and a reply out
 
@@ -2828,7 +2835,6 @@ This matrix comes from the default-feature compiled capability-report example. R
 | `storage-mongodb` | No |
 | `storage-s3` | No |
 | `storage-sqlite` | No |
-| `tinymemes` | Yes |
 | `voice` | No |
 | `web3` | No |
 
@@ -2839,52 +2845,56 @@ This matrix comes from the default-feature compiled capability-report example. R
 
 Public consuming methods that return `Self`, extracted from the RuntimeBuilder implementations. Static host and weight presets, inspection methods and build/run methods are excluded.
 
-- [`access`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L384): `pub fn access(mut self, access: Access) -> Self`
-- [`action_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L329): `pub fn action_dir(mut self, dir: impl Into<PathBuf>) -> Self`
-- [`agent_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L159): `pub fn agent_defaults(mut self, defaults: super::AgentDefaults) -> Self`
-- [`api_key`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L361): `pub fn api_key(mut self, key: impl Into<ApiKey>) -> Self`
-- [`autonomy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L194): `pub fn autonomy(mut self, value: openhuman_core::config::schema::AutonomyConfig) -> Self`
-- [`backend_url`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L371): `pub fn backend_url(mut self, url: impl Into<String>) -> Self`
-- [`boot_mode`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L349): `pub fn boot_mode(mut self, mode: CoreBootMode) -> Self`
-- [`config`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L501): `pub fn config(mut self, config: Config) -> Self`
-- [`config_source`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L337): `pub fn config_source(mut self, source: ConfigSource) -> Self`
-- [`configure_core_extensions`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L433): `pub fn configure_core_extensions(self, configure: impl FnOnce(&Extensions)) -> Self`
-- [`controller_extension`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L445): `pub fn controller_extension(mut self, extension: ControllerExtension) -> Self`
-- [`cron`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L219): `pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self`
-- [`cron_delivery`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L263): `pub fn cron_delivery( mut self, delivery: Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>, ) -> Self`
-- [`cron_job_handler`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L277): `pub fn cron_job_handler( mut self, kind: crate::cron::JobKind, handler: Arc<dyn crate::cron::JobKindHandler>, ) -> Self`
-- [`defer_services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L419): `pub fn defer_services(mut self) -> Self`
-- [`definition_base`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L178): `pub fn definition_base(mut self, definition: crate::AgentDefinitionSpec) -> Self`
-- [`domains`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L431): `pub fn domains(mut self, domains: DomainSet) -> Self`
-- [`host_kind`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L448): `pub fn host_kind(mut self, host_kind: HostKind) -> Self`
-- [`learning`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L214): `pub fn learning(mut self, value: super::LearningSettings) -> Self`
-- [`listen`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L470): `pub fn listen(self, host: impl Into<String>, port: u16) -> Self`
-- [`listen_host`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L475): `pub fn listen_host(mut self, host: impl Into<String>) -> Self`
-- [`listen_port`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L481): `pub fn listen_port(mut self, port: u16) -> Self`
-- [`live_policy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L494): `pub fn live_policy(mut self, policy: Arc<SecurityPolicy>) -> Self`
-- [`max_agents`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L292): `pub fn max_agents(mut self, limit: usize) -> Self`
-- [`mcp_baseline`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L189): `pub fn mcp_baseline(mut self, servers: impl IntoIterator<Item = crate::McpServer>) -> Self`
-- [`memory_engine`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L233): `pub fn memory_engine(mut self, engine: Arc<dyn tinymemory_api::MemoryEngine>) -> Self`
-- [`model_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L168): `pub fn model_defaults(mut self, model: super::ModelDefaults) -> Self`
+- [`access`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L460): `pub fn access(mut self, access: Access) -> Self`
+- [`action_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L405): `pub fn action_dir(mut self, dir: impl Into<PathBuf>) -> Self`
+- [`agent_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L161): `pub fn agent_defaults(mut self, defaults: super::AgentDefaults) -> Self`
+- [`api_key`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L437): `pub fn api_key(mut self, key: impl Into<ApiKey>) -> Self`
+- [`autonomy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L196): `pub fn autonomy(mut self, value: openhuman_core::config::schema::AutonomyConfig) -> Self`
+- [`backend_url`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L447): `pub fn backend_url(mut self, url: impl Into<String>) -> Self`
+- [`boot_mode`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L425): `pub fn boot_mode(mut self, mode: CoreBootMode) -> Self`
+- [`config`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L577): `pub fn config(mut self, config: Config) -> Self`
+- [`config_source`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L413): `pub fn config_source(mut self, source: ConfigSource) -> Self`
+- [`configure_core_extensions`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L451): `pub fn configure_core_extensions(self, configure: impl FnOnce(&Extensions)) -> Self`
+- [`controller_extension`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L463): `pub fn controller_extension(mut self, extension: ControllerExtension) -> Self`
+- [`cron`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L272): `pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self`
+- [`cron_delivery`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L317): `pub fn cron_delivery( mut self, delivery: Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>, ) -> Self`
+- [`cron_job_handler`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L331): `pub fn cron_job_handler( mut self, kind: crate::cron::JobKind, handler: Arc<dyn crate::cron::JobKindHandler>, ) -> Self`
+- [`defer_services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L495): `pub fn defer_services(mut self) -> Self`
+- [`definition_base`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L180): `pub fn definition_base(mut self, definition: crate::AgentDefinitionSpec) -> Self`
+- [`domains`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L507): `pub fn domains(mut self, domains: DomainSet) -> Self`
+- [`host_kind`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L524): `pub fn host_kind(mut self, host_kind: HostKind) -> Self`
+- [`learning`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L267): `pub fn learning(mut self, value: super::LearningSettings) -> Self`
+- [`listen`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L546): `pub fn listen(self, host: impl Into<String>, port: u16) -> Self`
+- [`listen_host`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L551): `pub fn listen_host(mut self, host: impl Into<String>) -> Self`
+- [`listen_port`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L557): `pub fn listen_port(mut self, port: u16) -> Self`
+- [`live_policy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L512): `pub fn live_policy(mut self, policy: Arc<SecurityPolicy>) -> Self`
+- [`max_agents`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L368): `pub fn max_agents(mut self, limit: usize) -> Self`
+- [`mcp_baseline`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L191): `pub fn mcp_baseline(mut self, servers: impl IntoIterator<Item = crate::McpServer>) -> Self`
+- [`memory_engine`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L286): `pub fn memory_engine(mut self, engine: Arc<dyn tinymemory_api::MemoryEngine>) -> Self`
+- [`model_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L170): `pub fn model_defaults(mut self, model: super::ModelDefaults) -> Self`
 - [`modules`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/selection.rs#L155): `pub fn modules(mut self, modules: impl IntoIterator<Item = RuntimeModule>) -> Self`
-- [`post_turn_hook`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L460): `pub fn post_turn_hook(mut self, hook: Arc<dyn LearningSink>) -> Self`
-- [`privacy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L204): `pub fn privacy(mut self, value: openhuman_core::config::schema::PrivacyConfig) -> Self`
-- [`provider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L377): `pub fn provider(mut self, provider: Provider) -> Self`
-- [`sandbox`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L173): `pub fn sandbox(mut self, mode: crate::SandboxModeSpec) -> Self`
-- [`secrets`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L209): `pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self`
-- [`server_launcher`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L474): `pub fn server_launcher(mut self, launcher: ServerLauncher) -> Self`
-- [`services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L403): `pub fn services(mut self, services: ServiceSet) -> Self`
-- [`session`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L491): `pub fn session(mut self, session: Session) -> Self`
-- [`session_store`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L248): `pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self`
-- [`skills`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L183): `pub fn skills(mut self, policy: super::SkillsPolicy) -> Self`
-- [`storage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L487): `pub fn storage(mut self, source: impl Into<StorageSource>) -> Self`
-- [`token`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L458): `pub fn token(mut self, token: TokenSource) -> Self`
-- [`tool_groups`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L440): `pub fn tool_groups(mut self, tool_groups: ToolGroups) -> Self`
-- [`tool_hook`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L467): `pub fn tool_hook(mut self, hook: Arc<dyn ToolHook<OpenHumanRunContext>>) -> Self`
-- [`tool_ranker`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L452): `pub fn tool_ranker(mut self, ranker: Arc<dyn ToolRanker>) -> Self`
-- [`tool_rules`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L199): `pub fn tool_rules(mut self, value: tinytools::ToolRules) -> Self`
-- [`workspace`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L302): `pub fn workspace(mut self, workspace: Workspace) -> Self`
-- [`workspace_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L316): `pub fn workspace_dir(mut self, dir: impl Into<PathBuf>) -> Self`
+- [`on_missing_agent`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L355): `pub fn on_missing_agent<F, Fut>(mut self, opener: F) -> Self`
+- [`post_turn_hook`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L478): `pub fn post_turn_hook(mut self, hook: Arc<dyn LearningSink>) -> Self`
+- [`privacy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L206): `pub fn privacy(mut self, value: openhuman_core::config::schema::PrivacyConfig) -> Self`
+- [`prompt_screen`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L221): `pub fn prompt_screen( mut self, value: openhuman_core::config::schema::PromptScreenConfig, ) -> Self`
+- [`provider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L453): `pub fn provider(mut self, provider: Provider) -> Self`
+- [`sandbox`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L175): `pub fn sandbox(mut self, mode: crate::SandboxModeSpec) -> Self`
+- [`secrets`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L262): `pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self`
+- [`security`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L242): `pub fn security(mut self, value: openhuman_core::config::schema::SecurityModeConfig) -> Self`
+- [`security_judge`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L254): `pub fn security_judge( mut self, value: openhuman_core::config::schema::SecurityJudgeRoute, ) -> Self`
+- [`server_launcher`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L492): `pub fn server_launcher(mut self, launcher: ServerLauncher) -> Self`
+- [`services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L479): `pub fn services(mut self, services: ServiceSet) -> Self`
+- [`session`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L567): `pub fn session(mut self, session: Session) -> Self`
+- [`session_store`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L301): `pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self`
+- [`skills`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L185): `pub fn skills(mut self, policy: super::SkillsPolicy) -> Self`
+- [`storage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L505): `pub fn storage(mut self, source: impl Into<StorageSource>) -> Self`
+- [`token`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L534): `pub fn token(mut self, token: TokenSource) -> Self`
+- [`tool_groups`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L516): `pub fn tool_groups(mut self, tool_groups: ToolGroups) -> Self`
+- [`tool_hook`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L485): `pub fn tool_hook(mut self, hook: Arc<dyn ToolHook<OpenHumanRunContext>>) -> Self`
+- [`tool_ranker`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L470): `pub fn tool_ranker(mut self, ranker: Arc<dyn ToolRanker>) -> Self`
+- [`tool_rules`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L201): `pub fn tool_rules(mut self, value: tinytools::ToolRules) -> Self`
+- [`workspace`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L378): `pub fn workspace(mut self, workspace: Workspace) -> Self`
+- [`workspace_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L392): `pub fn workspace_dir(mut self, dir: impl Into<PathBuf>) -> Self`
 
 <!-- Source: docs/gitbooks/en/developing/embed/api-index.md -->
 # API index
@@ -2917,6 +2927,8 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`Channels`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ChatMessage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ChatReply`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`CompactOptions`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`CompactOutcome`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Completer`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CompletionObserver`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CompletionRequest`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2927,6 +2939,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`Config`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ConfigSource`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ConfigurationInfo`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`ContextOverrides`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ControllerSchema`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreAgent`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreBootMode`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2939,7 +2952,6 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`CronReply`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CronSweepReport`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DEFAULT_MAX_AGENTS`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
-- [`DaemonConfig`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DefaultsInfo`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DefinitionBase`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`DirectProfileProvider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2972,6 +2984,8 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`McpAuthConfig`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`McpServer`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`MemoryBinding`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`MemoryBlockPrewarm`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`MemoryBlockSpec`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ModelDefaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`NoTenant`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`OpenError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2984,7 +2998,6 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`PhysicalDispatchStatus`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`PhysicalDispatchTerminal`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`PhysicalDispatchUsage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
-- [`PickListenPortError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ProfileError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ProfileEvents`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ProfileHandle`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2996,6 +3009,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`Provider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Provisioned`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ReasoningEffort`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`ReasoningReplay`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`RelayAccepted`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`RelayMessage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`RemoveAgent`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -3029,6 +3043,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`TokenSource`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Tool`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolAttachmentError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`ToolDiscoveryOptions`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolExposure`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolGroups`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ToolPolicy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -3072,6 +3087,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`providers`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`routing`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`run_from_args`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`sandbox`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`schema_for_rpc_method`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`seams`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`secret_storage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -3108,7 +3124,6 @@ The compiled capability report describes this build:
     "storage-mongodb": false,
     "storage-s3": false,
     "storage-sqlite": false,
-    "tinymemes": true,
     "voice": false,
     "web3": false
   },
@@ -3140,7 +3155,6 @@ The compiled capability report describes this build:
     "skills": "withheld",
     "storage": "withheld",
     "system": "withheld",
-    "tasks": "withheld",
     "web3": "withheld",
     "workflows": "withheld"
   },
@@ -3165,6 +3179,8 @@ The compiled capability report describes this build:
   "configuration": {
     "autonomy_enabled": true,
     "privacy": "Standard",
+    "prompt_screen_enforced": true,
+    "security_enforced": true,
     "secrets_encrypted": true,
     "cron_enabled": true,
     "learning": {
@@ -3199,10 +3215,10 @@ The compiled capability report describes this build:
 - [A per-agent post-turn hook observes completed turns](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/hooks.rs): A per-agent post-turn hook observes completed turns. (offline; optional live via OPENHUMAN_EXAMPLE_LIVE=1 and BASE_URL/API_KEY/MODEL.)
 - [Host tools and HostOnly keep the advertised tool catalog exact](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/host_tools.rs): Host tools and HostOnly keep the advertised tool catalog exact. (offline with loopback stubs; no live path.)
 - [Lean runtime without background services](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/lean_headless.rs): Lean runtime without background services. (offline with loopback stubs; optional live via OPENHUMAN_EXAMPLE_LIVE.)
-- [Linux agent fleet memory and latency](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs): Measure retained runtime-owned agents using loopback inference and two worker threads. (offline on Linux; use a fresh constrained cgroup for release measurements.)
-- [Connect an actual MCP protocol stub over loopback](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/mcp.rs): Connect an actual MCP protocol stub over loopback. (offline with loopback stubs; no live path.; feature: mcp)
+- [Linux agent fleet memory and latency](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs): Measure retained runtime-owned agents using loopback inference and two worker threads. (offline on Linux; use a fresh constrained cgroup for release measurements.; feature: mcp,storage-sqlite)
+- [Connect an actual MCP protocol stub over loopback](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/mcp.rs): Connect an actual MCP protocol stub over loopback. (offline with loopback stubs; no live path.; feature: mcp,storage-sqlite)
 - [Tenant scoped memory facade with an in-memory engine](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/memory.rs): Tenant scoped memory facade with an in-memory engine. (offline with loopback stubs; no live path.)
-- [SaaS profiles isolate conversation history](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/profiles.rs): SaaS profiles isolate conversation history. (offline with loopback stubs; no live path.; feature: channels)
+- [SaaS profiles isolate conversation history](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/profiles.rs): SaaS profiles isolate conversation history. (offline with loopback stubs; no live path.; feature: channels,storage-sqlite)
 - [Hello agent: a prompt in and a reply out](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/run_turn.rs): Hello agent: a prompt in and a reply out. (offline; optional live via OPENHUMAN_EXAMPLE_LIVE=1 and BASE_URL/API_KEY/MODEL.)
 - [Runtime lifecycle events and live hook registration](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/runtime_events.rs): Observe ordered metadata and add/remove a runtime-wide hook while agents keep running. (offline with a loopback provider; no live path.)
 - [Access tiers and explicit sandbox choices](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/sandbox_access.rs): Access tiers and explicit sandbox choices. (offline with loopback stubs; no live path.)

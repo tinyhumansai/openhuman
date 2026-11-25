@@ -224,13 +224,17 @@ fn desktop_boot_reads_a_preserved_existing_v1_profile_database() {
                         owner_workspace,
                     );
                     let approvals =
-                        openhuman_core::security::approval::store::list_pending(&config).unwrap();
+                        openhuman_core::security::approval::rpc::approval_list_recent_decisions(
+                            Some(10),
+                        )
+                        .await
+                        .expect("the approval history is imported through TinySecurity");
                     assert_eq!(
-                        approvals.len(),
+                        approvals.value.len(),
                         1,
-                        "approval owner did not read the v1 database record"
+                        "TinySecurity did not import the v1 approval history"
                     );
-                    assert_eq!(approvals[0].request_id, "fixture-approval");
+                    assert_eq!(approvals.value[0].request_id, "fixture-approval");
                     let flows = openhuman_core::flows::ops::flows_list(&config)
                         .await
                         .unwrap();

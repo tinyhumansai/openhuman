@@ -48,7 +48,7 @@ async fn call<R: DeserializeOwned>(
 
 /// The `StoreConfig` for `config`: the scope's document port and the host's
 /// history and batch limits.
-async fn store_config(config: &Config, scope: &DocScope) -> Result<StoreConfig> {
+pub(crate) async fn store_config(config: &Config, scope: &DocScope) -> Result<StoreConfig> {
     Ok(StoreConfig {
         backend: StoreBackend::Documents {
             callback: documents_port::address(scope).await?,

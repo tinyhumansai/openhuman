@@ -128,10 +128,7 @@ async fn managed_stream_retries_a_proxy_completion_without_visible_text() {
         seed_app_session(tmp.path());
         let (addr, calls) = spawn_recovering_sse_proxy(first_delta).await;
         let mut harness: AgentHarness<()> = AgentHarness::new();
-        harness.register_model(
-            "managed",
-            std::sync::Arc::new(backend_pointed_at(&addr, tmp.path())),
-        );
+        harness.with_model(std::sync::Arc::new(backend_pointed_at(&addr, tmp.path())));
         harness.with_policy(RunPolicy {
             empty_response_retries: 1,
             ..RunPolicy::default()

@@ -64,6 +64,18 @@ OpenHuman's desktop UI is a React 19 app (`app/src/`) that:
 - Leaves AI prompts to the core: bundled `crates/openhuman-core/src/agent/prompts` ship as Tauri resources (see `crates/openhuman-app/tauri.conf.json` resources) and are read core-side, not by the frontend
 - Uses a minimal MCP-style helper layer under `lib/mcp/` (transport, validation)
 
+Chat messages use the core's typed content contract. Attachment uploads are
+accepted by the core, which stores them and returns opaque references for the
+message; the frontend does not persist local paths or inline media bytes as
+conversation content. The core resolves those references within the trusted
+turn context before calling a model. Web chat, TUI, and relayed web progress
+share the TinyChannels compiled web-output projection; provider delivery keeps
+its separate channel terminal event. TinyChannels v2 owns the canonical typed
+web-event schema and projection, while TinyAgents owns generic chat turn
+admission and queue mechanics. OpenHuman's core adapts both to its RPC, socket,
+session, approval, and process-event-bus boundaries; the frontend consumes the
+resulting event contract and does not implement provider or agent-runner logic.
+
 ### Entry points
 
 | File                    | Purpose                                                                          |
@@ -247,7 +259,7 @@ const result = await apiClient.post<LoginResponse>("/auth/login", {
 
 - `authApi` / `userApi`: auth + user profile
 - `threadApi`, `threadUsageApi`: chat threads
-- `agentTeamApi`, `agentWorkApi`, `subagentApi`: agents
+- `agentWorkApi`, `subagentApi`: agents
 - `skillsApi`, `skillRegistryApi`, `flowsApi`, `workflowRunsApi`: skills & automation
 - `channelConnectionsApi`, `mcpClientsApi`, `mcpSetupApi`, `tunnelsApi`: connections
 - `memoryApi`: Memory v2 RPC wrappers (`openhuman.memory_*`)
@@ -427,7 +439,7 @@ are not separately exported components from the npm runtime package.
 | Queued follow-ups                              | `ComposerPrimitive.Queue`, `QueueItemPrimitive.Text`, `Remove`                       | Core run-queue adapter and translated registry row captions                                                          |
 | Markdown, code and citations                   | `MarkdownTextPrimitive` and registry elements                                        | Source projection, app links, math and artifact access                                                               |
 | Reasoning and tool groups                      | `MessagePrimitive.GroupedParts`, registry tool-group/reasoning elements              | Core timing and grouping interleaved reasoning with calls                                                            |
-| Tasks and subagents                            | Registry task-card/subagent-list, `ReadonlyThreadProvider`                           | Delegation state, awaiting-user replies and worktree actions                                                         |
+| Tasks and subagents                            | Registry task-card/subagent-list, `ReadonlyThreadProvider`                           | Delegation state and awaiting-user replies                                                         |
 | Approvals, questions and plans                 | Registry approval-card, elicitation-form and agent-plan                              | Core decision RPCs, security policy and plan/workflow lifecycle                                                      |
 | Todos and goals                                | Registry todo-list and agent-status                                                  | Durable harness progress and remembered disclosure state                                                             |
 | Images, documents and tool results             | Registry image, artifact-card, web-search, terminal-block, code-diff and web-preview | Core artifact and tool-result projection                                                                             |

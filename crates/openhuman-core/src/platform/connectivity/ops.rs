@@ -1,7 +1,7 @@
 //! Pure helpers for the connectivity diag controller.
 //!
 //! These are intentionally tiny so they can be unit-tested in isolation
-//! without spinning up the global `SocketManager`. The RPC handler in
+//! without installing the global `SocketPort`. The RPC handler in
 //! `rpc.rs` composes them.
 
 use std::io::ErrorKind;

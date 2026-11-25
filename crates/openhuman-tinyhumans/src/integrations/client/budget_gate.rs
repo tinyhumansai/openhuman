@@ -24,7 +24,7 @@ use crate::backend::url::effective_backend_api_url;
 use crate::client::BackendClient;
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::core::Outcome;
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
 /// Fetch `GET /teams/me/usage` for the pre-call probe with an
 /// already-resolved credential. `flatten_authed_error` keeps the typed 401 on
@@ -128,7 +128,10 @@ where
 /// document behind the shared failure backoff.
 async fn probe_usage(config: &Config) -> Result<Value, String> {
     let credential =
-        openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential(config)?;
+        openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential(
+            config,
+        )
+        .await?;
     let backend_key = effective_backend_api_url(&config.api_url);
     usage_with_failure_backoff(&backend_key, || fetch_usage(config, credential))
         .await

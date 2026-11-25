@@ -58,6 +58,7 @@ async fn legacy_migration_does_not_grant_private_file_or_disabled_image_access()
     let external_scope = AttachmentAccessScope {
         external_channel: true,
         workspace: None,
+        ..Default::default()
     };
     assert!(
         legacy::migrate_from(&cfg, source.to_str().unwrap(), &stash, &external_scope)
@@ -189,6 +190,9 @@ fn config(root: &Path) -> Config {
     }
 }
 
+// Refusing the unrelated file is enforced security: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn ready_media_artifact_in_files_folder_can_be_attached() {
     let temp = tempfile::tempdir().unwrap();
@@ -412,6 +416,7 @@ async fn explicit_workspace_wins_over_config_action_dir() {
     let scope = AttachmentAccessScope {
         external_channel: false,
         workspace: Some(scoped.clone()),
+        ..Default::default()
     };
     let attachment = save(&config, "thread", "file", "text/plain", b"original", &scope)
         .await
@@ -427,4 +432,67 @@ fn enriched_plain_turn_reloads_with_identical_text_blocks() {
     let row = tinyagents_runtime::transcript::message_to_native_transcript(&enriched).unwrap();
     let replayed = crate::agent::message_convert::chat_message_to_message(&row);
     assert_eq!(replayed, enriched);
+}
+
+/// Accepts one plain HTTP proxy request and returns its request line.
+async fn record_one_proxy_request(listener: tokio::net::TcpListener) -> String {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let (mut stream, _) = listener.accept().await.unwrap();
+    let mut head = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+        let n = stream.read(&mut buf).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        head.extend_from_slice(&buf[..n]);
+    }
+    stream
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&head)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[tokio::test]
+async fn fetch_client_follows_the_attachment_proxy_service_not_ollama() {
+    use crate::config::schema::{ProxyConfig, ProxyScope};
+    use crate::config::{runtime_proxy_config, set_runtime_proxy_config};
+
+    let _env = crate::config::TEST_ENV_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let recorder = tokio::spawn(record_one_proxy_request(listener));
+
+    let previous = runtime_proxy_config();
+    set_runtime_proxy_config(ProxyConfig {
+        enabled: true,
+        http_proxy: Some(proxy),
+        // Only attachment traffic: the runtime proxy is process-global.
+        scope: ProxyScope::Services,
+        services: vec!["inference.attachment".into()],
+        ..ProxyConfig::default()
+    });
+    let fetched = fetch_client()
+        .get("http://attachment.invalid/photo.png")
+        .send()
+        .await;
+    set_runtime_proxy_config(previous);
+
+    if fetched.is_err() {
+        recorder.abort();
+    }
+    assert!(
+        fetched.is_ok(),
+        "attachment fetch client bypassed the inference.attachment proxy: {fetched:?}"
+    );
+    let request_line = recorder.await.unwrap();
+    assert!(
+        request_line.starts_with("GET http://attachment.invalid/photo.png"),
+        "proxy saw an unexpected request: {request_line}"
+    );
 }

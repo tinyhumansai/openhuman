@@ -15,7 +15,7 @@
 //! `conversations` module, and the import below is the only line that changed for it. The item set is
 //! the same one the engine exported, so function signatures, argument order,
 //! error strings and the `[conversations]` log prefix stay byte-identical —
-//! `web_chat::run_task` and the RPC layer read them.
+//! `web_chat::turn_host` and the RPC layer read them.
 //!
 //! Every store entry point is synchronous and does fsync'd JSONL file IO. The
 //! store now coordinates lifecycle per conversation root, shared metadata per

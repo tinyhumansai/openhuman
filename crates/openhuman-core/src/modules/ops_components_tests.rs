@@ -43,6 +43,15 @@ fn disabled_lib_stems_cover_only_disabled_modules() {
     assert!(disabled_lib_stems(&Config::default()).is_empty());
 }
 
+#[test]
+fn disabled_lib_stems_cover_the_released_library_name() {
+    // A downloaded release is `lib<id>_module`, which differs from `lib_name`
+    // for modules such as tinysearch; a disabled one must still be skipped.
+    let stems = disabled_lib_stems(&config_without("search"));
+    assert!(stems.contains(&"libtinysearch_module".to_string()));
+    assert!(stems.contains(&"tinysearch_module".to_string()));
+}
+
 #[cfg(feature = "web3")]
 #[tokio::test]
 async fn a_disabled_wallet_never_loads_the_tinywallet_module() {

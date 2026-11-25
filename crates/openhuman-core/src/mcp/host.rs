@@ -108,7 +108,7 @@ pub fn agent_close_pending(workspace_dir: &std::path::Path, agent_id: &str) -> b
 }
 
 /// Converts the MCP section of product configuration to the module contract.
-pub fn client_config(config: &Config) -> tinymcp_bus::McpClientConfig {
+pub async fn client_config(config: &Config) -> tinymcp_bus::McpClientConfig {
     let mut client = tinymcp_bus::McpClientConfig {
         enabled: config.mcp_client.enabled,
         servers: config
@@ -131,7 +131,7 @@ pub fn client_config(config: &Config) -> tinymcp_bus::McpClientConfig {
     // are never `operator_trusted`: tinymcp refuses to start them unless the
     // host supplies the jail. The toolchain grants TinyBox resolves are added
     // when the config is opened (`module_port`), since they need an async call.
-    client.stdio_sandbox = super::host_sandbox::stdio_sandbox(config);
+    client.stdio_sandbox = super::host_sandbox::stdio_sandbox(config).await;
 
     // GitBooks uses dedicated deferred tools and is not part of the configured
     // server set, so first-turn tool assembly never dials it for a catalog.
@@ -156,9 +156,12 @@ fn credentialed_endpoint_transport_allowed(server: &crate::config::McpServerConf
     if url.scheme() == "https" || !matches!(url.scheme(), "http") {
         return true;
     }
-    let loopback = url
-        .host_str()
-        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
+    let loopback = match url.host() {
+        Some(url::Host::Domain(host)) => host == "localhost",
+        Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
+        Some(url::Host::Ipv6(addr)) => addr.is_loopback(),
+        None => false,
+    };
     if loopback {
         return true;
     }

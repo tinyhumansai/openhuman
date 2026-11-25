@@ -207,6 +207,25 @@ describe('ChatMascotOverlay', () => {
     expect(screen.getAllByTestId('mascot-rive')).toHaveLength(1);
   });
 
+  it('ignores cleanup from an older replay owner after another reply takes over', () => {
+    renderOverlay(true);
+    const publish = (owner: string, active: boolean, viseme: string, claim = false) =>
+      window.dispatchEvent(
+        new CustomEvent('voice-note-mascot', { detail: { owner, active, viseme, claim } })
+      );
+
+    act(() => publish('reply-a', true, 'aa', true));
+    expect(screen.getByTestId('mascot-rive')).toHaveAttribute('data-viseme', 'aa');
+    act(() => publish('reply-b', true, 'PP', true));
+    expect(screen.getByTestId('mascot-rive')).toHaveAttribute('data-viseme', 'PP');
+    act(() => publish('reply-a', true, 'oo'));
+    expect(screen.getByTestId('mascot-rive')).toHaveAttribute('data-viseme', 'PP');
+    act(() => publish('reply-a', false, 'sil'));
+    expect(screen.getByTestId('mascot-rive')).toHaveAttribute('data-viseme', 'PP');
+    act(() => publish('reply-b', false, 'sil'));
+    expect(screen.getByTestId('mascot-rive')).toHaveAttribute('data-viseme', 'sil');
+  });
+
   it('stays hidden until an anchor is measurable, then lands on it', () => {
     // The dock can mount after the overlay. A ResizeObserver can only watch
     // elements that already exist, so without the poll a late anchor would

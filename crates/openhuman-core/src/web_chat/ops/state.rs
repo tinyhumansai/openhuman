@@ -4,35 +4,20 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::core::runtime::DispatchCtx;
 
-use super::super::types::{InFlightEntry, ParallelEntry, SessionEntry};
+use super::super::runner::{runtime, scope_of};
+use super::super::types::SessionEntry;
 
 type ThreadSessions = Mutex<HashMap<String, SessionEntry>>;
-type InFlight = Mutex<HashMap<String, InFlightEntry>>;
-type ParallelInFlight = Mutex<HashMap<String, ParallelEntry>>;
 
 /// The current agent context's per-thread session cache.
 pub(crate) fn thread_sessions(ctx: &DispatchCtx) -> Arc<ThreadSessions> {
     crate::core::runtime::slot_for::<ThreadSessions>(ctx)
-}
-
-/// The current agent context's primary in-flight turns, keyed by thread.
-pub(crate) fn in_flight(ctx: &DispatchCtx) -> Arc<InFlight> {
-    crate::core::runtime::slot_for::<InFlight>(ctx)
-}
-
-/// Parallel (forked) turns, keyed by `request_id`. A separate lane from
-/// [`in_flight`] (which holds one primary, interrupt-able turn per thread) so
-/// any number of concurrent `QueueMode::Parallel` turns can run on the same
-/// thread without touching interrupt/steer/queue semantics.
-pub(crate) fn parallel_in_flight(ctx: &DispatchCtx) -> Arc<ParallelInFlight> {
-    crate::core::runtime::slot_for::<ParallelInFlight>(ctx)
 }
 
 /// The map key for `thread_id` in the calling scope.
@@ -103,31 +88,6 @@ pub(crate) fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
     .to_string()
 }
 
-/// Cooperatively cancel an in-flight turn, with a hard `abort()` backstop.
-///
-/// Cancelling the token makes the turn's `tokio::select!` arm fire, dropping
-/// the turn future at its next await point (cancelling the in-flight LLM
-/// request and releasing locks cleanly). The detached backstop hard-aborts the
-/// task only if it has not finished unwinding within a short grace period, so a
-/// wedged turn can never leak. Returns the cancelled turn's request id.
-pub(crate) fn cancel_in_flight_gracefully(entry: InFlightEntry) -> String {
-    let request_id = entry.request_id.clone();
-    entry.cancel_token.cancel();
-    let mut handle = entry.handle;
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = &mut handle => {}
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                log::warn!(
-                    "[web-channel] cooperative cancel did not finish within grace period — hard-aborting backstop"
-                );
-                handle.abort();
-            }
-        }
-    });
-    request_id
-}
-
 pub async fn invalidate_thread_sessions(ctx: &DispatchCtx, thread_id: &str) {
     // Under an embedded agent or a profile only that tenant's entry goes.
     // Outside both every entry for the thread in the current table goes.
@@ -190,57 +150,51 @@ pub(crate) async fn lock_thread_sessions_for_test(ctx: &DispatchCtx) -> impl Sen
 }
 
 /// The thread ids (as the caller chose them) with a primary or parallel turn
-/// in the calling context's tables.
+/// in the calling context's runner.
 pub(crate) async fn live_thread_ids(ctx: &DispatchCtx) -> Vec<String> {
-    let mut threads: Vec<String> = in_flight(ctx)
-        .lock_owned()
+    let scope = scope_of(ctx);
+    let mut threads: Vec<String> = runtime(ctx)
+        .runner
+        .live_turns()
         .await
-        .keys()
-        .map(|key| unscope(ctx, key))
+        .into_iter()
+        .filter(|turn| turn.scope == scope)
+        .map(|turn| turn.thread_id)
         .collect();
-    threads.extend(
-        parallel_in_flight(ctx)
-            .lock_owned()
-            .await
-            .values()
-            .map(|entry| unscope(ctx, &entry.thread_id)),
-    );
     threads.sort();
     threads.dedup();
     threads
 }
 
-/// Test seam: track `cancel` as a parallel turn on `thread_id` in the
-/// calling context's tables, so callers can watch a teardown reach it.
-#[cfg(test)]
-pub(crate) async fn track_parallel_turn_for_test(
-    ctx: &DispatchCtx,
-    thread_id: &str,
-    request_id: &str,
-    cancel: tokio_util::sync::CancellationToken,
-) {
-    let watched = cancel.clone();
-    let handle = ctx.spawn(async move { watched.cancelled().await });
-    parallel_in_flight(ctx).lock_owned().await.insert(
-        key_for(ctx, request_id),
-        ParallelEntry {
-            thread_id: key_for(ctx, thread_id),
-            client_id: "test-client".to_string(),
-            handle,
-            cancel_token: cancel,
-        },
-    );
-}
-
+/// Test accessor: `(thread key, request_id)` of every primary turn in flight
+/// in the calling context.
 pub async fn in_flight_entries_for_test(ctx: &DispatchCtx) -> Vec<(String, String)> {
-    let guard = in_flight(ctx).lock_owned().await;
-    guard
-        .iter()
-        .map(|(k, v)| (k.clone(), v.request_id.clone()))
+    let scope = scope_of(ctx);
+    runtime(ctx)
+        .runner
+        .live_turns()
+        .await
+        .into_iter()
+        .filter(|turn| turn.scope == scope && !turn.parallel)
+        .map(|turn| (key_for(ctx, &turn.thread_id), turn.request_id))
         .collect()
 }
 
-/// Test-only host-routing seam: drain one lane from the active turn's real
+/// Test accessor: `(request_id, thread key)` for every in-flight parallel turn.
+#[cfg(any(test, debug_assertions))]
+pub async fn parallel_in_flight_entries_for_test(ctx: &DispatchCtx) -> Vec<(String, String)> {
+    let scope = scope_of(ctx);
+    runtime(ctx)
+        .runner
+        .live_turns()
+        .await
+        .into_iter()
+        .filter(|turn| turn.scope == scope && turn.parallel)
+        .map(|turn| (turn.request_id, key_for(ctx, &turn.thread_id)))
+        .collect()
+}
+
+/// Test-only host-routing seam: take one lane from the active turn's real
 /// TinyAgents queue so acceptance tests can assert that web metadata survives
 /// queue admission. Production code only observes this queue through its
 /// status and terminal dispatch paths.
@@ -250,21 +204,15 @@ pub async fn drain_queued_turns_for_test(
     thread_id: &str,
     lane: tinyagents_harness::run_queue::QueueLane,
 ) -> Vec<crate::agent::queued_turn::QueuedTurn> {
-    let guard = in_flight(ctx).lock_owned().await;
-    match guard.get(&key_for(ctx, thread_id)) {
-        Some(entry) => entry.run_queue.drain(lane).await,
-        None => Vec::new(),
-    }
-}
-
-/// Test accessor: `(request_id, thread_id)` for every in-flight parallel turn.
-#[cfg(any(test, debug_assertions))]
-pub async fn parallel_in_flight_entries_for_test(ctx: &DispatchCtx) -> Vec<(String, String)> {
-    let guard = parallel_in_flight(ctx).lock_owned().await;
-    guard
-        .iter()
-        .map(|(request_id, entry)| (request_id.clone(), entry.thread_id.clone()))
-        .collect()
+    runtime(ctx)
+        .runner
+        .take_queued(
+            &scope_of(ctx),
+            thread_id,
+            lane,
+            tinyagents_harness::run_queue::QueueMode::All,
+        )
+        .await
 }
 
 /// Whether a cancel request should tear down the turn currently in flight for a

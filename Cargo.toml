@@ -30,7 +30,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.64.18"
+version = "0.64.20"
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/tinyhumansai/openhuman"
@@ -44,6 +44,7 @@ openhuman-rpc = { path = "crates/openhuman-rpc", default-features = false }
 openhuman-embed = { path = "crates/openhuman-embed", default-features = false }
 openhuman-tinyhumans = { path = "crates/openhuman-tinyhumans", default-features = false }
 tinyagents-hooks = { path = "vendor/tinyagents/crates/tinyagents-hooks", default-features = false }
+tinyagents-harness-tools = { path = "vendor/tinyagents/crates/tinyagents-harness-tools", default-features = false }
 
 # Patches are workspace-root settings; Cargo ignores them in member manifests.
 [patch."https://github.com/tinyhumansai/tinytools"]
@@ -52,7 +53,6 @@ tinyagents-hooks = { path = "vendor/tinyagents/crates/tinyagents-hooks", default
 # every host tool link — so there is exactly one `tinytools` package and one
 # `Tool` trait. Without this, MCP tools would not satisfy the harness's trait.
 tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
-tinytools-std = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 tinytools-agent = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
 
 [patch."https://github.com/tinyhumansai/tinybus"]
@@ -73,11 +73,9 @@ tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
 tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
 
 [patch."https://github.com/tinyhumansai/tinystoragedrivers"]
-# One editable checkout every module resolves onto. The v2 repository splits
-# the public facade, API, types and primitive implementations into separate
-# packages; only packages that exist in the pinned v2 checkout are patched.
-# scripts/ci/check-storage-owner.mjs enforces that resolved TSD packages stay
-# under this vendor directory.
+# Both canonical and fork module manifests can name TSD by Git. Resolve both
+# source identities to the one editable fork checkout below so every module
+# shares the same v2 types and bus contracts.
 tinystoragedrivers = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers" }
 tinystoragedrivers-api = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
 tinystoragedrivers-blob = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }
@@ -92,8 +90,6 @@ tinystoragedrivers-testkit = { path = "vendor/tinystoragedrivers/crates/tinystor
 tinystoragedrivers-types = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
 
 [patch."https://github.com/senamakel/tinystoragedrivers"]
-# The v2.1.0 owner APIs are published from the migration fork while the host
-# consumes their canonical module sources from the same pinned vendor tree.
 tinystoragedrivers = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers" }
 tinystoragedrivers-api = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
 tinystoragedrivers-blob = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }
@@ -108,7 +104,7 @@ tinystoragedrivers-testkit = { path = "vendor/tinystoragedrivers/crates/tinystor
 tinystoragedrivers-types = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
 
 [patch."https://github.com/tinyhumansai/tinyinference"]
-# tinymemes depends on the Jev client by git; resolve it to the vendored copy.
+# tinycomputer depends on the Jev client by git; resolve it to the vendored copy.
 tinyinference-decisions = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-decisions" }
 tinyinference-core = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-embeddings = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }

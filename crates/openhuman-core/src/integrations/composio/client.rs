@@ -19,6 +19,8 @@ mod network;
 #[path = "client_tests.rs"]
 mod tests;
 
+#[cfg(feature = "flows")]
+pub(crate) use credential::is_loopback_http_url;
 pub use credential::DirectCredential;
 pub use direct::direct_list_connections;
 #[cfg(test)]

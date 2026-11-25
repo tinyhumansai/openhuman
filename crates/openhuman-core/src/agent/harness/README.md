@@ -2,9 +2,12 @@
 
 Product shell around the tinyagents tool loop. The model/tool iteration
 itself runs in `crate::agent::tinyagents` (via
-`TurnSpec::run`); this module owns everything OpenHuman
-layers on top: sub-agent definitions, parent/child context plumbing, post-turn
-memory/archival hooks, and oversized-tool-result handling.
+`TurnSpec::run`). This module owns sub-agent definitions, post-turn
+memory/archival hooks, and oversized-tool-result handling. The channel/CLI
+turn driver lives with channel runtime at
+[`../../channels/runtime/turn_driver.rs`](../../channels/runtime/turn_driver.rs).
+Parent execution snapshots live with the sub-agent host in
+[`../subagent_host/fork_context.rs`](../subagent_host/fork_context.rs).
 
 `Agent`, its per-turn lifecycle, and transcript persistence live in
 [`../session_host/`](../session_host/), not here; this module supplies the definition/prompt data
@@ -14,7 +17,7 @@ Cancellation is the tinyagents steering channel (`SteeringCommand` in
 `crate::agent::tinyagents`); there is no in-house interrupt fence or
 cancellation token owned here. The message queue that lets a caller steer or
 follow up on an in-flight turn is `tinyagents_harness::run_queue::RunQueue`,
-used here (not defined here) by [`fork_context.rs`](./fork_context.rs).
+carried by the parent snapshot in [`../subagent_host/fork_context.rs`](../subagent_host/fork_context.rs).
 
 ## Responsibilities
 
@@ -24,13 +27,6 @@ used here (not defined here) by [`fork_context.rs`](./fork_context.rs).
   `../subagent_host/`, which implements the TinyAgents sub-agent lifecycle
   traits directly. This module does not export a compatibility runner of its
   own.
-- Define the parent snapshot a spawned tool receives on its run context
-  (`fork_context.rs`). Recursion facts come from TinyAgents’
-  public run context, including depth imported over MCP.
-  Sandbox mode is carried explicitly by `OpenHumanRunContext` into the typed
-  tool execution context.
-- Run the channel/CLI turn graph ([`graph.rs`](./graph.rs)); all sub-agents use
-  the shared sub-agent turn graph.
 - Offload oversized worker artifacts to the filesystem, and persist oversized
   tool results as action-workspace artifacts (`artifact_offload/`,
   `tool_result_artifacts/`).
@@ -39,8 +35,6 @@ used here (not defined here) by [`fork_context.rs`](./fork_context.rs).
 
 | Module | Role |
 | --- | --- |
-| `fork_context.rs` | The `ParentExecutionContext` snapshot a spawning agent hands to sub-agents, carried explicitly on the run context. `fork_context.rs` also carries the `RunQueue` handle (from `tinyagents_harness::run_queue`) down to a forked turn. |
-| `graph.rs` | `run_channel_turn_via_graph` (`pub(crate)`): the channel/CLI turn graph, thin over `TurnSpec::run`; called by the `agent.run_turn` native-bus handler in [`agent/bus.rs`](../bus.rs). |
 | `artifact_offload/` | The `outputs/` / `workspace/` convention under `action_dir`: prompt half (`contract.rs`) and host policy half (`policy.rs`); mechanics (thresholds, path resolution, pointer rendering, the writer) live in `tinyagents_harness::artifacts` and are re-exported here. |
 | `tool_result_artifacts/` | Wiring only: `new_tool_result_store` hands `tinyagents_harness::artifacts::tool_results` OpenHuman's redactor (`SanitizingRedactor`), `file_read`/`use_skill` names and `FileReadTool::MAX_FILE_SIZE_BYTES`. The store, `[tool_result_preview]` envelope, budgets and paged reads live in the crate. |
 | `required_output.rs` | Pure validate/repair/synthesize primitives (issue #4117) that guarantee a required structured-output block (for example a `thoughts` JSON block) on every accepted turn. The orchestration that calls these lives on the session in [`../session_host/turn/`](../session_host/turn/). |
@@ -53,9 +47,6 @@ What `harness/mod.rs` actually re-exports:
 - `AgentDefinition`, `AgentDefinitionRegistry`, `DefinitionSource`,
   `ModelSpec`, `PromptSource`, `SandboxMode`, `ToolScope`: the sub-agent
   archetype data model.
-- `ParentExecutionContext` and its accessors (`current_parent`,
-  `with_parent_context`, `AgentContextPreparedSource`):
-  parent runtime context for spawned tools.
 Sandbox policy lives on the explicit host operation context. Briefing task
 recency belongs to ``OpenHumanRunExt` (agent/tinyagents/host/run_context.rs)`.
 - `artifact_offload::{...}`: reached only via the `artifact_offload::` path
@@ -63,8 +54,8 @@ recency belongs to ``OpenHumanRunExt` (agent/tinyagents/host/run_context.rs)`.
 
 Adjacent public surface that lives in sibling modules, not here:
 `OpenHumanSessionHost`/`SessionHostBuilder`/`TurnOverrides` and the `Agent`
-turn lifecycle are in `../session_host/`; `run_subagent`,
-`SubagentRunOptions`, `SubagentRunError` are in `../subagent_host/`;
+turn lifecycle are in `../session_host/`; `OpenHumanSubagentHost`,
+`SubagentRunOptions`, and `SubagentRunError` are in `../subagent_host/`;
 `LastTurnUsage`/`SubagentUsageEntry` are in [`../tinyagents/host/run_context.rs`](../tinyagents/host/run_context.rs).
 
 ## Dependencies
@@ -85,23 +76,23 @@ turn lifecycle are in `../session_host/`; `run_subagent`,
 - `crate::memory`: text
   sanitization (`artifact_offload::SanitizingRedactor` wraps `memory::safety::sanitize_text` for both artifact stores).
 - `crate::config::AgentConfig`, `crate::skills::Workflow`,
-  `crate::tools::{Tool, ToolSpec}`: runtime context carried through
-  `fork_context::ParentExecutionContext`.
+  `crate::tools::{Tool, ToolSpec}`: inputs consumed by the session and
+  sub-agent hosts.
 
 ## Used by
 
 - `../session_host/` and `../subagent_host/` build turns from the
-  definitions, prompt data, and parent context types this module supplies.
+  definitions and prompt data this module supplies; parent context types are
+  owned by `../subagent_host/`.
 - `agent/bus.rs` serves the `agent.run_turn` native request through
-  `run_channel_turn_via_graph`; channels reach the harness through that bus.
+  `run_channel_turn` in [`channels/runtime/turn_driver.rs`](../../channels/runtime/turn_driver.rs);
+  channels reach it through that bus.
 - [`channels/runtime/dispatch/routing.rs`](../../channels/runtime/dispatch/routing.rs) consults
   `AgentDefinitionRegistry`/`ToolScope`.
 - `agent/tinyagents/middleware/credential_scrub.rs` calls
   `harness::credentials::scrub_credentials` on every tool result.
-- `agent/orchestration/tools/*` (`spawn_subagent`, `spawn_parallel_agents`,
-  `spawn_async_subagent`, `continue_subagent`, `steer_subagent`, and friends)
-  call into `../subagent_host/` and take this module's parent context
-  explicitly.
+- `agent/orchestration/tools/*` (`spawn_subagent`)
+  call into `../subagent_host/` and take its parent context explicitly.
 
 ## Tests
 

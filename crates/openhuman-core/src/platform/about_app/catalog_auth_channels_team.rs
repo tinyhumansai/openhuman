@@ -148,7 +148,9 @@ Capability {
         name: "Connect Messaging Platforms",
         domain: "channels",
         category: CapabilityCategory::Channels,
-        description: "Connect supported messaging platforms such as Telegram or Discord.",
+        description: "Connect supported messaging platforms such as Telegram or Discord. \
+                      Threads, reactions, typing indicators, media, and voice depend on \
+                      each configured provider's declared capabilities.",
         how_to: "Connections > Channels",
         status: CapabilityStatus::Beta,
         privacy: None,

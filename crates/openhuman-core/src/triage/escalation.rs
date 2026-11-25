@@ -5,23 +5,19 @@
 //! - **`drop`** — log only, publish `TriggerEvaluated`.
 //! - **`acknowledge`** — log + publish `TriggerEvaluated`. (Memory-write
 //!   for ack is a future addition.)
-//! - **`react`** — dispatch the `trigger_reactor` sub-agent via
-//!   [`run_subagent`], publish `TriggerEvaluated` + `TriggerEscalated`.
-//! - **`escalate`** — dispatch the `orchestrator` sub-agent, same
-//!   events.
+//! - **`react`** — run one direct `trigger_reactor` agent turn and publish
+//!   `TriggerEvaluated` + `TriggerEscalated`.
+//! - **`escalate`** — run one direct `orchestrator` agent turn, same events.
 //!
-//! `react`/`escalate` build a full [`Agent`] from config so they have
-//! a real provider, tool registry, and memory backing — the same
-//! construction path `agent_chat` uses. A [`ParentExecutionContext`] is
-//! carried explicitly into [`run_subagent`] so it can inherit the provider
-//! and tools.
+//! `react`/`escalate` run the target definition through the in-process agent
+//! chat path, preserving its configured model, tools, and memory without
+//! creating child-task lifecycle records.
 
 use crate::core::runtime::DispatchCtx;
 use anyhow::{anyhow, Context};
 
-use crate::agent::harness::fork_context::ParentExecutionContext;
-use crate::agent::orchestration::parent_context::build_root_parent;
-use crate::agent::subagent_host::{self, SubagentRunOptions};
+use super::parent_context::build_root_parent;
+use crate::agent::subagent_host::ParentExecutionContext;
 use crate::agent_registry::host_definition::AgentDefinitionRegistry;
 use crate::config::Config;
 
@@ -209,15 +205,6 @@ pub async fn apply_decision(
     Ok(())
 }
 
-/// Build a full [`Agent`] from config, install a [`ParentExecutionContext`]
-/// on the task-local, and call [`run_subagent`] with the named definition
-/// and prompt.
-///
-/// This is heavier than a simple `agent.run_turn` bus call — it creates a
-/// provider, memory store, tool registry, and all the machinery `Agent`
-/// normally needs. The cost is acceptable because `react`/`escalate`
-/// triggers are relatively rare (most triggers are `drop`/`acknowledge`)
-/// and the construction is the same O(1) code path `agent_chat` uses.
 /// Build the triage root parent: the shared [`build_root_parent`] context with
 /// nested spawns scoped to the single dispatched target agent.
 ///
@@ -253,7 +240,7 @@ async fn dispatch_target_agent(
         ));
     }
 
-    let config = crate::config::ops::load_current_or_init(ctx)
+    let mut config = crate::config::ops::load_current_or_init(ctx)
         .await
         .context("loading config for sub-agent dispatch")?;
 
@@ -267,36 +254,67 @@ async fn dispatch_target_agent(
         .get(agent_id)
         .ok_or_else(|| anyhow!("agent definition `{agent_id}` not found in registry"))?;
 
+    let (turn_model_source, model) = crate::agent::subagent_host::resolve_subagent_source(
+        &definition.model,
+        &definition.id,
+        Some(&config),
+        parent_ctx.turn_model_source.clone(),
+        parent_ctx.model_name.clone(),
+        !definition.subagents.is_empty(),
+        None,
+        definition.temperature,
+    )
+    .await;
+
+    // Synchronous child runs strip nested delegation tools regardless of the
+    // target definition's allowlist. Keep that same authority boundary.
+    let mut direct_definition = definition.clone();
+    direct_definition
+        .disallowed_tools
+        .extend(["spawn_subagent".to_string(), "delegate_*".to_string()]);
+
     tracing::debug!(
         agent_id = %agent_id,
-        model = %parent_ctx.model_name,
+        model = %model,
         tool_count = parent_ctx.all_tools.len(),
-        "[triage::escalation] dispatching run_subagent with parent context"
+        "[triage::escalation] dispatching direct agent turn"
     );
 
-    let outcome = subagent_host::run_subagent(
-        definition,
+    let outcome = crate::agent_runs::agent_chat::agent_chat_for_with_turn_model_source(
+        &mut config,
+        crate::inference::host_runtime::ops::AgentChatTarget::Definition {
+            definition: &direct_definition,
+            host: None,
+            seed: None,
+            usage: None,
+            host_only: false,
+            untrusted_input: false,
+            shape: None,
+            observer: None,
+            attachments: &[],
+        },
         prompt,
-        SubagentRunOptions {
-            run_context: crate::agent::tinyagents::host::OpenHumanRunContext::new()
-                .with_core(ctx.core().cloned())
-                .with_host_env(&parent_ctx.host_env)
-                .with_parent(parent_ctx),
+        None,
+        Some(direct_definition.temperature),
+        None,
+        None,
+        None,
+        crate::inference::host_runtime::ops::AgentChatEnv {
+            host: parent_ctx.host_env.clone(),
             ..Default::default()
         },
+        (turn_model_source, model),
     )
     .await
-    .map_err(|e| anyhow!("run_subagent(`{agent_id}`) failed: {e}"))?;
+    .map_err(|e| anyhow!("agent_chat_for({agent_id}) failed: {e}"))?;
 
     tracing::debug!(
         agent_id = %agent_id,
-        elapsed_ms = outcome.elapsed.as_millis() as u64,
-        iterations = outcome.iterations,
-        output_chars = outcome.output.chars().count(),
-        "[triage::escalation] run_subagent completed"
+        output_chars = outcome.value.chars().count(),
+        "[triage::escalation] direct agent turn completed"
     );
 
-    Ok(outcome.output)
+    Ok(outcome.value)
 }
 
 /// What survives an acknowledged trigger, for the source it actually came from.

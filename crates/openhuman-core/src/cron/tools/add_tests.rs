@@ -556,12 +556,14 @@ async fn accepts_agent_job_at_exactly_five_minutes() {
 }
 
 #[test]
-fn schema_and_description_document_the_agent_floor() {
+fn description_and_guide_document_the_agent_floor() {
     let tool = CronAddTool::new(
         Arc::new(Config::default()),
         Arc::new(SecurityPolicy::default()),
     );
     assert!(tool.description().contains("at least 5 minutes apart"));
-    let schema = tool.parameters_schema().to_string();
-    assert!(schema.contains("at least 300000 = 5 minutes"), "{schema}");
+    let guide = crate::tools::toolpacks::pack("scheduling")
+        .expect("scheduling pack")
+        .guide;
+    assert!(guide.contains("at least 5 minutes apart"), "{guide}");
 }

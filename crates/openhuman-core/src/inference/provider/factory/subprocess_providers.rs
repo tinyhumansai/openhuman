@@ -14,6 +14,9 @@ pub(super) fn try_create_claude_agent_sdk_chat_model_for_inspection(
     let model = claude_agent_sdk_model_from_string(provider, config)?;
     Some((|| {
         enforce_local_only_inference(role, provider)?;
+        if model.is_empty() {
+            anyhow::bail!("Claude Agent SDK route has an empty model");
+        }
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .ok()
             .filter(|value| !value.is_empty());
@@ -57,12 +60,10 @@ fn claude_agent_sdk_model_from_string(provider: &str, config: &Config) -> Option
     if provider == CLAUDE_AGENT_SDK_PROVIDER {
         Some(config.claude_agent_sdk.default_model.clone())
     } else {
-        Some(
-            provider
-                .strip_prefix(CLAUDE_AGENT_SDK_PREFIX)?
-                .trim()
-                .to_owned(),
-        )
+        // The model as the runtime route reads it: an `@<temperature>`
+        // suffix is not part of the model id.
+        let model = provider.strip_prefix(CLAUDE_AGENT_SDK_PREFIX)?.trim();
+        Some(split_model_and_temperature(model).0.trim().to_owned())
     }
 }
 

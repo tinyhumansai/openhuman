@@ -22,10 +22,11 @@ async fn native_turn_factory_applies_default_temperature_and_preserves_explicit_
         Arc::new(TemperatureProbe(Arc::clone(&seen))),
     );
     let tmp = tempfile::tempdir().expect("isolated workspace");
-    let config = Arc::new(managed_fixture_config(&tmp));
+    let config = Arc::new(managed_fixture_config(&tmp).await);
     let ctx = crate::core::runtime::DispatchCtx::unbound();
     let models = TurnModelSource::new_crate_native(&ctx, "chat", config)
         .build("hint:chat", 0.3, None, None)
+        .await
         .expect("native model set");
 
     models
@@ -49,9 +50,10 @@ async fn native_turn_factory_applies_default_temperature_and_preserves_explicit_
 }
 #[tokio::test]
 async fn native_budget_wrapping_keeps_owner_error_slots_for_primary_tiers_and_summary() {
-    use crate::agent::tinyagents::budget::{CallBudget, ModelBudget, SpendLimits};
+    use crate::agent::tinyagents::budget::{CallBudget, SpendLimits};
     use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
     use crate::core::slots::Extensions;
+    use tinyagents_harness::cost::ModelBudget;
 
     let _guard = crate::inference::inference_test_guard_async().await;
     let extensions = Extensions::new();
@@ -68,20 +70,21 @@ async fn native_budget_wrapping_keeps_owner_error_slots_for_primary_tiers_and_su
     );
     let ctx = DispatchCtx::new(context.clone());
     let tmp = tempfile::tempdir().expect("isolated workspace");
-    let config = Arc::new(managed_fixture_config(&tmp));
-    let budget = ModelBudget {
-        ledger: tinyinference_llm::model::budget::Budget::new(SpendLimits {
+    let config = Arc::new(managed_fixture_config(&tmp).await);
+    let budget = ModelBudget::new(
+        tinyinference_llm::model::budget::Budget::new(SpendLimits {
             tokens: Some(0),
             cost_micros: None,
         }),
-        call: CallBudget {
+        CallBudget {
             input_tokens: 10_000,
             output_tokens: 1,
             cost_micros: 1,
         },
-    };
+    );
     let models = TurnModelSource::new_crate_native(&ctx, "chat", config)
         .build("hint:chat", 0.0, None, None)
+        .await
         .expect("native model set")
         .with_host_controls(Some(&budget), None);
     let owner = models
@@ -161,7 +164,7 @@ async fn explicit_provider_string_turn_source_uses_scoped_managed_model() {
         CoreContext::for_test_with_host_kind(HostKind::Library, DomainSet::full(), None);
     let dispatch = DispatchCtx::new(explicit_context);
     let tmp = tempfile::tempdir().expect("isolated workspace");
-    let mut config = managed_fixture_config(&tmp);
+    let mut config = managed_fixture_config(&tmp).await;
     config.chat_provider = Some("unconfigured:must-not-win".into());
 
     CoreContext::scope(ambient_context, async {
@@ -173,6 +176,7 @@ async fn explicit_provider_string_turn_source_uses_scoped_managed_model() {
         );
         let models = source
             .build("explicit-turn-model", 0.0, None, None)
+            .await
             .expect("explicit provider string should construct through the scoped model");
         assert_eq!(name_of(&models.primary).await, "explicit-provider-model");
     })
@@ -199,9 +203,9 @@ async fn native_turn_preserves_deepseek_route_metadata_after_cloud_resolution() 
             default_model: Some("deepseek-chat".into()),
             oci: None,
         }],
-        ..Default::default()
+        ..crate::credentials::test_support::plaintext_fixture_config(tmp.path())
     };
-    crate::security::credentials::AuthService::from_config(&config)
+    crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
             "provider:deepseek",
             "default",
@@ -209,6 +213,7 @@ async fn native_turn_preserves_deepseek_route_metadata_after_cloud_resolution() 
             Default::default(),
             true,
         )
+        .await
         .expect("store isolated BYOK credential");
     let context = CoreContext::for_test_with_host_kind(
         HostKind::Library,
@@ -218,6 +223,7 @@ async fn native_turn_preserves_deepseek_route_metadata_after_cloud_resolution() 
     let ctx = DispatchCtx::new(context);
     let models = TurnModelSource::new_crate_native(&ctx, "chat", Arc::new(config))
         .build("hint:chat", 0.2, None, None)
+        .await
         .expect("configured DeepSeek turn model builds");
 
     assert_eq!(models.provider_id(), "deepseek");
@@ -303,6 +309,7 @@ async fn injected_turn_profile_is_authoritative_and_skips_unselected_routes() {
     let ctx = DispatchCtx::new(context);
     let models = TurnModelSource::new_crate_native(&ctx, "chat", Arc::new(Default::default()))
         .build("hint:chat", 0.2, None, None)
+        .await
         .expect("host injected model builds");
 
     assert_eq!(models.provider_id(), "ollama:injected");
@@ -348,6 +355,7 @@ async fn injected_turn_without_profile_keeps_conservative_capabilities() {
     let models = CoreContext::scope(context, async {
         TurnModelSource::new_crate_native(&ctx, "chat", Arc::new(Default::default()))
             .build("hint:chat", 0.2, None, None)
+            .await
             .expect("profileless host-injected model builds")
     })
     .await;
@@ -358,4 +366,40 @@ async fn injected_turn_without_profile_keeps_conservative_capabilities() {
     assert!(!models.is_local());
     assert_eq!(models.context_window(), None);
     assert!(models.primary.profile().is_none());
+}
+
+/// A `local-openai` endpoint can front a hosted gateway whose model calls
+/// tools natively (Teeny's builder: `glm-5.3-flash` on Surplus). Driven with
+/// the JSON-in-tag text protocol there, the gateway read each `<tool_call>`
+/// body as the tool's *name*, so every call after the first failed with
+/// ``unknown tool `{"arguments": …, "name": "shell"}` ``. Session assembly
+/// must report native tools for a local runtime once the operator opts in,
+/// and only then.
+#[test]
+fn a_local_runtime_reports_native_tools_only_when_opted_in() {
+    let ctx = crate::core::runtime::DispatchCtx::unbound();
+    let mut config = crate::config::Config::default();
+    let source = |config: &crate::config::Config| {
+        TurnModelSource::new_crate_native_from_string(
+            &ctx,
+            "chat",
+            "local-openai:glm-5.3-flash",
+            Arc::new(config.clone()),
+        )
+    };
+    assert!(
+        !source(&config).supports_native_tool_calling(),
+        "local runtimes stay on the text protocol by default"
+    );
+    // A cloud provider calls tools natively whatever the local flag says.
+    let cloud = TurnModelSource::new_crate_native_from_string(
+        &ctx,
+        "chat",
+        "openai:gpt-4o",
+        Arc::new(config.clone()),
+    );
+    assert!(cloud.supports_native_tool_calling());
+
+    config.local_ai.native_tool_calling = true;
+    assert!(source(&config).supports_native_tool_calling());
 }

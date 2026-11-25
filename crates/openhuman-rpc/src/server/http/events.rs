@@ -96,7 +96,7 @@ pub(super) async fn events_handler(
             )
                 .into_response();
         };
-        if !crate::core_host::core::event_bind_tokens::consume(&query.client_id, supplied_token) {
+        if !super::events_bind_tokens::consume(&query.client_id, supplied_token) {
             let client_id_len = query.client_id.len();
             log::warn!(
                 "[events] reject subscribe: bind token invalid or expired (client_id_len={})",
@@ -119,7 +119,7 @@ pub(super) async fn events_handler(
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
         move |item| -> Option<Result<Event, std::convert::Infallible>> {
             let event = item.ok()?;
-            if event.client_id != client_id {
+            if event.context().client_id != client_id {
                 return None;
             }
             if let Some(profile) = saas_profile.as_deref() {
@@ -128,7 +128,7 @@ pub(super) async fn events_handler(
                 }
             }
             let data = serde_json::to_string(&event).ok()?;
-            Some(Ok(Event::default().event(event.event).data(data)))
+            Some(Ok(Event::default().event(event.event_name()).data(data)))
         },
     );
 

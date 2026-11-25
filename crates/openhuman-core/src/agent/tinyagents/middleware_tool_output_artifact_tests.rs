@@ -159,7 +159,8 @@ async fn an_oversized_result_is_stored_as_the_tool_returned_it_not_as_rewritten(
 async fn a_raw_result_file_read_cannot_open_is_stored_as_the_processed_copy() {
     let tmp = tempfile::tempdir().unwrap();
     let summary = "s".repeat(3_000);
-    let raw_len = tinytools_std::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES as usize + 1;
+    let raw_len =
+        tinyagents_harness_tools::fs::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES as usize + 1;
     let mw = artifact_mw(Some(summarized(&summary)), tmp.path());
     let mut result = tool_result("echo", &"r".repeat(raw_len));
 

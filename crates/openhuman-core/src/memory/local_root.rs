@@ -1,7 +1,7 @@
 //! The engine scope root of a signed-out (local) session.
 //!
 //! A local session's user dir is named after the machine
-//! (`users/local-<hostname>/`, `session_support::local_session_user_id`), and
+//! (`users/local-<hostname>/`, `session_state::local_session_user_id`), and
 //! its root used to be a hash of that name: `user:local-<sha256[..8]>`. Two
 //! machines with the same hostname on one CortexDB then got the same root
 //! and merged memories, and a hostname is a name even when hashed

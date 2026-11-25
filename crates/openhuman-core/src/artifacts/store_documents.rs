@@ -199,7 +199,7 @@ impl Docs {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(error) => {
-                return Err(error).with_context(|| format!("read {}", artifacts_dir.display()))
+                return Err(error).with_context(|| format!("read {}", artifacts_dir.display()));
             }
         };
         let mut imported = 0;
@@ -308,7 +308,7 @@ pub(super) async fn delete_record(docs: Docs, artifact_dir: &Path, id: &str) -> 
         Err(e) => {
             return Err(format!(
                 "[artifacts] failed to delete legacy record for id={id}: {e}"
-            ))
+            ));
         }
     }
     let owned = id.to_string();

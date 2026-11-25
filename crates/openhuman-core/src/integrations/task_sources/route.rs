@@ -17,8 +17,8 @@
 use serde_json::json;
 
 use crate::config::Config;
+use crate::core::runtime::turn_origin::with_origin;
 use crate::platform::llm_gate;
-use crate::security::turn_origin::with_origin;
 use crate::triage::{
     apply_decision, remote_trigger_origin, run_triage, TriageOutcome, TriggerEnvelope,
 };

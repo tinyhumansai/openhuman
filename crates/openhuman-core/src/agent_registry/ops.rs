@@ -168,6 +168,7 @@ pub async fn available_tools(ctx: &DispatchCtx) -> Result<Vec<AgentToolInfo>, St
     AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .map_err(|e| format!("failed to initialise AgentDefinitionRegistry: {e}"))?;
     let agent = OpenHumanSessionHost::from_config_for_agent(ctx, &config, ORCHESTRATOR_AGENT_ID)
+        .await
         .map_err(|e| format!("failed to build tools-catalog agent: {e}"))?;
 
     let mut tools: Vec<AgentToolInfo> = agent

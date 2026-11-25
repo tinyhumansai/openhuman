@@ -47,6 +47,9 @@ use crate::config::Config;
 use crate::storage::sessions::DEFAULT_AGENT;
 use crate::storage::StorageBackend;
 
+mod agents;
+pub(super) use agents::{agent_of, known_agents};
+
 /// The marker name of the session import.
 pub const SESSIONS_DOMAIN: &str = "sessions";
 
@@ -377,17 +380,34 @@ fn decode_display_message(
     value: &serde_json::Value,
     sanitized_system: &mut bool,
 ) -> Result<DisplayMessage> {
-    let mut message: TranscriptMessage = serde_json::from_value::<TranscriptMessage>(value.clone())
-        .context("decode transcript message")?
-        .normalized();
+    // The typed transcript row shape was introduced in row version 2.
+    // Keep this importer compatible with older TinyAgents pins that do not
+    // expose the format version constant publicly.
+    const TYPED_ROW_VERSION: u32 = 2;
+    let mut message: TranscriptMessage =
+        serde_json::from_value(value.clone()).context("decode transcript message")?;
+    let row_version = value
+        .get("v")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default() as u32;
+    let usage_tool_calls = message.tool_calls.clone();
+    if row_version != TYPED_ROW_VERSION {
+        message.tool_calls.clear();
+        message.tool_call_id = None;
+        message.parts = None;
+        if row_version < TYPED_ROW_VERSION {
+            message = message.normalized();
+        }
+    }
     if message.role.is_empty() {
         anyhow::bail!("transcript message has no role");
     }
-    let content = message.content.clone();
     if message.role == "system" && !*sanitized_system {
         *sanitized_system = true;
         if let Some(cleaned) =
-            crate::config::migrations::phase_out_profile_md::strip_profile_md_block(&content)
+            crate::config::migrations::phase_out_profile_md::strip_profile_md_block(
+                &message.content,
+            )
         {
             message.content = cleaned;
         }
@@ -409,7 +429,7 @@ fn decode_display_message(
                         .get("reasoning_content")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
-                    tool_calls: message.tool_calls.clone(),
+                    tool_calls: usage_tool_calls,
                     iteration: value
                         .get("iteration")
                         .and_then(serde_json::Value::as_u64)
@@ -456,7 +476,7 @@ fn decode_display_message(
         iteration: value
             .get("iteration")
             .and_then(serde_json::Value::as_u64)
-            .map(|n| n as u32),
+            .map(|iteration| iteration as u32),
         ts: value
             .get("ts")
             .and_then(serde_json::Value::as_str)
@@ -468,7 +488,7 @@ fn decode_display_message(
         background: value
             .get("background")
             .cloned()
-            .and_then(|raw| serde_json::from_value(raw).ok()),
+            .and_then(|origin| serde_json::from_value(origin).ok()),
         message,
     })
 }
@@ -496,7 +516,10 @@ fn replay_transcript(
     tools: Option<&serde_json::Value>,
     records: Vec<DisplayRecord>,
 ) -> Result<usize> {
-    let mut logical = Vec::<TranscriptMessage>::new();
+    let mut logical = history
+        .read_session()?
+        .map(|session| session.messages)
+        .unwrap_or_default();
     let mut group = Vec::<DisplayMessage>::new();
     let mut replayed = 0usize;
     let flush = |logical: &mut Vec<TranscriptMessage>,
@@ -599,53 +622,6 @@ fn replay_transcript(
     Ok(replayed)
 }
 
-/// The agent definitions a stem may belong to, by the component their ids
-/// encode to in a stem.
-fn known_agents() -> HashMap<String, String> {
-    let mut ids: Vec<String> =
-        crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()
-            .list()
-            .iter()
-            .map(|def| def.id.clone())
-            .collect();
-    if let Some(current) =
-        crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
-    {
-        ids.extend(current.list().iter().map(|def| def.id.clone()));
-    }
-    ids.sort();
-    ids.dedup();
-    ids.into_iter()
-        .filter_map(|id| agent_component(&id).map(|component| (component, id)))
-        .collect()
-}
-
-/// The text a stem carries for agent `id`: `session_stem` of a probe session,
-/// without its session key. A stem is `<key>.<agent>[.g<n>]`, each component
-/// sanitized (a `.` inside one becomes `-`) and followed by a digest, so the
-/// agent's component is what follows the first `.`.
-fn agent_component(id: &str) -> Option<String> {
-    let stem = session_stem(&SessionRef::scoped("probe", id));
-    stem.split_once('.').map(|(_, agent)| agent.to_owned())
-}
-
-/// The agent whose component `stem` carries, if it is one of `known`.
-fn agent_of(stem: &str, known: &HashMap<String, String>) -> Option<String> {
-    // Sub-agent transcripts (`parent__child`) belong to their root's agent.
-    let root = stem.split("__").next().unwrap_or(stem);
-    let mut parts: Vec<&str> = root.split('.').collect();
-    if parts.last().is_some_and(|last| {
-        last.strip_prefix('g')
-            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
-    }) {
-        parts.pop();
-    }
-    if parts.len() < 2 {
-        return None;
-    }
-    known.get(*parts.last()?).cloned()
-}
-
 /// Every `*.jsonl` under `raw` (flat and date-grouped), flat winning a
 /// duplicate stem, as `(stem, path)`.
 fn transcript_files(raw: &Path) -> Result<Vec<(String, PathBuf)>> {
@@ -734,9 +710,6 @@ pub(crate) fn import_transcript_groups(
             let history = stores
                 .transcripts
                 .open_stem(&destination_stem, meta.clone())?;
-            if history.read_session()?.is_some() {
-                continue;
-            }
             replay_transcript(history.as_ref(), &meta, tools.as_ref(), records)
                 .with_context(|| format!("[sessions] replay transcript {}", path.display()))?;
             written += 1;

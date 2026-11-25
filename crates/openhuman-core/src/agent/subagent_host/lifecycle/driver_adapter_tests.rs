@@ -1,4 +1,5 @@
 use super::*;
+use tinyagents_orchestration::subagent::SubagentPersistenceDisposition;
 
 fn key() -> SubagentTaskKey {
     SubagentTaskKey {

@@ -37,11 +37,6 @@ impl OpenHumanSessionHost {
             dispatch: crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref()),
         }
     }
-
-    /// The workspace descriptor tools run against.
-    pub(crate) fn live_workspace_descriptor(&self) -> Option<tinytools::WorkspaceDescriptor> {
-        self.workspace_descriptor.clone()
-    }
 }
 
 #[cfg(test)]

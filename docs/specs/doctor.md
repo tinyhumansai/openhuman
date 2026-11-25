@@ -2,7 +2,7 @@
 
 This is the maintainer contract for the OpenHuman doctor framework and the
 checks delivered by the doctor epic. It defines stable check ids and report
-semantics before the legacy `platform/doctor` code moves. The core owns checks,
+semantics for the `doctor` domain. The core owns checks,
 the registry, runner, and RPC surface; `openhuman-cli` owns command parsing,
 rendering, and process exit codes; `openhuman-tinyhumans` owns hosted checks.
 
@@ -224,6 +224,19 @@ The CLI does not add fields to the RPC report. Human output is a rendering of
 the same findings and includes the severity, check id, message, and fix hint.
 JSON uses the same report in every surface.
 
+`--help` (also `-h` or `help`) prints usage and exits `0`. When no report is
+produced the CLI exits `2` and names one fixed reason; the underlying error is
+never printed, because it can carry endpoints or credential context. Text mode
+prints `doctor could not produce a report: <reason>` to stderr; `--json` prints
+`{"ok": false, "reason": "<reason>"}`. The reason strings are stable:
+
+| Reason                                                                     | Meaning                               |
+| -------------------------------------------------------------------------- | ------------------------------------- |
+| `the async runtime could not start`                                        | The CLI could not create its runtime. |
+| `the doctor host could not start (profile selection, config or core boot)` | The in-process host did not start.    |
+| `the doctor_report call failed`                                            | The core rejected or failed the RPC.  |
+| `the core answered without a report`                                       | The RPC returned no report object.    |
+
 ## Profile semantics
 
 On desktop, a requested profile id resolves through `ProfileLayout`. Doctor
@@ -255,8 +268,8 @@ lowercase slash-separated segment grammar and are unique across sources. A
 source may register zero checks when its host capability is absent.
 
 The doctor stays in the existing `DomainGroup::Platform` registration group.
-Moving its Rust module from `platform/doctor` to the top-level `doctor` domain
-does not add a new runtime domain group. `subsystems.status` remains a separate
+Its Rust module lives at the top-level `doctor` domain without adding a new
+runtime domain group. `subsystems.status` remains a separate
 wire projection: it reports driver bindings, health, and capabilities, while
 doctor findings include stable check ids, severity, guidance, provenance, and
 timing. A doctor check may consume subsystem status as evidence, but it does
@@ -352,6 +365,6 @@ make billable calls or write remote state.
 ## Implementation references
 
 - Existing doctor being replaced: `crates/openhuman-core/src/doctor/`
-- Existing subsystem status projection: `crates/openhuman-core/src/core/subsystem/status.rs`
+- Existing subsystem status projection: `crates/openhuman-core/src/memory/status.rs`
 - Capability ids: `crates/openhuman-core/src/platform/about_app/`
 - OpenClaw reference: [structured health-check contract](https://github.com/openclaw/openclaw/blob/main/docs/cli/doctor/health-contract.md), [lint mode and selectors](https://github.com/openclaw/openclaw/blob/main/docs/cli/doctor/lint.md), and [running doctor](https://github.com/openclaw/openclaw/blob/main/docs/cli/doctor/running.md)

@@ -88,7 +88,7 @@ pub async fn run_server_saas(
     crate::session_store::install_for_saas(storage_url).await?;
     let runtime =
         crate::core_host::core::runtime::saas::build(config, host.map(str::to_owned), port).await?;
-    let served = super::serve::serve(&runtime, None, None).await;
+    let served = super::serve::serve(Arc::new(runtime), None, None).await;
     if let Some(profiles) = crate::core_host::profiles::host::host() {
         profiles.release_idle_on_shutdown().await;
     }
@@ -183,7 +183,8 @@ pub(crate) async fn build_and_serve(
         log::warn!("[rpc:server] runtime build failed: {error}");
         anyhow::Error::new(error)
     })?;
-    let served = super::serve::serve(runtime.core_runtime(), ready_tx, shutdown_token).await;
+    let served =
+        super::serve::serve(Arc::clone(runtime.core_runtime()), ready_tx, shutdown_token).await;
     // Dropping the runtime releases the process's embed runtime slot, so the
     // desktop can restart its server in place.
     drop(runtime);

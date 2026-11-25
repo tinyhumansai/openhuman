@@ -1,8 +1,13 @@
 import { KeyRound, ShieldCheck } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
+import {
+  fetchToolTrust,
+  revokeToolTrust,
+  type ToolTrustGrant,
+} from '../../../services/api/approvalApi';
 import { decideKeyringConsent, retryKeyringProbe } from '../../../services/keyringApi';
 import Button from '../../ui/Button';
 import Card from '../../ui/Card';
@@ -48,11 +53,46 @@ const SecurityPanel = () => {
   const { t } = useT();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toolTrust, setToolTrust] = useState<ToolTrustGrant[]>([]);
+  const [toolTrustLoading, setToolTrustLoading] = useState(true);
+  const [toolTrustError, setToolTrustError] = useState<string | null>(null);
+  const [revokingRequestId, setRevokingRequestId] = useState<string | null>(null);
 
   const keyringStatus = snapshot.keyringStatus;
   const modeBadgeVariant =
     MODE_BADGE_VARIANT[keyringStatus.activeMode] ?? MODE_BADGE_VARIANT.consent_pending;
   const modeI18nKey = MODE_I18N_KEY[keyringStatus.activeMode] ?? keyringStatus.activeMode;
+
+  const loadToolTrust = async () => {
+    setToolTrustLoading(true);
+    setToolTrustError(null);
+    try {
+      setToolTrust(await fetchToolTrust());
+    } catch {
+      setToolTrustError(t('keyring.settings.toolTrustLoadFailed'));
+    } finally {
+      setToolTrustLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadToolTrust());
+    // Load on mount. Retry is explicit after an error.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleRevokeToolTrust = async (requestId: string) => {
+    setRevokingRequestId(requestId);
+    setToolTrustError(null);
+    try {
+      await revokeToolTrust(requestId);
+      setToolTrust(current => current.filter(grant => grant.request_id !== requestId));
+    } catch {
+      setToolTrustError(t('keyring.settings.toolTrustRevokeFailed'));
+    } finally {
+      setRevokingRequestId(null);
+    }
+  };
 
   const handleRetryProbe = async () => {
     setIsLoading(true);
@@ -164,6 +204,57 @@ const SecurityPanel = () => {
             </div>
           </SettingsSection>
         )}
+
+        <SettingsSection title={t('keyring.settings.toolTrustTitle')}>
+          <div className="space-y-3 px-4 py-3">
+            <p className="text-xs text-content-muted">
+              {t('keyring.settings.toolTrustDescription')}
+            </p>
+            {toolTrustLoading ? (
+              <p className="text-sm text-content-muted" role="status">
+                {t('keyring.settings.toolTrustLoading')}
+              </p>
+            ) : toolTrustError && toolTrust.length === 0 ? (
+              <div className="flex flex-wrap items-center gap-3" role="alert">
+                <p className="text-sm text-coral-600 dark:text-coral-200">{toolTrustError}</p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void loadToolTrust()}>
+                  {t('keyring.settings.toolTrustRetry')}
+                </Button>
+              </div>
+            ) : toolTrust.length === 0 ? (
+              <p className="text-sm text-content-muted">{t('keyring.settings.toolTrustEmpty')}</p>
+            ) : (
+              <ul className="divide-y divide-line">
+                {toolTrust.map(grant => (
+                  <li
+                    key={grant.request_id}
+                    className="flex items-center justify-between gap-3 py-3">
+                    <span className="min-w-0 truncate text-sm text-content">{grant.tool}</span>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void handleRevokeToolTrust(grant.request_id)}
+                      disabled={revokingRequestId !== null}>
+                      {revokingRequestId === grant.request_id
+                        ? t('keyring.settings.toolTrustRevoking')
+                        : t('keyring.settings.toolTrustRevoke')}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {toolTrustError && toolTrust.length > 0 && (
+              <p className="text-sm text-coral-600 dark:text-coral-200" role="alert">
+                {toolTrustError}
+              </p>
+            )}
+          </div>
+        </SettingsSection>
 
         <SettingsStatusLine
           saving={isLoading}

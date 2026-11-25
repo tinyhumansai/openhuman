@@ -1,10 +1,10 @@
 use super::*;
 use crate::config::schema::voice_live::LIVE_PROVIDER_SARVAM;
 
-#[test]
-fn providers_and_settings_reflect_the_config() {
+#[tokio::test]
+async fn providers_and_settings_reflect_the_config() {
     let config = Config::default();
-    let providers = live_providers(&config).value;
+    let providers = live_providers(&config).await.value;
     assert_eq!(
         providers.default_provider,
         config.voice_live.default_provider

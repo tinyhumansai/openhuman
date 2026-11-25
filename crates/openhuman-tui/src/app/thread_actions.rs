@@ -1,5 +1,6 @@
 //! Conversation send, cancel and session loading.
 use super::*;
+use openhuman_rpc::embed::chat_surface::WebChannelEvent;
 
 /// Queue a chat turn on the current thread. Fire-and-forget: the reply streams
 /// back over the web-channel bus and is folded in by the reducer.
@@ -47,13 +48,22 @@ pub(super) fn send_message(
             log::error!("[tui] openhuman.channel_web_chat failed: {e}");
             // Surface the failure in-transcript via a synthetic chat_error so
             // the reducer clears the streaming state and shows the reason.
-            web_chat::publish_web_channel_event(WebChannelEvent {
-                event: "chat_error".to_string(),
-                client_id: cid,
-                thread_id: tid,
+            web_chat::publish_web_channel_event(WebChannelEvent::ChatError {
+                context: web_chat::WebEventContext {
+                    client_id: cid,
+                    thread_id: tid,
+                    ..Default::default()
+                },
                 message: Some(format!("Failed to send: {e}")),
                 error_type: Some("transport".to_string()),
-                ..Default::default()
+                error_source: None,
+                error_retryable: None,
+                error_retry_after_ms: None,
+                error_provider: None,
+                error_fallback_available: None,
+                copy_key: None,
+                copy_params: None,
+                guardrail: None,
             });
         }
     });

@@ -25,6 +25,7 @@ async fn other_auth_events_are_ignored() {
         .handle(&DomainEvent::SessionExpired {
             source: "test".into(),
             reason: "expired".into(),
+            credential_fingerprint: None,
         })
         .await;
 }

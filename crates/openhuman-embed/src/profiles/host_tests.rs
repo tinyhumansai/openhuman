@@ -37,7 +37,7 @@ fn named_selection_never_overrides_hard_denies_or_default_readonly() {
         scope: Some(ToolScopeSpec::Named(vec![
             "memory".into(),
             "shell".into(),
-            "delegate".into(),
+            "spawn_subagent".into(),
             "curl".into(),
             "run_workflow".into(),
         ])),
@@ -46,7 +46,7 @@ fn named_selection_never_overrides_hard_denies_or_default_readonly() {
     let capabilities = options.finish(&config).unwrap();
     let unbound = unbound_ctx();
     assert!(capabilities.admits(&unbound, "memory"));
-    for name in ["shell", "delegate", "curl", "run_workflow", "hidden"] {
+    for name in ["shell", "spawn_subagent", "curl", "run_workflow", "hidden"] {
         assert!(!capabilities.admits(&unbound, name), "{name}");
     }
     assert_eq!(

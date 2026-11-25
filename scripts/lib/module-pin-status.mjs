@@ -50,14 +50,24 @@ export function classifyStatus({
   actual,
   wantedIsAncestor = null,
   exemption,
+  sourceParityContext,
 }) {
-  const strict = classifyPin({ id, version, submodulePath, actual, exemption });
+  const strict = classifyPin({
+    id,
+    version,
+    submodulePath,
+    actual,
+    exemption,
+    sourceParityContext,
+  });
   if (strict.kind === "exempt") {
     return {
       id,
       kind: "exempt",
       actual,
-      message: `exempt (declared drift accepted): ${strict.reason}`,
+      message: strict.sourceParity
+        ? `exempt (verified test-only source parity at ${actual}): ${strict.reason}`
+        : `exempt (declared drift accepted): ${strict.reason}`,
     };
   }
   const note =
@@ -65,7 +75,9 @@ export function classifyStatus({
       ? " (its module-pin-exemptions.json entry is stale; delete it)"
       : strict.kind === "exemption-widened"
         ? " (the drift moved past its module-pin-exemptions.json entry)"
-        : "";
+        : strict.kind === "invalid-source-parity"
+          ? ` (${strict.message})`
+          : "";
   if (strict.kind === "match" || strict.kind === "stale-exemption") {
     return { id, kind: "in-sync", actual, message: `in sync${note}` };
   }

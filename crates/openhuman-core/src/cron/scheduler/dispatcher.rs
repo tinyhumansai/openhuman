@@ -550,15 +550,42 @@ impl JobDispatcher {
         Ok(dispatched)
     }
 
+    /// Stop the module's scheduler and wait for it, so its scope is free when
+    /// this returns. A failed stop is left to the retrying stop of `Drop`.
+    pub(crate) async fn stop(mut self) {
+        let Some(started) = self.started.take() else {
+            return;
+        };
+        let config = self.binding.config();
+        let stopped = match module::proxy(&config).await {
+            Ok(proxy) => proxy
+                .call::<()>(members::STOP_SCHEDULER, (started.handle.clone(),))
+                .await
+                .map_err(|error| error.wire_message()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = stopped {
+            tracing::debug!(%error, "[cron:scheduler] StopScheduler failed; retrying on drop");
+            self.started = Some(started);
+        }
+    }
+
     /// Wait for every dispatched job to finish.
     pub(crate) async fn drain(&mut self) {
-        let config = self.binding.config();
-        if self.started.is_none() {
-            return;
-        }
-        if let Err(error) = self.call::<()>(&config, members::DRAIN_SCHEDULER).await {
+        if let Err(error) = self.try_drain().await {
             tracing::warn!(%error, "[cron:dispatch] a dispatched job failed");
         }
+    }
+
+    /// Wait for every dispatched job to finish; errors with the first run that
+    /// could not be executed or recorded, or when the module cannot be
+    /// reached. A job that ran and failed is recorded, not returned.
+    pub(crate) async fn try_drain(&mut self) -> Result<()> {
+        if self.started.is_none() {
+            return Ok(());
+        }
+        let config = self.binding.config();
+        self.call(&config, members::DRAIN_SCHEDULER).await
     }
 }
 

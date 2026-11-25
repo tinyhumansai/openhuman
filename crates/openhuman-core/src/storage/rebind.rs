@@ -7,7 +7,7 @@
 //! differs from the one the host installed:
 //!
 //! 1. opens the new backend;
-//! 2. points the session store (`ReboundSessionStores`) and the process's
+//! 2. points the session-store tenant routers and the process's
 //!    storage slot at it, together, so no store reads one workspace's
 //!    sessions beside another's documents;
 //! 3. runs the read-only legacy importers over the new workspace, since a
@@ -51,20 +51,21 @@ pub fn rebind(config: &Config) -> Result<Option<Rebound>> {
     rebind_with(config, super::installed_url(), |url, backend| {
         // Sessions first: no store may read one workspace's sessions beside
         // another's documents, so both move together.
-        let rebound = crate::storage::sessions::rebind_all(&backend);
+        let rebound = crate::storage::sessions::rebind_all(&backend)?;
         super::install_for_url(url, backend);
-        rebound
+        Ok(rebound)
     })
 }
 
 /// [`rebind`] with the URL the host installed and the installation made
 /// explicit, so the rule is testable without touching the process's slot.
-/// `install` receives the new URL and backend and returns how many session
-/// stores it moved.
+/// `install` receives the new URL and backend, and returns the number of
+/// session stores moved or an error that prevents the new backend from being
+/// installed.
 pub(crate) fn rebind_with(
     config: &Config,
     current: Option<String>,
-    install: impl FnOnce(&str, Arc<dyn StorageBackend>) -> usize,
+    install: impl FnOnce(&str, Arc<dyn StorageBackend>) -> Result<usize>,
 ) -> Result<Option<Rebound>> {
     let Some(current) = current else {
         return Ok(None);
@@ -94,7 +95,7 @@ pub(crate) fn rebind_with(
     let backend = super::block_on_anyhow(async move { Ok(super::open(&url).await?) })
         .with_context(|| format!("open the storage backend {redacted_to}"))?;
 
-    let session_stores = install(&next, Arc::clone(&backend));
+    let session_stores = install(&next, Arc::clone(&backend))?;
     tracing::debug!(
         target: "openhuman::storage",
         session_stores,

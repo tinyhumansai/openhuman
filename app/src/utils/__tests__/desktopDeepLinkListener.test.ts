@@ -444,6 +444,25 @@ describe('desktopDeepLinkListener', () => {
     }
   });
 
+  it('does not install the deep-link simulator in a shipped (non dev-like) build', async () => {
+    const win = window as Window & { __simulateDeepLink?: unknown };
+    delete win.__simulateDeepLink;
+    vi.resetModules();
+    vi.doMock('../config', async importOriginal => ({
+      ...(await importOriginal<typeof import('../config')>()),
+      IS_DEV_LIKE: false,
+    }));
+    try {
+      const { setupDesktopDeepLinkListener: setupShipped } =
+        await import('../desktopDeepLinkListener');
+      await setupShipped();
+      expect(win.__simulateDeepLink).toBeUndefined();
+    } finally {
+      vi.doUnmock('../config');
+      vi.resetModules();
+    }
+  });
+
   it('does not make the E2E deep-link helper wait for auth readiness', async () => {
     let resolveReadiness!: (_value: { ready: true }) => void;
     waitForOAuthAuthReadiness.mockReturnValueOnce(

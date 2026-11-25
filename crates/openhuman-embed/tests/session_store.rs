@@ -1,5 +1,3 @@
-#![cfg(feature = "testkit")]
-
 //! End-to-end proof that a host session store owns every conversation.
 //!
 //! A stateless runtime with an [`InMemorySessionStores`] runs two agents
@@ -18,11 +16,11 @@ use std::sync::Arc;
 
 use common::{chat_requests, offline_config, provider, runtime, stub_backend};
 use openhuman_core::storage::DocumentStoreExt as _;
-use openhuman_embed::session_store::session_store_conformance;
 use openhuman_embed::{
-    Access, AgentSpec, InMemorySessionStores, Provider, Runtime, RuntimeError,
-    SessionStoreProvider, Workspace,
+    Access, AgentSpec, Provider, Runtime, RuntimeError, SessionStoreProvider, Workspace,
 };
+use tinyagents_session::port::InMemorySessionStores;
+use tinyagents_session::testkit::conformance::session_store_conformance;
 
 /// Every path under `root`, relative to it.
 fn files_under(root: &std::path::Path) -> Vec<String> {
@@ -68,10 +66,7 @@ fn a_stateless_runtime_keeps_every_conversation_in_its_session_store() {
             let backend = stub_backend().await;
             let model = provider("noted").await;
             let store = Arc::new(InMemorySessionStores::new());
-            let mut config = offline_config();
-            // On by default in the product: it must stand down by itself once
-            // a host store owns the transcripts.
-            config.agent.session_dual_write = true;
+            let config = offline_config();
             let runtime = Runtime::builder()
                 .config(config)
                 .workspace(Workspace::stateless())
@@ -163,10 +158,9 @@ fn a_stateless_runtime_keeps_every_conversation_in_its_session_store() {
                 "another agent cannot reach asha's thread"
             );
             // The turn journal's run status went to the agent's own scope of
-            // the runtime's storage, which a stateless runtime keeps in memory.
+            // the runtime's installed storage backend.
             let storage = openhuman_core::storage::installed()
                 .expect("a stateless runtime installs a storage backend");
-            assert_eq!(storage.driver(), "memory");
             let runs = storage
                 .for_scope(&openhuman_core::storage::scope_for_agent("asha"))
                 .expect("asha's storage scope")

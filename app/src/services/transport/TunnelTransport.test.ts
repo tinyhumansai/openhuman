@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  base64urlDecode,
   base64urlEncode,
   deriveSessionKeys,
   deriveSharedSecret,
@@ -111,6 +112,45 @@ afterEach(() => {
 });
 
 describe('TunnelTransport', () => {
+  it('sends one ignored pairing ping before the first regular RPC', async () => {
+    const coreKp = generateKeypair();
+    const transport = new TunnelTransport(
+      'http://backend',
+      'CHAN_CONFIRM',
+      coreB64(coreKp),
+      'pairing-token'
+    );
+
+    const serverCipher = await connectTransport(transport);
+    const encryptedFrames = () =>
+      _emitSpy.mock.calls
+        .filter(([event]) => event === 'tunnel:frame')
+        .slice(1)
+        .map(([, payload]) => (payload as { payload: string }).payload);
+
+    await vi.waitFor(() => expect(encryptedFrames()).toHaveLength(1));
+    const confirm = JSON.parse(
+      new TextDecoder().decode(serverCipher.open(base64urlDecode(encryptedFrames()[0]!)))
+    ) as { payload: { method: string }; kind: string };
+    expect(confirm).toMatchObject({
+      kind: 'request',
+      payload: { method: 'openhuman.ping', params: {} },
+    });
+
+    const firstCall = transport.call('openhuman.devices_list', {}).catch(error => error);
+    await vi.waitFor(() => expect(encryptedFrames()).toHaveLength(2));
+    const firstRpc = JSON.parse(
+      new TextDecoder().decode(serverCipher.open(base64urlDecode(encryptedFrames()[1]!)))
+    ) as { payload: { method: string }; kind: string };
+    expect(firstRpc).toMatchObject({
+      kind: 'request',
+      payload: { method: 'openhuman.devices_list' },
+    });
+
+    await transport.close();
+    await firstCall;
+  });
+
   it('emits tunnel:connect with channelId + role on connect', async () => {
     const coreKp = generateKeypair();
     const channelId = 'CHAN_001';

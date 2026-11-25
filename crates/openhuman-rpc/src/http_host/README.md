@@ -110,7 +110,7 @@ Namespace `http_host`, invoked as `openhuman.http_host_<function>`:
   `register_controller_extension`) is the core's (`openhuman::core`).
 - The default username comes from the core's config
   (`config::load_config_with_timeout`) and session state
-  (`security::credentials::session_support::build_session_state`); this
+  (`credentials::session_state::build_session_state`); this
   module never talks to the backend.
 - Shutdown sequencing is the core's `core::shutdown::register`.
 - The core's error classification (`core/observability.rs`) maps a

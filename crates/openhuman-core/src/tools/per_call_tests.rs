@@ -1,7 +1,10 @@
 use super::*;
 use crate::agent::tinyagents::host::run_context::tool_context_with_approval;
 use crate::security::approval::ApprovalTurnContext;
+use async_trait::async_trait;
 use serde_json::json;
+use serde_json::Value;
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 
 /// Reports the chat it was built for, so a test can see which call built it.
 struct Probe {
@@ -47,9 +50,9 @@ fn chat(thread: &str) -> ApprovalChatContext {
     }
 }
 
-fn tool() -> PerCallTool<Probe> {
-    PerCallTool::new(|chat, _ctx| Probe {
-        built_for: chat.cloned(),
+fn tool() -> PerCallTool<Probe, PerCallContext> {
+    PerCallTool::new(super::context, |context| Probe {
+        built_for: context.chat,
     })
 }
 
@@ -115,15 +118,15 @@ fn static_metadata_comes_from_the_prototype() {
 
 #[tokio::test]
 async fn each_call_is_built_around_its_runs_dispatch_context() {
-    use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
+    use crate::core::runtime::{CoreContext, DomainSet};
     use std::sync::{Arc, Mutex};
 
     let seen: Arc<Mutex<Vec<Option<Arc<CoreContext>>>>> = Arc::default();
     let sink = Arc::clone(&seen);
-    let tool = PerCallTool::new(move |chat, ctx: &DispatchCtx| {
-        sink.lock().unwrap().push(ctx.core().cloned());
+    let tool = PerCallTool::new(super::context, move |context| {
+        sink.lock().unwrap().push(context.dispatch.core().cloned());
         Probe {
-            built_for: chat.cloned(),
+            built_for: context.chat,
         }
     });
     seen.lock().unwrap().clear();

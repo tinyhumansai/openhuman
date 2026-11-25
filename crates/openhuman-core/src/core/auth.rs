@@ -33,11 +33,6 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-#[cfg(unix)]
-use std::io::Write as _;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
-
 // The axum RPC-auth middleware + the `/v1` external-inference bearer helpers
 // are exclusive to the `http-server` feature (#5048). The always-compiled token
 // primitives (`verify_bearer_token`, `init_rpc_token`, `get_rpc_token`,
@@ -221,27 +216,13 @@ fn generate_token() -> String {
 }
 
 /// Write `token` to `path` with owner-only read+write permissions on Unix.
+///
+/// Published through a fresh 0600 inode renamed over the old file (the shared
+/// keyring writer): chmod on an existing file neither revokes descriptors
+/// already open on it nor survives a failed rewrite, and the old token stays
+/// intact until the rename succeeds.
 fn write_token_file(path: &Path, token: &str) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    #[cfg(unix)]
-    {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        file.write_all(token.as_bytes())?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, token)?;
-    }
-
+    crate::security::secret_storage::file_store::write_atomic(path, token.as_bytes())?;
     Ok(())
 }
 

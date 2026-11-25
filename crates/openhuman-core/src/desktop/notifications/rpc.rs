@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
+use crate::core::runtime::turn_origin::with_origin;
 use crate::core::Outcome;
-use crate::security::turn_origin::with_origin;
 use crate::triage::{
     apply_decision, local_trigger_origin, run_triage, TriageOutcome, TriggerEnvelope, TriggerSource,
 };

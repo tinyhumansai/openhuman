@@ -2,16 +2,16 @@ use super::*;
 
 #[tokio::test]
 async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
-    use crate::agent::orchestration::subagent_sessions::{
-        DurableSubagentStatus, SubagentSessionStore,
-    };
+    use crate::agent::orchestration::subagent_sessions::open_for_context;
     use crate::agent::tinyagents::host::OpenHumanRunContext;
     use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
     use crate::tools::toolpacks::ToolGroups;
     use tinyagents_harness::context::RunContext;
     use tinyagents_harness::tool::ToolDispatch;
     use tinyagents_harness_tools::subagents::SubAgentJobsTool;
-    use tinyagents_orchestration::subagent::{SubAgentJobRegistry, SubAgentJobStatus};
+    use tinyagents_orchestration::subagent::{
+        DurableSubagentStatus, SubAgentJobRegistry, SubAgentJobStatus,
+    };
 
     struct GatedModel {
         calls: std::sync::atomic::AtomicUsize,
@@ -58,6 +58,7 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
     let scratch = tempfile::tempdir().expect("isolated force-fresh fixture");
     let workspace = scratch.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace");
+    crate::storage::local::use_persistent_default_for_test(&workspace);
     let (first_started_tx, mut first_started_rx) = tokio::sync::mpsc::channel(1);
     let (second_started_tx, mut second_started_rx) = tokio::sync::mpsc::channel(1);
     let release_first = Arc::new(tokio::sync::Notify::new());
@@ -105,7 +106,7 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
             )
             .expect("detached child context")
             .with_cancellation(cancellation);
-        crate::agent::orchestration::tools::SpawnAsyncSubagentTool::new()
+        crate::agent::orchestration::tools::SpawnSubagentTool::new()
             .execute_with_live_parent_context(args, None, live.data.child(), detached)
             .await
             .expect("spawn tool executes")
@@ -143,9 +144,21 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
         .into_iter()
         .find(|job| job.agent == "task_manager_agent" && job.status == SubAgentJobStatus::Running)
         .expect("first detached child is registered in shared Jobs");
-    let store = SubagentSessionStore::new(workspace.clone());
-    let before = store
-        .load()
+    let session_dispatch = live.data.dispatch_ctx();
+    let session_port = open_for_context(
+        &session_dispatch,
+        workspace.clone(),
+        "force-fresh-parent-session",
+        Some("force-fresh-parent-thread".into()),
+        Some((*jobs).clone()),
+    )
+    .expect("open explicitly scoped force-fresh session store");
+    let before = session_port
+        .list_for_parent(
+            "force-fresh-parent-session",
+            Some("force-fresh-parent-thread"),
+        )
+        .await
         .expect("first child session persisted")
         .into_iter()
         .find(|session| session.current_task_id.as_deref() == Some(old_task_id.as_str()))
@@ -179,7 +192,13 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
         .await
         .expect("replacement child is actually dispatched")
         .expect("replacement child start notification");
-    let rows = store.load().expect("replacement session persisted");
+    let rows = session_port
+        .list_for_parent(
+            "force-fresh-parent-session",
+            Some("force-fresh-parent-thread"),
+        )
+        .await
+        .expect("replacement session persisted");
     let closed_old = rows
         .iter()
         .find(|session| session.subagent_session_id == before.subagent_session_id)
@@ -198,16 +217,18 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
 
     release_first.notify_one();
     release_second.notify_one();
-    let session_port =
-        crate::agent::orchestration::subagent_sessions::OpenHumanTinySubagentSessionStore::new(
-            workspace.clone(),
-            "force-fresh-parent-session",
-            Some("force-fresh-parent-thread".into()),
-        );
+    assert!(
+        session_port
+            .get(&old_task_id)
+            .await
+            .expect("look up task id in the owner-scoped session store")
+            .is_some(),
+        "the upstream store adapter resolves the public task-id alias"
+    );
     let wait = SubAgentJobsTool::new((*jobs).clone())
         .with_fixed_action(tinyagents_harness_tools::subagents::SubAgentJobAction::Await)
         .with_identifier_fields("task_id", "subagent_session_id")
-        .with_sessions(Arc::new(session_port), |_| {
+        .with_sessions(session_port.clone(), |_| {
             "force-fresh-parent-session".to_owned()
         })
         .with_owner_scope(Arc::new({
@@ -269,7 +290,13 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
         SubAgentJobStatus::Completed
     );
     assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-    let after_rows = store.load().expect("final durable state");
+    let after_rows = session_port
+        .list_for_parent(
+            "force-fresh-parent-session",
+            Some("force-fresh-parent-thread"),
+        )
+        .await
+        .expect("final durable state");
     let old_after = after_rows
         .iter()
         .find(|session| session.subagent_session_id == before.subagent_session_id)
@@ -333,7 +360,7 @@ async fn stopped_async_spawn_is_refused_before_progress_or_session_effects() {
         .expect("detached child context")
         .with_cancellation(detached_data.cancellation.clone());
 
-    let result = crate::agent::orchestration::tools::SpawnAsyncSubagentTool::new()
+    let result = crate::agent::orchestration::tools::SpawnSubagentTool::new()
         .execute_with_live_parent_context(
             json!({
                 "agent_id": "task_manager_agent",
@@ -469,7 +496,7 @@ async fn deleted_thread_marker_survives_router_restart_and_refuses_async_spawn()
         )
         .expect("detached child context")
         .with_cancellation(detached_data.cancellation.clone());
-    let result = crate::agent::orchestration::tools::SpawnAsyncSubagentTool::new()
+    let result = crate::agent::orchestration::tools::SpawnSubagentTool::new()
         .execute_with_live_parent_context(
             json!({
                 "agent_id": "task_manager_agent",
@@ -531,9 +558,7 @@ async fn deleted_thread_marker_survives_router_restart_and_refuses_async_spawn()
 
 #[tokio::test]
 async fn detached_registration_failure_finishes_the_announced_product_card() {
-    use crate::agent::orchestration::subagent_sessions::{
-        DurableSubagentStatus, SubagentSessionStore,
-    };
+    use crate::agent::orchestration::subagent_sessions::DurableSubagentStatus;
     use crate::agent::tinyagents::host::OpenHumanRunContext;
     use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
     use crate::tools::toolpacks::ToolGroups;
@@ -577,7 +602,7 @@ async fn detached_registration_failure_finishes_the_announced_product_card() {
         .expect("the already-detached invocation is allowed")
         .with_cancellation(detached_data.cancellation.clone());
 
-    let result = crate::agent::orchestration::tools::SpawnAsyncSubagentTool::new()
+    let result = crate::agent::orchestration::tools::SpawnSubagentTool::new()
         .execute_with_live_parent_context(
             json!({
                 "agent_id": "task_manager_agent",
@@ -603,8 +628,14 @@ async fn detached_registration_failure_finishes_the_announced_product_card() {
         ),
         "the announced product card must end in failure: {events:?}"
     );
-    let store = SubagentSessionStore::new(workspace.clone());
-    let rows = store.load().expect("session row is durable");
+    let rows = super::driver_sessions_for_parent(
+        &live.data.dispatch_ctx(),
+        &workspace,
+        "registration-failure-parent-session",
+        Some(thread_id),
+    )
+    .await
+    .expect("session row is durable");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].status, DurableSubagentStatus::Failed);
     assert!(

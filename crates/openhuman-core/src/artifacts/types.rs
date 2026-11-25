@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// The category of an artifact produced by the agent.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum ArtifactKind {
@@ -69,6 +69,40 @@ impl ArtifactStatus {
     }
 }
 
+/// Artifact fields carried inside the generic `WebChannelEvent.args` payload
+/// when an artifact has been reserved and generation is in progress.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ArtifactPendingPayload {
+    pub artifact_id: String,
+    pub kind: String,
+    pub title: String,
+    pub workspace_dir: String,
+    pub path: String,
+}
+
+/// Artifact fields carried inside `WebChannelEvent.args` after a file is
+/// available for download.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ArtifactReadyPayload {
+    pub artifact_id: String,
+    pub kind: String,
+    pub title: String,
+    pub workspace_dir: String,
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+/// Artifact fields carried inside `WebChannelEvent.args` when generation
+/// failed. The producer truncates `error` before publishing this payload.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ArtifactFailedPayload {
+    pub artifact_id: String,
+    pub kind: String,
+    pub title: String,
+    pub workspace_dir: String,
+    pub error: String,
+}
+
 /// Metadata record for a single agent-generated artifact.
 ///
 /// Persisted as `<workspace>/artifacts/<id>/meta.json`.
@@ -126,6 +160,15 @@ pub struct ArtifactMeta {
     /// existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+}
+
+/// Result of [`save_operator_version`](super::tiny_store::save_operator_version).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct SavedVersion {
+    /// The newest version number after the call.
+    pub version: u32,
+    /// Whether a version was appended.
+    pub saved: bool,
 }
 
 #[cfg(test)]

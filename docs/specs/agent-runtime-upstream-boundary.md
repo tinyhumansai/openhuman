@@ -162,8 +162,7 @@ ToolResult shape. Harness-only correlation (`call_id`, elapsed time, run id)
 belongs to an internal invocation record/event, not the tool result.
 
 `AgentHarness::register_tool` accepts `Arc<dyn tinytools::Tool>`. A recursive
-canonical tool that needs its typed parent (for example OpenHuman's
-`spawn_parallel_agents`) uses `AgentHarness::register_tool_dispatch` and an
+canonical tool that needs its typed parent (for example OpenHuman's recursive delegation tools) uses `AgentHarness::register_tool_dispatch` and an
 explicit `ToolDispatch<State, Ctx>` instead of recovering state from a
 task-local. The harness
 implements its execution context as `tinytools::ToolRunContext` and performs
@@ -253,8 +252,7 @@ Callers use registry types directly; OpenHuman does not re-export them.
 
 Generic delegation state machines, recursive run lifecycle, steering registry,
 topology export, and todo selection are `tinyagents-graph` responsibilities.
-OpenHuman retains workflow RPC/domain decisions, worktree creation policy,
-delivery, durable product ledgers, and graph-event projection.
+OpenHuman retains workflow RPC/domain decisions, delivery, durable product ledgers, and graph-event projection.
 
 Do not add `tinyagents-inspect` during the initial migration. Diagnostics can
 be added as a separate crate later if multiple consumers need a stable
@@ -279,7 +277,7 @@ all consumers import the owner directly, not that behavior is dropped.
 | `harness/` | Split then shrink | Move generic definitions, recursion, parsing, filtering, graph and loop helpers to TinyAgents; keep public OpenHuman session facade only until live callers use the crate harness, then replace it with host construction/routing. |
 | `learning/` | Keep | Product learning/profile policy behind `LearningSink`. Generic post-turn callback timing moves to harness. |
 | `library/` | Keep | Product-facing safe definition projection/RPC DTO. |
-| `orchestration/` | Split | Move generic graph lifecycle/delegation/selection; keep worktrees, workflow business rules, delivery, RPC, ledgers, and host tools. |
+| `orchestration/` | Split | Move generic graph lifecycle/delegation/selection; keep workflow business rules, delivery, RPC, ledgers, and host tools. |
 | `plan_review/` | Keep | OpenHuman interactive approval policy and RPC state. |
 | `profiles/` | Delete | Removed in this migration; agent definitions come from the registry. |
 | `progress_tracing.rs`, `progress_tracing/` | Keep | OpenHuman UI/Langfuse projection and transport. Generic observations/events remain upstream. |
@@ -304,7 +302,7 @@ all consumers import the owner directly, not that behavior is dropped.
 | `pformat.rs` | Delete | Import `tinytools-agent` directly. |
 | `progress.rs`, `progress_sink.rs` | Keep adapter | UI contract/sink mapping remain; task-local delivery becomes explicit `RunContext` data. |
 | `schemas.rs` | Keep | OpenHuman RPC controllers. |
-| `task_board.rs` | Delete facade | Call `tinyagents_graph::todos` directly; keep only product migrations at their owning startup module. |
+| `task_board.rs` | Delete facade | Call `tinyagents_harness_tools::todos` directly; keep only product migrations at their owning startup module. |
 | `task_session.rs` | Delete | It existed solely for the removed autonomous task-board dispatcher. |
 | `tool_policy.rs` | Keep policy | Product restrictions/approval facts; invoke through `SecurityGate`/canonical tool declarations. |
 | `turn_origin.rs`, `turn_workspace.rs` | Keep types/delete scopes | Product origin/workspace rules remain, but task-local accessors are replaced by explicit run context. |

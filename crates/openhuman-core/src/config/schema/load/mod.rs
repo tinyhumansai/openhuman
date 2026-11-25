@@ -16,6 +16,7 @@ mod parse_source;
 mod provenance;
 mod saas_scope;
 mod secrets;
+pub(crate) use secrets::{secret_slots, SecretSlot};
 pub(crate) mod source;
 
 pub(crate) use diagnostics::{ConfigLoadFallback, ConfigParseError, LoadDiagnostics};
@@ -33,10 +34,6 @@ pub use dirs::{
     resolve_action_dir, resolve_files_dir, user_openhuman_dir, write_active_user_id,
     PRE_LOGIN_USER_ID,
 };
-
-// redact_url_for_log is pub(super) for the schema module; tests inside load
-// can access it because they are a submodule and use `use super::*`.
-pub(super) use migrate::redact_url_for_log;
 
 // The wire contract between the config loader (which appends the marker to a
 // read failure) and `core::observability::expected_error_kind` (which keys on

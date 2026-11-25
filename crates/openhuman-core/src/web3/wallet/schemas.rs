@@ -1,4 +1,5 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::required_string;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -85,11 +86,18 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
         wallet_schemas("generate_mnemonic"),
         wallet_schemas("validate_mnemonic"),
         wallet_schemas("derive_recovery_material"),
+        wallet_schemas("token_balances"),
+        wallet_schemas("policy_get"),
+        wallet_schemas("policy_update"),
+        wallet_schemas("ledger_list"),
+        wallet_schemas("account"),
+        wallet_schemas("prepare_program"),
+        wallet_schemas("execute_prepared_program"),
     ]
 }
 
 pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
-    vec![
+    let mut controllers = vec![
         RegisteredController {
             schema: wallet_schemas("status"),
             handler: handle_status,
@@ -154,7 +162,25 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
             schema: wallet_schemas("derive_recovery_material"),
             handler: handle_derive_recovery_material,
         },
-    ]
+        RegisteredController {
+            schema: wallet_schemas("token_balances"),
+            handler: handle_token_balances,
+        },
+        RegisteredController {
+            schema: wallet_schemas("policy_get"),
+            handler: handle_policy_get,
+        },
+        RegisteredController {
+            schema: wallet_schemas("policy_update"),
+            handler: handle_policy_update,
+        },
+        RegisteredController {
+            schema: wallet_schemas("ledger_list"),
+            handler: handle_ledger_list,
+        },
+    ];
+    controllers.extend(super::program::schemas::registered());
+    controllers
 }
 
 pub fn wallet_schemas(function: &str) -> ControllerSchema {
@@ -413,6 +439,61 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "token_balances" => ControllerSchema {
+            namespace: "wallet",
+            function: "token_balances",
+            description: "List catalogued token balances for the wallet accounts: today the configured Solana cluster's USDC SPL mint, summed over the owner's token accounts. A row whose providerStatus is missing could not be read and shows zero.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of {chain, evmNetwork?, address, assetSymbol, tokenAddress, decimals, raw, formatted, providerStatus}.",
+                required: true,
+            }],
+        },
+        "policy_get" => ControllerSchema {
+            namespace: "wallet",
+            function: "policy_get",
+            description: "Read the effective native-wallet spend policy ([wallet_policy] plus env overrides): whether trusted automation may execute transfers, whether caps also apply to interactive executes, and the per-asset allowlist with per-transaction, rolling-24h and per-recipient rolling-7-day caps in atomic units.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{automation_enabled, apply_to_interactive, assets: [{chain, symbol, evm_network?, token_address?, per_tx_max_raw?, daily_max_raw?, recipient_weekly_max_raw?}]}.",
+                required: true,
+            }],
+        },
+        "policy_update" => ControllerSchema {
+            namespace: "wallet",
+            function: "policy_update",
+            description: "Update and persist the native-wallet spend policy. Absent fields keep their value; assets replaces the whole list. Environment overrides still win at the next load.",
+            inputs: vec![
+                optional_json("automationEnabled", "Optional boolean: allow trusted automation to execute transfers within the caps."),
+                optional_json("applyToInteractive", "Optional boolean: also cap interactive (UI / approved chat) executes."),
+                optional_json("assets", "Optional array of asset caps; replaces the list. Each {chain, symbol, evm_network?, token_address?, per_tx_max_raw?, daily_max_raw?, recipient_weekly_max_raw?}."),
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "The updated policy.",
+                required: true,
+            }],
+        },
+        "ledger_list" => ControllerSchema {
+            namespace: "wallet",
+            function: "ledger_list",
+            description: "List recent native-wallet execute records from the persistent spend ledger, newest first: pending, broadcast, in_doubt (never retried) and refused.",
+            inputs: vec![optional_json("limit", "Optional number of records (default 50, max 500).")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of {id, quoteId, createdAtMs, updatedAtMs, origin, originClass, policyApplied, chain, evmNetwork?, assetSymbol, tokenAddress?, toAddress, amountRaw, status, transactionHash?, error?}.",
+                required: true,
+            }],
+        },
+        "account" | "prepare_program" | "execute_prepared_program" => {
+            super::program::schemas::schema(function)
+        }
         _ => ControllerSchema {
             namespace: "wallet",
             function: "unknown",
@@ -580,6 +661,49 @@ fn handle_derive_recovery_material(
     })
 }
 
+fn handle_token_balances(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        crate::web3::wallet::token_balances(&ctx)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_policy_get(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        super::policy_ops::policy_get(&ctx)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_policy_update(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let patch: super::policy_ops::WalletPolicyPatch =
+            serde_json::from_value(Value::Object(params))
+                .map_err(|e| format!("invalid params: {e}"))?;
+        super::policy_ops::policy_update(&ctx, patch)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct LedgerListParams {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+fn handle_ledger_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let parsed: LedgerListParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        super::policy_ops::ledger_list(&ctx, parsed.limit)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
 /// Shared input schema for the tx_status / tx_receipt / lookup_tx readers.
 fn tx_query_inputs() -> Vec<FieldSchema> {
     vec![
@@ -604,12 +728,12 @@ fn required_json(name: &'static str, comment: &'static str) -> FieldSchema {
     }
 }
 
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
+fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
-        ty: TypeSchema::String,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
         comment,
-        required: true,
+        required: false,
     }
 }
 

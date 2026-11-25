@@ -55,7 +55,7 @@ fn repo_root() -> PathBuf {
 
 /// The built probe library: `OPENHUMAN_STORAGE_PROBE_MODULE` when set, else a
 /// build of the fixture under the checkout's own `target/storage-probe`.
-fn probe_artifact() -> &'static Path {
+pub(in crate::modules) fn probe_artifact() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
         if let Some(path) = std::env::var_os("OPENHUMAN_STORAGE_PROBE_MODULE") {

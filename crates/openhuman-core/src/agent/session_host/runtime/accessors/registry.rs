@@ -5,7 +5,14 @@ impl OpenHumanSessionHost {
     // Small accessors used by `run_single` + `turn` + sub-agent runner
     // ─────────────────────────────────────────────────────────────────
 
-    pub(in crate::agent::session_host) fn event_session_id(&self) -> &str {
+    /// The event-bus `session_id` this agent tags its `DomainEvent`s with —
+    /// for a web-chat session the `{"client_id": ..., "thread_id": ...}` JSON
+    /// `build_session_agent` stamps at build time. Read by `web_chat` so a
+    /// host-authored turn can address its sub-agent progress to the client
+    /// that owns the thread's session (#8458); the id is never re-stamped on
+    /// checkout, so a reused cached agent still names the web client that
+    /// built it.
+    pub(crate) fn event_session_id(&self) -> &str {
         &self.event_session_id
     }
 
@@ -14,7 +21,7 @@ impl OpenHumanSessionHost {
     }
 
     /// The agent definition id this session is running
-    /// (`"welcome"`, `"orchestrator"`, `"planner"`, …).
+    /// (`"welcome"`, `"orchestrator"`, `"workflow_builder"`, …).
     ///
     /// Exposed so callers that build sessions via
     /// [`OpenHumanSessionHost::from_config_for_agent`] can stamp the resolved id onto

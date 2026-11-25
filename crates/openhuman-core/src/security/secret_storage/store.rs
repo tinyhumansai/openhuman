@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use crate::security::secret_storage::backend::{self, SecretBackend};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum BackendKind {
+pub(crate) enum BackendKind {
     Host,
     Memory,
     File,
@@ -163,7 +163,7 @@ pub(super) fn validate_backend_selection() -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn effective_backend_kind() -> BackendKind {
+pub(crate) fn effective_backend_kind() -> BackendKind {
     if let Some(installed) = super::installed_secret_backend() {
         return backend_kind_from_env_value(installed.name()).unwrap_or(BackendKind::Host);
     }
@@ -172,6 +172,11 @@ pub(super) fn effective_backend_kind() -> BackendKind {
         std::env::var("OPENHUMAN_KEYRING_BACKEND").as_deref().ok(),
         cfg!(test),
     )
+}
+
+/// Whether the selected host master-key provider survives process exit.
+pub(crate) fn backend_is_persistent() -> bool {
+    backend().is_persistent()
 }
 
 fn effective_backend_kind_for(
@@ -184,7 +189,7 @@ fn effective_backend_kind_for(
         .unwrap_or(BackendKind::Memory)
 }
 
-fn backend_kind_from_env_value(value: &str) -> Option<BackendKind> {
+pub(crate) fn backend_kind_from_env_value(value: &str) -> Option<BackendKind> {
     match value.trim().to_ascii_lowercase().as_str() {
         "memory" => Some(BackendKind::Memory),
         "os" => Some(BackendKind::Host),

@@ -82,11 +82,11 @@ async fn pages(
 async fn a_sealed_journal_serves_the_same_pages_as_an_unsealed_one() {
     let fixture = backend();
     let backend = &fixture.backend;
-    let journal = journal(&backend);
+    let journal = journal(backend);
     seed(&journal, "run.a", 7).await;
     let before = pages(&journal, "run.a").await;
     journal.seal_run("run.a").await.unwrap();
-    assert!(sealed(&backend, "run.a").await);
+    assert!(sealed(backend, "run.a").await);
     assert_eq!(pages(&journal, "run.a").await, before);
 }
 
@@ -94,25 +94,25 @@ async fn a_sealed_journal_serves_the_same_pages_as_an_unsealed_one() {
 async fn backfill_seals_finished_runs_but_not_active_ones_and_records_itself() {
     let fixture = backend();
     let backend = &fixture.backend;
-    let journal = journal(&backend);
+    let journal = journal(backend);
     seed(&journal, "run.done", 2).await;
     seed(&journal, "run.live", 2).await;
-    mark_active(&backend, "run.live").await;
+    mark_active(backend, "run.live").await;
 
-    let report = maintain_scope(&backend, &Scope::local(), 0, 1_000)
+    let report = maintain_scope(backend, &Scope::local(), 0, 1_000)
         .await
         .unwrap();
     assert_eq!(report.backfilled, 1);
-    assert!(sealed(&backend, "run.done").await);
-    assert!(!sealed(&backend, "run.live").await);
+    assert!(sealed(backend, "run.done").await);
+    assert!(!sealed(backend, "run.live").await);
 
     // Recorded: a later pass does nothing, even for a run that has since ended.
     seed(&journal, "run.late", 1).await;
-    let report = maintain_scope(&backend, &Scope::local(), 0, 1_000)
+    let report = maintain_scope(backend, &Scope::local(), 0, 1_000)
         .await
         .unwrap();
     assert_eq!(report.backfilled, 0);
-    assert!(!sealed(&backend, "run.late").await);
+    assert!(!sealed(backend, "run.late").await);
     let storage = backend.for_scope(&Scope::local()).unwrap();
     let marker = storage
         .documents()
@@ -130,7 +130,7 @@ async fn backfill_seals_finished_runs_but_not_active_ones_and_records_itself() {
 async fn maintenance_deletes_a_sealed_journal_after_the_configured_retention() {
     let fixture = backend();
     let backend = &fixture.backend;
-    let journal = journal(&backend);
+    let journal = journal(backend);
     seed(&journal, "run.old", 2).await;
     journal.seal_run("run.old").await.unwrap();
 
@@ -145,7 +145,7 @@ async fn maintenance_deletes_a_sealed_journal_after_the_configured_retention() {
         .unwrap();
     // Inside the window: kept.
     let early = maintain_scope(
-        &backend,
+        backend,
         &Scope::local(),
         DAY_MS,
         sealed_at + DAY_MS as i64 / 2,
@@ -155,7 +155,7 @@ async fn maintenance_deletes_a_sealed_journal_after_the_configured_retention() {
     assert_eq!(early.deleted, 0);
     // Past one day, the configured retention (not the schema's 30).
     let late = maintain_scope(
-        &backend,
+        backend,
         &Scope::local(),
         DAY_MS,
         sealed_at + DAY_MS as i64 + 10,
@@ -176,7 +176,7 @@ async fn maintenance_deletes_a_sealed_journal_after_the_configured_retention() {
 async fn zero_retention_days_keeps_sealed_journals_forever() {
     let fixture = backend();
     let backend = &fixture.backend;
-    let journal = journal(&backend);
+    let journal = journal(backend);
     seed(&journal, "run.keep", 1).await;
     journal.seal_run("run.keep").await.unwrap();
     let storage = backend.for_scope(&Scope::local()).unwrap();
@@ -188,16 +188,11 @@ async fn zero_retention_days_keeps_sealed_journals_forever() {
         .unwrap()
         .sealed_ms
         .unwrap();
-    let summary = maintain_scope(
-        &backend,
-        &Scope::local(),
-        0,
-        sealed_at + 400 * DAY_MS as i64,
-    )
-    .await
-    .unwrap();
+    let summary = maintain_scope(backend, &Scope::local(), 0, sealed_at + 400 * DAY_MS as i64)
+        .await
+        .unwrap();
     assert_eq!(summary.deleted, 0);
-    assert!(sealed(&backend, "run.keep").await);
+    assert!(sealed(backend, "run.keep").await);
 }
 
 #[tokio::test]

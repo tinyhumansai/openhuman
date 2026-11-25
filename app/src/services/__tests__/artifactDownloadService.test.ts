@@ -69,10 +69,10 @@ describe('listArtifactsForThread', () => {
           status: 'pending',
         },
         {
-          id: 'art-bad-kind',
+          id: 'art-video',
           kind: 'video',
-          title: 'Unsupported',
-          path: 'artifacts/art-bad-kind/video.mp4',
+          title: 'Generated Clip',
+          path: 'artifacts/art-video/video.mp4',
           size_bytes: 99,
           status: 'ready',
         },
@@ -94,6 +94,13 @@ describe('listArtifactsForThread', () => {
           title: 'Report',
           path: 'artifacts/art-1/report.pdf',
           sizeBytes: 1234,
+        },
+        {
+          artifactId: 'art-video',
+          kind: 'video',
+          title: 'Generated Clip',
+          path: 'artifacts/art-video/video.mp4',
+          sizeBytes: 99,
         },
       ],
     });

@@ -212,8 +212,8 @@ export function buildProcessingBlocks(
         kind: 'thinking',
         key,
         text,
-        ...(item.startedAt !== undefined ? { startedAt: item.startedAt } : {}),
-        ...(item.endedAt !== undefined ? { endedAt: item.endedAt } : {}),
+        ...(item.startedAt == null ? {} : { startedAt: item.startedAt }),
+        ...(item.endedAt == null ? {} : { endedAt: item.endedAt }),
       });
     } else {
       blocks.push({ kind: item.kind, key, text });

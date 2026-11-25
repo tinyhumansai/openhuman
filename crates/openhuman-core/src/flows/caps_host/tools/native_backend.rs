@@ -49,7 +49,8 @@ pub(crate) async fn invoke(
         policy.clone(),
         tool_name,
         &args,
-    )?;
+    )
+    .await?;
     let audit_id = hooks.authorize(&policy, class, tool_name, &args).await?;
     tracing::debug!(target: "flows", %tool_name, ?class, "[flows] dispatching NATIVE OpenHuman tool");
     let result = crate::tools::native_ops::execute_tool_with_security(

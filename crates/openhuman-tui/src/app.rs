@@ -23,7 +23,7 @@ use serde_json::json;
 use tokio::sync::broadcast;
 
 use openhuman_rpc::embed::chat_surface as web_chat;
-use openhuman_rpc::embed::chat_surface::WebChannelEvent;
+use openhuman_rpc::embed::chat_surface::ScopedWebEvent;
 use openhuman_rpc::embed::CoreRuntime;
 
 use super::actions::Action;
@@ -60,7 +60,7 @@ pub async fn run(
     runtime: Arc<CoreRuntime>,
     client_id: String,
     thread_id: String,
-    mut web_rx: broadcast::Receiver<WebChannelEvent>,
+    mut web_rx: broadcast::Receiver<ScopedWebEvent>,
     options: LaunchOptions,
 ) -> anyhow::Result<()> {
     let mut state = TranscriptState::new(client_id.clone());
@@ -172,7 +172,7 @@ pub async fn run(
             },
             recv = web_rx.recv() => match recv {
                 Ok(ev) => {
-                    let before=ui.viewport.total_rows();handle_web_event(&ev, &mut state, &mut ui);
+                    let before=ui.viewport.total_rows();handle_web_event(ev.wire_event(), &mut state, &mut ui);
                     if ui.scroll_from_bottom>0 {ui.viewport.rows(&state,ui.transcript_area.width.saturating_sub(2),ui.transcript_area.height,ui.scroll_from_bottom);ui.scroll_from_bottom=ui.scroll_from_bottom.saturating_add(ui.viewport.total_rows().saturating_sub(before));}
                     dirty = true;
                 },
@@ -392,7 +392,7 @@ async fn dispatch_action(
     }
     match action {
         Action::Command(command) => {
-            return execute_command(command, runtime, client_id, state, ui).await
+            return execute_command(command, runtime, client_id, state, ui).await;
         }
         Action::View(tab) => {
             ui.active_tab = tab;

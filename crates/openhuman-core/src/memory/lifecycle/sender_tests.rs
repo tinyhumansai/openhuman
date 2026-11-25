@@ -8,6 +8,7 @@ fn origin(channel: &str, sender: Option<&str>, name: Option<&str>) -> AgentTurnO
         reply_target: "chat".into(),
         message_id: "m-1".into(),
         history_key: Some("k".into()),
+        channel_session: None,
     }
 }
 
@@ -78,6 +79,7 @@ fn nothing_is_attributed_without_a_channel_sender() {
         reply_target: "42".into(),
         message_id: "cron:job-1:run-1".into(),
         history_key: Some("k".into()),
+        channel_session: None,
     };
     assert_eq!(channel_actor(&cron), None, "a cron run is the job's prompt");
 }

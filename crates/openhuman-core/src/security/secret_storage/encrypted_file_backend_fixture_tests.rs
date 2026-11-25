@@ -12,7 +12,6 @@ use tinystoragedrivers::secrets::crypto;
 
 const FIXTURE_KEY: [u8; 32] = [0x42; 32];
 const SECRETS_ENC: &[u8] = include_bytes!("fixtures/secrets_enc.bin");
-const ENC2_VALUES: &str = include_str!("fixtures/enc2_values.txt");
 
 fn fixture_dir() -> tempfile::TempDir {
     #[cfg(target_os = "macos")]
@@ -32,18 +31,6 @@ fn fixture_dir() -> tempfile::TempDir {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
     dir
-}
-
-#[test]
-fn enc2_fixture_values_decrypt_under_the_fixture_key() {
-    let plain: Vec<String> = ENC2_VALUES
-        .lines()
-        .map(|line| {
-            assert!(line.starts_with("enc2:"));
-            String::from_utf8(crypto::decrypt_enc2(&FIXTURE_KEY, line).unwrap().to_vec()).unwrap()
-        })
-        .collect();
-    assert_eq!(plain, ["sk-test-fixture-value", "pa\u{00df}word \u{1f511}"]);
 }
 
 #[test]

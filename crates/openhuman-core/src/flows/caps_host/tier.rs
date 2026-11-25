@@ -38,12 +38,16 @@ use tinytools::status::POLICY_BLOCKED_MARKER;
 /// reuses this exact function — `CommandClass::Read` for
 /// recall/search/flavour/people, `CommandClass::Write` for remember/forget —
 /// rather than growing a second permission path for the new node kind.
-pub(crate) fn enforce_node_tier_gate(
+pub(crate) async fn enforce_node_tier_gate(
     security: &SecurityPolicy,
     class: CommandClass,
     node: &str,
 ) -> Result<GateDecision> {
-    let decision = security.gate_decision(class);
+    let decision = security.command_class_gate(class).await.map_err(|error| {
+        EngineError::Capability(format!(
+            "{POLICY_BLOCKED_MARKER} TinySecurity could not authorize the {node} node: {error}"
+        ))
+    })?;
     tracing::debug!(
         target: "flows",
         node,
@@ -99,12 +103,31 @@ pub(crate) async fn current_tier_policy(
 /// snapshot for another part of its operation (Composio integrations).
 pub(crate) fn tier_policy_from_config(
     ctx: &crate::core::runtime::DispatchCtx,
+    captured_config: &crate::config::Config,
+    live_config: Option<&crate::config::Config>,
+    baseline: &SecurityPolicy,
+) -> Result<SecurityPolicy> {
+    let mut policy = derive_tier_policy(ctx, captured_config, live_config, baseline)?;
+    // A clone shares the baseline's cached TinySecurity answers (budget and
+    // class gates). Those answers were made for the baseline's tier, so a
+    // policy at another tier must not read them: it would take a stricter
+    // tier's refusal as an allow, or a looser tier's allow as a refusal,
+    // until something refreshed the shared cells. Give it cells of its own;
+    // the async tier gate (and the test host) fills them for this tier.
+    if policy.enabled != baseline.enabled || policy.autonomy != baseline.autonomy {
+        policy.budget_snapshot = Default::default();
+        policy.class_gate_snapshot = Default::default();
+    }
+    Ok(policy)
+}
+
+fn derive_tier_policy(
+    ctx: &crate::core::runtime::DispatchCtx,
     _captured_config: &crate::config::Config,
     live_config: Option<&crate::config::Config>,
     baseline: &SecurityPolicy,
 ) -> Result<SecurityPolicy> {
     let mut policy = baseline.clone();
-    policy.tracker = baseline.tracker.shared_clone();
     let ceiling = ctx.autonomy_tier_ceiling();
     if ctx.autonomy_tier_source() == crate::core::runtime::AutonomyTierSource::Captured {
         if let Some(ceiling) = ceiling {
@@ -155,7 +178,7 @@ pub(crate) async fn enforce_current_node_tier_gate(
     node: &str,
 ) -> Result<GateDecision> {
     let policy = current_tier_policy(ctx, captured_config, baseline).await?;
-    enforce_node_tier_gate(&policy, class, node)
+    enforce_node_tier_gate(&policy, class, node).await
 }
 
 fn tier_config_error(_error: &str) -> EngineError {
@@ -204,7 +227,7 @@ fn stricter_tier(
 /// trip regardless of the running flow's own `require_approval` toggle.
 ///
 /// **Why this is needed (Codex P1 finding):** `ApprovalGate::intercept_audited`
-/// branches on the scoped [`AgentTurnOrigin`](crate::security::turn_origin::AgentTurnOrigin) —
+/// branches on the scoped [`AgentTurnOrigin`](crate::core::runtime::turn_origin::AgentTurnOrigin) —
 /// for a `TrustedAutomation { source: Workflow { require_approval: false }, .. }`
 /// origin (the default for every saved flow unless the author opts in) it
 /// returns `Allow` unconditionally, the same pre-declared-trust-root shortcut a
@@ -228,7 +251,7 @@ pub(crate) async fn gate_call_for_tier(
     action_summary: &str,
     args_redacted: Value,
 ) -> (crate::security::approval::GateOutcome, Option<String>) {
-    use crate::security::turn_origin;
+    use crate::core::runtime::turn_origin;
 
     let Some(gate) = crate::security::approval::ApprovalGate::try_global() else {
         return (crate::security::approval::GateOutcome::Allow, None);
@@ -265,17 +288,17 @@ pub(crate) async fn gate_call_for_tier(
 /// `ApprovalGate`.
 pub(crate) fn escalated_origin_for_prompt(
     tier_decision: GateDecision,
-    origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
-) -> Option<crate::security::turn_origin::AgentTurnOrigin> {
+    origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
     (tier_decision == GateDecision::Prompt)
         .then(|| force_workflow_approval(origin))
         .flatten()
 }
 
 fn force_workflow_approval(
-    origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
-) -> Option<crate::security::turn_origin::AgentTurnOrigin> {
-    use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
     match origin {
         Some(AgentTurnOrigin::TrustedAutomation {
@@ -318,7 +341,7 @@ fn force_workflow_approval(
 /// Split out as a free function over plain values so the escalation policy is
 /// unit-testable without a live `ApprovalGate`.
 pub(crate) fn escalated_origin_for_nested_harness(
-    origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
-) -> Option<crate::security::turn_origin::AgentTurnOrigin> {
+    origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
     force_workflow_approval(origin)
 }

@@ -30,6 +30,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use futures_util::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tinybus::Proxy;
@@ -63,7 +64,8 @@ pub struct ProxyTarget {
 
 /// Resolves the [`ProxyTarget`] for one `composio.mode`, or the user-facing
 /// reason there is none (not signed in, no credential).
-pub type ProxyTargetResolver = Arc<dyn Fn(&Config) -> Result<ProxyTarget, String> + Send + Sync>;
+pub type ProxyTargetResolver =
+    Arc<dyn for<'a> Fn(&'a Config) -> BoxFuture<'a, Result<ProxyTarget, String>> + Send + Sync>;
 
 static MODULE_PROXY_TARGETS: HookSlot<ProxyTargetResolver> =
     HookSlot::new("modules::connectors::proxy_targets");
@@ -85,7 +87,7 @@ pub(crate) fn note_load_resolution_ready() {
 /// mode the proxy route serves). Nothing registered => the mode has no route.
 pub fn register_proxy_target<F>(mode: impl Into<String>, resolve: F)
 where
-    F: Fn(&Config) -> Result<ProxyTarget, String> + Send + Sync + 'static,
+    F: for<'a> Fn(&'a Config) -> BoxFuture<'a, Result<ProxyTarget, String>> + Send + Sync + 'static,
 {
     MODULE_PROXY_TARGETS.register(mode, Arc::new(resolve));
 }
@@ -108,17 +110,17 @@ pub fn unregister_proxy_target(mode: &str) -> bool {
 /// with no key, or a mode string that is neither. A typo in `config.toml` fails
 /// loudly rather than silently downgrading to the other route, which would send
 /// a user's requests somewhere they did not choose.
-pub fn module_config(config: &Config) -> Result<serde_json::Value, String> {
-    module_config_with_proxy(config, &crate::config::runtime_proxy_config())
+pub async fn module_config(config: &Config) -> Result<serde_json::Value, String> {
+    module_config_with_proxy(config, &crate::config::runtime_proxy_config()).await
 }
 
 /// [`module_config`] against an explicit proxy policy rather than the
 /// process-global runtime one.
-pub(crate) fn module_config_with_proxy(
+pub(crate) async fn module_config_with_proxy(
     config: &Config,
     proxy: &crate::config::schema::ProxyConfig,
 ) -> Result<serde_json::Value, String> {
-    let mut payload = route_config(config, proxy)?;
+    let mut payload = route_config(config, proxy).await?;
     payload["offered_toolkits"] = offered_toolkits(config);
     Ok(payload)
 }
@@ -135,7 +137,7 @@ pub fn offered_toolkits(config: &Config) -> serde_json::Value {
     })
 }
 
-fn route_config(
+async fn route_config(
     config: &Config,
     proxy: &crate::config::schema::ProxyConfig,
 ) -> Result<serde_json::Value, String> {
@@ -167,15 +169,15 @@ fn route_config(
     match config.composio.mode.trim() {
         // Empty is the default, for hand-edited configs that omit the field.
         "" | COMPOSIO_MODE_BACKEND => {
-            let target = MODULE_PROXY_TARGETS
+            let resolve = MODULE_PROXY_TARGETS
                 .get(COMPOSIO_MODE_BACKEND)
                 .ok_or_else(|| {
                     format!(
                         "{}composio backend mode is not available in this build",
                         crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
                     )
-                })
-                .and_then(|resolve| resolve(config))?;
+                })?;
+            let target = resolve(config).await?;
             // The backend renders Composio results (Gmail timestamps) for the
             // model; with the user's zone it prints local time beside UTC. A
             // module before contract 1.9 ignores the field. It is part of the
@@ -196,7 +198,8 @@ fn route_config(
         COMPOSIO_MODE_DIRECT => {
             // The keychain wins over `config.toml`: the encrypted store is the
             // source of truth, and the file is a fallback for power users.
-            let stored = crate::security::credentials::get_composio_api_key(config)
+            let stored = crate::integrations::composio::get_composio_api_key(config)
+                .await
                 .map_err(|error| format!("failed to read the stored composio api key: {error}"))?;
             let api_key = stored
                 .or_else(|| {
@@ -321,8 +324,9 @@ static ROUTE_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// tell someone they are signed out.
 async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
     let _inspection_guard = inspection::route_lock().lock().await;
-    let mut route =
-        module_config(config).unwrap_or_else(|_| serde_json::json!({ "route": "none" }));
+    let mut route = module_config(config)
+        .await
+        .unwrap_or_else(|_| serde_json::json!({ "route": "none" }));
     // `state_dir` is load-time only: the trigger archive opens once, and moving
     // it later would strand the history already written there.
     if let Some(object) = route.as_object_mut() {
@@ -349,7 +353,7 @@ async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
         return Ok(());
     }
 
-    let inspection_binding = inspection::configured_binding_for_route(config, &route);
+    let inspection_binding = inspection::configured_binding_for_route(config, &route).await;
     proxy
         .call_confidential::<serde_json::Value>(methods::CONFIGURE, (route,))
         .await

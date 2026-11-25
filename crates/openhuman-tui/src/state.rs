@@ -6,12 +6,15 @@
 //! here so they can be unit-tested without a terminal.
 //!
 //! The single entry point is [`TranscriptState::apply_event`], which folds a
-//! [`WebChannelEvent`] (the same struct the desktop app receives over Socket.IO)
-//! into the transcript. Events for a different `client_id` are ignored, so a
+//! TinyChannels-owned typed [`WebChannelEvent`] (the same wire contract the
+//! desktop app receives over Socket.IO) into the transcript. Events for a
+//! different `client_id` are ignored, so a
 //! process-wide broadcast bus can be drained safely.
 
 use super::activity::{Activity, Status};
 use openhuman_rpc::embed::chat_surface::WebChannelEvent;
+
+use crate::event_view::WebEventView;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -240,6 +243,11 @@ impl TranscriptState {
     /// bus is process-wide). Returns nothing; inspect [`Self::entries`] /
     /// [`Self::is_streaming`] afterwards.
     pub fn apply_event(&mut self, ev: &WebChannelEvent) {
+        let ev = WebEventView::from_event(ev);
+        self.apply_event_view(&ev);
+    }
+
+    pub(crate) fn apply_event_view(&mut self, ev: &WebEventView) {
         if ev.client_id != self.client_id
             || (!self.thread_id.is_empty() && ev.thread_id != self.thread_id)
         {
@@ -296,9 +304,10 @@ impl TranscriptState {
                     format!("artifact · {status}{suffix}"),
                 ));
             }
-            "chat_done" => {
+            "chat_done" | "channel_outbound" => {
                 log::debug!(
-                    "[tui] state: chat_done full_response={}",
+                    "[tui] state: {} full_response={}",
+                    ev.event,
                     ev.full_response.is_some()
                 );
                 // `full_response` is authoritative — it replaces whatever the
@@ -348,9 +357,12 @@ impl TranscriptState {
                 }
                 self.finish_turn();
             }
-            other => {
-                log::trace!("[tui] state: unhandled event={other}");
-            }
+            other => match super::state_events::disposition(other) {
+                super::state_events::Disposition::Unknown => {
+                    log::debug!("[tui] state: unknown event={other} (not in the web contract)");
+                }
+                _ => log::trace!("[tui] state: ignored event={other}"),
+            },
         }
     }
 
@@ -398,7 +410,7 @@ impl TranscriptState {
         }
     }
 
-    fn apply_activity(&mut self, ev: &WebChannelEvent, child: bool) {
+    fn apply_activity(&mut self, ev: &WebEventView, child: bool) {
         let identity = if child {
             ev.subagent
                 .as_ref()
@@ -457,19 +469,23 @@ impl TranscriptState {
 
     fn push_projected_item(&mut self, item: &serde_json::Value) {
         match item.get("kind").and_then(serde_json::Value::as_str) {
-            Some("userMessage") => self.entries.push(Entry::new(
-                EntryKind::User,
-                item.get("displayContent")
+            Some("userMessage") => {
+                let content = item
+                    .get("displayContent")
                     .or_else(|| item.get("content"))
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default(),
-            )),
-            Some("assistantMessage") => self.entries.push(Entry::new(
-                EntryKind::Assistant,
-                item.get("content")
+                    .unwrap_or_default();
+                let text = label_voice_note(content, item);
+                self.entries.push(Entry::new(EntryKind::User, text));
+            }
+            Some("assistantMessage") => {
+                let content = item
+                    .get("content")
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default(),
-            )),
+                    .unwrap_or_default();
+                let text = label_voice_note(content, item);
+                self.entries.push(Entry::new(EntryKind::Assistant, text));
+            }
             Some("reasoning") => self.entries.push(Entry::new(
                 EntryKind::Thinking,
                 item.get("text")
@@ -583,6 +599,32 @@ impl TranscriptState {
             _ => {}
         }
     }
+}
+
+fn label_voice_note(content: &str, item: &serde_json::Value) -> String {
+    let Some(voice_note) = item.pointer("/extraMetadata/voiceNote") else {
+        return content.to_string();
+    };
+    let has_note_id = voice_note
+        .get("noteId")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|note_id| !note_id.is_empty());
+    if !has_note_id {
+        return content.to_string();
+    }
+
+    let label = voice_note
+        .get("durationMs")
+        .and_then(serde_json::Value::as_u64)
+        .map(format_short_duration)
+        .map(|duration| format!("[voice note {duration}]"))
+        .unwrap_or_else(|| "[voice note]".to_string());
+    format!("{label} {content}")
+}
+
+fn format_short_duration(ms: u64) -> String {
+    let seconds = ms.saturating_add(500) / 1000;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 /// Collapse to a single line and cap length so a rogue tool output can't blow

@@ -5,9 +5,10 @@ use tinymemory_tools::lifecycle::turn::TurnPack as NativeTurnPack;
 
 const MAX_PENDING: usize = 16;
 const MAX_PACK_BYTES: usize = 64 * 1024;
-const CACHED_NOTICE: &str = "This is cached memory from a completed background lookup for an earlier turn. It may be incomplete or unrelated to the current question; use explicit memory recall or fetch when you need a current answer.\n\n";
+pub(super) const CACHED_NOTICE: &str = "This is cached memory from a completed background lookup for an earlier turn. It may be incomplete or unrelated to the current question; use explicit memory recall or fetch when you need a current answer.\n\n";
 
-static TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+pub(super) static TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn pack(text: &str) -> TurnPack {
     TurnPack::from_native(NativeTurnPack {
@@ -20,7 +21,7 @@ fn pack(text: &str) -> TurnPack {
     })
 }
 
-async fn drain(cache: &Cache, key: &Key) {
+pub(super) async fn drain(cache: &Cache, key: &Key) {
     tokio::time::timeout(Duration::from_secs(1), async {
         while !cache.0.is_idle(key) {
             tokio::task::yield_now().await;
@@ -135,7 +136,9 @@ async fn pre_turn_logs_channel_metadata_without_writing_legacy_thread_map() {
         false,
         None,
         Some("telegram".into()),
+        None,
     )
+    .await
     .is_none());
     drain(&cache, &key).await;
 
@@ -261,6 +264,9 @@ async fn expiration_failure_and_oversized_packs_are_not_reused() {
 
 #[tokio::test]
 async fn credential_invalidation_removes_ready_and_rejects_late_inflight_results() {
+    let _stable = crate::memory::engine::CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _guard = TEST_LOCK.lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
@@ -306,9 +312,9 @@ async fn credential_invalidation_removes_ready_and_rejects_late_inflight_results
     );
 }
 
-struct HeldEngine {
-    inner: tinymemory_api::conformance::ReferenceEngine,
-    release: Arc<tokio::sync::Semaphore>,
+pub(super) struct HeldEngine {
+    pub(super) inner: tinymemory_api::conformance::ReferenceEngine,
+    pub(super) release: Arc<tokio::sync::Semaphore>,
 }
 #[async_trait::async_trait]
 impl tinymemory_api::MemoryEngine for HeldEngine {
@@ -425,22 +431,28 @@ async fn slow_engine_results_survive_the_manual_pre_turn_cutoff() {
         Option<tinymemory_api::ObservedActor>,
     )| {
         let (thread, index, text, in_prompt_from, at, resumed, observed_actor) = input;
-        super::pre_turn(
-            &crate::core::runtime::DispatchCtx::ambient(),
-            config,
-            identity,
-            thread,
-            index,
-            text,
-            in_prompt_from,
-            at,
-            resumed,
-            observed_actor,
-            None,
-        )
+        async move {
+            super::pre_turn(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                config,
+                identity,
+                thread,
+                index,
+                text,
+                in_prompt_from,
+                at,
+                resumed,
+                observed_actor,
+                None,
+                None,
+            )
+            .await
+        }
     };
     let config = Arc::new(config);
-    assert!(pre_turn(config.clone(), identity.clone(), input(0)).is_none());
+    assert!(pre_turn(config.clone(), identity.clone(), input(0))
+        .await
+        .is_none());
     // Even after the old one-millisecond cutoff, the pack remains owned by
     // the background worker instead of being discarded by the live turn.
     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -450,13 +462,16 @@ async fn slow_engine_results_survive_the_manual_pre_turn_cutoff() {
     release.add_permits(100);
     drain(&cache, &key).await;
     let pack = pre_turn(config.clone(), identity.clone(), input(2))
+        .await
         .expect("next turn uses completed slow lookup");
     assert!(pack.markdown.contains("teal"));
     assert!(pack.markdown.contains("earlier turn"));
     drain(&cache, &key).await;
     let mut omitted = identity;
     omitted.recall = false;
-    assert!(pre_turn(config.clone(), omitted.clone(), input(4)).is_none());
+    assert!(pre_turn(config.clone(), omitted.clone(), input(4))
+        .await
+        .is_none());
     drain(&cache, &Key::new(&config, &omitted, "slow", false)).await;
     let turns = crate::memory::test_fixtures::stored(
         &engine.inner,
@@ -636,4 +651,41 @@ async fn erase_waits_for_current_automatic_work_before_returning_its_barrier() {
     let fence = fencing.await.unwrap().unwrap();
     drop(fence);
     drain(&cache, &key).await;
+}
+
+#[tokio::test]
+async fn a_shared_engine_invalidates_every_workspaces_packs_but_a_private_one_only_its_own() {
+    // The shared case clears every workspace's ready blocks: no test that pins
+    // the cache may be running.
+    let _stable = crate::memory::engine::CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = TEST_LOCK.lock().await;
+    let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (config_one, config_two) = (config_in(&one), config_in(&two));
+    let identity = tinymemory_tools::layout::identity::Identity::agent("a")
+        .resolve(&crate::memory::scope::identity_pins(&config_one));
+    let key_one = Key::new(&config_one, &identity, "t", false);
+    let key_two = Key::new(&config_two, &identity, "t", false);
+    let cache = Arc::new(Cache::default());
+    CACHES.register(&cache.0);
+    for shared in [false, true] {
+        for key in [&key_one, &key_two] {
+            enqueue(
+                cache.clone(),
+                key.clone(),
+                Box::pin(async { Some(pack("cached")) }),
+            );
+            drain(&cache, key).await;
+        }
+
+        invalidate_with(&config_one, shared);
+
+        assert!(completed(&cache, &key_one).is_none());
+        assert_eq!(
+            completed(&cache, &key_two).is_none(),
+            shared,
+            "shared engine: {shared}"
+        );
+    }
 }

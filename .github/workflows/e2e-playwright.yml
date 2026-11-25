@@ -21,8 +21,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-playwright:
+    name: Build Playwright E2E artifact
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest@sha256:c3c20d625bcc9f75e50c3c2c2b75c88d3e60a3f4352b0f19f5327b490438722d
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+      - name: Install dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+      - name: Ensure .env exists for E2E build
+        run: |
+          touch .env
+          touch app/.env
+      - name: Build Playwright web E2E bundle and core
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:web:build
+      - name: Package Playwright E2E artifact
+        run: |
+          set -euo pipefail
+          host="$(rustc -vV | awk '/^host: / { print $2 }')"
+          stage="target/playwright-artifact/repo"
+          mkdir -p "$stage/app/dist-web" "$stage/target/e2e-web-$host/debug"
+          cp -a app/dist-web/. "$stage/app/dist-web/"
+          cp -a "target/e2e-web-$host/debug/openhuman-core" "$stage/target/e2e-web-$host/debug/"
+          tar -czf e2e-playwright-linux.tar.gz -C target/playwright-artifact repo
+      - name: Upload Playwright E2E artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-playwright-linux-${{ github.run_id }}
+          path: e2e-playwright-linux.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
   e2e-playwright:
-    name: E2E (Playwright / web lane)
+    name: E2E (Playwright / lane ${{ matrix.lane }})
+    needs: [build-playwright]
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1, 2, 3, 4]
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
@@ -46,22 +89,24 @@ jobs:
           restore-keys: |
             pnpm-store-${{ runner.os }}-
 
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            . -> target
-            crates/openhuman-app -> target
-          cache-on-failure: true
-          key: e2e-playwright-linux
-
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
-      - name: Ensure .env exists for E2E build
+      - name: Download Playwright E2E artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: e2e-playwright-linux-${{ github.run_id }}
+          path: .
+
+      - name: Restore Playwright E2E artifact
         run: |
-          touch .env
-          touch app/.env
+          set -euo pipefail
+          tar -xzf e2e-playwright-linux.tar.gz
+          cp -a repo/app/dist-web app/
+          touch app/dist-web/openhuman-e2e-bundle.marker
+          mkdir -p target
+          cp -a repo/target/. target/
+          chmod +x target/e2e-web-*/debug/openhuman-core
 
       - name: Install native test modules
         run: |
@@ -71,9 +116,6 @@ jobs:
           bash scripts/ci/self-hosted/install-test-modules.sh \
             "$module_root" "$module_root/modules.env"
           cat "$module_root/modules.env" >> "$GITHUB_ENV"
-
-      - name: Build Playwright web E2E bundle + standalone core
-        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:web:build
 
       - name: Install Playwright Chromium dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install-deps chromium
@@ -85,57 +127,7 @@ jobs:
         env:
           OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
           OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "1"
-        run: |
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          workspace_root="$OPENHUMAN_WORKSPACE"
-          # These route-only files each create a browser context. Running them
-          # together made the second bootstrap push the core to 929 MiB RSS,
-          # where the hosted runner kills it without a Rust error. Give each
-          # one its own core, then omit their titles from the regular matrix.
-          export OPENHUMAN_WORKSPACE="$workspace_root/connections-aliases"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/connections-tab-aliases.spec.ts
-
-          export OPENHUMAN_WORKSPACE="$workspace_root/connections-deeplinks"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/connections-tab-deeplinks.spec.ts
-
-          # The Skills catalog tests intentionally start real connector-backed
-          # discovery. On hosted runners, keeping that native module alive
-          # across the next browser context exhausts the core process. Run
-          # every assertion with a new core instead of dropping coverage.
-          skills_index=0
-          while IFS= read -r skills_test; do
-            export OPENHUMAN_WORKSPACE="$workspace_root/skills-$skills_index"
-            mkdir -p "$OPENHUMAN_WORKSPACE"
-            bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-              test/playwright/specs/skills-search-install.spec.ts \
-              -g "$skills_test"
-            skills_index=$((skills_index + 1))
-          done <<'EOF'
-          a burst of typing issues ONE catalog search
-          a pause between words issues a second search
-          a query with no matches leaves no catalog rows
-          the typed text is preserved in the box while results load
-          offers Install, and the button is enabled before it is pressed
-          disables the button and shows Installing while the RPC is in flight
-          a failed install re-enables the button rather than stranding it
-          EOF
-
-          # Each remaining shard gets a fresh standalone core. Keep the
-          # shard's persisted state fresh too: reusing a workspace silently
-          # carries every prior shard's transcripts and memory tree into the
-          # next core process.
-          for shard_index in $(seq 1 64); do
-            shard="$shard_index/64"
-            export OPENHUMAN_WORKSPACE="$workspace_root/shard-$shard_index"
-            mkdir -p "$OPENHUMAN_WORKSPACE"
-            bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-              --shard="$shard" \
-              --grep-invert='Connections (aliases|deep links)|Skills explorer'
-          done
+        run: bash app/scripts/e2e-web-shards.sh --lane=${{ matrix.lane }} --lanes=4 --selection=all
 
       - name: Pack Playwright E2E failure artifacts
         if: failure()
@@ -150,7 +142,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-playwright-failure-logs-${{ github.run_id }}
+          name: e2e-playwright-all-failure-logs-${{ github.run_id }}-lane-${{ matrix.lane }}
           path: .ci/artifacts/openhuman-playwright-failure-logs.tar.gz
           retention-days: 7
           if-no-files-found: ignore

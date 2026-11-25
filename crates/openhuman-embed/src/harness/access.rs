@@ -20,7 +20,7 @@
 //! expensive to diagnose. [`Access`] therefore always yields **both** halves
 //! together, and they cannot be set independently.
 
-use openhuman_core::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use openhuman_core::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use openhuman_core::security::{AutonomyLevel, TrustedAccess, TrustedRoot};
 
 /// The authority a harness's turns run with.

@@ -377,6 +377,6 @@ pub fn restore(archive: &Path, profile_dir: &Path) -> Result<Manifest, LayoutErr
     Ok(manifest)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-import"))]
 #[path = "archive_tests.rs"]
 mod tests;

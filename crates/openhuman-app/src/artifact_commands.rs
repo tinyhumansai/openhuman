@@ -139,10 +139,13 @@ pub async fn download_artifact_to_downloads(
     Ok(dest.display().to_string())
 }
 
-/// Strip path-traversal characters from a filename hint. The
-/// renderer is expected to pass something like `"My Deck.pptx"`;
-/// reject anything that contains a separator or null byte so a
-/// malicious `ai_get_artifact` response can never escape the chosen dir.
+/// Turn a filename hint (the artifact title, e.g. `"Q3: plan.pptx"`) into a
+/// single plain path component. Separators, NUL and `.`/`..` are rejected so
+/// a malicious `ai_get_artifact` response can never escape the chosen dir.
+/// Characters Windows treats specially are replaced rather than rejected —
+/// `:` alone would otherwise make `C:evil.dll` drive-relative and
+/// `a.txt:stream` an alternate data stream — and reserved device names
+/// (`CON`, `NUL`, `COM1`, …) get a `_` prefix.
 fn sanitize_filename(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -159,7 +162,54 @@ fn sanitize_filename(name: &str) -> Result<String, String> {
     if trimmed == "." || trimmed == ".." {
         return Err(format!("filename must not be '.' or '..': {trimmed:?}"));
     }
-    Ok(trimmed.to_string())
+    let mapped: String = trimmed
+        .chars()
+        .map(|c| match c {
+            ':' | '<' | '>' | '"' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    // Windows drops trailing dots and spaces, so `evil.dll.` would land as
+    // `evil.dll`.
+    let mut name = mapped.trim_end_matches(['.', ' ']).to_string();
+    if name.is_empty() {
+        return Err(format!("filename has no usable characters: {trimmed:?}"));
+    }
+    // Windows ignores spaces before the extension, so `CON .txt` is `CON`.
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    // Win32 also treats the superscript digits ¹ ² ³ as COM/LPT port digits.
+    let port_digit = |rest: &str| {
+        let mut chars = rest.chars();
+        matches!(
+            (chars.next(), chars.next()),
+            (Some('1'..='9' | '¹' | '²' | '³'), None)
+        )
+    };
+    let reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"]
+        .iter()
+        .any(|p| stem.strip_prefix(p).is_some_and(port_digit));
+    if reserved {
+        name.insert(0, '_');
+    }
+    let mut components = Path::new(&name).components();
+    if !matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    ) {
+        return Err(format!(
+            "filename must be a single path component: {trimmed:?}"
+        ));
+    }
+    Ok(name)
 }
 
 /// Pick a destination path under `dir` that does not exist yet.

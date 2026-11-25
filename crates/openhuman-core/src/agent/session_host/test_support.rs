@@ -29,14 +29,18 @@ pub(crate) fn with_fixture_model_name(builder: SessionHostBuilder) -> SessionHos
 /// session through the managed-provider factory. HookSlot test registrations
 /// are thread-local, so each test opts in on the thread that builds its host.
 fn model_fixture_entry() -> ChatModelEntry<ProviderContext> {
+    scripted_model_entry(Arc::new(SessionFixtureModel))
+}
+
+fn scripted_model_entry(scripted: Arc<dyn ChatModel<()>>) -> ChatModelEntry<ProviderContext> {
     ChatModelEntry {
-        build: Arc::new(|request: &ChatModelRequest<'_, ProviderContext>| {
+        build: Arc::new(move |request: &ChatModelRequest<'_, ProviderContext>| {
             let model = request
                 .model_override
                 .or(request.default_model)
                 .or(request.context.config.default_model.as_deref())
                 .unwrap_or("test/session-fixture");
-            Ok((Arc::new(SessionFixtureModel), model.to_string()))
+            Ok((Arc::clone(&scripted), model.to_string()))
         }),
         probe: None,
         models: Some(ProviderModelMetadata {
@@ -98,10 +102,52 @@ pub(crate) fn install_model_fixture() {
     crate::inference::registry::register_chat_model(PROVIDER_OPENHUMAN, model_fixture_entry());
 }
 
+/// Configure a managed-provider session fixture with its required test credential.
+pub(crate) async fn install_managed_model_fixture(config: &crate::config::Config) {
+    install_model_fixture();
+    crate::credentials::api_key::store_api_key(config, "test-session-fixture-key")
+        .await
+        .expect("store the managed inference fixture credential");
+}
+
+/// Bootstrap a managed model from a synchronous test fixture without using the
+/// storage bridge as a general executor. Profile persistence uses that bridge
+/// itself, and model registrations must also exist on the test's own thread.
+pub(crate) fn install_managed_model_fixture_sync(config: &crate::config::Config) {
+    install_model_fixture();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("managed fixture runtime")
+                    .block_on(install_managed_model_fixture(config));
+            })
+            .join()
+            .expect("managed fixture bootstrap thread");
+    });
+}
+
+pub(crate) fn install_scripted_model(model: Arc<dyn ChatModel<()>>) {
+    crate::inference::registry::register_chat_model(
+        PROVIDER_OPENHUMAN,
+        scripted_model_entry(model),
+    );
+}
+
 pub(crate) fn install_model_fixture_in(extensions: &crate::core::slots::Extensions) {
     crate::inference::registry::register_chat_model_in(
         extensions,
         PROVIDER_OPENHUMAN,
         model_fixture_entry(),
     );
+}
+
+/// Bind pure session fixtures to a real, isolated host for security screens
+/// and result scrubbing. The native module remains the authority.
+pub(crate) async fn with_native_security<F: std::future::Future>(operation: F) -> F::Output {
+    let directory = tempfile::tempdir().expect("session security fixture");
+    let config = crate::credentials::test_support::plaintext_fixture_config(directory.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&config, operation).await
 }

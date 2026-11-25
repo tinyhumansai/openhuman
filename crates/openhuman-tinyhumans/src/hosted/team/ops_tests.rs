@@ -182,7 +182,7 @@ fn clamp_u32_rejects_out_of_range() {
 async fn get_usage_for_local_session_is_backend_unavailable_without_a_request() {
     // Sentry 36649: the offline local user must get the demoted sentinel.
     let tmp = TempDir::new().unwrap();
-    let config = test_support::local_session(&tmp);
+    let config = test_support::local_session(&tmp).await;
     let err = get_usage(&config).await.unwrap_err();
     assert!(err.starts_with("BACKEND_UNAVAILABLE:"), "{err}");
     assert!(expected_error_kind(&err).is_some());
@@ -200,7 +200,7 @@ async fn get_usage_unwraps_the_usage_document() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     let out = get_usage(&config).await.unwrap();
     assert_eq!(out.value, json!({"remainingUsd": 3.0}));
 }
@@ -252,7 +252,7 @@ async fn team_calls_encode_ids_and_send_typed_bodies() {
         .await;
 
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     assert_eq!(
         list_members(&config, " t/1 ").await.unwrap().value,
         json!([])

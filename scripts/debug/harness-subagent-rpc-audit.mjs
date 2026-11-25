@@ -27,7 +27,7 @@ then steers it through openhuman.subagent_steer while the parent/core process is
 No prompt, response, credential, or transcript bodies are printed.
 
 Options:
-  --scenario <name>        async-steer, parallel-research-code, reuse-parent-comm, or all (default: async-steer)
+  --scenario <name>        async-steer, reuse-parent-comm, or all (default: async-steer)
   --core-url <url>          JSON-RPC endpoint (default: OPENHUMAN_CORE_RPC_URL or ${DEFAULT_RPC_URL})
   --token <token>           RPC bearer (default: OPENHUMAN_CORE_TOKEN or <workspace>/core.token)
   --workspace <path>        Workspace containing .openhuman/subagent_sessions.json
@@ -47,7 +47,6 @@ Options:
 Examples:
   node scripts/debug/harness-subagent-rpc-audit.mjs
   node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --model hint:agentic
-  node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --scenario parallel-research-code --model hint:agentic
   node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --scenario reuse-parent-comm --model hint:agentic
   node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --provider-mode direct-openai --scenario reuse-parent-comm --model gpt-4.1-mini
 `;
@@ -139,7 +138,6 @@ function parseArgs(argv) {
   }
   const scenarios = new Set([
     "async-steer",
-    "parallel-research-code",
     "reuse-parent-comm",
     "all",
   ]);
@@ -461,38 +459,12 @@ function printUsageReport(label, rows) {
   return totals;
 }
 
-function changedTranscriptFiles(before, after) {
-  return [...after.entries()]
-    .filter(([file, current]) => {
-      const previous = before.get(file);
-      return (
-        !previous ||
-        previous.size !== current.size ||
-        previous.mtimeMs !== current.mtimeMs
-      );
-    })
-    .map(([file]) => file);
-}
-
-function subagentTranscriptFiles(files) {
-  return files.filter((file) => path.basename(file).includes("__"));
-}
-
 function spawnPrompt(opts) {
   return `Harness async subagent RPC audit.
 Call spawn_subagent exactly once with agent_id \`${opts.agentId}\`, task_key \`${opts.taskKey}\`, blocking false, and fresh false.
 Ask the sub-agent to produce a concise confirmation for audit marker \`${opts.taskKey}\`.
 After the tool returns, reply with one short sentence saying the async worker was started.
 Do not call wait_subagent.`;
-}
-
-function parallelPrompt(opts) {
-  return `Harness parallel subagent audit.
-Call spawn_parallel_agents exactly once with these two tasks:
-1. agent_id "agent_memory", ownership "memory recall", prompt "Recall what memory holds about title normalization or text cleanup helpers and return a concise factual note. Include one short evidence phrase, or say plainly that nothing relevant is stored."
-2. agent_id "task_manager_agent", ownership "task-source inventory", prompt "List the task sources and artifacts currently configured and return a concise factual note, or say plainly that none are configured. Read only; do not add, update, or remove anything."
-After spawn_parallel_agents returns, reply with one concise sentence summarizing that both parallel workers completed.
-Audit marker: ${opts.taskKey}.`;
 }
 
 function reusePrompt(opts, turn) {
@@ -560,13 +532,12 @@ omit_memory_md = true
 inline = """
 You are the OpenHuman async subagent RPC audit orchestrator.
 For async steering audit messages, call spawn_subagent exactly once with agent_id "async_audit_worker", blocking false, fresh false, and the task_key provided by the user.
-For parallel audit messages, call spawn_parallel_agents exactly once with the task list provided by the user.
 For reusable subagent parent communication audit messages, call spawn_subagent exactly as many times as requested, preserving each requested task_key, blocking setting, and fresh setting. When asked to collect workers, call wait_subagent for the returned task_id values.
 After the requested tool call or calls return, provide one concise sentence. Do not call wait_subagent for async steering audits. Do not call any tools other than the requested audit tools.
 """
 
 [tools]
-named = ["spawn_subagent", "spawn_parallel_agents", "wait_subagent"]
+named = ["spawn_subagent", "wait_subagent"]
 
 [subagents]
 allowlist = ["async_audit_worker", "agent_memory", "task_manager_agent"]
@@ -859,45 +830,6 @@ async function runAsyncSteerScenario(opts) {
   return failures;
 }
 
-async function runParallelResearchCodeScenario(opts) {
-  const transcriptWorkspace = opts.sessionWorkspace || opts.workspace;
-  const before = await transcriptSnapshot(transcriptWorkspace);
-  const params = { message: parallelPrompt(opts) };
-  if (opts.model) params.model_override = opts.model;
-
-  const started = Date.now();
-  const result = await rpc(
-    opts.coreUrl,
-    opts.token,
-    "openhuman.agent_chat",
-    params,
-    opts.rpcTimeoutMs,
-  );
-  const response = responseText(result);
-  const after = await transcriptSnapshot(transcriptWorkspace);
-  const changed = changedTranscriptFiles(before, after);
-  const changedSubagents = subagentTranscriptFiles(changed);
-
-  console.log(
-    `[harness-subagent-rpc-audit] parallel turn completed in ${Date.now() - started}ms${
-      opts.verbose ? ` response_chars=${response.length}` : ""
-    }`,
-  );
-  console.log(
-    `[harness-subagent-rpc-audit] transcript changes changed=${changed.length} subagent_changed=${changedSubagents.length}`,
-  );
-
-  const failures = [];
-  if (response.length === 0)
-    failures.push("parallel parent response was empty");
-  if (changedSubagents.length < 2) {
-    failures.push(
-      `expected at least two changed subagent transcripts, observed ${changedSubagents.length}`,
-    );
-  }
-  return failures;
-}
-
 async function runReuseParentCommScenario(opts) {
   const transcriptWorkspace = opts.sessionWorkspace || opts.workspace;
   const sessionWorkspace = opts.sessionWorkspace || opts.workspace;
@@ -1023,9 +955,7 @@ async function main() {
   }
   console.log(`  task_key: ${opts.taskKey}`);
   console.log(`  scenario: ${opts.scenario}`);
-  if (opts.scenario !== "parallel-research-code") {
-    console.log(`  agent_id: ${opts.agentId}`);
-  }
+  console.log(`  agent_id: ${opts.agentId}`);
   console.log(`  mode: ${opts.spawnCore ? "spawned-core" : "attached-core"}`);
   if (opts.isolatedWorkspace) {
     console.log("  definitions: isolated audit overrides enabled");
@@ -1036,7 +966,7 @@ async function main() {
   try {
     const scenarios =
       opts.scenario === "all"
-        ? ["async-steer", "parallel-research-code", "reuse-parent-comm"]
+        ? ["async-steer", "reuse-parent-comm"]
         : [opts.scenario];
     for (const scenario of scenarios) {
       console.log(`[harness-subagent-rpc-audit] scenario ${scenario}`);
@@ -1047,8 +977,6 @@ async function main() {
       };
       if (scenario === "async-steer") {
         failures.push(...(await runAsyncSteerScenario(scenarioOpts)));
-      } else if (scenario === "parallel-research-code") {
-        failures.push(...(await runParallelResearchCodeScenario(scenarioOpts)));
       } else if (scenario === "reuse-parent-comm") {
         failures.push(...(await runReuseParentCommScenario(scenarioOpts)));
       }

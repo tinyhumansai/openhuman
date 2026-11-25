@@ -3,11 +3,11 @@
 use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
-use crate::core::all::ControllerFuture;
+use crate::core::all::{BoundRegisteredController, ControllerFuture};
 
 use crate::voice::schemas::helpers::{
-    deserialize_params, generate_silent_wav, validate_provider_key, validate_stt_provider,
-    validate_tts_provider,
+    deserialize_params, validate_provider_key, validate_stt_provider, validate_tts_provider,
+    SILENT_CLIP_SAMPLES, SILENT_CLIP_SAMPLE_RATE,
 };
 use crate::voice::schemas::params::{
     SetProvidersParams, VoiceListModelsParams, VoiceTestProviderParams,
@@ -18,12 +18,23 @@ use crate::voice::schemas::params::{
 // Provider configuration handlers
 // ---------------------------------------------------------------------------
 
+pub(crate) fn voice_set_providers_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        super::super::registry::voice_schemas("voice_set_providers"),
+        deserialize_params::<SetProvidersParams>,
+        run_voice_set_providers,
+    )
+}
+
 pub(crate) fn handle_voice_set_providers(
     ctx: DispatchCtx,
     params: Map<String, Value>,
 ) -> ControllerFuture {
+    voice_set_providers_controller().invoke(ctx, params)
+}
+
+fn run_voice_set_providers(ctx: DispatchCtx, p: SetProvidersParams) -> ControllerFuture {
     Box::pin(async move {
-        let p = deserialize_params::<SetProvidersParams>(params)?;
         let mut config = ctx.load_config().await?;
 
         if let Some(stt) = p
@@ -85,9 +96,24 @@ pub(crate) fn handle_voice_set_providers(
     })
 }
 
+pub(crate) fn voice_update_provider_settings_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        super::super::registry::voice_schemas("voice_update_provider_settings"),
+        deserialize_params::<VoiceUpdateProviderSettingsParams>,
+        run_voice_update_provider_settings,
+    )
+}
+
 pub(crate) fn handle_voice_update_provider_settings(
     ctx: DispatchCtx,
     params: Map<String, Value>,
+) -> ControllerFuture {
+    voice_update_provider_settings_controller().invoke(ctx, params)
+}
+
+fn run_voice_update_provider_settings(
+    ctx: DispatchCtx,
+    p: VoiceUpdateProviderSettingsParams,
 ) -> ControllerFuture {
     Box::pin(async move {
         use crate::config::schema::voice_providers::{
@@ -96,7 +122,6 @@ pub(crate) fn handle_voice_update_provider_settings(
         use tinyinference_voice::external_stt::SttApiStyle;
         use tinyinference_voice::external_tts::TtsApiStyle;
 
-        let p = deserialize_params::<VoiceUpdateProviderSettingsParams>(params)?;
         let mut config = ctx.load_config().await?;
 
         if let Some(providers) = p.voice_providers {
@@ -253,12 +278,23 @@ fn sync_legacy_stt_engine(config: &mut crate::config::Config, provider: &str) {
     }
 }
 
+pub(crate) fn voice_list_models_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        super::super::registry::voice_schemas("voice_list_models"),
+        deserialize_params::<VoiceListModelsParams>,
+        run_voice_list_models,
+    )
+}
+
 pub(crate) fn handle_voice_list_models(
     ctx: DispatchCtx,
     params: Map<String, Value>,
 ) -> ControllerFuture {
+    voice_list_models_controller().invoke(ctx, params)
+}
+
+fn run_voice_list_models(ctx: DispatchCtx, p: VoiceListModelsParams) -> ControllerFuture {
     Box::pin(async move {
-        let p = deserialize_params::<VoiceListModelsParams>(params)?;
         let config = ctx.load_config().await?;
         let provider_id = p.provider_id.trim();
         let capability = p.capability.as_deref().unwrap_or("both");
@@ -321,12 +357,29 @@ pub(crate) fn handle_voice_list_models(
     })
 }
 
+pub(crate) fn voice_test_provider_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        super::super::registry::voice_schemas("voice_test_provider"),
+        deserialize_params::<VoiceTestProviderParams>,
+        run_voice_test_provider,
+    )
+}
+
 pub(crate) fn handle_voice_test_provider(
     ctx: DispatchCtx,
     params: Map<String, Value>,
 ) -> ControllerFuture {
+    voice_test_provider_controller().invoke(ctx, params)
+}
+
+/// How long "Test STT" waits for the lazily loaded TinyVoice module before
+/// answering `ok: false`. Kept well under the 30 s abort in the frontend's
+/// `testVoiceProvider` so the user sees why instead of a client timeout; the
+/// download keeps running and a later test finds the module ready.
+const STT_TEST_MODULE_LOAD_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+fn run_voice_test_provider(ctx: DispatchCtx, p: VoiceTestProviderParams) -> ControllerFuture {
     Box::pin(async move {
-        let p = deserialize_params::<VoiceTestProviderParams>(params)?;
         let config = ctx.load_config().await?;
         let start = std::time::Instant::now();
 
@@ -387,12 +440,29 @@ pub(crate) fn handle_voice_test_provider(
 
         if p.workload == "stt" {
             let provider = crate::voice::create_stt_provider(&p.provider, "", &config)
+                .await
                 .map_err(|e| e.to_string())?;
 
-            // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the local
-            // The selected engine can transcribe it without an
-            // external binary (issue #3425).
-            let silent_wav = generate_silent_wav();
+            // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the
+            // selected engine can transcribe it without an external binary
+            // (issue #3425).
+            let silent_wav = match crate::modules::voice::encode_wav_pcm16(
+                &config,
+                &[0; SILENT_CLIP_SAMPLES],
+                SILENT_CLIP_SAMPLE_RATE,
+                1,
+                Some(STT_TEST_MODULE_LOAD_WAIT),
+            )
+            .await
+            {
+                Ok(wav) => wav,
+                Err(e) => {
+                    return Ok(serde_json::json!({
+                        "ok": false,
+                        "detail": format!("STT test failed: {e}"),
+                    }))
+                }
+            };
             let audio_b64 = {
                 use base64::Engine;
                 base64::engine::general_purpose::STANDARD.encode(&silent_wav)
@@ -417,8 +487,9 @@ pub(crate) fn handle_voice_test_provider(
             };
         }
 
-        let provider =
-            crate::voice::create_tts_provider(trimmed, "", &config).map_err(|e| e.to_string())?;
+        let provider = crate::voice::create_tts_provider(trimmed, "", &config)
+            .await
+            .map_err(|e| e.to_string())?;
         match provider.synthesize(&config, "Hello", None).await {
             Ok(_outcome) => {
                 let elapsed = start.elapsed().as_millis();

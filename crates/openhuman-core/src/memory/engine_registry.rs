@@ -72,7 +72,8 @@ pub struct EngineRequest<'a> {
 }
 
 /// Binds the engine for a config and layout root.
-pub type EngineBuilder = Arc<dyn for<'a> Fn(&EngineRequest<'a>) -> Binding + Send + Sync>;
+pub type EngineBuilder =
+    Arc<dyn for<'a> Fn(&EngineRequest<'a>) -> EngineFuture<Binding> + Send + Sync>;
 
 /// Whether background memory work is free for the bound engine and config.
 pub type FreeBackground = Arc<dyn Fn(Config, BoundEngine) -> EngineFuture<bool> + Send + Sync>;

@@ -8,7 +8,6 @@
 //!
 //! # Modules
 //!
-//! - [`bus`] — the lifecycle subscriber that logs this domain's events.
 //! - [`ops`] — the `mcp_clients` RPC handlers, calling the module and
 //!   publishing this application's own events.
 //! - [`config_ops`] — the `config_get` / `config_set` handlers over the
@@ -33,8 +32,6 @@
 #[cfg(feature = "mcp")]
 pub mod action_tool;
 #[cfg(feature = "mcp")]
-pub mod bus;
-#[cfg(feature = "mcp")]
 pub mod config_ops;
 #[cfg(feature = "mcp")]
 pub mod ops;
@@ -45,6 +42,10 @@ pub mod supervisor_events;
 #[cfg(feature = "mcp")]
 pub mod tools;
 
+#[cfg(feature = "mcp")]
+pub(crate) use schemas::registry_get_controller_entry;
+#[cfg(all(test, feature = "mcp"))]
+pub(crate) use schemas::registry_get_parameter_contract;
 #[cfg(feature = "mcp")]
 pub use schemas::{
     all_controller_schemas as all_mcp_registry_controller_schemas,
@@ -84,7 +85,7 @@ pub mod connections {
         args: impl serde::Serialize,
     ) -> Result<R, tinybus::module::ModuleCallError> {
         crate::mcp::module_client::McpConfiguredClient::for_config(config)?
-            .call(&host::client_config(config), member, args)
+            .call(&host::client_config(config).await, member, args)
             .await
     }
 
@@ -362,7 +363,7 @@ pub mod boot {
         // read forces that open without recreating connection policy here.
         if let Err(error) = client
             .call::<serde_json::Value>(
-                &host::client_config(config),
+                &host::client_config(config).await,
                 tinymcp_bus::names::methods::STATIC_LIST,
                 (),
             )
@@ -420,7 +421,7 @@ pub mod oauth {
             crate::mcp::module_client::McpConfiguredClient::for_config(config)
                 .map_err(|error| error.to_string())?
                 .call(
-                    &host::client_config(config),
+                    &host::client_config(config).await,
                     tinymcp_bus::names::methods::OAUTH_COMPLETE,
                     (state, code),
                 )
@@ -441,43 +442,92 @@ pub mod oauth {
 /// A tool whose description trips a rule is dropped, and the drop is
 /// logged and published with the *rule code* only — the offending text is never
 /// re-emitted, because the payload is the thing that was dangerous.
+///
+/// The scan runs with the embedder's config, else the loaded one, so a `serve`
+/// host (which has no embedder config) still scans; it fails closed only when
+/// no config can be loaded or the scanner errors.
+///
+/// With security disabled (`crate::security::switch`) nothing is scanned and
+/// every tool is kept.
 #[cfg(feature = "mcp")]
-pub(crate) fn tools_safe_for_agent(
+pub(crate) async fn tools_safe_for_agent(
     server: &str,
     tools: Vec<tinymcp_bus::McpTool>,
 ) -> Vec<tinymcp_bus::McpTool> {
     use crate::core::bus::BUS;
     use crate::core::events::DomainEvent;
-    use crate::security::prompt_injection::scan_tool_definition;
-
-    tools
-        .into_iter()
-        .filter(|tool| {
-            let hit = tool
-                .description
-                .as_deref()
-                .and_then(|text| scan_tool_definition("description", text));
-
-            match hit {
-                Some(hit) => {
-                    tracing::warn!(
-                        server,
-                        tool = %tool.name,
-                        reason = %hit.code,
-                        "[mcp] dropped a remote tool that tripped the input-validation scan"
-                    );
-                    BUS.publish(DomainEvent::McpToolRejected {
-                        server: server.to_string(),
-                        tool: tool.name.clone(),
-                        reason: hit.code.clone(),
-                    });
-                    false
-                }
-                None => true,
+    let embedder_config = crate::security::prompt_injection::tool_scan_config().await;
+    if crate::security::switch::disabled_for(embedder_config.as_ref()).is_some() {
+        return tools;
+    }
+    // A test process has no booted host, so no embedder scope names a
+    // configuration to scan under. The test host supplies the one the real
+    // TinySecurity module is admitted with, as the prompt screen does
+    // (`enforce_prompt_input_with_config`); a process without the staged
+    // module still has none and fails closed below.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let embedder_config =
+        embedder_config.or_else(crate::modules::security::test_host::screening_config);
+    let mut safe = Vec::with_capacity(tools.len());
+    for tool in tools {
+        #[cfg(feature = "security-module")]
+        let definition = serde_json::json!({
+            "name": &tool.name,
+            "description": &tool.description,
+            "input_schema": &tool.input_schema,
+            "meta": &tool.meta,
+        });
+        #[cfg(feature = "security-module")]
+        let result = if let Some(config) = embedder_config.as_ref() {
+            match crate::modules::security::client(config).await {
+                Ok(client) => client
+                    .scan_tool_definition(tool.name.clone(), &definition)
+                    .await
+                    .ok(),
+                Err(_) => None,
             }
-        })
-        .collect()
+        } else {
+            None
+        };
+        #[cfg(not(feature = "security-module"))]
+        let result: Option<tinysecurity_bus::ScanResponse> = None;
+        let reason = match result {
+            Some(result) if result.verdict == tinysecurity_bus::ScanVerdict::Clean => {
+                safe.push(tool);
+                continue;
+            }
+            Some(hit) => hit
+                .rule_ids
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "tool_definition.flagged".into()),
+            None => "scan.unavailable".to_owned(),
+        };
+        tracing::warn!(
+            server,
+            tool = %tool.name,
+            reason = %reason,
+            "[mcp] dropped a remote tool that tripped the input-validation scan"
+        );
+        BUS.publish(DomainEvent::McpToolRejected {
+            server: server.to_string(),
+            tool: tool.name.clone(),
+            reason,
+        });
+    }
+    safe
 }
+
+#[cfg(all(test, feature = "mcp"))]
+#[path = "scan_tests.rs"]
+mod scan_tests;
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;
 
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `mcp` feature is OFF.

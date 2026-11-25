@@ -20,7 +20,7 @@ pub async fn mcp_clients_config_get(config: &Config) -> Result<Outcome<Value>, S
         .map_err(|error| error.to_string())?;
     let doc: Value = client
         .call(
-            &super::super::host::client_config(config),
+            &super::super::host::client_config(config).await,
             tinymcp_bus::names::methods::CONFIG_DOCUMENT_GET,
             (),
         )
@@ -46,7 +46,7 @@ pub async fn mcp_clients_config_set(config: &Config, doc: Value) -> Result<Outco
         .map_err(|error| error.to_string())?;
     let applied: tinymcp_bus::ConfigApplyResponse = client
         .call_confidential(
-            &super::super::host::client_config(config),
+            &super::super::host::client_config(config).await,
             tinymcp_bus::names::methods::CONFIG_DOCUMENT_APPLY,
             (doc,),
         )
@@ -76,7 +76,7 @@ pub async fn mcp_clients_config_set(config: &Config, doc: Value) -> Result<Outco
         tokio::spawn(async move {
             let outcome: Result<tinymcp_bus::ConnectOutcome, _> = client
                 .call(
-                    &super::super::host::client_config(&config),
+                    &super::super::host::client_config(&config).await,
                     tinymcp_bus::names::methods::CONNECT,
                     (server_id.clone(),),
                 )

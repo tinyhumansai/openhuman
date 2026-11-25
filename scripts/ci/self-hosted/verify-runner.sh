@@ -2,7 +2,7 @@
 # Fail closed on stale guests. Never install or silently select another compiler.
 # `image` checks only the pinned digest against CI_IMAGE_BUILD_INFO (default
 # /etc/ohci/build-info). With no argument, also check preinstalled tools and
-# signed-cache settings, then append masked configuration to required GITHUB_ENV.
+# the pinned linker, then append the toolchain configuration to GITHUB_ENV.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 image="$(cat "$root/scripts/ci/self-hosted/guest-image.txt")"
@@ -15,7 +15,7 @@ fi
 echo "[ci][guest] verified $image"
 [[ "${1:-}" != image ]] || exit 0
 
-for tool in rustup cargo rustc clang readelf tinymold python3 node pnpm jq git curl pkg-config pwsh diff-cover; do
+for tool in rustup cargo rustc clang readelf python3 node pnpm jq git curl pkg-config pwsh diff-cover; do
   command -v "$tool" >/dev/null || { echo "::error::Missing preinstalled tool: $tool" >&2; exit 1; }
 done
 linker=/usr/local/bin/rust-mold-linker
@@ -51,16 +51,7 @@ rustup run "$channel" cargo clippy --version
 rustup run "$channel" cargo fmt --version
 rustup run "$channel" cargo nextest --version
 rustup run "$channel" cargo llvm-cov --version
-tinymold --version
 /opt/mold/bin/mold --version
-for key in TINYMOLD_REMOTE_URL TINYMOLD_REMOTE_AUTH TINYMOLD_REMOTE_SIGNING_KEY TINYMOLD_REMOTE_TRUSTED_KEYS; do
-  [[ -n "${!key:-}" ]] || { echo "::error::Guest lacks signed cache configuration: $key" >&2; exit 1; }
-  [[ "${!key}" != *$'\n'* && "${!key}" != *$'\r'* ]] || exit 1
-  # The supervisor supplies credentials through MMDS. Publish only into the
-  # runner's masked environment, so the action needs no repository secrets.
-  printf '::add-mask::%s\n' "${!key}"
-  printf '%s=%s\n' "$key" "${!key}" >> "$GITHUB_ENV"
-done
 {
   echo "RUSTUP_TOOLCHAIN=$channel"
   echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=$linker"

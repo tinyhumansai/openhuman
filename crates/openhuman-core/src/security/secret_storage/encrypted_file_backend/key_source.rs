@@ -1,6 +1,7 @@
 //! Resolve environment, host-provided, and workspace-file master keys.
 
 use super::*;
+use std::io::Read;
 
 /// Whether an environment source is configured according to the same
 /// whitespace handling used before key parsing. Invalid Unicode is present
@@ -80,9 +81,8 @@ pub(super) fn load_or_mint_master_key(
     if let Some(key) = source.load()? {
         return Ok(key);
     }
-    let bytes = Zeroizing::new(crypto::generate_random_bytes(KEY_LEN));
-    let mut key = Zeroizing::new([0; KEY_LEN]);
-    key.copy_from_slice(&bytes);
+    let key =
+        crypto::generate_key().map_err(|error| SecretStorageError::Backend(error.to_string()))?;
     source.store(&key)?;
     let readback = source
         .load()?
@@ -95,6 +95,107 @@ pub(super) fn load_or_mint_master_key(
     Ok(key)
 }
 
+/// Whether the operator supplied a usable master key through the environment
+/// ([`MASTER_KEY_ENV`] or [`MASTER_KEY_FILE_ENV`]): exactly one set, readable,
+/// and a well-formed key. Unlike startup this holds for every keyring backend,
+/// so a policy that trusts an operator key never trusts a variable that is set
+/// but unusable. The key is decoded only to be checked, then wiped.
+pub(crate) fn operator_master_key_supplied() -> bool {
+    let (Ok(inline), Ok(file)) = (
+        env_value(MASTER_KEY_ENV, std::env::var(MASTER_KEY_ENV)),
+        env_value(MASTER_KEY_FILE_ENV, std::env::var(MASTER_KEY_FILE_ENV)),
+    ) else {
+        return false;
+    };
+    operator_master_key_valid(inline.as_deref(), file.as_deref(), read_master_key_file)
+}
+
+/// The decision behind [`operator_master_key_supplied`], with the key file
+/// reader injected.
+pub(crate) fn operator_master_key_valid(
+    inline: Option<&str>,
+    file: Option<&str>,
+    read_file: impl FnOnce(&Path) -> Result<String, String>,
+) -> bool {
+    match master_key_from_env(inline, file, read_file) {
+        Ok(Some((mut key, _source))) => {
+            zeroize::Zeroize::zeroize(&mut key);
+            true
+        }
+        Ok(None) | Err(_) => false,
+    }
+}
+
+/// Reads the file named by [`MASTER_KEY_FILE_ENV`].
+///
+/// On Unix a key file must not be writable by other users. Read-only group or
+/// other permissions are supported for container secret mounts, where the
+/// runtime may add group-read access for a non-root core.
+pub(super) fn read_master_key_file(path: &Path) -> Result<String, String> {
+    let path_metadata = std::fs::symlink_metadata(path).map_err(|e| {
+        format!("cannot inspect master key file permissions ({MASTER_KEY_FILE_ENV}): {e}")
+    })?;
+    if !path_metadata.file_type().is_file() {
+        return Err(format!(
+            "master key file ({MASTER_KEY_FILE_ENV}) must be a regular file"
+        ));
+    }
+
+    // A path can change after the metadata check. Nonblocking and no-follow
+    // flags keep a raced FIFO/device/symlink from turning this read into a
+    // hang or redirecting it to a different object.
+    #[cfg(unix)]
+    let mut file = {
+        use rustix::fs::{Mode, OFlags};
+        rustix::fs::open(
+            path,
+            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map(std::fs::File::from)
+        .map_err(|e| format!("cannot read master key file: {e}"))?
+    };
+    #[cfg(not(unix))]
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("cannot read master key file: {e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("cannot inspect master key file: {e}"))?;
+    if !metadata.file_type().is_file() {
+        return Err(format!(
+            "master key file ({MASTER_KEY_FILE_ENV}) must be a regular file"
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        if key_file_mode_is_other_writable(mode) {
+            return Err(format!(
+                "master key file ({MASTER_KEY_FILE_ENV}) is writable by other users; \
+                 restrict it to a read-only secret mount"
+            ));
+        }
+    }
+    let mut bytes = Vec::with_capacity(4096);
+    file.by_ref()
+        .take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read master key file: {e}"))?;
+    if bytes.len() > 4096 {
+        return Err(format!(
+            "master key file ({MASTER_KEY_FILE_ENV}) exceeds the 4096-byte limit"
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| format!("master key file ({MASTER_KEY_FILE_ENV}) is not valid UTF-8"))
+}
+
+#[cfg(unix)]
+pub(super) fn key_file_mode_is_other_writable(mode: u32) -> bool {
+    mode & 0o002 != 0
+}
+
 /// Load or durably create the workspace key under the cross-process write
 /// lock. Never replace a malformed or unreadable existing key. The atomic
 /// file writer creates the key with Unix mode `0600` before publication.
@@ -102,48 +203,15 @@ pub(super) fn workspace_master_key(
     workspace: &Path,
 ) -> Result<Zeroizing<[u8; 32]>, SecretStorageError> {
     let path = workspace.join("keyring/master.key");
-    let _lock = file_store::lock_for_write(&path)?;
-    match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => {
-            if !metadata.file_type().is_file() {
-                return Err(SecretStorageError::Backend(
-                    "workspace master key must be a regular file".into(),
-                ));
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if metadata.permissions().mode() & 0o077 != 0 {
-                    return Err(SecretStorageError::Backend(
-                        "workspace master key requires permissions 0600".into(),
-                    ));
-                }
-            }
-            let text = Zeroizing::new(std::fs::read_to_string(&path).map_err(|_| {
-                SecretStorageError::Backend("cannot read workspace master key".into())
-            })?);
-            parse_master_key_hex(text.trim())
-                .map(Zeroizing::new)
-                .map_err(SecretStorageError::Backend)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let bytes = Zeroizing::new(crypto::generate_random_bytes(KEY_LEN));
-            let mut key = Zeroizing::new([0; KEY_LEN]);
-            key.copy_from_slice(&bytes);
-            let hex = Zeroizing::new(crypto::hex_encode(&key[..]));
-            file_store::write_atomic(&path, hex.as_bytes())?;
-            Ok(key)
-        }
-        Err(_) => Err(SecretStorageError::Backend(
-            "cannot inspect workspace master key".into(),
-        )),
-    }
+    tinystoragedrivers::secrets::load_or_create_key_file(&path)
+        .map_err(crate::security::secret_storage::adapter::backend_error)
 }
 
 /// Resolves a key for a profile-scoped diagnostic read without creating or
 /// changing key state. Explicit operator key variables retain their normal
 /// precedence; otherwise only an existing key file beneath `workspace` is
 /// considered. Host key sources are excluded because they can prompt or mint.
+#[cfg(feature = "secret-file")]
 pub(super) fn profile_master_key_read_only(
     workspace: &Path,
 ) -> Result<Option<Zeroizing<[u8; 32]>>, SecretStorageError> {
@@ -151,50 +219,45 @@ pub(super) fn profile_master_key_read_only(
         .map_err(SecretStorageError::Backend)?;
     let file = env_value(MASTER_KEY_FILE_ENV, std::env::var(MASTER_KEY_FILE_ENV))
         .map_err(SecretStorageError::Backend)?;
-    if let Some((key, _)) = master_key_from_env(
-        inline.as_deref(),
-        file.as_deref(),
-        super::read_master_key_file,
-    )
-    .map_err(SecretStorageError::Backend)?
+    if let Some((key, _)) =
+        master_key_from_env(inline.as_deref(), file.as_deref(), read_master_key_file)
+            .map_err(SecretStorageError::Backend)?
     {
         return Ok(Some(Zeroizing::new(key)));
     }
 
+    use tinystoragedrivers::secrets::{HexKeyFileSource as _, ProtectedHexKeyFile};
+
     let path = workspace.join("keyring/master.key");
-    let metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => {
-            return Err(SecretStorageError::Backend(
-                "cannot inspect profile master key".into(),
-            ));
-        }
-    };
-    if !metadata.file_type().is_file() {
-        return Err(SecretStorageError::Backend(
-            "profile master key must be a regular file".into(),
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(SecretStorageError::Backend(
-                "profile master key requires permissions 0600".into(),
-            ));
+    // The driver refuses a missing parent directory instead of reporting the
+    // key absent, and never creates it. A profile with no `keyring/` at all has
+    // no key; say so (still an error for the caller) rather than a backend fault.
+    // Anything present at that name, symlinks included, goes through the
+    // driver's admission below.
+    if let Some(keyring) = path.parent() {
+        if matches!(std::fs::symlink_metadata(keyring), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            log::debug!("[keyring:storage] profile keyring directory absent; no read-only key");
+            return Ok(None);
         }
     }
-    let text = Zeroizing::new(
-        std::fs::read_to_string(&path)
-            .map_err(|_| SecretStorageError::Backend("cannot read profile master key".into()))?,
-    );
-    parse_master_key_hex(text.trim())
-        .map(Zeroizing::new)
-        .map(Some)
-        .map_err(SecretStorageError::Backend)
+    let source = ProtectedHexKeyFile::new(path).map_err(|error| {
+        SecretStorageError::Backend(format!("invalid profile master key source: {error}"))
+    })?;
+    let encoded = crate::storage::block_on(async move { source.read_encoded().await })
+        .map_err(crate::security::secret_storage::adapter::backend_error)?;
+    encoded
+        .map(|bytes| {
+            let text = std::str::from_utf8(&bytes).map_err(|_| {
+                SecretStorageError::Backend("profile master key is not valid UTF-8".into())
+            })?;
+            parse_master_key_hex(text.trim())
+                .map(Zeroizing::new)
+                .map_err(SecretStorageError::Backend)
+        })
+        .transpose()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "secret-file"))]
 #[path = "key_source_tests.rs"]
 mod tests;

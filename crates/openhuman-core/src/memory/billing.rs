@@ -19,7 +19,7 @@ use super::engine::{self, Binding};
 
 /// Whether memory work is free for the user right now. See the module docs.
 pub async fn free_period_active(config: &Config) -> bool {
-    let bound = match engine::resolve(config) {
+    let bound = match engine::resolve(config).await {
         Binding::On(bound) => bound,
         Binding::Off { .. } => return false,
     };

@@ -82,3 +82,27 @@ fn reset_local_data_delete_error_reports_reboot_schedule_counts() {
         "missing lock cause: {msg}"
     );
 }
+
+#[test]
+fn data_paths_refusal_keeps_the_core_message() {
+    // The core answers a refused clear with a JSON-RPC error on `200 OK`.
+    let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"Clear App Data is not available on the legacy data layout"}}"#;
+    let err = parse_data_paths(200, body)
+        .err()
+        .expect("a refusal is an error");
+    assert!(err.contains("legacy data layout"), "{err}");
+}
+
+#[test]
+fn data_paths_parse_the_wrapped_outcome() {
+    let body = r#"{"jsonrpc":"2.0","id":1,"result":{"result":{
+        "current_openhuman_dir":"/h/.openhuman/users/u",
+        "default_openhuman_dir":"/h/.openhuman",
+        "active_workspace_marker_path":"/h/.openhuman/active_workspace.toml",
+        "active_user_marker_path":"/h/.openhuman/active_user.toml"},"logs":[]}}"#;
+    let paths = parse_data_paths(200, body).unwrap();
+    assert_eq!(
+        paths.current_openhuman_dir,
+        std::path::PathBuf::from("/h/.openhuman/users/u")
+    );
+}

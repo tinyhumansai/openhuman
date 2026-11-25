@@ -68,17 +68,17 @@ pub use handle::RelayAccepted;
 pub use handle::{ChatReply, ProfileEvents, ProfileHandle};
 #[cfg(feature = "channels")]
 pub use openhuman_core::channels::providers::relay::RelayInboundParams as RelayMessage;
-/// Validated operator-owned direct inference settings.
-pub use openhuman_core::core::runtime::direct_profile_provider::DirectProfileProvider;
 pub use openhuman_core::core::runtime::saas::{SaasCronConfig, SaasSandboxConfig};
 pub use openhuman_core::core::runtime::SaasConfig;
 pub use openhuman_core::cron::host_delivery::{CronDelivery, CronReply};
 pub use openhuman_core::cron::JobOrigin;
 pub use openhuman_core::profiles::cron::SweepReport as CronSweepReport;
+/// Validated operator-owned direct inference settings.
+pub use openhuman_core::profiles::direct_profile_provider::DirectProfileProvider;
 pub use openhuman_core::profiles::{OpenError, ProfileId, ProfileIdMode, ProfileSummary};
 pub use openhuman_core::storage::lease::LeaseRecord;
 pub use openhuman_core::threads::{ConversationMessageRecord, ConversationThreadSummary};
-pub use openhuman_core::web_chat::WebChannelEvent;
+pub use openhuman_core::web_chat::{ScopedWebEvent, WebChannelEvent};
 
 /// The kind of backend credential a profile holds (see
 /// [`ProfileRuntime::set_credential`]).
@@ -167,8 +167,9 @@ impl ProfileRuntimeBuilder {
     /// provisioned profile once a minute for due agent jobs
     /// ([`ProfileRuntime::sweep_cron`]) and hands each reply to
     /// [`CronDelivery::deliver`] with the profile, the thread the job was
-    /// created in and its [`JobOrigin`]. A run that answers `NO_REPLY`, or
-    /// fails, is never delivered. Without one nothing is swept.
+    /// created in and its [`JobOrigin`]. A failed run is never delivered, nor
+    /// is `NO_REPLY` from a job whose prompt allows it; any other job always
+    /// delivers a message. Without one nothing is swept.
     #[must_use]
     pub fn cron_delivery(mut self, delivery: Arc<dyn CronDelivery>) -> Self {
         self.cron_delivery = Some(delivery);
@@ -191,7 +192,12 @@ impl ProfileRuntimeBuilder {
                 let backend = openhuman_core::storage::open(&url)
                     .await
                     .map_err(|e| ProfileError::Boot(format!("opening the storage backend: {e}")))?;
-                openhuman_core::storage::install(backend);
+                match openhuman_core::storage::StorageUrl::parse(&url) {
+                    Ok(parsed) => {
+                        openhuman_core::storage::install_with_driver(parsed.driver(), backend)
+                    }
+                    Err(_) => openhuman_core::storage::install(backend),
+                };
             }
         }
         // Install the session store only after other validations pass, but before

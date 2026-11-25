@@ -114,7 +114,12 @@ fn analyst(id: &str, provider: &MockServer, reads: Arc<AtomicUsize>) -> AgentSpe
                 .bare_prompt("You must call read_file on documents/sample.txt before analyzing the document. Answer with the analysis JSON.")
                 .tools(ToolScopeSpec::HostOnly),
         )
-        .tools(move |_| HostTurnTools::advertised(vec![Box::new(ReadFile(reads.clone()))]))
+        .tools(move |_| {
+            let reads = reads.clone();
+            Box::pin(async move {
+                HostTurnTools::advertised(vec![Box::new(ReadFile(reads))])
+            })
+        })
 }
 
 fn answer_schema() -> ResponseFormat {

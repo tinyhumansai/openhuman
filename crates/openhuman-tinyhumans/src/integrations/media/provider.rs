@@ -30,11 +30,11 @@ use tinyinference_video::{
 
 use crate::client::BackendClient;
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::media::generation::MediaGenerators;
-use openhuman_embed::__host::security::approval::ApprovalChatContext;
-use openhuman_embed::__host::security::credentials::session_support::{
+use openhuman_embed::__host::credentials::backend_credential::{
     resolve_backend_credential, BackendCredential,
 };
+use openhuman_embed::__host::media::generation::MediaGenerators;
+use openhuman_embed::__host::security::approval::ApprovalChatContext;
 
 /// Backend route prefix that proxies OpenRouter's media API.
 pub const OPENROUTER_PROXY_PATH: &str = "/agent-integrations/openrouter";
@@ -94,9 +94,16 @@ pub fn managed_generators(config: &Config) -> Option<MediaGenerators> {
 /// Resolves the backend credential on every request, so a session refreshed
 /// mid-run is used and an API-key host needs no session at all.
 pub(crate) fn bearer_resolver(config: Arc<Config>) -> BearerResolver {
-    Arc::new(move || match resolve_backend_credential(&config) {
-        Ok(BackendCredential::Session(token) | BackendCredential::ApiKey(token)) => Ok(token),
-        Err(error) => Err(ti_image::Error::Auth(error)),
+    Arc::new(move || {
+        let config = Arc::clone(&config);
+        Box::pin(async move {
+            match resolve_backend_credential(&config).await {
+                Ok(BackendCredential::Session(token) | BackendCredential::ApiKey(token)) => {
+                    Ok(token)
+                }
+                Err(error) => Err(ti_image::Error::Auth(error)),
+            }
+        })
     })
 }
 
@@ -115,7 +122,7 @@ impl Guard {
         let descriptor = crate::integrations::client::requests::backend_egress_descriptor(
             &format!("{OPENROUTER_PROXY_PATH}/{route}"),
         );
-        openhuman_embed::__host::egress::enforce_egress(&descriptor).map_err(|error| {
+        openhuman_embed::__host::egress::enforce_egress_blocking(&descriptor).map_err(|error| {
             tracing::info!(route, %error, "[media_generation] blocked by privacy policy");
             ti_image::Error::Validation(format!("blocked by the privacy policy: {error}"))
         })?;

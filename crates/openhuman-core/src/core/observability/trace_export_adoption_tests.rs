@@ -87,6 +87,7 @@ fn parent_run() -> Vec<AgentObservation> {
                 input: Some(serde_json::json!({"query":"CONTENT_SENTINEL_INPUT"})),
                 output: Some(serde_json::json!({"result":"CONTENT_SENTINEL_OUTPUT"})),
                 duration_ms: Some(70),
+                input_bytes: None,
                 output_bytes: Some(33),
                 error: None,
                 metadata: None,

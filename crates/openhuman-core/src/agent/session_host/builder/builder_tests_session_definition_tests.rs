@@ -182,8 +182,8 @@ async fn the_session_is_stamped_with_the_definitions_own_id() {
     );
 }
 
-#[test]
-fn a_name_the_definition_contradicts_fails_the_build() {
+#[tokio::test]
+async fn a_name_the_definition_contradicts_fails_the_build() {
     // Silently preferring either one would leave a session that resolves to
     // nothing, and every turn refused for want of a definition.
     // `OpenHumanSessionHost` is not `Debug`, so the `Ok` arm cannot be
@@ -220,4 +220,48 @@ async fn a_padded_name_is_stored_as_the_definitions_own_id() {
         .await
         .expect("resolution never errors")
         .is_some());
+}
+
+/// TS-E2E-027: a caller that already built the session's policy hands it to
+/// the hosted base, so `build` makes no stand-in from a default config. That
+/// stand-in logged "autonomy policy DISABLED" on every turn, whatever the
+/// user's config said.
+#[tokio::test]
+async fn the_hosted_base_carries_the_policy_the_caller_built() {
+    let policy = Arc::new(crate::security::SecurityPolicy::default());
+    let agent = bare()
+        .agent_definition_name(SEAT)
+        .security_policy(Arc::clone(&policy))
+        .build()
+        .expect("a session with its own policy is a legal build");
+
+    let base = agent.hosted_base.as_ref().expect("a hosted base");
+    assert!(
+        Arc::ptr_eq(&base.security_policy, &policy),
+        "the hosted base must carry the caller's policy, not a stand-in"
+    );
+}
+
+/// A definition's `omit_memory_log` reaches a direct `agent_definition(def)`
+/// caller that never calls the setter, so its turns stay out of memory.
+#[test]
+fn a_definitions_omit_memory_log_reaches_a_direct_builder_caller() {
+    let mut def = AgentDefinition::clone(&definition(SEAT, vec![]));
+    def.extensions.omit_memory_log = true;
+    let agent = seat(Some(Arc::new(def)));
+    assert!(agent.omit_memory_log);
+}
+
+/// An explicit `omit_memory_log` setter still overrides the definition's flag.
+#[test]
+fn an_explicit_omit_memory_log_setter_overrides_the_definition() {
+    let mut def = AgentDefinition::clone(&definition(SEAT, vec![]));
+    def.extensions.omit_memory_log = true;
+    let agent = bare()
+        .agent_definition_name(SEAT)
+        .agent_definition(Arc::new(def))
+        .omit_memory_log(false)
+        .build()
+        .expect("a library host seat is a legal build");
+    assert!(!agent.omit_memory_log);
 }

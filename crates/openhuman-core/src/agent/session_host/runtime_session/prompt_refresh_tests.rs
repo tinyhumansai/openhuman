@@ -27,7 +27,9 @@ fn host_with(
     let chat_model: Arc<dyn tinyinference_llm::model::ChatModel<()>> = model.clone();
     let mut host = crate::agent::SessionHostBuilder::new()
         .with_session_history_locator(Arc::clone(locator))
+        .model_name("test/session-fixture".to_string())
         .chat_model(chat_model)
+        .model_name("test/session-fixture".to_string())
         .tools(Vec::new())
         .prompt_builder(prompt)
         .workspace_dir(root.join("workspace"))
@@ -299,9 +301,11 @@ fn resumed<'a>(prefix: &'a PrefixSnapshot, history: &'a [Message]) -> SessionSta
         history,
         raw_history: &[],
         prefix,
+        prefix_is_frozen: !prefix.messages().is_empty(),
         transcript_target: None,
         committed_turns: 1,
         resumed: true,
+        identity: None,
     }
 }
 
@@ -600,4 +604,107 @@ async fn a_catalogue_change_under_a_kept_prompt_carries_no_note() {
         "hi",
         "a catalogue change alone is not a replaced prompt"
     );
+}
+
+#[tokio::test]
+async fn a_catalogue_change_under_a_rendered_but_identical_prompt_carries_no_note() {
+    // The agent opts in and the current prompt renders identical to the
+    // recorded one, but a permanent tool was added since: the catalogue
+    // refresh changes the prefix. The prompt was not replaced, so no note.
+    let root = tempfile::tempdir().expect("tempdir");
+    let prelude = prelude(root.path(), "current", true);
+    {
+        let mut surface = prelude
+            .tool_surface
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let spec = tinytools::ToolSpec {
+            name: "A_TOOL".into(),
+            description: "d".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        };
+        surface.visible_tool_specs = Arc::new(vec![Arc::new(spec)]);
+        surface.permanent_tool_names = ["A_TOOL".to_string()].into();
+    }
+    let history = [
+        Message::system("current"),
+        Message::user("earlier"),
+        Message::assistant("hello"),
+    ];
+    let mut request = request();
+    let prepared = prelude
+        .prepare_turn(
+            false,
+            &resumed(&current(), &history),
+            &snapshot(4),
+            &mut request,
+        )
+        .await
+        .expect("prepared turn");
+    let prefix = prepared
+        .prefix
+        .as_ref()
+        .expect("the refreshed catalogue is offered");
+    assert!(prefix
+        .messages()
+        .last()
+        .expect("a catalogue")
+        .text()
+        .contains("A_TOOL"));
+    assert_eq!(
+        request.input.text(),
+        "hi",
+        "a catalogue change under a kept prompt is not a replaced prompt"
+    );
+}
+
+#[tokio::test]
+async fn a_recorded_catalogue_is_not_read_as_a_replaced_prompt() {
+    // The thread recorded a permanent-tool catalogue beside its prompt, and
+    // the current prompt renders identical to the recorded one. Whether the
+    // catalogue is unchanged or names another tool now, the prompt was not
+    // replaced, so the user's message carries no note.
+    let spec = |name: &str| {
+        Arc::new(tinytools::ToolSpec {
+            name: name.into(),
+            description: "d".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        })
+    };
+    let recorded = tinyagents_runtime::refresh_prefix(
+        &current(),
+        &[spec("A_TOOL")],
+        &["A_TOOL".to_string()].into(),
+        super::super::permanent::PERMANENT_TOOLS_MARKER,
+        "</openhuman-permanent-tools>",
+    )
+    .expect("a recorded catalogue");
+    for now in ["A_TOOL", "B_TOOL"] {
+        let root = tempfile::tempdir().expect("tempdir");
+        let prelude = prelude(root.path(), "current", true);
+        {
+            let mut surface = prelude
+                .tool_surface
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            surface.visible_tool_specs = Arc::new(vec![spec(now)]);
+            surface.permanent_tool_names = [now.to_string()].into();
+        }
+        let history = [Message::user("earlier"), Message::assistant("hello")];
+        let mut request = request();
+        prelude
+            .prepare_turn(
+                false,
+                &resumed(&recorded, &history),
+                &snapshot(4),
+                &mut request,
+            )
+            .await
+            .expect("prepared turn");
+        assert_eq!(
+            request.input.text(),
+            "hi",
+            "catalogue now names {now}: the prompt was not replaced"
+        );
+    }
 }

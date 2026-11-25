@@ -26,6 +26,43 @@ use std::time::{Duration, Instant};
 
 use tinyinference_llm::message::Message;
 
+pub(super) struct OpenHumanPostCommitSink {
+    pub(super) state: std::sync::Arc<std::sync::Mutex<super::OpenHumanSessionState>>,
+    pub(super) hooks: Vec<std::sync::Arc<dyn tinyagents_harness::host::LearningSink>>,
+    pub(super) identity: TurnIdentityOwned,
+}
+
+pub(super) struct TurnIdentityOwned {
+    pub(super) session_id: String,
+    pub(super) agent_id: String,
+    pub(super) channel: String,
+}
+
+#[async_trait::async_trait]
+impl tinyagents_runtime::PostCommitSink<crate::agent::tinyagents::host::OpenHumanRunContext>
+    for OpenHumanPostCommitSink
+{
+    async fn after_commit(
+        &self,
+        observation: &tinyagents_runtime::PostCommitObservation<
+            crate::agent::tinyagents::host::OpenHumanRunContext,
+        >,
+    ) -> Result<(), tinyagents_runtime::RuntimeError> {
+        finalize_committed_turn(
+            &self.state,
+            &self.hooks,
+            TurnIdentity {
+                session_id: self.identity.session_id.clone(),
+                agent_id: self.identity.agent_id.clone(),
+                channel: self.identity.channel.clone(),
+            },
+            observation.receipt.clone(),
+        )
+        .await;
+        Ok(())
+    }
+}
+
 pub(super) fn take_terminal_sidecar(
     state: &std::sync::Arc<std::sync::Mutex<super::OpenHumanSessionState>>,
     terminal: tinyagents_runtime::SessionTerminal,
@@ -174,6 +211,42 @@ pub(super) async fn finalize_committed_turn(
     let commit_started = std::time::Instant::now();
     // The turn's own context, taken before the receipt is dropped.
     let dispatch = receipt.options.context.dispatch_ctx();
+    if !receipt.options.context.native_staged_parts.is_empty() {
+        if let Some(message_id) = receipt.options.context.native_message_id.as_deref() {
+            if let Some(user) =
+                tinyagents_harness::summarization::last_user_message(&receipt.outcome.history)
+            {
+                let committed = crate::threads::attachments::native_parts_in_committed_message(
+                    &receipt.options.context.native_staged_parts,
+                    user,
+                );
+                if !committed.is_empty() {
+                    let thread_id = receipt
+                        .options
+                        .context
+                        .thread_id
+                        .as_deref()
+                        .unwrap_or_default();
+                    match crate::threads::attachments::commit_native_channel_parts(
+                        &dispatch, thread_id, &committed, message_id,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            if let Some(lease) =
+                                receipt.options.context.native_staged_lease.as_ref()
+                            {
+                                lease.mark_committed();
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!("[session-runtime] native attachment claim failed after commit: {error}");
+                        }
+                    }
+                }
+            }
+        }
+    }
     let output = receipt.outcome.output.clone().unwrap_or_default();
     // Skips compaction checkpoints (user-role, not the user's words).
     let input = tinyagents_harness::summarization::last_user_message(&receipt.outcome.history)
@@ -201,7 +274,6 @@ pub(super) async fn finalize_committed_turn(
         "[session-runtime] post-commit: durable commit done; finalizing turn"
     );
     let usage = super::holistic_last_turn_usage(&sidecar);
-    let interrupted = sidecar.hit_cap || receipt.outcome.interrupted;
     // This hook runs only after the runtime durably appended the turn. Emit
     // OpenHuman's classified stop before the terminal journal flush, so native
     // completion cannot overwrite a cancellation/timeout/stop or hide commit
@@ -216,7 +288,10 @@ pub(super) async fn finalize_committed_turn(
         let mut state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.last_turn_hit_cap = interrupted;
+        // Only the cap: a turn that ended on an early-exit tool
+        // (`ask_user_clarification`) is also `interrupted`, but it is waiting on
+        // the user's answer, not paused at its iteration limit.
+        state.last_turn_hit_cap = sidecar.hit_cap;
         state.last_turn_usage = Some(usage.clone());
         state.last_turn_iterations = iterations;
         state.prelude.clone()
@@ -226,6 +301,7 @@ pub(super) async fn finalize_committed_turn(
     // accounting runs after it in the background; the next
     // turn awaits it before reading the goal.
     let goal_accounting = {
+        let dispatch = receipt.options.context.dispatch_ctx();
         let prelude = prelude.clone();
         let thread_id = receipt.options.context.thread_id.clone();
         let sidecar = sidecar.clone();
@@ -236,6 +312,7 @@ pub(super) async fn finalize_committed_turn(
             let started = std::time::Instant::now();
             super::account_committed_turn_against_goal(
                 &prelude.workspace_dir,
+                &dispatch,
                 thread_id.as_deref(),
                 &sidecar,
             )

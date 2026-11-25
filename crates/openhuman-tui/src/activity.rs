@@ -1,6 +1,6 @@
 //! Bounded, inspectable tool and child-run projections.
 use super::theme::safe_text;
-use openhuman_rpc::embed::chat_surface::WebChannelEvent;
+use crate::event_view::WebEventView;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -48,7 +48,7 @@ pub struct Activity {
 }
 
 impl Activity {
-    pub fn from_event(id: String, event: &WebChannelEvent, child: bool) -> Self {
+    pub fn from_event(id: String, event: &WebEventView, child: bool) -> Self {
         Self {
             id,
             label: safe_text(
@@ -67,7 +67,7 @@ impl Activity {
             tools: 0,
         }
     }
-    pub fn update(&mut self, event: &WebChannelEvent) {
+    pub fn update(&mut self, event: &WebEventView) {
         if let Some(args) = &event.args {
             self.args = bounded(&args.to_string(), 4096);
         }

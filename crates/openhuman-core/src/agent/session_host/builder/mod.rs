@@ -12,13 +12,12 @@ pub(crate) use factory_resolution::provider_role_for_definition;
 mod builder_build;
 mod factory;
 mod factory_resolution;
-mod host_only;
+mod host_policy;
 mod host_tools;
 mod iteration_cap;
 mod profile_factory;
 mod setters;
 
-pub use host_only::HostOnlyToolPolicy;
 pub use host_tools::{HostTools, HostTurnTools, TurnContext};
 
 #[cfg(test)]
@@ -29,46 +28,6 @@ use std::sync::Arc;
 use tinyagents_definition::ToolScope;
 use tinytools::ToolPolicySession;
 use tinytools::{Tool, ToolSpec};
-
-/// Drop entries with duplicate `name` fields, first occurrence wins.
-///
-/// Anthropic (and other strict providers) rejects a chat/completions
-/// request that lists two tools with the same name — OpenHuman's own
-/// backend and OpenAI silently accept duplicates, which hid the
-/// underlying collision (a sub-agent's `delegate_name` shadowing a
-/// same-named skill tool) until #1710's
-/// per-role routing started sending the same tool list to Anthropic.
-///
-/// Called from every place that materialises the visible tool spec
-/// list — initial build, post-composio refresh, scope-filter change —
-/// so the request the provider sees is always name-unique regardless
-/// of which path produced it.
-///
-/// Generic over the element type so the two carriers of a spec list share one
-/// implementation: the main agent holds `Arc<ToolSpec>` (the three spec views
-/// share their leaves), while the sub-agent assembly still materialises owned
-/// `ToolSpec`s for the public `AgentTurnRequest`.
-pub(crate) fn dedup_visible_tool_specs<S: std::borrow::Borrow<ToolSpec>>(specs: Vec<S>) -> Vec<S> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut deduped: Vec<S> = Vec::with_capacity(specs.len());
-    let mut dropped: Vec<String> = Vec::new();
-    for spec in specs {
-        let name = spec.borrow().name.clone();
-        if seen.insert(name.clone()) {
-            deduped.push(spec);
-        } else {
-            dropped.push(name);
-        }
-    }
-    if !dropped.is_empty() {
-        log::warn!(
-            "[agent] dropped {} duplicate tool spec(s) before sending to provider: {:?}",
-            dropped.len(),
-            dropped
-        );
-    }
-    deduped
-}
 
 /// Drop every synthesised delegation tool whose name a durable tool already
 /// owns.
@@ -149,12 +108,12 @@ pub(super) fn visible_tool_specs_for_policy(
         })
         .cloned()
         .filter_map(|mut spec| {
-            if spec.name == "spawn_async_subagent" {
+            if spec.name == "spawn_subagent" {
                 // Same narrowing for the spawn enum: advertise only the ids
                 // this agent's `[subagents]` allowlist lets `execute` dispatch.
                 let allowed = allowed_subagent_ids_for(&tool_policy.profile.agent_id);
                 if !allowed.is_empty() {
-                    crate::agent::orchestration::tools::scope_spawn_async_subagent_spec(
+                    crate::agent::orchestration::tools::scope_spawn_subagent_spec(
                         Arc::make_mut(&mut spec),
                         &allowed,
                     );

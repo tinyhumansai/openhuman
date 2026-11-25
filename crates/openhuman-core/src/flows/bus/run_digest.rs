@@ -72,7 +72,7 @@ impl FlowRunDigestSubscriber {
             tracing::trace!(target: "flows", %flow_id, %run_id, %status, "[flows] digest: ignoring non-success terminal status");
             return;
         }
-        if !crate::memory::memory_is_on(&config) {
+        if !crate::memory::memory_is_on(&config).await {
             tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: memory is off — skipping");
             return;
         }

@@ -71,6 +71,7 @@ pub async fn current_session_is_local(ctx: &DispatchCtx) -> bool {
         return false;
     };
     get_session_token(&config)
+        .await
         .ok()
         .flatten()
         .is_some_and(|token| is_local_session_token(&token))
@@ -203,7 +204,7 @@ pub fn user_id_from_jwt_claims(token: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-pub fn build_session_state(config: &Config) -> Result<AuthStateResponse, String> {
+pub async fn build_session_state(config: &Config) -> Result<AuthStateResponse, String> {
     // The API key wins whenever both are present — same precedence as
     // `resolve_backend_credential`, which every backend request actually
     // authenticates with. Checked before the session profile loads: a host
@@ -213,7 +214,7 @@ pub fn build_session_state(config: &Config) -> Result<AuthStateResponse, String>
     // would misidentify what's actually authenticating its requests. An API
     // key carries no user identity, so `user_id`/`user` stay `None` rather
     // than leaking the session's.
-    if super::api_key::has_api_key(config) {
+    if super::api_key::has_api_key(config).await {
         return Ok(AuthStateResponse {
             is_authenticated: true,
             user_id: None,
@@ -224,12 +225,12 @@ pub fn build_session_state(config: &Config) -> Result<AuthStateResponse, String>
             issuing_backend: None,
         });
     }
-    let profile = load_app_session_profile(config)?;
+    let profile = load_app_session_profile(config).await?;
     Ok(session_state_from_profile(profile.as_ref()))
 }
 
-pub fn get_session_token(config: &Config) -> Result<Option<String>, String> {
-    let profile = load_app_session_profile(config)?;
+pub async fn get_session_token(config: &Config) -> Result<Option<String>, String> {
+    let profile = load_app_session_profile(config).await?;
     session_token_for_config(config, profile.as_ref())
 }
 
@@ -353,8 +354,10 @@ pub fn classify_session_token(
 /// - token with no recorded expiry (local offline session / `exp`-less JWT) →
 ///   presence-only check; the `flatten_authed_error` 401 net still covers a
 ///   server-side revocation that precedes the recorded `exp`.
-pub fn require_live_session_token(config: &Config) -> Result<String, String> {
-    resolve_backend_credential(config).map(BackendCredential::into_secret)
+pub async fn require_live_session_token(config: &Config) -> Result<String, String> {
+    resolve_backend_credential(config)
+        .await
+        .map(BackendCredential::into_secret)
 }
 
 /// The credential a backend request authenticates with.
@@ -437,11 +440,15 @@ pub const LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE: &str =
 /// The API key is checked **first**, and a stored key short-circuits every
 /// session check: a library runtime never stores a session, and a desktop that
 /// somehow has both has been told explicitly to use the key.
-pub fn resolve_backend_credential(config: &Config) -> Result<BackendCredential, String> {
-    if let Some(key) = super::api_key::get_api_key(config).map_err(|e| e.to_string())? {
+pub async fn resolve_backend_credential(config: &Config) -> Result<BackendCredential, String> {
+    if let Some(key) = super::api_key::get_api_key(config)
+        .await
+        .map_err(|e| e.to_string())?
+    {
         return Ok(BackendCredential::ApiKey(key));
     }
-    let profile = load_app_session_profile(config)?;
+    let profile = load_app_session_profile(config).await?;
+    let checked_token = session_token_from_profile(profile.as_ref());
     check_session_backend(config, profile.as_ref())?;
     match classify_session_token(profile.as_ref(), chrono::Utc::now()) {
         // The offline local session has no TinyHumans account behind it, so a
@@ -456,7 +463,8 @@ pub fn resolve_backend_credential(config: &Config) -> Result<BackendCredential, 
             Err("no backend session token; run auth_store_session first".to_string())
         }
         SessionTokenCheck::Expired => {
-            publish_local_session_expiry("require_live_session_token");
+            publish_local_session_expiry("require_live_session_token", checked_token.as_deref())
+                .await;
             Err(
                 "SESSION_EXPIRED: backend session token expired locally — re-authentication required"
                     .to_string(),
@@ -467,12 +475,12 @@ pub fn resolve_backend_credential(config: &Config) -> Result<BackendCredential, 
 
 /// Resolve a credential for a direct call to the configured backend.
 /// A missing transport or unusable credential is an expected offline state.
-pub fn direct_backend_credential(config: &Config, op: &str) -> Option<BackendCredential> {
+pub async fn direct_backend_credential(config: &Config, op: &str) -> Option<BackendCredential> {
     if config.resolved_endpoints.control_plane_url.is_none() {
         log::debug!("[backend-direct] {op} skipped: no control plane resolved");
         return None;
     }
-    match resolve_backend_credential(config) {
+    match resolve_backend_credential(config).await {
         Ok(credential) => Some(credential),
         Err(reason) => {
             log::debug!("[backend-direct] {op} skipped: no usable backend credential ({reason})");
@@ -490,11 +498,14 @@ pub fn direct_backend_credential(config: &Config, op: &str) -> Option<BackendCre
 /// shape does not fit. The backend accepts a key as `Authorization: Bearer`
 /// (it recognises it by prefix), so handing the key over as a bearer is
 /// correct on every route a key may reach.
-pub fn backend_bearer_secret(config: &Config) -> Result<Option<String>, String> {
-    if let Some(key) = super::api_key::get_api_key(config).map_err(|e| e.to_string())? {
+pub async fn backend_bearer_secret(config: &Config) -> Result<Option<String>, String> {
+    if let Some(key) = super::api_key::get_api_key(config)
+        .await
+        .map_err(|e| e.to_string())?
+    {
         return Ok(Some(key));
     }
-    get_session_token(config)
+    get_session_token(config).await
 }
 
 /// Whether *some* backend credential is present — an API key or a non-empty
@@ -502,11 +513,11 @@ pub fn backend_bearer_secret(config: &Config) -> Result<Option<String>, String> 
 /// "signed in?" question the scheduler gate asks: an expired session still
 /// counts as signed in here because the gate's job is to notice the later
 /// `SessionExpired`, not to pre-empt it.
-pub fn has_backend_credential(config: &Config) -> bool {
-    if super::api_key::has_api_key(config) {
+pub async fn has_backend_credential(config: &Config) -> bool {
+    if super::api_key::has_api_key(config).await {
         return true;
     }
-    matches!(get_session_token(config), Ok(Some(_)))
+    matches!(get_session_token(config).await, Ok(Some(_)))
 }
 
 /// Announce a locally-detected session expiry on the bus so
@@ -520,7 +531,7 @@ pub fn has_backend_credential(config: &Config) -> bool {
 /// ever prompts a re-auth (that regression was caught in review on #6206).
 ///
 /// `operation` names the calling site for the log line only.
-pub fn publish_local_session_expiry(operation: &'static str) {
+pub async fn publish_local_session_expiry(operation: &'static str, token: Option<&str>) {
     // Dedupe the publish via the scheduler gate so N parallel authed
     // callers in one tick don't emit N SessionExpired events.
     if crate::platform::llm_gate::is_signed_out() {
@@ -530,7 +541,7 @@ pub fn publish_local_session_expiry(operation: &'static str) {
     // reach here through `resolve_backend_credential` (the key short-circuits),
     // but a stale direct caller must not sign the whole process out over a
     // credential the runtime does not use.
-    if ambient_config_has_api_key() {
+    if ambient_config_has_api_key().await {
         tracing::debug!(
             domain = "credentials",
             operation = operation,
@@ -546,6 +557,8 @@ pub fn publish_local_session_expiry(operation: &'static str) {
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
         source: "credentials.local_expiry_precheck".to_string(),
         reason: "backend session token expired locally — re-authentication required".to_string(),
+        credential_fingerprint: token
+            .map(crate::credentials::backend_credential::credential_fingerprint),
     });
 }
 
@@ -556,19 +569,20 @@ pub fn publish_local_session_expiry(operation: &'static str) {
 /// lock, and on Windows the `app_state_snapshot` hot path used to take
 /// it twice per call which materially increased lock contention
 /// (Sentry: "Timed out waiting for auth profile lock").
-pub fn load_app_session_profile(config: &Config) -> Result<Option<AuthProfile>, String> {
+pub async fn load_app_session_profile(config: &Config) -> Result<Option<AuthProfile>, String> {
     let auth_service = AuthService::from_config(config);
     auth_service
         .get_profile(APP_SESSION_PROVIDER, None)
+        .await
         .map_err(|e| e.to_string())
 }
 
 /// Reads the selected app-session profile for doctor checks without opening
 /// the ordinary mutable auth-profile store.
-pub fn load_app_session_profile_read_only(
+pub async fn load_app_session_profile_read_only(
     config: &Config,
 ) -> Result<Option<AuthProfile>, super::profiles::ReadOnlyAuthProfileError> {
-    AuthService::get_profile_read_only(config, APP_SESSION_PROVIDER, None)
+    AuthService::get_profile_read_only(config, APP_SESSION_PROVIDER, None).await
 }
 
 pub fn session_state_from_profile(profile: Option<&AuthProfile>) -> AuthStateResponse {
@@ -620,9 +634,11 @@ pub fn session_token_from_profile(profile: Option<&AuthProfile>) -> Option<Strin
 /// embedder-supplied config off the [`CoreContext`](crate::core::runtime::CoreContext)
 /// when there is one; a host that discovers its config from disk has no API
 /// key by construction (it is only ever installed by a library runtime).
-pub fn ambient_config_has_api_key() -> bool {
-    crate::core::runtime::CoreContext::with_current_embedder_config(super::api_key::has_api_key)
-        .unwrap_or(false)
+pub async fn ambient_config_has_api_key() -> bool {
+    match crate::core::runtime::CoreContext::current_embedder_config() {
+        Some(config) => super::api_key::has_api_key(&config).await,
+        None => false,
+    }
 }
 
 #[cfg(test)]

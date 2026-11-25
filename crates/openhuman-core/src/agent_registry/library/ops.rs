@@ -86,7 +86,9 @@ fn direct_tool_names(def: &AgentDefinition) -> Vec<String> {
             names.push(tool.clone());
         }
     }
-    names.retain(|name| !def.disallowed_tools.contains(name));
+    // Same glob grammar the runtime uses to hide denied tools, so a `file_*`
+    // denylist drops every matching name here too.
+    names.retain(|name| !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name));
     names.sort();
     names
 }

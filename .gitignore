@@ -155,7 +155,6 @@ diff-coverage.md
 
 # Local/self-hosted CI run output (never commit)
 ci-out/
-ci-out-ex63/
 
 # Proptest failures are promoted to named unit tests.
 proptest-regressions/
@@ -165,6 +164,11 @@ proptest-regressions/
 crates/openhuman-core/storage/*.db
 crates/openhuman-core/storage/*.db-wal
 crates/openhuman-core/storage/*.db-shm
+
+# Local root-profile SQLite state is runtime data, never repository source.
+/storage/storage.db
+/storage/storage.db-shm
+/storage/storage.db-wal
 
 # Retired generated app schema snapshot; the runtime schema is registered in Rust.
 /app/schema.json

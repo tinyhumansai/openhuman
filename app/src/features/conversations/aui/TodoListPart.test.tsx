@@ -90,6 +90,29 @@ describe('TodoListPart', () => {
     expect(screen.getByText('Celebrate')).toBeInTheDocument();
   });
 
+  it('uses the call arguments when the settled tool result is not a todo payload', () => {
+    render(
+      <TodoListPart
+        {...baseProps}
+        toolCallId="call-receipt-fallback"
+        args={
+          {
+            todos: [
+              { content: 'Prepare release', status: 'completed' },
+              { content: 'Publish release', status: 'pending' },
+            ],
+          } as never
+        }
+        result={'Updated 1 of 2 tasks.' as never}
+        status={{ type: 'complete' }}
+      />
+    );
+
+    const toggle = screen.getByRole('button', { expanded: false });
+    expect(toggle).toHaveTextContent('1/2');
+    expect(toggle).toHaveTextContent('Publish release');
+  });
+
   it('renders nothing when there are no items', () => {
     const { container } = render(
       <TodoListPart

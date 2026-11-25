@@ -32,6 +32,7 @@ pub mod live;
 mod ops;
 #[cfg(feature = "voice")]
 pub mod realtime_harness;
+pub mod reply_synthesis;
 #[cfg(feature = "voice")]
 mod schemas;
 #[cfg(feature = "voice")]
@@ -50,6 +51,8 @@ pub use factory::{
 #[cfg(feature = "voice")]
 pub use ops::*;
 #[cfg(feature = "voice")]
+pub(crate) use schemas::all_voice_controller_entries;
+#[cfg(feature = "voice")]
 pub use schemas::{all_voice_controller_schemas, all_voice_registered_controllers, voice_schemas};
 #[cfg(feature = "voice")]
 pub use types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
@@ -62,3 +65,6 @@ pub use types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
 mod stub;
 #[cfg(not(feature = "voice"))]
 pub use stub::*;
+
+#[cfg(all(test, feature = "voice"))]
+pub(crate) use schemas::parameter_contracts;

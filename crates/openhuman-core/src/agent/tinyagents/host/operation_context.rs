@@ -1,7 +1,7 @@
 //! The immutable authority view the run exposes to shared tools through the
 //! harness's typed state-view seam, and the readers tools use on it.
 
-use crate::security::turn_origin::AgentTurnOrigin;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use tinyagents_definition::SandboxMode;
 
 use std::{sync::Arc, time::Duration};
@@ -18,6 +18,8 @@ pub struct OpenHumanRunExt {
     pub task_recency_window: Option<Duration>,
     /// Explicit child-process environment supplied by the embedding host.
     pub command_environment: Option<Arc<std::collections::BTreeMap<String, String>>>,
+    /// The run's shell commands left running past their yield point.
+    pub(crate) shell_processes: Option<Arc<crate::sandbox::shell_processes::ShellProcesses>>,
 }
 
 impl std::fmt::Debug for OpenHumanRunExt {
@@ -34,8 +36,24 @@ impl OpenHumanRunExt {
         Self {
             task_recency_window: context.task_recency_window,
             command_environment: context.command_environment.clone(),
+            shell_processes: Some(context.shell_processes.clone()),
         }
     }
+}
+
+/// The run's registry of shell commands left running past their yield
+/// point. Direct tool dispatch (CLI, JSON-RPC, tests) has none, so its shell
+/// calls always wait for the command to end.
+pub(crate) fn shell_processes_for_tool(
+    context: Option<&dyn tinytools::ToolRunContext>,
+) -> Option<Arc<crate::sandbox::shell_processes::ShellProcesses>> {
+    context
+        .and_then(tinytools::ToolRunContext::host_extension)
+        .and_then(|extension| {
+            extension.downcast_ref::<tinyagents_harness::tool::ToolExecutionContext>()
+        })
+        .and_then(|context| context.host::<OpenHumanRunExt>())
+        .and_then(|ext| ext.shell_processes.clone())
 }
 
 /// Reads the explicit command environment from a tool's run context.
@@ -79,6 +97,10 @@ pub(crate) struct HostOperationContext {
     /// [`OpenHumanRunContext::approval`](super::OpenHumanRunContext::approval).
     pub(crate) approval: crate::security::approval::ApprovalTurnContext,
     pub(crate) sandbox_mode: Option<SandboxMode>,
+    /// Whether the run's definition opted its sandboxed shell into a files-only jail.
+    pub(crate) sandbox_filesystem_only: bool,
+    /// Whether the run's browser is view-only (`AgentExt::browser_view_only`).
+    pub(crate) browser_view_only: bool,
     /// The agent definition the run's parent execution context belongs to, for
     /// tools that act on behalf of the spawning agent when no memory identity
     /// is scoped (see `memory::tools::CallFacts::gather`).
@@ -185,6 +207,32 @@ pub(crate) fn sandbox_mode_for_tool(
         .and_then(|host| host.sandbox_mode)
 }
 
+/// Whether the run's own definition opted its sandboxed shell into a files-only
+/// jail (`AgentExt::sandbox_filesystem_only`). Direct tool dispatch never has.
+pub(crate) fn sandbox_filesystem_only_for_tool(
+    context: Option<&dyn tinytools::ToolRunContext>,
+) -> bool {
+    context
+        .and_then(tinytools::ToolRunContext::host_extension)
+        .and_then(|extension| {
+            extension.downcast_ref::<tinyagents_harness::tool::ToolExecutionContext>()
+        })
+        .and_then(|context| context.state::<HostOperationContext>())
+        .is_some_and(|host| host.sandbox_filesystem_only)
+}
+
+/// Whether the run's browser is view-only (`AgentExt::browser_view_only`),
+/// from the explicit tool carrier. Direct tool dispatch never is.
+pub(crate) fn browser_view_only_for_tool(context: Option<&dyn tinytools::ToolRunContext>) -> bool {
+    context
+        .and_then(tinytools::ToolRunContext::host_extension)
+        .and_then(|extension| {
+            extension.downcast_ref::<tinyagents_harness::tool::ToolExecutionContext>()
+        })
+        .and_then(|context| context.state::<HostOperationContext>())
+        .is_some_and(|host| host.browser_view_only)
+}
+
 /// Reads the run's approval context from the explicit tool carrier. Direct tool
 /// dispatch (CLI, JSON-RPC, tests) has none, so a tool called that way sees the
 /// non-interactive default.
@@ -215,4 +263,13 @@ pub(crate) fn tool_context_with_approval(
         &run,
         tinyagents_harness::ids::CallId::new("approval-test-call"),
     )
+}
+
+/// One turn's run, for tests that make several tool calls in the same turn:
+/// each `ToolExecutionContext::from_run_context(&run, …)` shares its state.
+#[cfg(test)]
+pub(crate) fn test_turn_run() -> tinyagents_harness::context::RunContext<super::OpenHumanRunContext>
+{
+    super::OpenHumanRunContext::new()
+        .into_tinyagents(tinyagents_harness::context::RunConfig::new("turn-test"))
 }

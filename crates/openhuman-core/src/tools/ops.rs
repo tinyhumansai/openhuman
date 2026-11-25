@@ -1,20 +1,19 @@
-#[cfg(feature = "mcp")]
-use super::implementations::network::{McpListServersTool, McpListToolsTool};
 use super::*;
-use crate::config::{Config, DelegateAgentConfig};
+use crate::config::Config;
+use crate::mcp::gitbooks_tools::{GitbooksGetPageTool, GitbooksSearchTool};
+#[cfg(feature = "mcp")]
+use crate::mcp::tools::{mcp_call_tool, McpListServersTool, McpListToolsTool};
 use crate::modules::tinybox::host_runtime::{NativeRuntime, RuntimeAdapter};
-use crate::security::{AuditLogger, SecurityPolicy};
-use crate::tools::delegate::DelegateTool;
-use std::collections::HashMap;
+use crate::security::{AuditSink, SecurityPolicy};
 use std::sync::Arc;
-use tinyagents_harness_tools::{CurrentTimeTool, ResolveTimeTool};
-use tinytools::Tool;
-use tinytools_std::detect_tools::DetectToolsTool;
-use tinytools_std::filesystem::{
+use tinyagents_harness_tools::exec::detect_tools::DetectToolsTool;
+use tinyagents_harness_tools::fs::filesystem::{
     ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, GitOperationsTool,
     GlobTool, GrepTool, ImageInfoTool, ListFilesTool, ReadDiffTool, RunLinterTool, RunTestsTool,
 };
-use tinytools_std::network::PushoverTool;
+use tinyagents_harness_tools::net::network::PushoverTool;
+use tinyagents_harness_tools::{CurrentTimeTool, ResolveTimeTool};
+use tinytools::Tool;
 
 /// Create the default tool registry
 pub fn default_tools(security: Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
@@ -25,13 +24,13 @@ pub fn default_tools(security: Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
 ///
 /// Convenience entry point used by tests and the lightweight CLI surface.
 /// Production assembly sites use [`all_tools_with_runtime`] and pass a real
-/// [`AuditLogger`]; this wrapper substitutes [`AuditLogger::disabled`] so
+/// [`AuditSink`]; this wrapper substitutes [`AuditSink::disabled`] so
 /// existing test callers do not need to plumb one through.
 pub fn default_tools_with_runtime(
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
 ) -> Vec<Box<dyn Tool>> {
-    let audit = AuditLogger::disabled();
+    let audit = AuditSink::disabled();
     let config = Arc::new(Config::default());
     vec![
         Box::new(ShellTool::with_config(
@@ -47,14 +46,13 @@ pub fn default_tools_with_runtime(
 
 /// Create full tool registry including memory tools.
 #[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
-pub fn all_tools(
+pub async fn all_tools(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
-    audit: Arc<AuditLogger>,
+    audit: Arc<AuditSink>,
     browser_config: &crate::config::BrowserConfig,
     http_config: &crate::config::HttpRequestConfig,
     action_dir: &std::path::Path,
-    agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::config::Config,
 ) -> Vec<Box<dyn Tool>> {
     all_tools_with_runtime(
@@ -65,24 +63,23 @@ pub fn all_tools(
         browser_config,
         http_config,
         action_dir,
-        agents,
         root_config,
         None,
     )
+    .await
 }
 
 /// Create full tool registry including memory tools.
 ///
 #[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
-pub fn all_tools_with_runtime(
+pub async fn all_tools_with_runtime(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
-    audit: Arc<AuditLogger>,
+    audit: Arc<AuditSink>,
     browser_config: &crate::config::BrowserConfig,
     http_config: &crate::config::HttpRequestConfig,
     action_dir: &std::path::Path,
-    agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::config::Config,
     approval_workspace_root: Option<&std::path::Path>,
 ) -> Vec<Box<dyn Tool>> {
@@ -94,10 +91,10 @@ pub fn all_tools_with_runtime(
         browser_config,
         http_config,
         action_dir,
-        agents,
         root_config,
         approval_workspace_root,
     )
+    .await
     .0
 }
 
@@ -107,15 +104,14 @@ pub fn all_tools_with_runtime(
 /// so later registry refreshes can rebind `use_skill` without inspecting the
 /// tool's generic dispatch extension.
 #[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
-pub fn all_tools_with_runtime_and_pack_handle(
+pub async fn all_tools_with_runtime_and_pack_handle(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
-    audit: Arc<AuditLogger>,
+    audit: Arc<AuditSink>,
     browser_config: &crate::config::BrowserConfig,
     http_config: &crate::config::HttpRequestConfig,
     action_dir: &std::path::Path,
-    agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::config::Config,
     approval_workspace_root: Option<&std::path::Path>,
 ) -> (
@@ -139,6 +135,8 @@ pub fn all_tools_with_runtime_and_pack_handle(
 
     let mut tools: Vec<Box<dyn Tool>> = vec![
         shell,
+        // Follows a `shell` command left running past its yield point.
+        Box::new(ShellProcessTool::new()),
         Box::new(FileReadTool::new(security.clone())),
         file_write,
         // Coding-harness baseline tools (issue #1205): file navigation
@@ -165,18 +163,26 @@ pub fn all_tools_with_runtime_and_pack_handle(
         // value ready to paste into a tool argument.
         Box::new(ResolveTimeTool::new()),
         Box::new(DetectToolsTool::new()),
-        Box::new(InstallToolTool::new(security.clone())),
+        Box::new(InstallToolTool::with_audit_and_config(
+            security.clone(),
+            Arc::clone(&audit),
+            Arc::clone(&config),
+        )),
     ]);
     tools.extend(crate::cron::tools::tools(config.clone(), security));
     #[cfg(feature = "flows")]
     tools.extend(crate::flows::registration::tools(config.clone(), security));
     #[cfg(feature = "web3")]
-    tools.extend(crate::web3::wallet::tools::all_agent_tools());
+    tools.extend(crate::web3::tools::wallet_agent_tools());
     tools.append(&mut vec![
-        Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
+        Box::new(crate::cron::tools::ScheduleTool::new(
+            security.clone(),
+            root_config.clone(),
+        )),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
-        Box::new(UpdateCheckTool::new()),
-        Box::new(UpdateApplyTool::new(security.clone())),
+    ]);
+    tools.extend(crate::platform::update::registered_tools(security.clone()));
+    tools.append(&mut vec![
         Box::new(GitOperationsTool::new(
             security.clone(),
             action_dir.to_path_buf(),
@@ -193,7 +199,7 @@ pub fn all_tools_with_runtime_and_pack_handle(
             action_dir.to_path_buf(),
         )),
     ]);
-    tools.push(Box::new(GmailUnsubscribeTool));
+    tools.push(Box::new(crate::integrations::gmail::GmailUnsubscribeTool));
     #[cfg(feature = "skills")]
     tools.extend(crate::skills::registration::tools(config.clone()));
     tools.append(&mut vec![
@@ -203,12 +209,14 @@ pub fn all_tools_with_runtime_and_pack_handle(
         // task_source_add/update/remove) are registered too but ship
         // default-OFF via `tools::user_filter` (their toggle IDs default off
         // in onboarding). The per-call permission ladder still gates them.
+        // The `task_source_*` family registers nothing while no provider can
+        // fetch (`task_sources::types::any_provider_can_fetch`).
     ]);
     tools.extend(crate::artifacts::tiny_store::registered_tools(
         &config.workspace_dir,
         crate::artifacts::FileRoots::from_config(&config),
         action_dir,
-        crate::artifacts::artifact_publisher(&config),
+        crate::artifacts::artifact_publisher(&config).await,
     ));
     tools.extend(crate::integrations::task_sources::tools::registered_tools(
         config.clone(),
@@ -249,9 +257,7 @@ pub fn all_tools_with_runtime_and_pack_handle(
         // controllers remain registered for the UI. `credentials` exposes only
         // non-secret reads.
     ]);
-    tools.extend(crate::security::credentials::tools::registered_tools(
-        config.clone(),
-    ));
+    tools.extend(crate::credentials::tools::registered_tools(config.clone()));
     tools.append(&mut vec![
         // MCP registry and workspace persona. Observe/connect/call tools
         // default-ON; MCP uninstall (mcp_manage), and persona/workspace writers
@@ -273,7 +279,7 @@ pub fn all_tools_with_runtime_and_pack_handle(
     // The single `memory` tool (recall | fetch | learn | forget), registered
     // only while memory is on: with no usable engine (signed out, no CortexDB
     // key) the model is not offered a tool that can only fail.
-    if crate::memory::engine::is_on(root_config) {
+    if crate::memory::engine::is_on(root_config).await {
         tools.push(Box::new(crate::memory::MemoryTool::new(config.clone())));
         tracing::debug!("[tools::ops] registered memory tool");
     } else {
@@ -298,23 +304,14 @@ pub fn all_tools_with_runtime_and_pack_handle(
     // `juice_find` / `juice_extract` / `juice_summarize`: only while a handle can name them.
     tools.extend(crate::inference::tokenjuice::repl_tools_for(root_config));
 
-    // Presentation generation (#2778), backed by the native Rust engine.
-    // Always registered.
+    // Presentation then document generation (#2778, #4847): native-Rust
+    // engines emitting through the artifact pipeline. Always registered
+    // while `documents` is on.
     #[cfg(feature = "documents")]
-    tools.push(Box::new(PresentationTool::for_config(
+    tools.extend(crate::artifacts::tools::registered_tools(
         root_config,
         security.clone(),
-    )));
-
-    // Document generation (#4847, Problem 3). Native-Rust engine
-    // (docx-rs backed) — no managed runtime, no subprocess — emitting a
-    // real `.docx` through the same byte-agnostic artifact pipeline as
-    // the presentation tool. Always registered; same constructor shape.
-    #[cfg(feature = "documents")]
-    tools.push(Box::new(DocumentTool::for_config(
-        root_config,
-        security.clone(),
-    )));
+    ));
 
     // Thread-level goal tools (Codex-style per-thread completion contract).
     // Visible only to agents that allowlist them (orchestrator). The target
@@ -333,7 +330,6 @@ pub fn all_tools_with_runtime_and_pack_handle(
             browser_client.clone(),
         )));
         tools.push(Box::new(BrowserTool::new(
-            security.clone(),
             browser_client,
             browser_config.max_task_steps,
         )));
@@ -424,7 +420,7 @@ pub fn all_tools_with_runtime_and_pack_handle(
     // `mcp::registry` domain gated above. Both are compiled out by the `mcp`
     // feature; see the static-vs-dynamic note in AGENTS.md.
     #[cfg(feature = "mcp")]
-    tools.push(crate::mcp::ui::show_ui_tool(root_config));
+    tools.push(Box::new(ShowUiTool::for_config(root_config)));
     #[cfg(feature = "mcp")]
     if root_config.mcp_client.enabled && !root_config.mcp_client.servers.is_empty() {
         // Catalog retrieval runs in the async turn prelude. This synchronous
@@ -433,11 +429,11 @@ pub fn all_tools_with_runtime_and_pack_handle(
         let mcp_config = Arc::new(root_config.clone());
         tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_config))));
         tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_config))));
-        let call = Box::new(mcp_call_tool(Arc::clone(&mcp_config), security.clone()));
+        let call = Box::new(mcp_call_tool(Arc::clone(&mcp_config)));
         tools.push(crate::mcp::ui::ui_aware_call(call, &mcp_config));
     }
 
-    tools.extend(crate::search::build_search_tools(root_config));
+    tools.extend(crate::search::build_search_tools(root_config).await);
 
     // Media generation roots. The `media_generate_*` tools themselves come from
     // a host's registered tool source (the core ships no media generators);
@@ -464,16 +460,18 @@ pub fn all_tools_with_runtime_and_pack_handle(
         browser_config,
         http_config,
         action_dir,
-        agents,
         approval_workspace_root,
     };
 
     // Sources placed after the search tools (a host's media and file-storage
     // tools), where the catalogue has always listed them.
-    tools.extend(crate::tools::sources::build_registered_tool_sources(
-        &source_ctx,
-        Some(crate::tools::sources::ANCHOR_AFTER_SEARCH),
-    ));
+    tools.extend(
+        crate::tools::sources::build_registered_tool_sources(
+            &source_ctx,
+            Some(crate::tools::sources::ANCHOR_AFTER_SEARCH),
+        )
+        .await,
+    );
 
     // Hosting tools — deploy a workspace directory through the compiled
     // TinyHosts module. Registered only once a credential
@@ -507,35 +505,17 @@ pub fn all_tools_with_runtime_and_pack_handle(
     // Image metadata is always available for user-provided images.
     tools.push(Box::new(ImageInfoTool::new(security.clone())));
 
-    // Add delegation tool when agents are configured
-    if !agents.is_empty() {
-        let delegate_agents: HashMap<String, DelegateAgentConfig> = agents
-            .iter()
-            .map(|(name, cfg)| (name.clone(), cfg.clone()))
-            .collect();
-        tools.push(Box::new(DelegateTool::new_with_options(
-            delegate_agents,
-            security.clone(),
-            crate::tools::delegate::ProviderRuntimeOptions {
-                auth_profile_override: None,
-                openhuman_dir: root_config
-                    .config_path
-                    .parent()
-                    .map(std::path::PathBuf::from),
-                secrets_encrypt: root_config.secrets.encrypt,
-                reasoning_enabled: root_config.runtime.reasoning_enabled,
-            },
-        )));
-    }
+    // Hosted source tools retain their stable catalogue position ahead of the
+    // Composio tools.
+    tools.extend(
+        crate::tools::sources::build_registered_tool_sources(
+            &source_ctx,
+            Some(crate::tools::sources::ANCHOR_AFTER_DELEGATE),
+        )
+        .await,
+    );
 
-    // Sources placed after the delegation tool (a host's place and market-data
-    // tools), ahead of the Composio tools.
-    tools.extend(crate::tools::sources::build_registered_tool_sources(
-        &source_ctx,
-        Some(crate::tools::sources::ANCHOR_AFTER_DELEGATE),
-    ));
-
-    let composio_tools = crate::integrations::composio::all_composio_agent_tools(root_config);
+    let composio_tools = crate::integrations::composio::all_composio_agent_tools(root_config).await;
     if composio_tools.is_empty() {
         tracing::debug!("[integrations] composio unavailable — skipping");
     } else {
@@ -546,25 +526,11 @@ pub fn all_tools_with_runtime_and_pack_handle(
         tools.extend(composio_tools);
     }
 
-    // Coding-harness `lsp` tool (issue #1205) — capability-gated by the
-    // OPENHUMAN_LSP_ENABLED env var. The backend (real language-server
-    // bridge) is a follow-up; today the gate just controls visibility
-    // so agents don't see a method that always errors.
-    if crate::tools::implementations::lsp_capability_enabled() {
-        tools.push(Box::new(crate::tools::implementations::LspTool::new()));
-        tracing::debug!("[lsp] capability gate on — LspTool registered");
-    } else {
-        tracing::debug!("[lsp] capability gate off (set OPENHUMAN_LSP_ENABLED=1 to register)");
-    }
-
     // Registered tool sources placed at the end of the catalogue
     // (`tools::sources`), after every built-in and before the filters below,
     // so they are gated exactly like built-ins. Nothing registered => nothing
     // appended.
-    tools.extend(crate::tools::sources::build_registered_tool_sources(
-        &source_ctx,
-        None,
-    ));
+    tools.extend(crate::tools::sources::build_registered_tool_sources(&source_ctx, None).await);
 
     // Post-filters over the assembled list:
     //
@@ -603,11 +569,9 @@ pub fn all_tools_with_runtime_and_pack_handle(
         tools.len()
     );
 
-    // Append the two always-on pack tools. They resolve packed tools by name
-    // out of the agent's live registry (bound after `Arc::new`), so they also
-    // cover the `delegate_*` tools synthesised later by
-    // `orchestrator_tools::collect_orchestrator_tools` — which never pass
-    // through this function.
+    // Append the pack proxy and return its late-bound registry handle. The
+    // session host retains the handle so it can bind both durable and
+    // synthesized tool registries after construction.
     let pack_registry = crate::tools::toolpacks::append_pack_tools(&mut tools);
     // The lookup half of `ToolExposure::Deferred` is not registered here: the
     // tinyagents harness advertises its intrinsic `tool_search` bridge

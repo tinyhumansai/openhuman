@@ -143,7 +143,7 @@ fn user_id_from_object(obj: &serde_json::Map<String, Value>) -> Option<String> {
 
 /// The user id inside a `/auth/me`-shaped payload: top-level `id`/`_id`/
 /// `userId`, or the same under `data` or `user`. Same rules as the core's
-/// `openhuman_embed::__host::security::credentials::jwt::user_id_from_profile_payload`.
+/// `openhuman_embed::__host::credentials::jwt::user_id_from_profile_payload`.
 pub fn user_id_from_profile_payload(payload: &Value) -> Option<String> {
     let obj = payload.as_object()?;
     if let Some(data) = obj.get("data").and_then(Value::as_object) {

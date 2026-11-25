@@ -92,7 +92,7 @@ pub(super) fn command(command: &str) -> tokio::process::Command {
     // A hook leads its own process group and dies with the handle that owns it,
     // so a deadline cannot leave its pipeline running.
     process.kill_on_drop(true);
-    tinytools_std::timeout::own_process_group(process.as_std_mut());
+    tinyagents_harness_tools::exec::timeout::own_process_group(process.as_std_mut());
     process
 }
 
@@ -113,6 +113,19 @@ fn from_selection(selection: &ShellInvocation, command: &str) -> std::process::C
         process.raw_arg(raw.replace(PLACEHOLDER, command));
     }
     process
+}
+
+/// Select POSIX `sh` without TinyBox, for tests that run a live hook.
+#[cfg(test)]
+pub(super) fn install_posix_for_test() {
+    install(ShellInvocation {
+        flavor: tinybox_bus::ShellFlavor::Posix,
+        program: "/bin/sh".into(),
+        arguments: vec!["-c".into(), PLACEHOLDER.into()],
+        raw_arguments: None,
+        bootstrap_environment: Vec::new(),
+        remove_environment: Vec::new(),
+    });
 }
 
 #[cfg(test)]

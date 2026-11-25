@@ -71,7 +71,7 @@ impl SessionExpiredSubscriber {
     /// [`EventHandler::handle`] with the process mode passed in, so the SaaS
     /// early return is testable without the process-wide mode lock.
     pub(crate) async fn handle_with(&self, ctx: &DispatchCtx, saas: bool, event: &DomainEvent) {
-        let DomainEvent::SessionExpired { source, reason } = event else {
+        let DomainEvent::SessionExpired { source, reason, .. } = event else {
             return;
         };
 
@@ -97,7 +97,7 @@ impl SessionExpiredSubscriber {
             Ok(config) => {
                 // An API-key runtime has no session to clear: a backend 401 on
                 // the key is a per-call error for the caller, not a sign-out.
-                if crate::security::credentials::api_key::has_api_key(&config) {
+                if crate::security::credentials::api_key::has_api_key(&config).await {
                     tracing::warn!(
                         source = %source,
                         reason = %reason,
@@ -107,7 +107,8 @@ impl SessionExpiredSubscriber {
                     return;
                 }
                 let is_local_session =
-                    crate::security::credentials::jwt::get_session_token(&config)
+                    crate::security::credentials::session_support::get_session_token(&config)
+                        .await
                         .ok()
                         .flatten()
                         .is_some_and(|token| {
@@ -137,7 +138,7 @@ impl SessionExpiredSubscriber {
                 //     we've at least pinned the scheduler gate so background work
                 //     can't make things worse.
                 if let Err(err) =
-                    crate::security::credentials::rpc::clear_session(ctx, &config).await
+                    crate::security::credentials::ops::clear_session(ctx, &config).await
                 {
                     tracing::warn!(
                         source = %source,

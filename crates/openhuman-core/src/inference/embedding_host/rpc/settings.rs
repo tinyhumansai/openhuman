@@ -4,7 +4,7 @@
 use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
 use tinyinference_providers::route::{custom_provider_string, split_custom_provider};
 
 use super::{resolve_api_key, LOG_PREFIX};
@@ -79,29 +79,28 @@ pub async fn get_settings(config: &Config) -> Result<Outcome<serde_json::Value>,
         });
 
     let auth = AuthService::from_config(config);
-    let providers: Vec<serde_json::Value> = catalog::all_providers()
-        .iter()
-        .map(|entry| {
-            let has_key = if entry.requires_api_key {
-                let cred_provider = format!("embeddings:{}", entry.slug);
-                auth.get_provider_bearer_token(&cred_provider, None)
-                    .ok()
-                    .flatten()
-                    .is_some()
-            } else {
-                false
-            };
-            serde_json::json!({
-                "slug": entry.slug,
-                "label": entry.label,
-                "description": entry.description,
-                "requires_api_key": entry.requires_api_key,
-                "requires_endpoint": entry.requires_endpoint,
-                "has_api_key": has_key,
-                "models": entry.models,
-            })
-        })
-        .collect();
+    let mut providers = Vec::new();
+    for entry in catalog::all_providers() {
+        let has_key = if entry.requires_api_key {
+            let cred_provider = format!("embeddings:{}", entry.slug);
+            auth.get_provider_bearer_token(&cred_provider, None)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+        } else {
+            false
+        };
+        providers.push(serde_json::json!({
+            "slug": entry.slug,
+            "label": entry.label,
+            "description": entry.description,
+            "requires_api_key": entry.requires_api_key,
+            "requires_endpoint": entry.requires_endpoint,
+            "has_api_key": has_key,
+            "models": entry.models,
+        }));
+    }
 
     let vector_search_enabled = {
         let (_, endpoint) = split_custom_provider(provider);
@@ -120,11 +119,12 @@ pub async fn get_settings(config: &Config) -> Result<Outcome<serde_json::Value>,
     // value are unaffected; callers asking "does this bill the managed budget?"
     // must read this one (#5402).
     let local_model = config.workload_local_model("embeddings");
-    let session_exists = config
-        .config_path
-        .parent()
-        .map(|dir| dir.join("auth-profiles.json").exists())
-        .unwrap_or(false);
+    let session_exists = auth
+        .get_provider_bearer_token(crate::credentials::APP_SESSION_PROVIDER, None)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|token| !token.trim().is_empty());
     let effective_provider = effective_embedder_slug(
         config
             .embeddings_provider
@@ -215,7 +215,7 @@ pub async fn update_settings(
     // login would false-fail. TinyInference owns endpoint verification and
     // its structured rejection policy.
     if let (_, Some(endpoint)) = split_custom_provider(&effective_provider) {
-        let api_key = resolve_api_key(&config, "custom");
+        let api_key = resolve_api_key(&config, "custom").await;
         tracing::debug!(
             provider = effective_provider.as_str(),
             "{LOG_PREFIX} update_settings verifying embeddings endpoint with a test embed"

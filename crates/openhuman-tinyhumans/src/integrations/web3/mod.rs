@@ -18,7 +18,7 @@ pub const HANDLER_ID: &str = "tinyhumans-web3";
 pub(crate) fn register() {
     register_wallet_backend(HANDLER_ID, |config, call| {
         Box::pin(async move {
-            let client = CryptoClient::from_config(&config)?;
+            let client = CryptoClient::from_config(&config).await?;
             match call {
                 WalletBackendCall::Routes => client.routes().await,
                 WalletBackendCall::SwapTransaction(body) => client.swap_tx(&body).await,

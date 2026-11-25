@@ -117,3 +117,95 @@ async fn scope_runs_the_future_under_the_agents_context() {
         workspace.path()
     );
 }
+
+/// Opens whatever it is asked for under `opens_as`, and reports a live
+/// `live` agent with a lease that flips `released` when dropped.
+struct Leasing {
+    live: String,
+    opens_as: String,
+    released: Arc<std::sync::atomic::AtomicBool>,
+}
+
+struct Lease(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl Leasing {
+    fn agent(id: &str) -> HostAgent {
+        HostAgent {
+            definition: definition(id),
+            config: Config::default(),
+            host_tools: None,
+            hooks: Default::default(),
+            context: CoreContext::for_test(DomainSet::full(), None),
+        }
+    }
+}
+
+impl HostAgentResolver for Leasing {
+    fn resolve(&self, agent_id: &str) -> Option<HostAgent> {
+        (agent_id == self.live).then(|| Self::agent(agent_id))
+    }
+
+    fn resolve_leased(&self, agent_id: &str) -> Option<OpenedHostAgent> {
+        self.resolve(agent_id)
+            .map(|agent| OpenedHostAgent::new(agent).with_lease(Lease(Arc::clone(&self.released))))
+    }
+
+    fn open<'a>(
+        &'a self,
+        _agent_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Option<OpenedHostAgent>> + Send + 'a>> {
+        Box::pin(async move { Some(OpenedHostAgent::new(Self::agent(&self.opens_as))) })
+    }
+}
+
+#[tokio::test]
+async fn resolve_or_open_refuses_an_agent_opened_under_another_id() {
+    let _slot = lock();
+    let installed: Arc<dyn HostAgentResolver> = Arc::new(Leasing {
+        live: "host-agents-live".into(),
+        opens_as: "host-agents-other".into(),
+        released: Arc::default(),
+    });
+    install(Arc::clone(&installed));
+    let asked_for_other = resolve_or_open("host-agents-wanted").await;
+    let asked_for_match = resolve_or_open("host-agents-other").await;
+    clear_if(&installed);
+
+    assert!(
+        asked_for_other.is_none(),
+        "a driver must never run a different agent than the one it asked for"
+    );
+    assert!(asked_for_match.is_some());
+}
+
+#[tokio::test]
+async fn resolve_or_open_keeps_the_lease_of_a_live_agent_for_the_whole_run() {
+    let _slot = lock();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let installed: Arc<dyn HostAgentResolver> = Arc::new(Leasing {
+        live: "host-agents-live".into(),
+        opens_as: "host-agents-live".into(),
+        released: Arc::clone(&released),
+    });
+    install(Arc::clone(&installed));
+    let opened = resolve_or_open("host-agents-live").await;
+    let (_agent, lease) = opened.expect("the live agent resolves").into_parts();
+    let leased_by_free_fn = resolve_leased("host-agents-live");
+    clear_if(&installed);
+
+    assert!(lease.is_some(), "a live hit carries its resolver's lease");
+    assert!(leased_by_free_fn.is_some());
+    assert!(
+        !released.load(std::sync::atomic::Ordering::SeqCst),
+        "the lease is held while the run holds it"
+    );
+    drop(lease);
+    drop(leased_by_free_fn);
+    assert!(released.load(std::sync::atomic::Ordering::SeqCst));
+}

@@ -148,6 +148,10 @@ jobs:
           OPENHUMAN_XDG_ROOT: /root/openhuman-rust-e2e-xdg-${{ github.run_id }}-${{ github.run_attempt }}
           RUST_BACKTRACE: "1"
 
+  security-native:
+    name: Security Native Fixture (3 OS)
+    uses: ./.github/workflows/security-native.yml
+
   build-playwright-e2e-artifact:
     name: Build Playwright E2E Artifact
     runs-on: ubuntu-22.04
@@ -246,16 +250,16 @@ jobs:
           if-no-files-found: error
 
   playwright-e2e:
-    name: E2E (Playwright / web lane)
+    name: E2E (Playwright / lane ${{ matrix.lane }})
     needs: [build-playwright-e2e-artifact]
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest@sha256:c3c20d625bcc9f75e50c3c2c2b75c88d3e60a3f4352b0f19f5327b490438722d
     timeout-minutes: 90
-    # TODO(ci-flaky, #3615): several specs consistently hit toBeVisible
-    # timeouts under CI resource contention. Run the lane but don't block
-    # release merges until infra stabilises.
-    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1, 2, 3, 4]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -326,49 +330,7 @@ jobs:
         env:
           OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
           OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "1"
-        run: |
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          workspace_root="$OPENHUMAN_WORKSPACE"
-          export OPENHUMAN_WORKSPACE="$workspace_root/connections-aliases"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/connections-tab-aliases.spec.ts
-
-          export OPENHUMAN_WORKSPACE="$workspace_root/connections-deeplinks"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/connections-tab-deeplinks.spec.ts
-
-          export OPENHUMAN_WORKSPACE="$workspace_root/chat-harness-subagent"
-          mkdir -p "$OPENHUMAN_WORKSPACE"
-          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-            test/playwright/specs/chat-harness-subagent.spec.ts
-
-          skills_index=0
-          while IFS= read -r skills_test; do
-            export OPENHUMAN_WORKSPACE="$workspace_root/skills-$skills_index"
-            mkdir -p "$OPENHUMAN_WORKSPACE"
-            bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-              test/playwright/specs/skills-search-install.spec.ts -g "$skills_test"
-            skills_index=$((skills_index + 1))
-          done <<'EOF'
-          a burst of typing issues ONE catalog search
-          a pause between words issues a second search
-          a query with no matches leaves no catalog rows
-          the typed text is preserved in the box while results load
-          offers Install, and the button is enabled before it is pressed
-          disables the button and shows Installing while the RPC is in flight
-          a failed install re-enables the button rather than stranding it
-          EOF
-
-          for shard_index in $(seq 1 64); do
-            shard="$shard_index/64"
-            export OPENHUMAN_WORKSPACE="$workspace_root/shard-$shard_index"
-            mkdir -p "$OPENHUMAN_WORKSPACE"
-            bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh \
-              --shard="$shard" \
-              --grep-invert='Connections (aliases|deep links)|Skills explorer|Chat Harness - Subagent'
-          done
+        run: bash app/scripts/e2e-web-shards.sh --lane=${{ matrix.lane }} --lanes=4 --selection=required
 
       - name: Pack Playwright E2E failure artifacts
         if: failure()
@@ -383,7 +345,110 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: e2e-playwright-failure-logs-${{ github.run_id }}
+          name: e2e-playwright-required-failure-logs-${{ github.run_id }}-lane-${{ matrix.lane }}
+          path: .ci/artifacts/openhuman-playwright-failure-logs.tar.gz
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Runs only the exact unchanged AUI component-compatibility failure. Its job result is advisory; the required matrix above covers every healthy spec and every migration owner.
+  playwright-legacy-diagnostic:
+    name: E2E (Playwright legacy diagnostic / lane ${{ matrix.lane }})
+    needs: [build-playwright-e2e-artifact]
+    continue-on-error: true
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest@sha256:c3c20d625bcc9f75e50c3c2c2b75c88d3e60a3f4352b0f19f5327b490438722d
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [1]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install JS dependencies (test harness)
+        run: pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Download Playwright E2E artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: e2e-playwright-linux-${{ github.run_id }}
+          path: .
+
+      - name: Restore Playwright E2E artifact
+        run: |
+          set -euo pipefail
+          tar -xzf e2e-playwright-linux.tar.gz
+          cp -a repo/app/dist-web app/
+          # This bundle is built in a separate checkout (or restored from the
+          # exact source-hash cache above). Its marker mtime predates this
+          # job's fresh checkout, so refresh it after restoring the artifact;
+          # the content-addressed key proves the bundle matches these inputs.
+          touch app/dist-web/openhuman-e2e-bundle.marker
+          mkdir -p target
+          cp -a repo/target/. target/
+          rm -rf repo e2e-playwright-linux.tar.gz
+          chmod +x target/e2e-web-*/debug/openhuman-core
+
+      - name: Install native test modules
+        run: |
+          # Keep fixtures in a trusted tree and resolve their verified releases
+          # from the same registry the product uses.
+          module_root="/root/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
+
+      - name: Install Playwright Chromium dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install-deps chromium
+
+      - name: Install Playwright Chromium headless shell
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install chromium-headless-shell
+
+      - name: Run Playwright web E2E suite
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+          OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "1"
+        run: bash app/scripts/e2e-web-shards.sh --lane=${{ matrix.lane }} --lanes=1 --selection=diagnostic
+
+      - name: Pack Playwright E2E failure artifacts
+        if: failure()
+        run: |
+          mkdir -p .ci/artifacts
+          tar -czf .ci/artifacts/openhuman-playwright-failure-logs.tar.gz \
+            -C "$OPENHUMAN_WORKSPACE" .
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+
+      - name: Upload Playwright E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-playwright-legacy-diagnostic-failure-logs-${{ github.run_id }}-lane-${{ matrix.lane }}
           path: .ci/artifacts/openhuman-playwright-failure-logs.tar.gz
           retention-days: 7
           if-no-files-found: ignore
@@ -408,15 +473,9 @@ jobs:
     needs:
       - unit-tests
       - rust-e2e
+      - security-native
       - build-playwright-e2e-artifact
-      # `playwright-e2e` is intentionally EXCLUDED from the gate. It carries
-      # `continue-on-error: true` (flaky specs, TODO #3615), which makes the
-      # job report `success` to `needs` even when its steps fail — so listing
-      # it here would be a can-never-fail check that only reads as coverage.
-      # Rather than leave it decorative, we drop it from the gate until the
-      # specs are stabilised and the flag removed (#3615); the lane still runs
-      # for signal, and `build-playwright-e2e-artifact` (which CAN fail) stays
-      # gated so a broken web build is still caught.
+      - playwright-e2e
       - e2e-desktop
     if: always()
     runs-on: ubuntu-latest
@@ -425,13 +484,12 @@ jobs:
       - name: Require all CI Full jobs to pass
         run: |
           set -euo pipefail
-          # NOTE: "Playwright E2E" is deliberately absent — see the needs:
-          # comment above (#3615). Re-add it here once continue-on-error is
-          # removed from the playwright-e2e job.
           declare -A results=(
             ["Full Unit Suites"]="${{ needs['unit-tests'].result }}"
             ["Rust E2E"]="${{ needs['rust-e2e'].result }}"
+            ["Security Native Fixture"]="${{ needs['security-native'].result }}"
             ["Build Playwright E2E Artifact"]="${{ needs['build-playwright-e2e-artifact'].result }}"
+            ["Playwright E2E"]="${{ needs['playwright-e2e'].result }}"
             ["Desktop E2E"]="${{ needs['e2e-desktop'].result }}"
           )
 

@@ -3,7 +3,7 @@
 
 use tinymemory_api::ObservedActor;
 
-use crate::security::turn_origin::AgentTurnOrigin;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 
 /// The sender observed in an external-channel user turn, or `None` for any
 /// other origin, a missing sender, or a cron replay.

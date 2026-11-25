@@ -3,7 +3,7 @@
 //!
 //! The compress-cache-retrieve tier used to write each offloaded original to
 //! `<workspace>/.tokenjuice/ccr/<token>`, expiring by file age. The module
-//! keeps them as expiring blobs `juice/ccr/<token>` in its own scope and writes
+//! keeps them as expiring blobs `tinyjuice_ccr/<token>` in its own scope and writes
 //! no files. A model that was handed a recovery handle before the upgrade can
 //! still fetch the original afterwards.
 //!

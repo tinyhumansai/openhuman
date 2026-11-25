@@ -25,6 +25,30 @@ async function gotoSettingsRoute(page: Page, hash: string): Promise<void> {
   await dismissWalkthroughIfPresent(page);
 }
 
+async function ensureRecoveryPhraseGenerateMode(page: Page): Promise<void> {
+  const copyButton = page.getByRole('button', { name: 'Copy to Clipboard' });
+  const replaceButton = page.getByRole('button', { name: 'Replace wallet' });
+
+  await expect
+    .poll(
+      async () => {
+        if (await copyButton.isVisible()) return 'generate';
+        if (await replaceButton.isVisible()) return 'configured';
+        return 'loading';
+      },
+      { timeout: 15_000 }
+    )
+    .not.toBe('loading');
+
+  if (await replaceButton.isVisible()) {
+    await replaceButton.click();
+    await page.getByRole('menuitem', { name: 'Create a New Wallet' }).click();
+    await page.getByRole('button', { name: 'I understand, replace my wallet' }).click();
+  }
+
+  await expect(copyButton).toBeVisible();
+}
+
 test.describe('Settings - Account Preferences', () => {
   test.beforeEach(async ({ page }) => {
     await bootAuthenticatedPage(page, 'pw-settings-account-user');
@@ -50,6 +74,40 @@ test.describe('Settings - Account Preferences', () => {
       .poll(async () => page.evaluate(() => window.location.hash))
       .toContain('/connections?tab=wallet');
     await expect(page.getByTestId('wallet-panel')).toBeVisible();
+  });
+
+  test('saves a generated recovery phrase and exposes configured wallet state', async ({
+    page,
+  }) => {
+    await gotoSettingsRoute(page, '/settings/recovery-phrase');
+
+    await ensureRecoveryPhraseGenerateMode(page);
+    await page.getByRole('button', { name: 'Reveal recovery phrase' }).click();
+    await expect(page.getByRole('button', { name: 'Copy to Clipboard' })).toBeEnabled();
+    await page.locator('#mnemonic-confirm-checkbox').check();
+    await page.getByRole('button', { name: 'Save Recovery Phrase' }).click();
+
+    await expect(page.getByText('Recovery phrase saved')).toBeVisible();
+    await expect(page.getByText(/Multi-chain wallet identities are ready/)).toBeVisible();
+
+    await expect
+      .poll(async () => {
+        const wallet = await callCoreRpc<{
+          result?: { configured?: boolean; accounts?: unknown[] };
+        }>('openhuman.wallet_status', {});
+        return {
+          configured: Boolean(wallet.result?.configured),
+          accountCount: wallet.result?.accounts?.length ?? 0,
+        };
+      })
+      .toEqual({ configured: true, accountCount: expect.any(Number) });
+
+    const wallet = await callCoreRpc<{ result?: { configured?: boolean; accounts?: unknown[] } }>(
+      'openhuman.wallet_status',
+      {}
+    );
+    expect(wallet.result?.configured).toBe(true);
+    expect((wallet.result?.accounts ?? []).length).toBeGreaterThan(0);
   });
 
   test('persists the privacy analytics toggle to core config', async ({ page }) => {
@@ -112,5 +170,14 @@ test.describe('Settings - Account Preferences', () => {
     } finally {
       await callCoreRpc('openhuman.config_update_user_timezone', { timezone: original ?? null });
     }
+  });
+
+  test('shows the billing dashboard handoff on the account panel', async ({ page }) => {
+    await gotoSettingsRoute(page, '/settings/account');
+
+    await expect(page.getByTestId('account-panel')).toBeVisible();
+    await expect(page.getByTestId('account-open-billing')).toBeVisible();
+    await expect(page.getByText('Plan & billing')).toBeVisible();
+    await expect(page.getByText('Manage your subscription, credits, and invoices')).toBeVisible();
   });
 });

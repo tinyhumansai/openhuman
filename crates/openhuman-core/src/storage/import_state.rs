@@ -14,7 +14,7 @@ use tinystoragedrivers::{
     StorageBackend, StorageError, Versioned, WriteCondition, WriteOp,
 };
 
-use super::{documents::Repo, DocumentStoreExt};
+use super::documents::Repo;
 
 /// How long a claim blocks other processes before it can be taken over.
 pub const CLAIM_TTL_MS: i64 = 10 * 60 * 1000;
@@ -23,20 +23,6 @@ const COLLECTION: &str = "storage.import_state";
 const LOG_PREFIX: &str = "[storage::import_state]";
 const WAIT_POLL: Duration = Duration::from_millis(100);
 const CAS_RETRIES: usize = 32;
-
-/// The legacy marker collections whose completion rows are moved at boot.
-pub const LEGACY_MARKERS: &[(&str, &str)] = &[
-    ("storage_import", "storage"),
-    ("threads_import", "threads"),
-    ("subagent_sessions_import", "subagents"),
-    ("composio_state_import", "composio"),
-    ("channels_host_import", "host"),
-    ("tinybox_host_import", "host"),
-    ("tinyconnectors_host_import", "host"),
-    ("tinywallet_host_import", "host"),
-    ("tinyjuice_host_import", "host"),
-    ("mcp_host_import", "host"),
-];
 
 /// Declares the host-owned import progress collection.
 #[must_use]
@@ -53,9 +39,11 @@ pub fn step_id(kind: &str, id: &str) -> String {
 /// The owner name used by module importers.
 pub const HOST_OWNER: &str = "host";
 
-/// Returns a backend whose scope handles carry `condition` on every write.
-/// Calling `for_scope_conditioned` on the wrapped backend composes the
-/// condition with any profile-level condition before opening the target.
+/// Returns a backend whose scope handles carry `condition` on every write,
+/// except collection declarations, which every driver must accept from an
+/// importer (see `claim_bound`). Calling `for_scope_conditioned` on the
+/// wrapped backend composes the condition with any profile-level condition
+/// before opening the target.
 pub(crate) fn backend_with_condition(
     backend: std::sync::Arc<dyn StorageBackend>,
     condition: WriteCondition,
@@ -82,7 +70,7 @@ impl StorageBackend for ClaimBoundBackend {
     }
 
     fn for_scope(&self, scope: &tinystoragedrivers::Scope) -> Result<Storage, StorageError> {
-        self.backend.for_scope_conditioned(scope, &self.condition)
+        super::claim_bound::claim_bound(self.backend.as_ref(), scope, &self.condition)
     }
 
     fn for_scope_conditioned(
@@ -95,7 +83,7 @@ impl StorageBackend for ClaimBoundBackend {
             .clone()
             .and(condition.clone())
             .map_err(|error| StorageError::invalid_input(error.to_string()))?;
-        self.backend.for_scope_conditioned(scope, &condition)
+        super::claim_bound::claim_bound(self.backend.as_ref(), scope, &condition)
     }
 }
 
@@ -250,11 +238,35 @@ pub fn with_claim<T>(
     with_claim_ttl(repo, owner, step, CLAIM_TTL_MS, body)
 }
 
+/// Runs `body` under a claim like [`with_claim`], but returns `Ok(None)` at
+/// once when another holder's claim is live instead of polling for up to the
+/// claim TTL. For callers on an async path that retry at their next call.
+pub fn try_claim<T>(
+    repo: &Repo,
+    owner: &str,
+    step: &str,
+    body: impl FnOnce(&WriteCondition) -> Result<T>,
+) -> Result<Option<T>> {
+    claim_waiting(repo, owner, step, CLAIM_TTL_MS, Duration::ZERO, body)
+}
+
 fn with_claim_ttl<T>(
     repo: &Repo,
     owner: &str,
     step: &str,
     ttl_ms: i64,
+    body: impl FnOnce(&WriteCondition) -> Result<T>,
+) -> Result<Option<T>> {
+    let max_wait = Duration::from_millis(CLAIM_TTL_MS.max(0) as u64);
+    claim_waiting(repo, owner, step, ttl_ms, max_wait, body)
+}
+
+fn claim_waiting<T>(
+    repo: &Repo,
+    owner: &str,
+    step: &str,
+    ttl_ms: i64,
+    max_wait: Duration,
     body: impl FnOnce(&WriteCondition) -> Result<T>,
 ) -> Result<Option<T>> {
     let started = Instant::now();
@@ -283,7 +295,7 @@ fn with_claim_ttl<T>(
             }
             return result.map(Some);
         }
-        if started.elapsed() >= Duration::from_millis(CLAIM_TTL_MS.max(0) as u64) {
+        if started.elapsed() >= max_wait {
             return Ok(None);
         }
         std::thread::sleep(WAIT_POLL);
@@ -517,49 +529,6 @@ fn release(repo: &Repo, token: &ClaimToken) -> Result<()> {
             Err(error) => Err(error),
         }
     })
-}
-
-/// Migrates older import marker documents to host-owned completion rows.
-pub async fn migrate_legacy_markers(scoped: &Storage) -> Result<usize, StorageError> {
-    let docs = scoped.documents();
-    if !docs
-        .capabilities()
-        .contains(tinystoragedrivers::Capability::CollectionEnumeration)
-    {
-        return Ok(0);
-    }
-    let present = docs.collections("").await?;
-    let mut moved = 0;
-    for (collection, owner) in LEGACY_MARKERS {
-        if !present.iter().any(|name| name == collection) {
-            continue;
-        }
-        ensure(scoped).await?;
-        for marker in docs
-            .query_all(collection, &tinystoragedrivers::Query::all())
-            .await?
-        {
-            if marker.id.ends_with("#claim") {
-                continue;
-            }
-            let completed_at_ms = if marker.meta.created_ms > 0 {
-                marker.meta.created_ms
-            } else {
-                chrono::Utc::now().timestamp_millis()
-            };
-            mark_done_at(
-                scoped,
-                owner,
-                &step_id(collection, &marker.id),
-                completed_at_ms,
-            )
-            .await?;
-            moved += 1;
-        }
-        docs.drop_collection(collection).await?;
-        tracing::info!(target: "openhuman::storage", collection, owner, "{LOG_PREFIX} legacy import markers moved to host-owned state");
-    }
-    Ok(moved)
 }
 
 #[cfg(test)]

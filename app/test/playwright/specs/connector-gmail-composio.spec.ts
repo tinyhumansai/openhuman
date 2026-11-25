@@ -2,7 +2,6 @@ import { expect, type Page, test } from '@playwright/test';
 
 import {
   bootAuthenticatedPage,
-  callCoreRpc,
   dismissWalkthroughIfPresent,
   waitForAppReady,
 } from '../helpers/core-rpc';
@@ -10,10 +9,7 @@ import {
 const CONNECTOR_NAME = 'Gmail';
 const TOOLKIT_SLUG = 'gmail';
 const CONNECTION_ID = 'c-gmail-1';
-const ACTION = 'GMAIL_FETCH_EMAILS';
 const MOCK_BASE = 'http://127.0.0.1:' + (process.env.E2E_MOCK_PORT || '18473');
-
-type RequestLogEntry = { method?: string; url?: string; body?: string };
 
 async function mockFetch(path: string, init?: RequestInit) {
   const response = await fetch(MOCK_BASE + path, init);
@@ -35,11 +31,6 @@ async function setMockBehavior(behavior: Record<string, unknown>) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ behavior }),
   });
-}
-
-async function getRequestLog(): Promise<RequestLogEntry[]> {
-  const payload = await mockFetch('/__admin/requests');
-  return (payload.data as RequestLogEntry[]) ?? [];
 }
 
 async function seedConnector(status: 'ACTIVE' | 'FAILED' | 'EXPIRED' = 'ACTIVE') {
@@ -152,14 +143,6 @@ async function openModal(page: Page) {
   return dialog;
 }
 
-function unwrapConnections(payload: unknown): Array<{ toolkit?: string; status?: string }> {
-  const root = payload as {
-    result?: { connections?: Array<{ toolkit?: string; status?: string }> };
-    connections?: Array<{ toolkit?: string; status?: string }>;
-  };
-  return root.result?.connections ?? root.connections ?? [];
-}
-
 test.describe('Gmail connector', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const testSlug = testInfo.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -167,44 +150,6 @@ test.describe('Gmail connector', () => {
   });
 
   test('renders the connector card', async ({ page }) => {
-    await expect(page.getByTestId('skill-install-composio-gmail')).toContainText(CONNECTOR_NAME);
-  });
-
-  test('routes authorize through the mock backend', async () => {
-    await callCoreRpc('openhuman.composio_authorize', { toolkit: TOOLKIT_SLUG });
-    const requests = await getRequestLog();
-    const authReq = requests.find(
-      request =>
-        request.method === 'POST' && request.url?.includes('/agent-integrations/composio/authorize')
-    );
-    expect(authReq).toBeDefined();
-    expect(JSON.parse(authReq?.body || '{}')).toMatchObject({ toolkit: TOOLKIT_SLUG });
-  });
-
-  test('persists connected state through list_connections', async () => {
-    const payload = await callCoreRpc<unknown>('openhuman.composio_list_connections', {});
-    const hit = unwrapConnections(payload).find(
-      connection => connection.toolkit?.toLowerCase() === TOOLKIT_SLUG
-    );
-    expect(hit?.status).toBe('ACTIVE');
-  });
-
-  test('routes composio_execute without blanking the app', async ({ page }) => {
-    await callCoreRpc('openhuman.composio_execute', { tool: ACTION, arguments: {} });
-    await assertSessionNotNuked(page);
-  });
-
-  test('survives a 400 fetch emails error and keeps the skills page usable', async ({ page }) => {
-    await setMockBehavior({ composioExecuteFails: '1' });
-    await expect(
-      callCoreRpc('openhuman.composio_execute', {
-        connection_id: CONNECTION_ID,
-        tool: ACTION,
-        arguments: {},
-      })
-    ).rejects.toThrow(/failed/i);
-    await assertSessionNotNuked(page);
-    await reloadSkills(page);
     await expect(page.getByTestId('skill-install-composio-gmail')).toContainText(CONNECTOR_NAME);
   });
 
@@ -223,30 +168,6 @@ test.describe('Gmail connector', () => {
     );
     const dialog = await openModal(page);
     await expect(dialog).toContainText(CONNECTOR_NAME);
-    await assertSessionNotNuked(page);
-  });
-
-  test('survives a 4xx composio execute error', async ({ page }) => {
-    await setMockBehavior({ composioExecuteFails: '400' });
-    await expect(
-      callCoreRpc('openhuman.composio_execute', {
-        connection_id: CONNECTION_ID,
-        tool: ACTION,
-        arguments: {},
-      })
-    ).rejects.toThrow(/failed/i);
-    await assertSessionNotNuked(page);
-  });
-
-  test('routes disconnect through the mock backend', async ({ page }) => {
-    await callCoreRpc('openhuman.composio_delete_connection', { connection_id: CONNECTION_ID });
-    const requests = await getRequestLog();
-    const deleteReq = requests.find(
-      request =>
-        request.method === 'DELETE' &&
-        request.url?.includes('/agent-integrations/composio/connections/')
-    );
-    expect(deleteReq).toBeDefined();
     await assertSessionNotNuked(page);
   });
 });

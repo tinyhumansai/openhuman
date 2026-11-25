@@ -16,6 +16,13 @@ fn embedded_secrets_default_to_memory_without_key_files() {
                 config.workspace_dir = root.path().join("workspace");
                 config.config_path = root.path().join("config.toml");
                 let workspace = config.workspace_dir.clone();
+                let legacy_dir = workspace.join("legacy-secrets");
+                std::fs::create_dir_all(&legacy_dir).unwrap();
+                let legacy_key = legacy_dir.join(".secret_key");
+                let key_bytes = "01".repeat(32);
+                std::fs::write(&legacy_key, &key_bytes).unwrap();
+                config.config_path = legacy_dir.join("config.toml");
+                let store_config = config.clone();
                 let runtime = RuntimeBuilder::lean()
                     .workspace(Workspace::Dir(workspace.clone()))
                     .config(config)
@@ -49,14 +56,16 @@ fn embedded_secrets_default_to_memory_without_key_files() {
                         "in-memory storage must not write {name}"
                     );
                 }
-                let legacy_dir = workspace.join("legacy-secrets");
-                std::fs::create_dir_all(&legacy_dir).unwrap();
-                let legacy_key = legacy_dir.join(".secret_key");
-                let key_bytes = "01".repeat(32);
-                std::fs::write(&legacy_key, &key_bytes).unwrap();
-                let store = secret_storage::SecretStore::new(&legacy_dir, true);
-                let ciphertext = store.encrypt("legacy-compatible").unwrap();
-                assert_eq!(store.decrypt(&ciphertext).unwrap(), "legacy-compatible");
+                let store =
+                    secret_storage::SecretStore::new_with_config(&legacy_dir, true, &store_config);
+                let ciphertext = store
+                    .encrypt_via_security("legacy-compatible")
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    store.decrypt_via_security(&ciphertext).await.unwrap(),
+                    "legacy-compatible"
+                );
                 assert_eq!(
                     std::fs::read_to_string(&legacy_key).unwrap(),
                     key_bytes,

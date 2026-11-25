@@ -68,7 +68,7 @@ impl McpConfiguredClient {
             return Ok(None);
         };
         client
-            .existing_status_if_open(&super::super::host::client_config(config))
+            .existing_status_if_open(&super::super::host::client_config(config).await)
             .await
     }
 

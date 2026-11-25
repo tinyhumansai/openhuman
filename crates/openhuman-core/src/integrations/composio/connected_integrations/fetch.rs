@@ -81,19 +81,19 @@ pub async fn fetch_connected_integrations_status(
     // real connection. An authoritative empty set keeps this session local.
     // A stored API key outranks the local session (`resolve_backend_credential`),
     // so it still reaches the backend.
-    if config.composio.mode.trim() != crate::config::schema::COMPOSIO_MODE_DIRECT
-        && !crate::security::credentials::api_key::has_api_key(config)
-        && crate::security::credentials::session_support::get_session_token(config)
+    let local_session_without_api_key = config.composio.mode.trim()
+        != crate::config::schema::COMPOSIO_MODE_DIRECT
+        && !crate::credentials::api_key::has_api_key(config).await
+        && crate::credentials::session_state::get_session_token(config)
+            .await
             .ok()
             .flatten()
-            .is_some_and(|token| {
-                crate::security::credentials::session_support::is_local_session_token(&token)
-            })
-    {
+            .is_some_and(|token| crate::credentials::session_state::is_local_session_token(&token));
+    if local_session_without_api_key {
         return FetchConnectedIntegrationsStatus::Authoritative(Vec::new());
     }
 
-    let Some(key) = checked_cache_key(config) else {
+    let Some(key) = checked_cache_key(config).await else {
         return FetchConnectedIntegrationsStatus::Unavailable;
     };
     // A connection event or a divergent list_connections response invalidates
@@ -148,7 +148,8 @@ fn fetch_connected_integrations_uncached(
             ComposioListConnectedIntegrationsRequest,
         };
 
-        let mode = match crate::integrations::composio::client::resolve_composio_route(config) {
+        let mode = match crate::integrations::composio::client::resolve_composio_route(config).await
+        {
             Ok(crate::integrations::composio::client::ComposioRoute::Backend) => Mode::Backend,
             Ok(crate::integrations::composio::client::ComposioRoute::Direct(_)) => Mode::Direct,
             Err(error) => {

@@ -14,8 +14,9 @@ mod common;
 use common::{chat_completion, offline_config, runtime, stub_backend};
 use openhuman_embed::{
     Access, AgentDefinitionSpec, AgentError, AgentSpec, HostTurnTools, MemoryBinding, Provider,
-    Runtime, SandboxModeSpec, ToolScopeSpec, Workspace,
+    Runtime, SandboxModeSpec, SessionStoreProvider, ToolScopeSpec, Workspace,
 };
+use tinyagents_session::InMemorySessionStores;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
@@ -104,8 +105,10 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .mount(&provider_b)
                 .await;
             let mut budget_completion = chat_completion("budget-metered");
-            budget_completion["usage"]["prompt_tokens"] = serde_json::json!(1_000_000);
-            budget_completion["usage"]["total_tokens"] = serde_json::json!(1_000_001);
+            // Below gpt-5.5's 272K long-context step, so the call bills at the
+            // standard $5/MTok input rate: $1.25 against the $1 cap.
+            budget_completion["usage"]["prompt_tokens"] = serde_json::json!(250_000);
+            budget_completion["usage"]["total_tokens"] = serde_json::json!(250_001);
             Mock::given(method("POST"))
                 .and(path("/v1/chat/completions"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(budget_completion))
@@ -114,6 +117,7 @@ fn one_runtime_hosts_independently_configured_agents() {
             #[allow(unused_variables)]
             let skills = skills_fixture();
             let beta_action = tempfile::tempdir().expect("beta action dir");
+            let session_store = std::sync::Arc::new(InMemorySessionStores::new());
 
             // The core carries no hosted provider; supply the managed one the
             // way the TinyHumans layer does, pointed at the mock.
@@ -125,11 +129,12 @@ fn one_runtime_hosts_independently_configured_agents() {
                     .workspace(Workspace::Ephemeral)
                     .backend_url(backend.uri())
                     .api_key(API_KEY)
+                    .session_store(session_store.clone())
                     .build()
                     .await
                     .expect("runtime builds"),
             );
-            assert!(runtime.has_api_key());
+            assert!(runtime.has_api_key().await);
 
             // Regression: `has_api_key()` must read the credential store live,
             // not a snapshot taken when the runtime was built — a host that
@@ -142,7 +147,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("clear api key");
             assert!(
-                !runtime.has_api_key(),
+                !runtime.has_api_key().await,
                 "has_api_key() must observe a live clear, not a build-time snapshot"
             );
             runtime
@@ -152,7 +157,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("restore api key");
             assert!(
-                runtime.has_api_key(),
+                runtime.has_api_key().await,
                 "has_api_key() must observe a live store, not a build-time snapshot"
             );
 
@@ -246,13 +251,18 @@ fn one_runtime_hosts_independently_configured_agents() {
                             AgentDefinitionSpec::new()
                                 .tools(ToolScopeSpec::Named(vec!["shell".to_string()])),
                         )
-                        .tools(|turn| HostTurnTools {
-                            withheld: if turn.session_id() == Some("hidden-turn") {
+                        .tools(|turn| {
+                            let withheld = if turn.session_id() == Some("hidden-turn") {
                                 std::collections::HashSet::from(["shell".to_string()])
                             } else {
                                 std::collections::HashSet::new()
-                            },
-                            ..Default::default()
+                            };
+                            Box::pin(async move {
+                                HostTurnTools {
+                                    withheld,
+                                    ..Default::default()
+                                }
+                            })
                         }),
                 )
                 .expect("withholding agent instantiates");
@@ -301,12 +311,12 @@ fn one_runtime_hosts_independently_configured_agents() {
             assert_eq!(common::chat_requests(&budget_provider).await.len(), 1);
             assert_eq!(
                 stop_reason.lock().expect("stop reason lock").as_deref(),
-                Some("turn cost $5.0000 reached cap $1.0000")
+                Some("turn cost $1.2500 reached cap $1.0000")
             );
             let usage = budgeted_turn
                 .usage
                 .expect("runtime-owned agent reports turn usage");
-            assert_eq!(usage.input_tokens, 1_000_000);
+            assert_eq!(usage.input_tokens, 250_000);
             assert!(
                 usage.cost_usd.is_some_and(|usd| usd >= 1.0),
                 "budgeted usage: {usage:?}"
@@ -411,9 +421,9 @@ fn one_runtime_hosts_independently_configured_agents() {
             // Transcripts are keyed by agent and live in the agent's own store
             // under the workspace, and a thread resumes its own history.
             let listing = |agent_id: &str, session_id: &str| -> Vec<String> {
-                tinyagents_session::port::WorkspaceStores::open(&workspace_dir, agent_id)
-                    .expect("the agent's workspace store")
-                    .transcripts()
+                session_store
+                    .for_agent(agent_id)
+                    .transcripts
                     .thread_transcripts(session_id, None)
                     .map(|found| found.roots.into_iter().map(|root| root.stem).collect())
                     .unwrap_or_default()
@@ -502,23 +512,28 @@ fn one_runtime_hosts_independently_configured_agents() {
             );
 
             // Interleaved concurrency across agents keeps their providers apart.
+            // Batch the turns so this isolation check does not flood one
+            // runtime with fifty simultaneous requests while Nextest runs the
+            // other integration binaries beside it.
             let mut turns = tokio::task::JoinSet::new();
-            for index in 0..25 {
-                let alpha = alpha.clone();
-                let beta = beta.clone();
-                turns.spawn(async move { alpha.turn(format!("a{index}")).send().await });
-                turns.spawn(async move { beta.turn(format!("b{index}")).send().await });
-            }
             let mut a_count = 0;
             let mut b_count = 0;
-            while let Some(outcome) = turns.join_next().await {
-                let outcome = outcome.expect("no panic").expect("turn runs");
-                if outcome.reply.contains("alpha-ok") {
-                    a_count += 1;
-                } else if outcome.reply.contains("beta-ok") {
-                    b_count += 1;
-                } else {
-                    panic!("unexpected reply {:?}", outcome.reply);
+            for start in (0..25).step_by(5) {
+                for index in start..start + 5 {
+                    let alpha = alpha.clone();
+                    let beta = beta.clone();
+                    turns.spawn(async move { alpha.turn(format!("a{index}")).send().await });
+                    turns.spawn(async move { beta.turn(format!("b{index}")).send().await });
+                }
+                while let Some(outcome) = turns.join_next().await {
+                    let outcome = outcome.expect("no panic").expect("turn runs");
+                    if outcome.reply.contains("alpha-ok") {
+                        a_count += 1;
+                    } else if outcome.reply.contains("beta-ok") {
+                        b_count += 1;
+                    } else {
+                        panic!("unexpected reply {:?}", outcome.reply);
+                    }
                 }
             }
             assert_eq!((a_count, b_count), (25, 25));
@@ -547,10 +562,14 @@ fn one_runtime_hosts_independently_configured_agents() {
             // unbound agent keeps the runtime's defaults.
             let bound = runtime
                 .agent(
-                    AgentSpec::new("employee")
-                        .memory(MemoryBinding::new("employee-7").root("team:acme")),
+                    AgentSpec::new("employee").memory(
+                        MemoryBinding::new("employee-7")
+                            .root("team:acme")
+                            .memory_block_deadline(std::time::Duration::from_millis(300)),
+                    ),
                 )
                 .expect("a bound agent instantiates");
+            assert_eq!(bound.config().memory.memory_block_deadline_ms, Some(300));
             assert_eq!(
                 bound.config().memory.agent_id.as_deref(),
                 Some("employee-7")
@@ -592,10 +611,14 @@ fn one_runtime_hosts_independently_configured_agents() {
                 panic!("the test is the runtime's sole owner once every agent is dropped");
             };
             drop(runtime);
-            assert!(
-                !workspace_dir.exists(),
-                "an ephemeral workspace must be removed with its runtime"
-            );
+            // The workspace goes with the last holder of the runtime's guard:
+            // the runtime, or a dropped agent's deferred MCP cleanup, which keeps
+            // the files until the module acknowledges its close (`EphemeralRoot`).
+            common::eventually(
+                "the ephemeral workspace to be removed with its runtime",
+                || (!workspace_dir.exists()).then_some(()),
+            )
+            .await;
         })
         .await
         .expect("library host task did not panic");

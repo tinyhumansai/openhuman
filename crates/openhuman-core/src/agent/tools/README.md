@@ -11,8 +11,7 @@ crate should construct them directly.
 | Tool | File | Wire name (if different) |
 | --- | --- | --- |
 | `AskClarificationTool` | `tinyagents_harness_tools` | `ask_user_clarification` |
-| `DelegateTool` | [`delegate.rs`](./delegate.rs) | `delegate` |
-| `PlanExitTool` | [`plan_exit.rs`](./plan_exit.rs) | `plan_exit` |
+| `plan_exit_tool` | [`plan_exit.rs`](./plan_exit.rs) | `plan_exit` |
 | `RememberPreferenceTool` | `remember_preference.rs` | `remember_preference` |
 | `SavePreferenceTool` | `save_preference.rs` | `save_preference` |
 | `RunWorkflowTool`, `AwaitWorkflowTool` | [`run_workflow.rs`](./run_workflow.rs) | `run_workflow`, `await_workflow` |
@@ -32,13 +31,9 @@ instead of registering them as disabled.
   Any caller that exposes this tool without that listing gets a tool that
   answers its own question, since the model reads a normal success and keeps
   going.
-- `DelegateTool` hands a subtask to a named agent configured with its own
-  provider and model, using `DelegateAgentConfig`; `DelegateToolDispatch` is
-  the typed harness-side wrapper that supplies live thread and workspace
-  context and makes cancellation explicit.
-- `PlanExitTool` ends a plan-mode pass by returning the plan text plus
-  `PLAN_EXIT_MARKER`. The mode switch itself lives outside this tool; nothing
-  in this crate currently consumes the marker.
+- `plan_exit_tool` configures TinyAgents' plan-exit tool with OpenHuman's
+  thread mode and pending-review stores. TinyAgents owns the tool behavior and
+  `PLAN_EXIT_MARKER`.
 - `RememberPreferenceTool` pins an explicit `(class, key, value)` preference
   into the `user_profile` memory namespace. `SavePreferenceTool` stores a
   free-form preference into either the `general` or `situational` lane.

@@ -6,7 +6,7 @@ import { startMockServer, stopMockServer } from '../mock-server';
 
 describe('Slack connection entry point', () => {
   before(async function beforeSuite() {
-    if (!supportsExecuteScript()) this.skip();
+    if (!supportsExecuteScript()) this.skip(); // https://github.com/senamakel/openhuman/issues/236 — Playwright owns the matching browser flow.
     await startMockServer();
     await waitForApp();
     await resetApp('e2e-slack-flow');

@@ -29,10 +29,12 @@ impl CryptoClient {
 
     /// Build from config; errors when the user is not signed in (no session
     /// token) — the same gate the composio tools use.
-    pub fn from_config(config: &Config) -> Result<Self, String> {
-        let inner = crate::integrations::build_client(config).ok_or_else(|| {
-            "web3 requires a signed-in session (no backend auth token available)".to_string()
-        })?;
+    pub async fn from_config(config: &Config) -> Result<Self, String> {
+        let inner = crate::integrations::build_client(config)
+            .await
+            .ok_or_else(|| {
+                "web3 requires a signed-in session (no backend auth token available)".to_string()
+            })?;
         Ok(Self::new(inner))
     }
 

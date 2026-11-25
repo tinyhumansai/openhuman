@@ -11,6 +11,7 @@
  * Every other spec assumes this works — so when CI is red, look here first.
  */
 import { waitForApp } from '../helpers/app-helpers';
+import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { hasAppChrome } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { startMockServer, stopMockServer } from '../mock-server';
@@ -44,6 +45,11 @@ describe('Smoke', function () {
   it('renders a non-empty DOM in the main webview', async () => {
     const elements = await browser.$$('//*');
     expect(elements.length).toBeGreaterThan(0);
+  });
+
+  it('starts the embedded core normally and answers core.ping', async () => {
+    const ping = await callOpenhumanRpc('core.ping', {});
+    expect(ping.ok).toBe(true);
   });
 
   // NOTE: a permanently-`it.skip`ped "reaches a logged-in route after auth +

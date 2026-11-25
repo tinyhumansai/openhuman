@@ -17,44 +17,48 @@ fn config_for(tmp: &tempfile::TempDir) -> Config {
 fn entry(roots: Arc<Mutex<Vec<Option<String>>>>, free: Option<FreeBackground>) -> EngineEntry {
     EngineEntry {
         build: Arc::new(move |request| {
-            roots.lock().unwrap().push(request.root.map(str::to_string));
-            Binding::On(bound_engine(
-                ID,
-                "registered://engine",
-                Arc::new(ReferenceEngine::new()),
-            ))
+            let roots = Arc::clone(&roots);
+            let root = request.root.map(str::to_string);
+            Box::pin(async move {
+                roots.lock().unwrap().push(root);
+                Binding::On(bound_engine(
+                    ID,
+                    "registered://engine",
+                    Arc::new(ReferenceEngine::new()),
+                ))
+            })
         }),
         free_background: free,
     }
 }
 
-#[test]
-fn an_unregistered_engine_id_stays_off() {
+#[tokio::test]
+async fn an_unregistered_engine_id_stays_off() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_for(&tmp);
-    assert!(!resolve(&config).is_on());
+    assert!(!resolve(&config).await.is_on());
 }
 
-#[test]
-fn a_registered_engine_is_bound_with_its_endpoint() {
+#[tokio::test]
+async fn a_registered_engine_is_bound_with_its_endpoint() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_for(&tmp);
     register_memory_engine(ID, entry(Arc::default(), None));
-    let binding = resolve(&config);
+    let binding = resolve(&config).await;
     unregister_memory_engine(ID);
     let bound = binding.engine().expect("bound");
     assert_eq!(bound.id, ID);
     assert_eq!(bound.endpoint, "registered://engine");
 }
 
-#[test]
-fn the_layout_root_reaches_the_registered_builder() {
+#[tokio::test]
+async fn the_layout_root_reaches_the_registered_builder() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_for(&tmp);
     let roots = Arc::new(Mutex::new(Vec::new()));
     register_memory_engine(ID, entry(Arc::clone(&roots), None));
-    let _ = bind_with_root(&config, Some("user:abc"));
-    let _ = bind_with_root(&config, None);
+    let _ = bind_with_root(&config, Some("user:abc")).await;
+    let _ = bind_with_root(&config, None).await;
     unregister_memory_engine(ID);
     assert_eq!(
         *roots.lock().unwrap(),

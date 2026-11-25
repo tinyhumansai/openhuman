@@ -192,7 +192,7 @@ export function handleConversations(ctx) {
     if (method === "PATCH") {
       json(res, 200, {
         success: true,
-        data: { id: channelItemMatch[1], ...(parsedBody || {}) },
+        data: { ...(parsedBody || {}), id: channelItemMatch[1] },
       });
       return true;
     }

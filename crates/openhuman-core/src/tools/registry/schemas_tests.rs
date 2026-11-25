@@ -40,6 +40,14 @@ fn diagnostics_schema_has_no_inputs() {
 }
 
 #[test]
+fn required_tool_id_trims_padded_ids_before_lookup() {
+    let mut params = Map::new();
+    params.insert("tool_id".to_string(), json!(" tools.web_search "));
+
+    assert_eq!(parse_get(params).unwrap(), "tools.web_search");
+}
+
+#[test]
 fn required_tool_id_rejects_wrong_type() {
     let mut params = Map::new();
     params.insert("tool_id".to_string(), json!(10));

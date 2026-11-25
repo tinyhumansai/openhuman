@@ -51,10 +51,10 @@ async fn run_role_tool_with(
     }
     // JSON-RPC, MCP, and agent callers share this dispatcher; enforce egress
     // policy here so non-agent routes cannot bypass LocalOnly mode.
-    if let Some(message) = crate::search::tools::local_only_search_block(tool) {
+    if let Some(message) = crate::search::tools::local_only_search_block(tool).await {
         return Err(message);
     }
-    ensure_servable(config, tool, &arguments)?;
+    ensure_servable(config, tool, &arguments).await?;
     let request = tinysearch_bus::ExecuteToolRequest {
         name: tool.to_string(),
         arguments,
@@ -83,7 +83,7 @@ async fn run_role_tool_with(
 
 /// Refuse early, without loading the module, when nothing can serve the call.
 #[cfg(feature = "modules")]
-fn ensure_servable(
+async fn ensure_servable(
     config: &crate::config::Config,
     tool: &str,
     arguments: &Value,
@@ -91,7 +91,7 @@ fn ensure_servable(
     use crate::search::providers::{effective_role_providers, resolve};
     let role = tinysearch_bus::role_for_tool(tool)
         .ok_or_else(|| format!("{tool} is not a search role tool"))?;
-    let resolved = resolve(config);
+    let resolved = resolve(config).await;
     let usable = effective_role_providers(&resolved, config, role);
     let pinned = arguments.get("provider").and_then(Value::as_str);
     let servable = match pinned {

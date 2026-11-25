@@ -1,20 +1,392 @@
 //! Adapter from TinyAgents' durable subagent-session port to OpenHuman storage.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tinyagents_orchestration::subagent::{
-    DurableSubagentSession as TinySession, DurableSubagentStatus as TinyStatus,
-    ReuseDecision as TinyReuseDecision, SubagentError, SubagentSessionSelector as TinySelector,
+    DriverSubagentSessionStore, DurableSubagentSession as TinySession,
+    DurableSubagentStatus as TinyStatus, ReuseDecision as TinyReuseDecision,
+    ScopedSubagentSessionStore, SubagentError, SubagentSessionSelector as TinySelector,
     SubagentSessionStore as TinySessionStore, SubagentSessionUpsert as TinyUpsert,
 };
 
+use super::tiny_port_epoch::import_parent_epoch;
+#[cfg(test)]
+use super::tiny_port_epoch::parent_epoch_from_sidecar;
 use super::types::{DurableSubagentSession, DurableSubagentStatus, SubagentSessionSelector};
 use super::{SubagentSessionStore, SubagentSessionUpsert};
+
+pub(crate) fn host_projection(
+    session: TinySession,
+    parent_epoch: Option<u64>,
+) -> DurableSubagentSession {
+    DurableSubagentSession {
+        subagent_session_id: session.subagent_session_id,
+        parent_session: session.parent_session,
+        parent_thread_id: session.parent_thread_id,
+        worker_thread_id: session.worker_thread_id,
+        agent_id: session.agent_id,
+        display_name: session.display_name,
+        model: session.model,
+        sandbox_mode: session.sandbox_mode,
+        action_root: session.action_root,
+        task_key: session.task_key,
+        task_title: session.task_title,
+        current_task_id: session.current_task_id,
+        lifecycle_key: session.lifecycle_key,
+        parent_epoch,
+        status: match session.status {
+            TinyStatus::Running => DurableSubagentStatus::Running,
+            TinyStatus::Idle => DurableSubagentStatus::Idle,
+            TinyStatus::AwaitingUser => DurableSubagentStatus::AwaitingUser,
+            TinyStatus::Failed => DurableSubagentStatus::Failed,
+            TinyStatus::Closed => DurableSubagentStatus::Closed,
+        },
+        reusable: session.reusable,
+        latest_history: session.latest_history.map(|history| {
+            tinyagents_runtime::transcript::messages_to_display_transcript(&history)
+        }),
+        latest_error: session.latest_error,
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+        last_used_at: session.last_used_at,
+    }
+}
+
+/// Opens TinyAgents' async session store in the caller's explicit storage
+/// scope and binds it to one parent session/thread. The core's storage handle
+/// is captured before returning, so later trait calls never consult ambient
+/// task-local scope.
+pub(crate) fn open_for_context(
+    ctx: &crate::core::runtime::DispatchCtx,
+    workspace_dir: PathBuf,
+    parent_session: impl Into<String>,
+    parent_thread_id: Option<String>,
+    jobs: Option<tinyagents_orchestration::subagent::SubAgentJobRegistry>,
+) -> Result<Arc<dyn TinySessionStore>, SubagentError> {
+    let documents = documents_for_context(ctx, &workspace_dir)?;
+    let driver = Arc::new(DriverSubagentSessionStore::new(Arc::clone(&documents))?);
+    let parent_session = parent_session.into();
+    import_host_sessions(
+        ctx,
+        &workspace_dir,
+        &parent_session,
+        parent_thread_id.as_deref(),
+        documents,
+    )?;
+    let owner = crate::agent::tinyagents::tool_registration::subagent_owner_key(
+        &workspace_dir,
+        &parent_session,
+        parent_thread_id.as_deref(),
+    );
+    let scoped: Arc<dyn TinySessionStore> = if let Some(jobs) = jobs {
+        Arc::new(ScopedSubagentSessionStore::with_close_callback(
+            Arc::clone(&driver),
+            parent_session.clone(),
+            parent_thread_id.clone(),
+            move |_session_id, _task_id, key| {
+                if let Err(error) = jobs.cancel_key_owned(key, owner.clone()) {
+                    log::debug!("[subagent_sessions] close cancellation was not applied: {error}");
+                }
+            },
+        ))
+    } else {
+        Arc::new(ScopedSubagentSessionStore::new(
+            Arc::clone(&driver),
+            parent_session.clone(),
+            parent_thread_id.clone(),
+        ))
+    };
+    Ok(Arc::new(TaskIdSessionLookup {
+        inner: scoped,
+        parent_session,
+        parent_thread_id,
+    }))
+}
+
+/// Imports one terminal legacy task into TinyAgents' scoped session store and
+/// returns the port's view of it. The legacy read only discovers the parent
+/// scope; all terminal reporting is based on the migrated driver row.
+pub(crate) async fn import_terminal_task_for_context(
+    ctx: &crate::core::runtime::DispatchCtx,
+    workspace_dir: PathBuf,
+    task_id: &str,
+) -> Result<Option<TinySession>, SubagentError> {
+    let legacy = SubagentSessionStore::new_in_context(ctx, workspace_dir.clone())
+        .map_err(SubagentError::Persistence)?
+        .find_task_for_import(task_id)
+        .map_err(SubagentError::Persistence)?;
+    let Some(row) = legacy.filter(|row| {
+        matches!(
+            row.status,
+            DurableSubagentStatus::Idle | DurableSubagentStatus::Failed
+        )
+    }) else {
+        return Ok(None);
+    };
+    let parent_session = row.parent_session.clone();
+    let parent_thread_id = row.parent_thread_id.clone();
+    let documents = documents_for_context(ctx, &workspace_dir)?;
+    import_host_session(
+        &workspace_dir,
+        &parent_session,
+        parent_thread_id.as_deref(),
+        row,
+        documents.clone(),
+    )?;
+    let driver = DriverSubagentSessionStore::new(documents)?;
+    let session = driver
+        .list_for_parent(&parent_session, parent_thread_id.as_deref())
+        .await?
+        .into_iter()
+        .find(|session| session.current_task_id.as_deref() == Some(task_id));
+    Ok(session)
+}
+
+fn documents_for_context(
+    ctx: &crate::core::runtime::DispatchCtx,
+    workspace_dir: &std::path::Path,
+) -> Result<Arc<dyn crate::storage::DocumentStore>, SubagentError> {
+    let open_documents = || {
+        let opened =
+            crate::storage::local::open("subagent_sessions", workspace_dir).map_err(|error| {
+                SubagentError::Persistence(format!("open session store: {error:#}"))
+            })?;
+        let scoped = opened.scoped().map_err(|error| {
+            SubagentError::Persistence(format!("scope session store: {error:#}"))
+        })?;
+        Ok::<_, SubagentError>(Arc::clone(scoped.documents()))
+    };
+    let context = ctx.resolved().ok_or_else(|| {
+        SubagentError::Persistence("subagent session store has no resolved owner scope".into())
+    })?;
+    crate::core::runtime::CoreContext::sync_scope(context, open_documents)
+}
+
+/// Copies the pre-driver host collection into TinyAgents' collection without
+/// removing or rewriting the source rows. The old collection remains the
+/// owner of OpenHuman-only `parent_epoch` until the host's epoch sidecar is
+/// established independently.
+fn import_host_sessions(
+    ctx: &crate::core::runtime::DispatchCtx,
+    workspace_dir: &std::path::Path,
+    parent_session: &str,
+    parent_thread_id: Option<&str>,
+    documents: Arc<dyn crate::storage::DocumentStore>,
+) -> Result<(), SubagentError> {
+    let legacy = SubagentSessionStore::new_in_context(ctx, workspace_dir.to_path_buf())
+        .map_err(SubagentError::Persistence)?
+        .load()
+        .map_err(SubagentError::Persistence)?;
+    for row in legacy.into_iter().filter(|row| {
+        row.parent_session == parent_session && row.parent_thread_id.as_deref() == parent_thread_id
+    }) {
+        import_host_session(
+            workspace_dir,
+            parent_session,
+            parent_thread_id,
+            row,
+            Arc::clone(&documents),
+        )?;
+    }
+    Ok(())
+}
+
+fn import_host_session(
+    workspace_dir: &std::path::Path,
+    parent_session: &str,
+    parent_thread_id: Option<&str>,
+    row: super::DurableSubagentSession,
+    documents: Arc<dyn crate::storage::DocumentStore>,
+) -> Result<(), SubagentError> {
+    import_parent_epoch(
+        Arc::clone(&documents),
+        row.subagent_session_id.clone(),
+        row.parent_epoch,
+    )?;
+    let converter = OpenHumanTinySubagentSessionStore::new(
+        workspace_dir.to_path_buf(),
+        parent_session,
+        parent_thread_id.map(str::to_owned),
+    );
+    let session = converter.convert(row)?;
+    let id = session.subagent_session_id.clone();
+    let docs = Arc::clone(&documents);
+    let existing = crate::storage::block_on(async move {
+        docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new(
+            "subagent_sessions",
+        ))
+        .await?;
+        docs.get("subagent_sessions", &id).await
+    })
+    .map_err(|error| SubagentError::Persistence(format!("read driver session: {error}")))?;
+    if existing.is_some() {
+        return Ok(());
+    }
+    // The driver's upsert API intentionally only creates a Running row;
+    // import existing terminal/reusable state as its public durable shape.
+    let doc = serde_json::to_value(&session)
+        .map_err(|error| SubagentError::Persistence(format!("session encode: {error}")))?;
+    let write_docs = Arc::clone(&documents);
+    crate::storage::block_on(async move {
+        write_docs
+            .ensure_collection(&tinystoragedrivers::CollectionSpec::new(
+                "subagent_sessions",
+            ))
+            .await?;
+        match write_docs
+            .put(
+                "subagent_sessions",
+                &session.subagent_session_id,
+                doc,
+                crate::storage::Precondition::Absent,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == tinystoragedrivers::ErrorKind::Conflict => Ok(()),
+            Err(error) => Err(error),
+        }
+    })
+    .map_err(|error| SubagentError::Persistence(format!("import host session: {error}")))
+}
+
+/// Host compatibility seam: public orchestration tools historically accept a
+/// task id as well as a durable session id. TinyAgents owns the durable store
+/// and owner checks; this adapter only resolves that task-id alias in the
+/// already owner-scoped row set.
+struct TaskIdSessionLookup {
+    inner: Arc<dyn TinySessionStore>,
+    parent_session: String,
+    parent_thread_id: Option<String>,
+}
+
+#[async_trait]
+impl TinySessionStore for TaskIdSessionLookup {
+    async fn list_for_parent(
+        &self,
+        parent_session: &str,
+        parent_thread_id: Option<&str>,
+    ) -> Result<Vec<TinySession>, SubagentError> {
+        self.inner
+            .list_for_parent(parent_session, parent_thread_id)
+            .await
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<TinySession>, SubagentError> {
+        if let Some(session) = self.inner.get(id).await? {
+            return Ok(Some(session));
+        }
+        let mut matches = self
+            .inner
+            .list_for_parent(&self.parent_session, self.parent_thread_id.as_deref())
+            .await?
+            .into_iter()
+            .filter(|session| session.current_task_id.as_deref() == Some(id));
+        let session = matches.next();
+        if matches.next().is_some() {
+            return Err(SubagentError::InvalidRequest(
+                "subagent task id is ambiguous within the authenticated owner scope".into(),
+            ));
+        }
+        Ok(session)
+    }
+
+    async fn upsert_running(
+        &self,
+        upsert: TinyUpsert,
+    ) -> Result<(TinySession, TinyReuseDecision), SubagentError> {
+        self.inner.upsert_running(upsert).await
+    }
+
+    async fn close(&self, id: &str) -> Result<bool, SubagentError> {
+        self.inner.close(id).await
+    }
+
+    async fn close_if_current(
+        &self,
+        id: &str,
+        task_id: &str,
+        lifecycle_key: &tinyagents_orchestration::subagent::SubagentTaskKey,
+        parent_session: &str,
+        parent_thread_id: Option<&str>,
+    ) -> Result<bool, SubagentError> {
+        self.inner
+            .close_if_current(id, task_id, lifecycle_key, parent_session, parent_thread_id)
+            .await
+    }
+
+    async fn mark_finished(
+        &self,
+        id: &str,
+        task_id: &str,
+        status: TinyStatus,
+        history: Vec<tinyinference_llm::message::Message>,
+    ) -> Result<bool, SubagentError> {
+        self.inner.mark_finished(id, task_id, status, history).await
+    }
+
+    async fn mark_finished_if_current(
+        &self,
+        id: &str,
+        task_id: &str,
+        lifecycle_key: &tinyagents_orchestration::subagent::SubagentTaskKey,
+        parent_session: &str,
+        parent_thread_id: Option<&str>,
+        status: TinyStatus,
+        history: Vec<tinyinference_llm::message::Message>,
+    ) -> Result<bool, SubagentError> {
+        self.inner
+            .mark_finished_if_current(
+                id,
+                task_id,
+                lifecycle_key,
+                parent_session,
+                parent_thread_id,
+                status,
+                history,
+            )
+            .await
+    }
+
+    async fn mark_failed(
+        &self,
+        id: &str,
+        task_id: &str,
+        error: String,
+    ) -> Result<bool, SubagentError> {
+        self.inner.mark_failed(id, task_id, error).await
+    }
+
+    async fn mark_failed_if_current(
+        &self,
+        id: &str,
+        task_id: &str,
+        lifecycle_key: &tinyagents_orchestration::subagent::SubagentTaskKey,
+        parent_session: &str,
+        parent_thread_id: Option<&str>,
+        error: String,
+    ) -> Result<bool, SubagentError> {
+        self.inner
+            .mark_failed_if_current(
+                id,
+                task_id,
+                lifecycle_key,
+                parent_session,
+                parent_thread_id,
+                error,
+            )
+            .await
+    }
+}
 
 /// Routes generic Jobs/Message session operations through OpenHuman's existing
 /// workspace-scoped session store. Legacy rows acquire a lifecycle key only
 /// from their validated pause checkpoint; the public task id is never enough.
+/// The current TinyAgents session upsert contract does not carry its driver's
+/// admitted parent epoch, so these rows retain `None` and use the completion
+/// router's legacy epoch-zero fencing semantics.
 #[derive(Clone)]
 pub(crate) struct OpenHumanTinySubagentSessionStore {
     store: SubagentSessionStore,
@@ -224,6 +596,10 @@ impl TinySessionStore for OpenHumanTinySubagentSessionStore {
                 worker_thread_id: upsert.worker_thread_id,
                 task_id: upsert.task_id,
                 lifecycle_key: Some(upsert.lifecycle_key),
+                // TinyUpsert has no admitted parent epoch. Do not infer one
+                // from the live router here; admission happened separately in
+                // the owning driver and a later lifecycle could now be open.
+                parent_epoch: None,
             },
             reuse.as_ref(),
         )

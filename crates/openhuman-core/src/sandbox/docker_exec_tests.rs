@@ -13,12 +13,14 @@ use std::time::Duration;
 #[cfg(feature = "modules")]
 fn policy(workspace: &Path) -> SandboxPolicy {
     SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: workspace.to_path_buf(),
         state_dir: PathBuf::from("/tmp/state"),
         read_only_mounts: vec![],
         read_write_mounts: vec![],
         allow_network: false,
+        mount_workspace: true,
         env_passthrough: vec![],
         docker_overrides: None,
     }
@@ -46,6 +48,7 @@ fn module_request_preserves_policy_and_only_forwards_allowed_environment() {
     std::fs::create_dir_all(&readonly).unwrap();
 
     let mut sandbox_policy = policy(&workspace);
+    sandbox_policy.allow_network = true;
     sandbox_policy.read_only_mounts.push(readonly.clone());
     sandbox_policy.env_passthrough = vec!["OH_TINYBOX_ALLOWED_ENV".to_owned()];
     sandbox_policy.docker_overrides = Some(DockerOverrides {

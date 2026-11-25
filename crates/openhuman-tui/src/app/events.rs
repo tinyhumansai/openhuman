@@ -1,16 +1,22 @@
 //! Runtime event projection and pending decisions.
 use super::*;
+use crate::event_view::WebEventView;
+use openhuman_rpc::embed::chat_surface::WebChannelEvent;
 
 pub(super) fn handle_web_event(
-    ev: &WebChannelEvent,
+    event: &WebChannelEvent,
     state: &mut TranscriptState,
     ui: &mut UiState,
 ) {
+    let ev = WebEventView::from_event(event);
     if ui.thread_id.is_empty() || ev.client_id != state.client_id() || ev.thread_id != ui.thread_id
     {
         return;
     }
-    if matches!(ev.event.as_str(), "chat_done" | "chat_error") {
+    if matches!(
+        ev.event.as_str(),
+        "chat_done" | "channel_outbound" | "chat_error"
+    ) {
         ui.stopping = false;
     }
     match ev.event.as_str() {
@@ -78,6 +84,6 @@ pub(super) fn handle_web_event(
                 present_pending_plan_review(ui);
             }
         }
-        _ => state.apply_event(ev),
+        _ => state.apply_event_view(&ev),
     }
 }

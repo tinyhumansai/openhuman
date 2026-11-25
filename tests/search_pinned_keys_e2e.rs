@@ -79,8 +79,9 @@ async fn answer_for(server: &MockServer, key: &str, title: &str) {
         .await;
 }
 
-fn web_search_tool(config: &Config) -> Box<dyn Tool> {
+async fn web_search_tool(config: &Config) -> Box<dyn Tool> {
     build_search_tools(config)
+        .await
         .into_iter()
         .find(|tool| tool.name() == "web_search_tool")
         .expect("a pinned key offers web_search_tool")
@@ -136,8 +137,8 @@ async fn each_agent_searches_with_its_own_in_memory_key() {
     answer_for(&provider, KEY_A, "answered-for-agent-a").await;
     answer_for(&provider, KEY_B, "answered-for-agent-b").await;
 
-    let a = web_search_tool(&agent_config(root.path(), &provider.uri(), KEY_A));
-    let b = web_search_tool(&agent_config(root.path(), &provider.uri(), KEY_B));
+    let a = web_search_tool(&agent_config(root.path(), &provider.uri(), KEY_A)).await;
+    let b = web_search_tool(&agent_config(root.path(), &provider.uri(), KEY_B)).await;
 
     // In turn: the module is reconfigured for each agent's call.
     for _ in 0..2 {

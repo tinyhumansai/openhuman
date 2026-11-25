@@ -113,11 +113,13 @@ fn root_context(
     progress: tokio::sync::mpsc::Sender<crate::progress::AgentProgress>,
 ) -> crate::agent::tinyagents::host::OpenHumanRunContext {
     let mut context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
-    context.origin = Some(crate::security::turn_origin::AgentTurnOrigin::WebChat {
-        thread_id: thread_id.to_string(),
-        client_id: format!("client-{thread_id}"),
-        request_id: Some(format!("request-{thread_id}")),
-    });
+    context.origin = Some(
+        crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
+            thread_id: thread_id.to_string(),
+            client_id: format!("client-{thread_id}"),
+            request_id: Some(format!("request-{thread_id}")),
+        },
+    );
     context.thread_id = Some(thread_id.to_string());
     context.workspace = Some(tinytools::WorkspaceDescriptor::new(workspace));
     context.progress = Some(progress);
@@ -153,6 +155,7 @@ async fn budget_stop_hook_pauses_the_hosted_turn_inner() {
     let model: Arc<dyn ChatModel<()>> = Arc::new(BudgetedToolModel(model_calls.clone()));
     let models = TurnModelSource::from_model(model)
         .build("claude-sonnet-4-6", 0.0, None, None)
+        .await
         .expect("scripted turn models build");
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
     let mut context = root_context("budget-stop", "/tmp/budget-stop", tx);
@@ -226,6 +229,7 @@ async fn deadline_wind_down_pauses_the_hosted_turn_inner() {
     let model: Arc<dyn ChatModel<()>> = Arc::new(BudgetedToolModel(model_calls.clone()));
     let models = TurnModelSource::from_model(model)
         .build("claude-sonnet-4-6", 0.0, None, None)
+        .await
         .expect("scripted turn models build");
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
     let mut context = root_context("deadline-wind-down", "/tmp/deadline-wind-down", tx);
@@ -300,6 +304,7 @@ fn a_turn_before_its_wind_down_point_runs_to_its_final_answer() {
                         Arc::new(BudgetedToolModel(model_calls.clone()));
                     let models = TurnModelSource::from_model(model)
                         .build("claude-sonnet-4-6", 0.0, None, None)
+                        .await
                         .expect("scripted turn models build");
                     let (tx, _rx) = tokio::sync::mpsc::channel(64);
                     let mut context = root_context("deadline-fresh", "/tmp/deadline-fresh", tx);
@@ -358,6 +363,7 @@ async fn golden_turn(label: &str, stop: GoldenStop) -> serde_json::Value {
     let model: Arc<dyn ChatModel<()>> = Arc::new(BudgetedToolModel(model_calls.clone()));
     let models = TurnModelSource::from_model(model)
         .build("claude-sonnet-4-6", 0.0, None, None)
+        .await
         .expect("scripted turn models build");
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
     let mut context = root_context(label, &format!("/tmp/{label}"), tx);

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
-# Run E2E crypto payment flow tests only. See app/scripts/e2e-run-spec.sh.
+# Run browser-owned crypto payment flow tests.
 set -euo pipefail
-exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/e2e-run-spec.sh" "test/e2e/specs/crypto-payment-flow.spec.ts" "crypto-payment"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$APP_DIR"
+exec bash "$SCRIPT_DIR/e2e-web-session.sh" test/playwright/specs/crypto-payment-flow.spec.ts

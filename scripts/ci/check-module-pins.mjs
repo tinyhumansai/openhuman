@@ -38,6 +38,7 @@
 // Usage: check-module-pins.mjs [repo-root]
 import { readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { repositoryGitEnv } from "../lib/git-env.mjs";
 
 // Any throw below is a check that could not be COMPLETED, which is not the same
 // as a check that passed. Report it as a failure with a legible message rather
@@ -78,6 +79,7 @@ function mustRun(cmd, args, cwd, what) {
   try {
     return execFileSync(cmd, args, {
       cwd,
+      env: repositoryGitEnv(),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
@@ -265,6 +267,11 @@ for (const rec of active) {
     submodulePath: path,
     actual,
     exemption: exemptById.get(rec.id),
+    sourceParityContext: {
+      repoPath: join(ROOT, path),
+      assets: rec.assets,
+      actualHead: headCommit(path),
+    },
   });
   if (!verdict.ok) {
     fail(verdict.message);

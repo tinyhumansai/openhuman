@@ -11,11 +11,7 @@ pub use models::{
     inference_get_client_config, inference_list_models, inference_update_local_settings,
     inference_update_model_settings,
 };
-pub use oauth::{
-    inference_openai_oauth_complete, inference_openai_oauth_disconnect,
-    inference_openai_oauth_import_codex_cli, inference_openai_oauth_start,
-    inference_openai_oauth_status, inference_provider_auth_errors,
-};
+pub use oauth::inference_provider_auth_errors;
 pub use sentiment::inference_analyze_sentiment;
 #[cfg(test)]
 use status::expected_test_provider_model_error_kind;

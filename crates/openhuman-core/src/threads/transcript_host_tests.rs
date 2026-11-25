@@ -178,6 +178,7 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
     let meta = transcript::TranscriptMeta {
         session_id: None,
         parent_session_id: None,
+        prefix_reset: false,
         agent_name: "orchestrator".into(),
         agent_id: Some("orchestrator".into()),
         agent_type: Some("root".into()),
@@ -296,6 +297,7 @@ fn text_dialect_tool_turn_projects_calls_on_their_issuing_row_as_settled() {
     );
 }
 
+#[cfg(feature = "legacy-import")]
 /// Transcripts already written while the codec filed a turn's calls on its
 /// final row (calls recorded *after* their own results) still project each call
 /// once, settled, with its real name.
@@ -321,6 +323,26 @@ fn calls_recorded_after_their_results_project_as_settled() {
         .transcripts;
     crate::storage::import::sessions::import_transcript_groups(provider.as_ref(), dir.path())
         .unwrap();
+    let listed = locator
+        .thread_transcripts(thread, None)
+        .expect("imported roots");
+    assert_eq!(listed.roots.len(), 1);
+    for root in &listed.roots {
+        let display = root.transcript.read_display().unwrap().unwrap();
+        for record in &display.records {
+            if let tinyagents_session::transcript::DisplayRecord::Message(message) = record {
+                if message.message.role == "assistant"
+                    && message.message.content == "Here is what I found."
+                {
+                    assert!(
+                        message.message.tool_calls.is_empty(),
+                        "legacy text-dialect calls belong to turn usage, not the typed native-call field"
+                    );
+                    assert_eq!(message.turn_usage.as_ref().unwrap().tool_calls.len(), 2);
+                }
+            }
+        }
+    }
     let items = project_thread_in(locator.as_ref(), thread, None, None)
         .expect("transcript")
         .items;
@@ -366,6 +388,7 @@ fn tool_failure_metadata_round_trips_write_to_display_line() {
     let meta = transcript::TranscriptMeta {
         session_id: None,
         parent_session_id: None,
+        prefix_reset: false,
         agent_name: "orchestrator".into(),
         agent_id: Some("orchestrator".into()),
         agent_type: Some("root".into()),

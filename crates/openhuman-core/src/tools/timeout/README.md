@@ -1,6 +1,6 @@
 # tool_timeout (host adapter)
 
-Bounds, resolution, process-group capture (`output_or_kill`, `output_unbounded`, `output_with_input`), `ProcessCleanup` and `CommandEnvironment` live in `tinytools_std::timeout` (tinyhumansai/tinytools). Callers import them from there directly.
+Bounds, resolution, process-group capture (`output_or_kill`, `output_unbounded`, `output_with_input`), `ProcessCleanup` and `CommandEnvironment` live in `tinyagents_harness_tools::exec::timeout` (tinyhumansai/tinyagents). Callers import them from there directly.
 
 This module keeps only host policy:
 

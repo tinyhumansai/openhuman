@@ -50,7 +50,7 @@ async fn module_call<R: serde::de::DeserializeOwned>(
 ) -> Result<R, String> {
     super::super::module_client::McpConfiguredClient::for_config(config)
         .map_err(|error| error.to_string())?
-        .call(&host::client_config(config), member, args)
+        .call(&host::client_config(config).await, member, args)
         .await
         .map_err(|error| error.to_string())
 }
@@ -62,7 +62,7 @@ async fn module_call_confidential<R: serde::de::DeserializeOwned>(
 ) -> Result<R, String> {
     super::super::module_client::McpConfiguredClient::for_config(config)
         .map_err(|error| error.to_string())?
-        .call_confidential(&host::client_config(config), member, args)
+        .call_confidential(&host::client_config(config).await, member, args)
         .await
         .map_err(|error| error.to_string())
 }
@@ -229,7 +229,7 @@ pub async fn mcp_clients_connect(
     )
     .await?;
 
-    let tools = super::tools_safe_for_agent(&server_id, outcome.tools);
+    let tools = super::tools_safe_for_agent(&server_id, outcome.tools).await;
     let tool_count = u32::try_from(tools.len()).unwrap_or(u32::MAX);
 
     BUS.publish(DomainEvent::McpServerConnected {
@@ -326,7 +326,7 @@ pub async fn mcp_clients_update_env(
 
     match outcome.status {
         UpdateEnvStatus::Connected => {
-            let tools = super::tools_safe_for_agent(&server_id, outcome.tools);
+            let tools = super::tools_safe_for_agent(&server_id, outcome.tools).await;
             let tool_count = u32::try_from(tools.len()).unwrap_or(u32::MAX);
 
             BUS.publish(DomainEvent::McpServerConnected {
@@ -545,7 +545,7 @@ pub async fn mcp_clients_list_tools(
         }
     };
 
-    let tools = super::tools_safe_for_agent(&server_id, tools);
+    let tools = super::tools_safe_for_agent(&server_id, tools).await;
     let count = tools.len();
 
     Ok(Outcome::new(

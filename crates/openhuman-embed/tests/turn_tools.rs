@@ -64,7 +64,10 @@ async fn scenario() {
                     .bare_prompt("Use probe then answer")
                     .tools(ToolScopeSpec::HostOnly),
             )
-            .tools(move |_| HostTurnTools::advertised(vec![Box::new(Probe(calls.clone()))]))
+            .tools(move |_| {
+                let calls = calls.clone();
+                Box::pin(async move { HostTurnTools::advertised(vec![Box::new(Probe(calls))]) })
+            })
     };
     let agent = runtime
         .agent(spec("replace", &provider, calls.clone()))
@@ -77,7 +80,12 @@ async fn scenario() {
         agent
             .turn("replacement")
             .session("same-thread")
-            .tools(move |_| HostTurnTools::advertised(vec![Box::new(Probe(replacement.clone()))]))
+            .tools(move |_| {
+                let replacement = replacement.clone();
+                Box::pin(
+                    async move { HostTurnTools::advertised(vec![Box::new(Probe(replacement))]) },
+                )
+            })
             .send(),
         other.run("independent")
     );
@@ -89,7 +97,7 @@ async fn scenario() {
     agent
         .turn("revoked")
         .session("same-thread")
-        .tools(|_| HostTurnTools::advertised(vec![]))
+        .tools(|_| Box::pin(async { HostTurnTools::advertised(vec![]) }))
         .send()
         .await
         .unwrap();
@@ -157,7 +165,7 @@ async fn scenario() {
     mixed
         .turn("replace with empty belt")
         .session("mixed-thread")
-        .tools(|_| HostTurnTools::advertised(vec![]))
+        .tools(|_| Box::pin(async { HostTurnTools::advertised(vec![]) }))
         .send()
         .await
         .unwrap();

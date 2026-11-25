@@ -142,7 +142,7 @@ pub(super) async fn connection_is_active(config: &Config, toolkit: &str) -> anyh
             .iter()
             .any(|c| c.is_active() && c.normalized_toolkit().eq_ignore_ascii_case(toolkit))
     };
-    match resolve_composio_route(config)? {
+    match resolve_composio_route(config).await? {
         ComposioRoute::Backend => {
             let resp = connectors::call_bare::<ComposioConnectionsResponse>(
                 config,
@@ -238,7 +238,7 @@ impl Tool for ComposioConnectTool {
     ) -> anyhow::Result<ToolResult> {
         let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
         let outcome = Box::pin(self.execute_unredacted(args, &approval)).await;
-        redact_composio_outcome(&self.config, outcome)
+        redact_composio_outcome(&self.config, outcome).await
     }
 }
 
@@ -303,7 +303,7 @@ impl ComposioConnectTool {
         // (#3993). This grounds the answer: a backend-allowlisted toolkit gets
         // a card; a genuinely unsupported one gets a clear, listed refusal
         // instead of a card that would fail on Connect.
-        match resolve_composio_route(&live_config) {
+        match resolve_composio_route(&live_config).await {
             Ok(ComposioRoute::Backend) => {
                 if let Ok(resp) = connectors::call_bare::<ComposioToolkitsResponse>(
                     &live_config,

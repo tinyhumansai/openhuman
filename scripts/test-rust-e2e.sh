@@ -193,6 +193,9 @@ fi
 # tests, not a logic failure. Mirror scripts/test-rust-with-mock.sh and give the
 # suite a larger stack unless the caller already pinned one explicitly.
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
+# Credential saves ask the user to approve each TinySecurity keyring operation;
+# the test builds answer for them (keyring_consent/test_responder.rs).
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 
 cd "$REPO_ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true
@@ -229,11 +232,22 @@ else
   # Shell command analysis and the storage URL E2E suites load TinyBox through
   # the native module path; the ignored MCP registry cases need TinyMCP. Both
   # come from the registry-pinned release, digest-verified before any
-  # subprocess starts.
-  for released_id in tinyconnectors tinyflows tinysearch tinybox tinymcp; do
+  # subprocess starts. inbound_module_e2e loads the TinyEventQueues release.
+  for released_id in tinyconnectors tinyflows tinysearch tinybox tinymcp tinyeventqueues; do
     released_dir="$(stage_release_module "$released_id" "$module_platform" "$module_ext")"
     export OPENHUMAN_MODULE_PATH="$released_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
   done
+fi
+
+# The native Telegram E2E loads TinyChannels and TinyVoice by file. The CI
+# installer exports both; stage the same pinned releases when it has not.
+if [ -z "${OPENHUMAN_CHANNELS_TEST_ARTIFACT:-}" ]; then
+  OPENHUMAN_CHANNELS_TEST_ARTIFACT="$(stage_release_artifact tinychannels "$module_platform" "$module_ext")"
+  export OPENHUMAN_CHANNELS_TEST_ARTIFACT
+fi
+if [ -z "${OPENHUMAN_VOICE_TEST_ARTIFACT:-}" ]; then
+  OPENHUMAN_VOICE_TEST_ARTIFACT="$(stage_release_artifact tinyvoice "$module_platform" "$module_ext")"
+  export OPENHUMAN_VOICE_TEST_ARTIFACT
 fi
 
 # Module-backed Composio coverage must use a staged artifact as well. Without
@@ -246,6 +260,10 @@ fi
 if [ "${#e2e_source_ids[@]}" -gt 0 ]; then
   echo "[rust-e2e] Building pinned local test modules: ${e2e_source_ids[*]} ..."
   stage_source_modules "${e2e_source_ids[@]}"
+  # inbound_module_e2e loads the TinyEventQueues release in either mode; it is
+  # not among the modules built from source.
+  released_dir="$(stage_release_module tinyeventqueues "$module_platform" "$module_ext")"
+  export OPENHUMAN_MODULE_PATH="$released_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
 fi
 for source_id in ${e2e_source_ids[@]+"${e2e_source_ids[@]}"}; do
   export OPENHUMAN_MODULE_PATH="$REPO_ROOT/target/module-sources/$source_id${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
@@ -263,28 +281,30 @@ run_json_rpc_e2e_suite() {
   # failed to compile listed nothing, the loop ran zero times, and the suite
   # reported success. A listing that fails part-way is refused whole, so a
   # partial list is never run as though it were complete.
-  local listing test_names test_name
-  if ! listing="$(
-    "$CARGO_BIN" test --manifest-path Cargo.toml --features "$PRODUCT_FEATURES" \
-      --test json_rpc_e2e -- --list
-  )"; then
-    echo "[rust-e2e] ERROR: could not enumerate json_rpc_e2e tests; refusing to run an empty or partial list." >&2
-    return 1
-  fi
-
-  test_names="$(printf '%s\n' "$listing" | sed -n 's/: test$//p')"
-  if [ -z "$test_names" ]; then
-    echo "[rust-e2e] ERROR: json_rpc_e2e enumeration returned no tests; refusing to report success." >&2
-    return 1
-  fi
-
-  while IFS= read -r test_name; do
-    echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test json_rpc_e2e $test_name"
-    bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test \
-      --manifest-path Cargo.toml --features "$PRODUCT_FEATURES" \
-      --test json_rpc_e2e "$test_name" -- \
-      --exact --test-threads=1 ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
-  done <<<"$test_names"
+  local target listing test_names test_name
+  local -a targets=(json_rpc_threads_e2e json_rpc_wallet_e2e json_rpc_flows_e2e
+    json_rpc_flows_builder_chat_e2e
+    json_rpc_mcp_e2e json_rpc_inference_e2e json_rpc_auth_security_e2e
+    json_rpc_config_e2e json_rpc_agent_team_e2e json_rpc_web_chat_e2e
+    json_rpc_misc_e2e)
+  if [[ "${suite:-}" =~ ^json_rpc_.*_e2e$ ]]; then targets=("$suite"); fi
+  for target in "${targets[@]}"; do
+    if ! listing="$("$CARGO_BIN" test --manifest-path Cargo.toml --features "$PRODUCT_FEATURES" --test "$target" -- --list)"; then
+      echo "[rust-e2e] ERROR: could not enumerate ${target}; refusing to run an empty or partial list." >&2
+      return 1
+    fi
+    test_names="$(printf '%s\n' "$listing" | sed -n 's/: test$//p')"
+    if [ -z "$test_names" ]; then
+      echo "[rust-e2e] ERROR: ${target} enumeration returned no tests; refusing to report success." >&2
+      return 1
+    fi
+    while IFS= read -r test_name; do
+      echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test ${target} ${test_name}"
+      bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test --manifest-path Cargo.toml \
+        --features "$PRODUCT_FEATURES" --test "$target" "$test_name" -- \
+        --exact --test-threads=1 ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+    done <<<"$test_names"
+  done
 }
 
 run_in_process_modules() {
@@ -295,7 +315,7 @@ run_in_process_modules() {
   while IFS= read -r module; do
     [ -n "$module" ] || continue
     echo "[rust-e2e]   in_process module: ${module}"
-    if [ "$module" = "config_auth_app_state_connectivity_e2e" ]; then
+    if [[ "$module" =~ ^(config|auth|app_state|connectivity)_e2e$ ]]; then
       # These RPC fixtures share process-global credential and listener state;
       # serialize them so one test cannot drop another test's ephemeral server.
       bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test \
@@ -343,7 +363,7 @@ run_in_process_modules() {
 }
 
 for suite in "${SUITES[@]}"; do
-  if [ "$suite" = "json_rpc_e2e" ]; then
+  if [ "$suite" = "json_rpc_e2e" ] || [[ "$suite" =~ ^json_rpc_.*_e2e$ ]]; then
     run_json_rpc_e2e_suite
     continue
   fi
@@ -368,6 +388,16 @@ for suite in "${SUITES[@]}"; do
     bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test \
       --manifest-path Cargo.toml --features "$PRODUCT_FEATURES,e2e-test-support" \
       --test "$suite" -- --test-threads=1 ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+    continue
+  fi
+  if [ "$suite" = "inbound_module_e2e" ]; then
+    # The staged TinyEventQueues release under the host's production Deliver
+    # (#8155). Its e2e-test-support gate is outside the product set, so name
+    # it here instead of failing Cargo's required-features check.
+    echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test $suite (e2e-test-support)"
+    bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test \
+      --manifest-path Cargo.toml --features "$PRODUCT_FEATURES,e2e-test-support" \
+      --test "$suite" -- ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
     continue
   fi
   if [ "$suite" = "tinydocs_linked_e2e" ]; then

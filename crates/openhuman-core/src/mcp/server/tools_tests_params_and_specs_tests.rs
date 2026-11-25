@@ -1,9 +1,9 @@
 use super::*;
 
-#[test]
-fn list_tools_exposes_base_mcp_surface_when_searxng_disabled() {
+#[tokio::test]
+async fn list_tools_exposes_base_mcp_surface_when_searxng_disabled() {
     let config = crate::config::Config::default();
-    let result = list_tools_result_for_config(&config);
+    let result = list_tools_result_for_config(&config).await;
     let names = result["tools"]
         .as_array()
         .expect("tools array")
@@ -27,13 +27,13 @@ fn list_tools_exposes_base_mcp_surface_when_searxng_disabled() {
     );
 }
 
-#[test]
-fn list_tools_emits_annotations_for_every_tool() {
+#[tokio::test]
+async fn list_tools_emits_annotations_for_every_tool() {
     // Exercise the searxng-enabled config so the annotation contract covers
     // every shipping tool, not just the base set.
     let mut config = crate::config::Config::default();
     config.searxng.enabled = true;
-    let result = list_tools_result_for_config(&config);
+    let result = list_tools_result_for_config(&config).await;
     let tools = result["tools"].as_array().expect("tools array");
     for tool in tools {
         let name = tool["name"].as_str().expect("tool name");
@@ -124,14 +124,14 @@ fn run_subagent_annotations_signal_act_semantics() {
     );
 }
 
-#[test]
-fn list_tools_includes_searxng_when_enabled() {
+#[tokio::test]
+async fn list_tools_includes_searxng_when_enabled() {
     let mut config = crate::config::Config::default();
     config.search.providers.insert(
         "searxng".into(),
         crate::config::SearchProviderSettings::direct(),
     );
-    let result = list_tools_result_for_config(&config);
+    let result = list_tools_result_for_config(&config).await;
     let names = result["tools"]
         .as_array()
         .expect("tools array")

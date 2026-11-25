@@ -19,11 +19,16 @@ describe('turn task attachment', () => {
         {
           ...task('turn'),
           goal: {
-            goal_id: 'g',
+            threadId: 'turn',
+            goalId: 'g',
             objective: 'Plan',
             status: 'paused',
-            tokens_used: 0,
-            time_used_seconds: 0,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            tokenBudget: null,
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            timeUsedSubsecNanos: 0,
           },
         },
         true

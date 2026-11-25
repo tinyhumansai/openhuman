@@ -2,6 +2,7 @@
 //!
 //! Resolve the selected profile and run the native doctor check registry.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use super::contract::DoctorProfileStatus;
@@ -25,7 +26,7 @@ pub async fn doctor_report_with_options(
     mut options: DoctorOptions,
 ) -> Result<Outcome<DoctorReport>, String> {
     if options.profile.is_none() {
-        if let Some(outcome) = unusable_default_config_outcome(config, options.tier) {
+        if let Some(outcome) = unusable_default_config_outcome(config, &options)? {
             return Ok(outcome);
         }
     }
@@ -185,7 +186,7 @@ pub async fn doctor_report_for_desktop_selection(
     selection: DesktopProfileSelection,
     options: DoctorOptions,
 ) -> Result<Outcome<DoctorReport>, String> {
-    if let Some(outcome) = unusable_default_config_outcome(&selection.config, options.tier) {
+    if let Some(outcome) = unusable_default_config_outcome(&selection.config, &options)? {
         return Ok(outcome);
     }
     let components = ComponentSet::from_config(&selection.config.components);
@@ -237,15 +238,40 @@ pub(crate) fn config_parse_finding(config: &Config) -> Option<Finding> {
 
 fn unusable_default_config_outcome(
     config: &Config,
-    tier: DoctorTier,
-) -> Option<Outcome<DoctorReport>> {
+    options: &DoctorOptions,
+) -> Result<Option<Outcome<DoctorReport>>, String> {
     if config.load_diagnostics().fallback
         != crate::config::schema::load::ConfigLoadFallback::Defaults
     {
-        return None;
+        return Ok(None);
     }
-    let finding = config_parse_finding(config)?;
-    let findings = vec![finding];
+    let ctx = DoctorCtx::from_config(config.clone());
+    let check_ids = super::registry::registered_checks_for(&ctx)?
+        .iter()
+        .map(|check| check.id().to_owned())
+        .collect::<HashSet<_>>();
+    let only = options.only.iter().cloned().collect::<HashSet<_>>();
+    let skip = options.skip.iter().cloned().collect::<HashSet<_>>();
+    let parse_selected =
+        (only.is_empty() || only.contains("config/parse")) && !skip.contains("config/parse");
+    let mut findings = if parse_selected {
+        config_parse_finding(config).into_iter().collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let has_unknown_selector = only
+        .iter()
+        .chain(skip.iter())
+        .any(|id| !check_ids.contains(id));
+    if has_unknown_selector {
+        findings.push(Finding::error(
+            "doctor/selection",
+            "One or more selected check ids are not registered.",
+            "Use a registered exact check id from the doctor report.",
+        ));
+    }
+    let summary = DoctorSummary::from_findings(&findings);
+    let ok = summary.error == 0;
     let (layout_version, resolution_source) = config.doctor_profile_metadata();
     let report = DoctorReport {
         schema_version: 2,
@@ -256,14 +282,21 @@ fn unusable_default_config_outcome(
             crate::config::schema::profile_layout::LayoutVersion::V2 => 2,
         }),
         config_resolution_source: resolution_source,
-        tier,
-        checks_run: vec!["config/parse".into()],
+        tier: options.tier,
+        checks_run: if parse_selected {
+            vec!["config/parse".into()]
+        } else {
+            Vec::new()
+        },
         checks_skipped: Vec::new(),
-        summary: DoctorSummary::from_findings(&findings),
+        summary,
         findings,
-        ok: false,
+        ok,
     };
-    Some(Outcome::single_log(report, "doctor config parse failed"))
+    Ok(Some(Outcome::single_log(
+        report,
+        "doctor config parse failed",
+    )))
 }
 
 async fn report_with_context(

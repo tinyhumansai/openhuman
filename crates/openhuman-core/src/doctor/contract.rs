@@ -46,7 +46,6 @@ impl DoctorTier {
 pub enum ComponentId {
     Flows,
     Tinyflows,
-    Memes,
     Documents,
     Search,
     Mcp,
@@ -68,7 +67,6 @@ impl ComponentId {
         match self {
             Self::Flows => components.flows,
             Self::Tinyflows => components.tinyflows,
-            Self::Memes => components.memes,
             Self::Documents => components.documents,
             Self::Search => components.search,
             Self::Mcp => components.mcp,
@@ -90,7 +88,6 @@ impl ComponentId {
         match self {
             Self::Flows => "flows",
             Self::Tinyflows => "tinyflows",
-            Self::Memes => "memes",
             Self::Documents => "documents",
             Self::Search => "search",
             Self::Mcp => "mcp",

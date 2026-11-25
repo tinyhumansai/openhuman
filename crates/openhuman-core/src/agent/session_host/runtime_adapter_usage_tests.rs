@@ -103,6 +103,7 @@ async fn committed_goal_accounting_saturates_direct_plus_inclusive_child_tokens(
 
         runtime_session::account_committed_turn_against_goal(
             workspace.path(),
+            &crate::core::runtime::DispatchCtx::ambient(),
             Some("saturated-goal"),
             &sidecar,
         )

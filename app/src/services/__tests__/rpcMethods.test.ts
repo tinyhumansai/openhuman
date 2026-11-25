@@ -4,9 +4,24 @@ import { describe, expect, test } from 'vitest';
 
 import { CORE_RPC_METHODS, LEGACY_METHOD_ALIASES, normalizeRpcMethod } from '../rpcMethods';
 
+// Many schema files name their namespace once as a file-local
+// `const NAMESPACE: &str = "…";` and write `namespace: NAMESPACE` in each
+// literal. Inline that constant so the literal-only matcher below sees it.
+// Only this one well-known const name is resolved; anything else is left as-is
+// (and so is not matched), which keeps this a regex, not a Rust parser.
+function resolveNamespaceConst(source: string): string {
+  const decl = /\bconst\s+NAMESPACE\s*:\s*&(?:'static\s+)?str\s*=\s*"([a-z0-9_]+)"\s*;/.exec(
+    source
+  );
+  return decl ? source.replace(/\bnamespace:\s*NAMESPACE\b/g, `namespace: "${decl[1]}"`) : source;
+}
+
 // Controller identity comes from the namespace/function fields on one literal.
 // Matching adjacent fields also keeps declarations in separate blocks apart.
-function schemaMethodPairs(source: string): Set<string> {
+// Pass one Rust module's source at a time so a file-local `NAMESPACE` const
+// never leaks into another file's literals.
+function schemaMethodPairs(rawSource: string): Set<string> {
+  const source = resolveNamespaceConst(rawSource);
   const pairs = source.matchAll(
     /\b(?:Channel)?ControllerSchema\s*\{\s*namespace:\s*"([a-z0-9_]+)"\s*,\s*function:\s*"([a-z0-9_]+)"/g
   );
@@ -48,6 +63,25 @@ describe('schema method pairing', () => {
       FieldSchema { namespace: "config", function: "get" }
     `);
     expect([...methods]).toEqual(['openhuman.channels_list']);
+  });
+
+  test('resolves a file-local NAMESPACE const', () => {
+    const methods = schemaMethodPairs(`
+      const NAMESPACE: &str = "agent_registry";
+      ControllerSchema {
+        namespace: NAMESPACE,
+        function: "available_tools",
+        description: "tools",
+      }
+    `);
+    expect([...methods]).toEqual(['openhuman.agent_registry_available_tools']);
+  });
+
+  test('leaves an unresolvable namespace identifier unmatched', () => {
+    const methods = schemaMethodPairs(
+      'ControllerSchema { namespace: OTHER_NS, function: "list", description: "x" }'
+    );
+    expect(methods.size).toBe(0);
   });
 });
 
@@ -204,7 +238,7 @@ describe('rpcMethods catalog', () => {
       return [fs.readFileSync(abs, 'utf8'), ...parts, ...companion].join('\n');
     };
 
-    const schemaSources = [
+    const schemaSources: string[] = [
       readWithParts('../../../../crates/openhuman-core/src/config/schemas/schema_defs.rs'),
       readWithParts('../../../../crates/openhuman-core/src/inference/schemas.rs'),
       readWithParts('../../../../crates/openhuman-core/src/inference/host_runtime/schemas.rs'),
@@ -212,6 +246,8 @@ describe('rpcMethods catalog', () => {
       // Agent chat is owned by agent_runs; core/all.rs composes these host-side
       // controllers into the inference capability group.
       readWithParts('../../../../crates/openhuman-core/src/agent_runs/schemas.rs'),
+      // `inference_agent_chat` / `_simple` are declared next to their handlers.
+      readWithParts('../../../../crates/openhuman-core/src/agent_runs/agent_chat/controllers.rs'),
       // The MCP registry split its schemas module into a directory. Controller
       // definitions (and therefore the mcp_clients literals this guard owns)
       // live in `registry.rs`; keep this path explicit so another move fails
@@ -221,7 +257,10 @@ describe('rpcMethods catalog', () => {
       readWithParts('../../../../crates/openhuman-core/src/platform/health/schemas.rs'),
       readWithParts('../../../../crates/openhuman-core/src/channels/controllers/schemas.rs'),
       // The credential handoff RPCs (`auth_set_credential` / `auth_clear_credential`).
-      readWithParts('../../../../crates/openhuman-core/src/security/credentials/schemas.rs'),
+      readWithParts('../../../../crates/openhuman-core/src/credentials/schemas.rs'),
+      // The agent registry (`agent_registry_*`, incl. `available_tools` used by
+      // the agent editor and the flows "Tool" node). Uses `namespace: NAMESPACE`.
+      readWithParts('../../../../crates/openhuman-core/src/agent_registry/schemas.rs'),
       // The channels_* namespace/function literals now live in the vendored
       // tinychannels workspace (`ChannelControllerSchema`), not in the thin
       // `crates/openhuman-core/src/channels/controllers/schemas.rs` adapter above, which
@@ -239,9 +278,10 @@ describe('rpcMethods catalog', () => {
         ),
         'utf8'
       ),
-    ].join('\n');
+    ];
 
-    const registeredMethods = schemaMethodPairs(schemaSources);
+    // Pair each module separately so a file-local `NAMESPACE` const stays scoped.
+    const registeredMethods = new Set(schemaSources.flatMap(src => [...schemaMethodPairs(src)]));
     for (const method of Object.values(CORE_RPC_METHODS)) {
       // core.* methods (e.g. core.ping) are special dispatch methods, not in the schema catalog.
       if (!method.startsWith('openhuman.')) continue;

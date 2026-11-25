@@ -63,6 +63,8 @@ The desktop app links the core in-process, so local builds need no staged `openh
 
 Normal app quit runs teardown from `RunEvent::ExitRequested`: long-lived scanner tasks stop and the embedded core's cancellation token fires. The final process sweep then sends `SIGTERM` to direct children and, after a short grace period, `SIGKILL` to any holdouts. Sweep summaries are logged as `[app] sweep: term=N kill=M total=K`; any nonzero `kill` count is a warning and means a child ignored graceful shutdown.
 
+An OS session end (Windows `WM_ENDSESSION`) delivers `RunEvent::Exit` without `ExitRequested`. The `Exit` handler then runs the teardown itself, stopping the core first and bounding gateway cleanup to a few seconds. On Windows it also exits the process from inside the handler (tray removal, child sweep, `std::process::exit(0)`), because tao's runner is already destroyed and the next event it dispatched would panic (#8505).
+
 On macOS, hard exits (Force Quit, `SIGKILL`, renderer crash) can skip normal teardown. The next launch runs startup recovery before the app runtime starts: it lists OpenHuman processes whose executable path belongs to the launching `.app/Contents`, skips the current process, sends `SIGTERM`, waits briefly, then `SIGKILL`s stragglers that still match the same pid+command. Logs use the `[startup-recovery]` prefix.
 
 Startup recovery skips when `OPENHUMAN_CORE_REUSE_EXISTING=1` is set so manual CLI-core reuse still works. The Tauri command `process_diagnostics_list_owned` returns the currently owned process list; the macOS implementation is bundle-scoped, and Linux and Windows return an empty list.

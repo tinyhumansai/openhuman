@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 use crate::config::Config;
+use crate::credentials::{
+    session_state::get_session_token, AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+};
 use crate::doctor::profile::{
     load_desktop_profile, resolve_desktop_profile_for_doctor, DesktopProfileError,
 };
@@ -14,10 +17,6 @@ use crate::doctor::{
     Finding, FindingSeverity,
 };
 use crate::profiles::ProfileLayout;
-use crate::security::credentials::{
-    session_support::get_session_token, AuthService, APP_SESSION_PROVIDER,
-    DEFAULT_AUTH_PROFILE_NAME,
-};
 
 fn config_for(layout: &ProfileLayout) -> Config {
     Config {
@@ -89,6 +88,7 @@ async fn explicit_profile_reads_its_own_session_without_switching_active_user() 
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     let account_b = ProfileLayout::new(root, "account-b");
@@ -111,9 +111,10 @@ async fn explicit_profile_reads_its_own_session_without_switching_active_user() 
         selected.config.default_model.as_deref(),
         Some("account-b-model")
     );
-    assert_eq!(get_session_token(&selected.config).unwrap(), None);
+    assert_eq!(get_session_token(&selected.config).await.unwrap(), None);
     assert_eq!(
         get_session_token(&config_for(&account_a))
+            .await
             .unwrap()
             .as_deref(),
         Some("account-a-session")
@@ -142,9 +143,9 @@ async fn inspecting_selected_profile_credentials_does_not_quarantine_corrupt_aut
     let selected = load_desktop_profile(temp.path(), "account-b")
         .await
         .unwrap();
-    let result = crate::security::credentials::session_support::load_app_session_profile_read_only(
-        &selected.config,
-    );
+    let result =
+        crate::credentials::session_state::load_app_session_profile_read_only(&selected.config)
+            .await;
     let after = tokio::fs::read(&profiles_path).await;
     if result.is_ok() {
         return Err("a corrupt credential store must be reported as unavailable".into());
@@ -195,9 +196,7 @@ async fn selected_profile_auth_snapshot_reads_its_backend_without_mutating_profi
         .set(
             &crate::security::secret_storage::ops::namespaced_key(
                 "account-a",
-                &crate::security::credentials::profiles::auth_profile_secret_key(
-                    "app-session:default",
-                ),
+                &crate::credentials::profiles::auth_profile_secret_key("app-session:default"),
             ),
             r#"{"token":"account-a-session"}"#,
         )
@@ -206,9 +205,7 @@ async fn selected_profile_auth_snapshot_reads_its_backend_without_mutating_profi
         .set(
             &crate::security::secret_storage::ops::namespaced_key(
                 "account-b",
-                &crate::security::credentials::profiles::auth_profile_secret_key(
-                    "app-session:default",
-                ),
+                &crate::credentials::profiles::auth_profile_secret_key("app-session:default"),
             ),
             r#"{"token":"account-b-session"}"#,
         )
@@ -219,13 +216,11 @@ async fn selected_profile_auth_snapshot_reads_its_backend_without_mutating_profi
     let selected = load_desktop_profile(root, "account-b").await.unwrap();
     let before = snapshot_tree(&account_b.dir);
     let profile =
-        crate::security::credentials::session_support::load_app_session_profile_read_only(
-            &selected.config,
-        )
-        .unwrap()
-        .unwrap();
-    let token =
-        crate::security::credentials::session_support::session_token_from_profile(Some(&profile));
+        crate::credentials::session_state::load_app_session_profile_read_only(&selected.config)
+            .await
+            .unwrap()
+            .unwrap();
+    let token = crate::credentials::session_state::session_token_from_profile(Some(&profile));
     let after = snapshot_tree(&account_b.dir);
 
     assert_eq!(token.as_deref(), Some("account-b-session"));
@@ -269,13 +264,13 @@ async fn selected_profile_runs_its_context_scoped_endpoint_enricher() {
     .await
     .unwrap();
 
-    let mut profile = crate::security::credentials::profiles::AuthProfile::new_token(
-        crate::security::credentials::APP_SESSION_PROVIDER,
-        crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+    let mut profile = crate::credentials::profiles::AuthProfile::new_token(
+        crate::credentials::APP_SESSION_PROVIDER,
+        crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
         "session-token".into(),
     );
     profile.metadata.insert(
-        crate::security::credentials::session_support::SESSION_ISSUING_BACKEND_META.into(),
+        crate::credentials::session_state::SESSION_ISSUING_BACKEND_META.into(),
         "https://account-b.example".into(),
     );
 
@@ -287,13 +282,11 @@ async fn selected_profile_runs_its_context_scoped_endpoint_enricher() {
             .as_deref(),
         Some("https://account-b.example")
     );
-    assert!(
-        crate::security::credentials::session_support::check_session_backend(
-            &selected.config,
-            Some(&profile)
-        )
-        .is_ok()
-    );
+    assert!(crate::credentials::session_state::check_session_backend(
+        &selected.config,
+        Some(&profile)
+    )
+    .is_ok());
 }
 
 fn snapshot_tree(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {

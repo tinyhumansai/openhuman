@@ -433,13 +433,15 @@ fn web_channel_catalog_has_chat_and_cancel() {
     let s = all_web_channel_controller_schemas();
     let c = all_web_channel_registered_controllers();
     assert_eq!(s.len(), c.len());
-    assert_eq!(s.len(), 5);
+    assert_eq!(s.len(), 7);
     let fns: Vec<&str> = s.iter().map(|x| x.function).collect();
     assert!(fns.contains(&"web_chat"));
     assert!(fns.contains(&"web_cancel"));
     assert!(fns.contains(&"web_queue_status"));
     assert!(fns.contains(&"web_queue_clear"));
     assert!(fns.contains(&"web_queue_remove"));
+    assert!(fns.contains(&"web_voice_note_store"));
+    assert!(fns.contains(&"web_voice_note_read"));
 }
 
 #[test]
@@ -593,7 +595,7 @@ fn classify_inference_error_local_offline_profile_is_not_an_expired_session() {
     // arm matches the sentinel anywhere in the chain.
     let raw = format!(
         "run_chat_task failed client_id=abc thread_id=t-1 error={}",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 
@@ -621,7 +623,7 @@ fn classify_inference_error_a_mixed_fallback_chain_reports_the_provider_that_fai
     // than at the head of the ladder.
     let raw = format!(
         "All providers/models failed. Attempts: {}; openai API error (401 Unauthorized): invalid api key",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 
@@ -639,7 +641,7 @@ fn classify_inference_error_the_refusal_alone_keeps_the_exhausted_chain_flag() {
     // aggregate metadata rides along instead of being dropped.
     let raw = format!(
         "All providers/models failed. Attempts: {}",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 

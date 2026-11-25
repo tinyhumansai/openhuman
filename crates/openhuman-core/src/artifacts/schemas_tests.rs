@@ -1,122 +1,76 @@
 use super::*;
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_input_order, expect_schema_output_fields, expect_schema_required_inputs,
+};
 use serde_json::json;
 
-// ── schemas() branch coverage ───────────────────────────────────
-
 #[test]
-fn schemas_list_artifacts_has_pagination_inputs_and_correct_outputs() {
-    let s = schemas("list_artifacts");
-    assert_eq!(s.namespace, "ai");
-    assert_eq!(s.function, "list_artifacts");
-    let input_names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
-    assert!(input_names.contains(&"offset"));
-    assert!(input_names.contains(&"limit"));
-    assert!(s.inputs.iter().all(|f| !f.required));
-    let output_names: Vec<_> = s.outputs.iter().map(|f| f.name).collect();
-    assert!(output_names.contains(&"artifacts"));
-    assert!(output_names.contains(&"total"));
-    assert!(output_names.contains(&"offset"));
-    assert!(output_names.contains(&"limit"));
-}
-
-#[test]
-fn schemas_get_artifact_requires_artifact_id() {
-    let s = schemas("get_artifact");
-    assert_eq!(s.namespace, "ai");
-    assert_eq!(s.function, "get_artifact");
-    assert_eq!(s.inputs.len(), 1);
-    assert_eq!(s.inputs[0].name, "artifact_id");
-    assert!(s.inputs[0].required);
-    // Output should be flat fields matching the actual JSON response shape
-    let output_names: Vec<_> = s.outputs.iter().map(|f| f.name).collect();
-    assert!(output_names.contains(&"id"));
-    assert!(output_names.contains(&"kind"));
-    assert!(output_names.contains(&"title"));
-    assert!(output_names.contains(&"path"));
-    assert!(output_names.contains(&"size_bytes"));
-    assert!(output_names.contains(&"status"));
-    assert!(output_names.contains(&"created_at"));
-    assert!(output_names.contains(&"absolute_path"));
-    // Must NOT have an opaque "artifact" wrapper
-    assert!(!output_names.contains(&"artifact"));
-}
-
-#[test]
-fn schemas_delete_artifact_has_artifact_id_input_and_result_output() {
-    let s = schemas("delete_artifact");
-    assert_eq!(s.inputs.len(), 1);
-    assert_eq!(s.inputs[0].name, "artifact_id");
-    assert!(s.inputs[0].required);
-    assert_eq!(s.outputs[0].name, "result");
-    if let TypeSchema::Object { fields } = &s.outputs[0].ty {
-        let names: Vec<_> = fields.iter().map(|f| f.name).collect();
-        assert!(names.contains(&"artifact_id"));
-        assert!(names.contains(&"deleted"));
-    } else {
-        panic!("expected object output type");
-    }
-}
-
-#[test]
-fn schemas_unknown_function_returns_placeholder_with_error_output() {
-    let s = schemas("does-not-exist");
-    assert_eq!(s.function, "unknown");
-    assert_eq!(s.outputs[0].name, "error");
-}
-
-// ── registry helpers ────────────────────────────────────────────
-
-#[test]
-fn all_controller_schemas_covers_every_supported_function() {
+fn artifact_schema_contracts_and_registration_are_preserved() {
+    const FUNCTIONS: &[&str] = &[
+        "list_artifacts",
+        "get_artifact",
+        "delete_artifact",
+        "regenerate",
+        "save_artifact_version",
+        "share_artifact",
+        "read_artifact_body",
+    ];
     let names: Vec<_> = all_controller_schemas()
         .into_iter()
         .map(|s| s.function)
         .collect();
-    assert_eq!(
-        names,
-        vec![
-            "list_artifacts",
-            "get_artifact",
-            "delete_artifact",
-            "regenerate",
-            "save_artifact_version",
-            "share_artifact",
-            "read_artifact_body"
-        ]
+    assert_eq!(names, FUNCTIONS);
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "list_artifacts",
     );
-}
 
-#[test]
-fn all_registered_controllers_has_handler_per_schema() {
-    let controllers = all_registered_controllers();
-    assert_eq!(controllers.len(), 7);
-    let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
-    assert_eq!(
-        names,
-        vec![
-            "list_artifacts",
-            "get_artifact",
-            "delete_artifact",
-            "regenerate",
-            "save_artifact_version",
-            "share_artifact",
-            "read_artifact_body"
-        ]
+    let list = schemas("list_artifacts");
+    expect_schema_identity(&list, "ai", "list_artifacts");
+    expect_schema_fields(&list, &[("offset", Some(false)), ("limit", Some(false))]);
+    expect_schema_output_fields(&list, &["artifacts", "total", "offset", "limit"]);
+
+    let get = schemas("get_artifact");
+    expect_schema_identity(&get, "ai", "get_artifact");
+    expect_schema_input_order(&get, &["artifact_id"]);
+    expect_schema_required_inputs(&get, &["artifact_id"]);
+    expect_schema_output_fields(
+        &get,
+        &[
+            "id",
+            "kind",
+            "title",
+            "path",
+            "size_bytes",
+            "status",
+            "created_at",
+            "absolute_path",
+        ],
     );
-}
+    assert!(!get.outputs.iter().any(|field| field.name == "artifact"));
 
-#[test]
-fn schemas_regenerate_requires_artifact_id_thread_and_client() {
-    let s = schemas("regenerate");
-    assert_eq!(s.function, "regenerate");
-    let input_names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
-    assert_eq!(input_names, vec!["artifact_id", "thread_id", "client_id"]);
-    assert!(s.inputs.iter().all(|f| f.required));
-    if let TypeSchema::Object { fields } = &s.outputs[0].ty {
-        let names: Vec<_> = fields.iter().map(|f| f.name).collect();
-        assert!(names.contains(&"artifact_id"));
-        assert!(names.contains(&"regenerated"));
-        assert!(names.contains(&"is_error"));
+    let delete = schemas("delete_artifact");
+    expect_schema_identity(&delete, "ai", "delete_artifact");
+    expect_schema_input_order(&delete, &["artifact_id"]);
+    expect_schema_required_inputs(&delete, &["artifact_id"]);
+    assert_eq!(delete.outputs[0].name, "result");
+    if let TypeSchema::Object { fields } = &delete.outputs[0].ty {
+        assert!(fields.iter().any(|field| field.name == "artifact_id"));
+        assert!(fields.iter().any(|field| field.name == "deleted"));
+    } else {
+        panic!("expected object output type");
+    }
+
+    let regenerate = schemas("regenerate");
+    expect_schema_identity(&regenerate, "ai", "regenerate");
+    expect_schema_input_order(&regenerate, &["artifact_id", "thread_id", "client_id"]);
+    assert!(regenerate.inputs.iter().all(|input| input.required));
+    if let TypeSchema::Object { fields } = &regenerate.outputs[0].ty {
+        for name in ["artifact_id", "regenerated", "is_error"] {
+            assert!(fields.iter().any(|field| field.name == name));
+        }
     } else {
         panic!("expected object output type");
     }
@@ -169,13 +123,3 @@ fn read_optional_u64_rejects_negative_number() {
 }
 
 // ── type_name ───────────────────────────────────────────────────
-
-#[test]
-fn type_name_reports_each_json_variant() {
-    assert_eq!(type_name(&Value::Null), "null");
-    assert_eq!(type_name(&json!(true)), "bool");
-    assert_eq!(type_name(&json!(1)), "number");
-    assert_eq!(type_name(&json!("s")), "string");
-    assert_eq!(type_name(&json!([])), "array");
-    assert_eq!(type_name(&json!({})), "object");
-}

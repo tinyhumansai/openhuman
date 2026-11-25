@@ -13,9 +13,8 @@ use tinyagents_harness::context::{RunConfig, RunContext};
 use tinyagents_orchestration::subagent::{
     ArtifactReference, PreparedSubagent, SubagentCapabilities, SubagentDriver, SubagentError,
     SubagentExecution, SubagentExecutor, SubagentIncomplete, SubagentOutcome, SubagentOutcomeKind,
-    SubagentPause, SubagentPausePersistenceDisposition, SubagentPersistence,
-    SubagentPersistenceDisposition, SubagentPlanner, SubagentRequest, SubagentResume,
-    SubagentRunResult, SubagentTaskKey, SubagentTerminalPersistenceDisposition,
+    SubagentPause, SubagentPausePersistenceDisposition, SubagentPlanner, SubagentRequest,
+    SubagentResume, SubagentRunResult, SubagentTaskKey, SubagentTerminalPersistenceDisposition,
 };
 use tinyinference_llm::{
     message::Message,
@@ -32,7 +31,7 @@ use driver_adapter::HostInvocation;
 
 #[path = "lifecycle/driver_result.rs"]
 mod driver_result;
-pub(super) use driver_result::{decode_driver_job_result, resolve_inline_driver_outcome};
+pub(super) use driver_result::decode_driver_job_result;
 pub(super) use persistence::OpenHumanPersistence;
 
 use super::{
@@ -48,10 +47,29 @@ pub(crate) fn detached_subagent_parent(
 ) -> anyhow::Result<RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>> {
     let data = parent.data.detached_child();
     let cancellation = data.cancellation.clone();
+    let workspace = parent
+        .workspace
+        .clone()
+        .or_else(|| {
+            data.parent
+                .as_ref()
+                .and_then(|context| context.workspace_descriptor.clone())
+        })
+        .or_else(|| {
+            data.parent
+                .as_ref()
+                .map(|context| tinytools::WorkspaceDescriptor::new(context.workspace_dir.clone()))
+        });
     let config = RunConfig::new(format!("{run_name}-{}", uuid::Uuid::new_v4()));
     parent
         .child(config, data)
-        .map(|context| context.with_cancellation(cancellation))
+        .map(|context| {
+            let context = context.with_cancellation(cancellation);
+            match workspace {
+                Some(workspace) => context.with_workspace(workspace),
+                None => context,
+            }
+        })
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -69,170 +87,11 @@ pub(crate) fn load_terminal_outcome(
         .map_err(|error| format!("failed to load subagent terminal outcome: {error}"))
 }
 
-/// Runs one host subagent through a neutral driver using a real direct child.
-///
-/// Callers that are already inside a TinyAgents turn must use this entrypoint:
-/// it derives the durable key from `parent` before constructing the child and
-/// therefore preserves root, parent, thread, and cancellation lineage.
-pub async fn run_subagent_with_parent(
-    parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-    definition: crate::agent_registry::host_definition::AgentDefinition,
-    input: impl Into<String>,
-    options: SubagentRunOptions,
-) -> Result<SubagentRunOutcome, SubagentRunError> {
-    // Boxed so the nested lifecycle futures stay off this poll frame (#6379).
-    Box::pin(OpenHumanSubagentHost::new(definition, options).run(parent, input.into())).await
-}
-
-/// Root host entrypoint for callers that begin outside a retained live parent
-/// context. It creates the one explicit root context, then drives the same
-/// neutral lifecycle as nested callers.
-pub async fn run_subagent(
-    definition: &crate::agent_registry::host_definition::AgentDefinition,
-    input: &str,
-    options: SubagentRunOptions,
-) -> Result<SubagentRunOutcome, SubagentRunError> {
-    let mut root_data = options.run_context.clone();
-    let root_config = root_data.root_run_config("subagent-host");
-    let root = root_data.into_tinyagents(root_config);
-    run_subagent_with_parent(&root, definition.clone(), input, options).await
-}
-
-/// Resume a durable lifecycle with its recovered original task key.  The fresh
-/// child supplies live execution lineage only; all coalescing, pause lookup and
-/// terminal persistence remain scoped to `original_key`.
-pub async fn continue_subagent_with_parent(
-    parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-    original_key: SubagentTaskKey,
-    definition: crate::agent_registry::host_definition::AgentDefinition,
-    input: impl Into<String>,
-    options: SubagentRunOptions,
-) -> Result<SubagentRunOutcome, SubagentRunError> {
-    OpenHumanSubagentHost::new(definition, options)
-        .continue_with_key(parent, original_key, input.into())
-        .await
-}
-
-/// Continuation counterpart for host surfaces that retain only the explicit
-/// OpenHuman carrier. The original durable key is mandatory.
-pub async fn continue_subagent(
-    original_key: SubagentTaskKey,
-    definition: &crate::agent_registry::host_definition::AgentDefinition,
-    input: &str,
-    options: SubagentRunOptions,
-) -> Result<SubagentRunOutcome, SubagentRunError> {
-    let mut root_data = options.run_context.clone();
-    let root_config = root_data.root_run_config("subagent-host");
-    let root = root_data.into_tinyagents(root_config);
-    continue_subagent_with_parent(&root, original_key, definition.clone(), input, options).await
-}
-
 pub(super) fn merged_resume_history(mut history: Vec<Message>, input: String) -> Vec<Message> {
     if !input.is_empty() {
         history.push(Message::user(input));
     }
     history
-}
-
-/// Runs a host-prepared subagent through TinyAgents' registered driver
-/// dispatcher and shared Jobs/Message registry. Product preflight and result
-/// delivery stay with the caller; the generic driver owns child registration,
-/// execution, control queues, and terminal lifecycle transitions.
-pub(crate) async fn run_subagent_via_driver_tool(
-    parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-    definition: crate::agent_registry::host_definition::AgentDefinition,
-    input: String,
-    options: SubagentRunOptions,
-) -> Result<(SubagentRunOutcome, String), SubagentRunError> {
-    let fallback_agent_id = definition.id.clone();
-    let task_id = options
-        .task_id
-        .clone()
-        .unwrap_or_else(|| format!("sub-{}", uuid::Uuid::new_v4()));
-    let mut options = options;
-    options.task_id = Some(task_id.clone());
-    let parent_thread_id = parent.thread_id().map(|id| id.as_str().to_owned());
-    let task_key = SubagentTaskKey::from_context(parent, task_id.clone(), parent_thread_id);
-    let (tool_result, bundle) = invoke_async_spawn_driver_tool(
-        parent, definition, input, options, "inline", None, None, None,
-    )
-    .await?;
-    resolve_inline_driver_outcome(tool_result, &bundle, &task_key, &fallback_agent_id).await
-}
-
-/// Runs the configured one-shot `delegate` executor inside the shared Tiny
-/// subagent job lifecycle. Its captured Tool still owns config lookup, model
-/// routing, security checks and response formatting; this adapter supplies the
-/// authenticated parent, cancellation, stable target identity and Jobs record.
-pub(crate) async fn run_configured_delegate_via_driver_tool(
-    parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-    tool: Arc<dyn tinytools::Tool>,
-    arguments: serde_json::Value,
-    agent_id: String,
-) -> Result<tinytools::ToolResult, SubagentRunError> {
-    let task_id = format!("delegate-{}", uuid::Uuid::new_v4());
-    let mut options = SubagentRunOptions::default();
-    options.task_id = Some(task_id.clone());
-    options.thread_id = parent.thread_id().map(|id| id.as_str().to_owned());
-    options.run_context = parent.data.clone();
-    let input = arguments
-        .get("prompt")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let request = HostRequest {
-        invocation: HostInvocation::ConfiguredTool {
-            agent_id,
-            tool,
-            arguments,
-        },
-        options,
-    };
-    let (tool_result, bundle) =
-        invoke_driver_tool_with_request(parent, request, input, "inline", None, None, None).await?;
-    let task_key = SubagentTaskKey::from_context(
-        parent,
-        task_id,
-        parent.thread_id().map(|id| id.as_str().to_owned()),
-    );
-    decode_driver_job_result(tool_result, &bundle, &task_key)?;
-    let result = bundle
-        .configured_tool_result
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(&task_key)
-        .ok_or_else(|| {
-            SubagentRunError::Provider(anyhow::anyhow!(
-                "driver-backed configured delegate completed without a host result"
-            ))
-        });
-    result
-}
-
-/// Continues a host-authorized pause through TinyAgents' registered Jobs
-/// dispatcher, preserving the original lifecycle key and checkpoint payload.
-pub(crate) async fn continue_subagent_via_driver_tool(
-    parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-    original_key: SubagentTaskKey,
-    definition: crate::agent_registry::host_definition::AgentDefinition,
-    input: String,
-    mut options: SubagentRunOptions,
-    resume: SubagentResume,
-) -> Result<(SubagentRunOutcome, String), SubagentRunError> {
-    let fallback_agent_id = definition.id.clone();
-    options.task_id = Some(original_key.task_id.clone());
-    let (tool_result, bundle) = invoke_async_spawn_driver_tool(
-        parent,
-        definition,
-        input,
-        options,
-        "inline",
-        None,
-        None,
-        Some((original_key.clone(), resume)),
-    )
-    .await?;
-    resolve_inline_driver_outcome(tool_result, &bundle, &original_key, &fallback_agent_id).await
 }
 
 /// Starts a detached host-prepared child through TinyAgents' registered
@@ -252,8 +111,40 @@ pub(crate) async fn spawn_async_via_driver_tool(
         + Sync
         + 'static,
 ) -> Result<String, SubagentRunError> {
-    spawn_async_via_driver_tool_using_jobs(parent, definition, input, options, None, completion)
-        .await
+    spawn_async_via_driver_tool_using_jobs(
+        parent, definition, input, options, None, None, completion,
+    )
+    .await
+}
+
+/// Resumes a host-authorized clarification checkpoint through the same
+/// detached Jobs path as a new spawn, retaining its lifecycle key and task id.
+pub(crate) async fn resume_async_via_driver_tool(
+    parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+    original_key: SubagentTaskKey,
+    resume: SubagentResume,
+    definition: crate::agent_registry::host_definition::AgentDefinition,
+    input: String,
+    options: SubagentRunOptions,
+    completion: impl Fn(
+            String,
+            Result<SubagentRunOutcome, String>,
+            bool,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync
+        + 'static,
+) -> Result<String, SubagentRunError> {
+    spawn_async_via_driver_tool_using_jobs(
+        parent,
+        definition,
+        input,
+        options,
+        None,
+        Some((original_key, resume)),
+        completion,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -278,6 +169,7 @@ pub(crate) async fn spawn_async_via_driver_tool_with_jobs(
         input,
         options,
         Some(jobs),
+        None,
         completion,
     )
     .await
@@ -289,6 +181,7 @@ async fn spawn_async_via_driver_tool_using_jobs(
     input: String,
     options: SubagentRunOptions,
     jobs: Option<tinyagents_orchestration::subagent::SubAgentJobRegistry>,
+    continuation: Option<(SubagentTaskKey, SubagentResume)>,
     completion: impl Fn(
             String,
             Result<SubagentRunOutcome, String>,
@@ -298,13 +191,17 @@ async fn spawn_async_via_driver_tool_using_jobs(
         + Sync
         + 'static,
 ) -> Result<String, SubagentRunError> {
-    let task_id = options
-        .task_id
-        .clone()
+    let task_id = continuation
+        .as_ref()
+        .map(|(key, _)| key.task_id.clone())
+        .or_else(|| options.task_id.clone())
         .unwrap_or_else(|| format!("sub-{}", uuid::Uuid::new_v4()));
     let mut options = options;
     options.task_id = Some(task_id.clone());
-    let task_key = SubagentTaskKey::from_context(parent, task_id, None);
+    let task_key = continuation
+        .as_ref()
+        .map(|(key, _)| key.clone())
+        .unwrap_or_else(|| SubagentTaskKey::from_context(parent, task_id.clone(), None));
     let (tool_result, bundle) = invoke_async_spawn_driver_tool(
         parent,
         definition,
@@ -313,7 +210,7 @@ async fn spawn_async_via_driver_tool_using_jobs(
         "background",
         Some(Arc::new(completion)),
         jobs,
-        None,
+        continuation,
     )
     .await?;
     decode_driver_job_result(tool_result, &bundle, &task_key)
@@ -398,9 +295,13 @@ async fn invoke_driver_tool_with_request(
     )?;
     let request_host = host_request.clone();
     let request_task_id = task_id.clone();
+    let callback_lifecycle_key = continuation
+        .as_ref()
+        .map(|(key, _)| key.clone())
+        .unwrap_or_else(|| SubagentTaskKey::from_context(parent, task_id.clone(), None));
     let request_continuation = continuation;
     let dispatcher = DriverSubAgentTool::new(
-        "spawn_async_subagent",
+        "spawn_subagent",
         "Host-prepared asynchronous subagent invocation.",
         bundle.driver.clone(),
         move |_state: &(), parent, args, _call_id| {
@@ -455,11 +356,10 @@ async fn invoke_driver_tool_with_request(
         .as_ref()
         .map(|context| context.workspace_dir.as_path())
         .unwrap_or_else(|| std::path::Path::new(""));
-    let owner = crate::agent::tinyagents::tool_registration::subagent_owner_key(
-        owner_workspace,
-        &parent_session,
-        thread_id.as_deref(),
-    );
+    let owner =
+        parent
+            .data
+            .subagent_owner_scope(owner_workspace, &parent_session, thread_id.as_deref());
     let owner_scope: Arc<dyn Fn(u64) -> String + Send + Sync> = Arc::new(move |_| owner.clone());
     let mut dispatcher = dispatcher
         .with_job_registry(jobs)
@@ -471,7 +371,7 @@ async fn invoke_driver_tool_with_request(
             ToolTimeout::Unbounded,
         );
     if let Some(completion) = completion {
-        let callback_task_key = SubagentTaskKey::from_context(parent, task_id.clone(), None);
+        let callback_task_key = callback_lifecycle_key;
         let host_outcome = Arc::clone(&bundle.host_outcome);
         let failures = Arc::clone(&bundle.failures);
         let persistence = Arc::clone(&bundle.persistence);
@@ -628,36 +528,7 @@ impl OpenHumanSubagentHost {
                     })
                     .unwrap_or_else(|| PathBuf::from(".openhuman/subagent_checkpoints"))
             }));
-        Box::pin(self.run_leader(parent, task_key, child, input, false, checkpoint_dir)).await
-    }
-
-    async fn continue_with_key(
-        self,
-        parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-        task_key: SubagentTaskKey,
-        input: String,
-    ) -> Result<SubagentRunOutcome, SubagentRunError> {
-        let child_config = RunConfig::new(format!("subagent-{}", uuid::Uuid::new_v4()));
-        let (_, child) = crate::agent::tinyagents::host::direct_subagent_child(
-            parent,
-            task_key.task_id.clone(),
-            child_config,
-        )
-        .map_err(|error| SubagentRunError::Provider(anyhow::anyhow!(error.to_string())))?;
-        let checkpoint_dir =
-            absolute_checkpoint_dir(self.options.checkpoint_dir.clone().unwrap_or_else(|| {
-                parent
-                    .data
-                    .parent
-                    .as_ref()
-                    .map(|context| {
-                        context
-                            .workspace_dir
-                            .join(".openhuman/subagent_checkpoints")
-                    })
-                    .unwrap_or_else(|| PathBuf::from(".openhuman/subagent_checkpoints"))
-            }));
-        Box::pin(self.run_leader(parent, task_key, child, input, true, checkpoint_dir)).await
+        Box::pin(self.run_leader(parent, task_key, child, input, checkpoint_dir)).await
     }
 
     async fn run_leader(
@@ -666,7 +537,6 @@ impl OpenHumanSubagentHost {
         task_key: SubagentTaskKey,
         child: RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         input: String,
-        continuation: bool,
         checkpoint_dir: PathBuf,
     ) -> Result<SubagentRunOutcome, SubagentRunError> {
         let fallback_agent_id = self.definition.id.clone();
@@ -679,22 +549,17 @@ impl OpenHumanSubagentHost {
             shared_subagent_flight(&parent.data.dispatch_ctx(), &checkpoint_dir),
             parent.data.dispatch_ctx(),
         )?;
-        let request = if continuation {
-            SubagentRequest::continue_with_key(task_key.clone(), child, request, input, None, None)
-                .await
-        } else {
-            // `direct_subagent_child` derives the same key for the host's
-            // durable lookup; this constructor independently proves that the
-            // execution context is the supplied parent's direct child.
-            SubagentRequest::fresh_from_parent(
-                parent,
-                child,
-                task_key.task_id.clone(),
-                request,
-                input,
-                None,
-            )
-        }
+        // `direct_subagent_child` derives the same key for the host's durable
+        // lookup; this constructor independently proves that the execution
+        // context is the supplied parent's direct child.
+        let request = SubagentRequest::fresh_from_parent(
+            parent,
+            child,
+            task_key.task_id.clone(),
+            request,
+            input,
+            None,
+        )
         .map_err(map_lifecycle_error)?;
         let cancellation = parent.cancellation.clone();
         match Box::pin(driver.driver.run(request, cancellation)).await {

@@ -40,6 +40,40 @@ fn scoped_policy_is_thread_local_and_restored() {
 }
 
 #[test]
+fn a_reload_on_a_scoped_thread_leaves_the_process_policy_alone() {
+    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let workspace = std::env::temp_dir().join("openhuman_scoped_reload_test");
+    install(
+        Arc::new(SecurityPolicy::default()),
+        workspace.clone(),
+        workspace.clone(),
+    );
+    let _guard = install_scoped(
+        Arc::new(SecurityPolicy::default()),
+        workspace.clone(),
+        workspace,
+    );
+
+    reload_from(&AutonomyConfig {
+        auto_approve: vec!["create_workflow".into()],
+        ..AutonomyConfig::default()
+    });
+
+    let sibling_list = std::thread::spawn(|| {
+        current()
+            .expect("global policy remains installed")
+            .auto_approve
+            .clone()
+    })
+    .join()
+    .expect("sibling thread joined");
+    assert!(
+        !sibling_list.iter().any(|tool| tool == "create_workflow"),
+        "a scoped test's reload must not reach the process-global policy"
+    );
+}
+
+#[test]
 fn install_then_reload_swaps_policy_and_bumps_generation() {
     // Serialize against other tests that install/reload this process-global
     // (the approval-gate auto_approve test and the autonomy `ops` tests),
@@ -177,6 +211,61 @@ fn set_action_dir_swaps_root_and_bumps_generation() {
         new_action,
         "reload after set_action_dir must keep the swapped root"
     );
+}
+
+#[test]
+fn concurrent_policy_reload_keeps_autonomy_action_dir_and_privacy_updates() {
+    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let workspace = std::env::temp_dir().join("openhuman_live_policy_concurrent_ws");
+    for round in 0..64 {
+        let old_action = workspace.join(format!("old-action-{round}"));
+        let new_action = workspace.join(format!("new-action-{round}"));
+        install(
+            Arc::new(SecurityPolicy {
+                autonomy: AutonomyLevel::Supervised,
+                workspace_dir: workspace.clone(),
+                action_dir: old_action.clone(),
+                privacy_mode: PrivacyMode::Standard,
+                ..SecurityPolicy::default()
+            }),
+            workspace.clone(),
+            old_action,
+        );
+
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let config = AutonomyConfig {
+            level: AutonomyLevel::Full,
+            workspace_only: false,
+            ..AutonomyConfig::default()
+        };
+        let reload_barrier = Arc::clone(&barrier);
+        let reload = std::thread::spawn(move || {
+            reload_barrier.wait();
+            reload_from(&config);
+        });
+        let action_barrier = Arc::clone(&barrier);
+        let action = std::thread::spawn(move || {
+            action_barrier.wait();
+            set_action_dir(new_action);
+        });
+        let privacy_barrier = Arc::clone(&barrier);
+        let privacy = std::thread::spawn(move || {
+            privacy_barrier.wait();
+            reload_privacy(PrivacyMode::LocalOnly).unwrap();
+        });
+        barrier.wait();
+        reload.join().unwrap();
+        action.join().unwrap();
+        privacy.join().unwrap();
+
+        let policy = current().expect("policy remains installed");
+        assert_eq!(policy.autonomy, AutonomyLevel::Full);
+        assert_eq!(
+            policy.action_dir,
+            workspace.join(format!("new-action-{round}"))
+        );
+        assert_eq!(policy.privacy_mode, PrivacyMode::LocalOnly);
+    }
 }
 
 fn agent_context(policy: Option<Arc<SecurityPolicy>>) -> Arc<crate::core::runtime::CoreContext> {

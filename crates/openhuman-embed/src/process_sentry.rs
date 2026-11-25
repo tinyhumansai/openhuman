@@ -124,7 +124,7 @@ pub fn resolve_environment(app_env: Option<String>) -> String {
 /// The signed-in user's id from the core's credential identity slot — the
 /// CLI's fallback, and the default for [`SentryConfig::user_id`].
 pub fn credential_user_id() -> Option<String> {
-    openhuman_core::security::credentials::identity::peek_credential_user_identity()
+    openhuman_core::credentials::identity::peek_credential_user_identity()
         .and_then(|identity| identity.id)
 }
 
@@ -182,6 +182,7 @@ const NOISE_FILTERS: &[NoiseFilter] = &[
         "fs-limitation",
         obs::is_windows_file_system_limitation_event,
     ),
+    ("disk-full", obs::is_disk_full_event),
     ("max-iterations", obs::is_max_iterations_event),
     (
         "transient-backend-api",
@@ -200,22 +201,21 @@ const NOISE_FILTERS: &[NoiseFilter] = &[
         "skills-install-4xx",
         obs::is_skills_install_client_error_event,
     ),
-    (
-        "channel-message-404",
-        obs::is_channel_message_not_found_event,
-    ),
     ("user-config-provider", obs::is_user_config_provider_event),
     ("connectivity", obs::is_connectivity_event),
     ("stale-release", obs::is_stale_release_event),
     ("session-expired", obs::is_session_expired_event),
 ];
 
-/// The name of the first filter that classifies `event` as known noise.
+/// The name of the first filter that classifies `event` as known noise: the
+/// built-in chain first, then the filters the installed host registered
+/// (`core::observability::register_crash_noise_filter`).
 pub fn known_noise(event: &Event<'static>) -> Option<&'static str> {
     NOISE_FILTERS
         .iter()
         .find(|(_, matches)| matches(event))
         .map(|(name, _)| *name)
+        .or_else(|| obs::registered_crash_noise(event))
 }
 
 /// The `before_send` hook: drop known noise, otherwise strip the hostname,

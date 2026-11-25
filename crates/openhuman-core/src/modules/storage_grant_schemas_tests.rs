@@ -23,8 +23,32 @@ fn every_row_has_a_valid_generated_grant() {
             .validate()
             .unwrap_or_else(|why| panic!("{}: {why}", row.module));
         assert!(grant.writable);
-        let items = module_collections(row.owner);
-        assert_eq!(grant.collections.len(), items.len(), "{}", row.module);
+        // What the owner provisions plus what its migrations read, and each
+        // one reachable: a collection the module touches but the grant lacks
+        // is refused as target-not-granted on every host with storage.
+        let mut expected: Vec<String> = module_collections(row.owner)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        for name in read_collections(row.owner) {
+            if !expected.contains(&name) {
+                expected.push(name);
+            }
+        }
+        let granted: Vec<String> = grant.collections.iter().map(|s| s.name.clone()).collect();
+        assert_eq!(granted, expected, "{}", row.module);
+        for collection in &expected {
+            assert!(
+                allowed(
+                    &grant,
+                    Object::Documents,
+                    "Get",
+                    json!({"collection": collection, "id": "x"})
+                ),
+                "{}: {collection} is not granted",
+                row.module
+            );
+        }
     }
     assert!(declared("not-a-module").is_none());
 }
@@ -129,19 +153,13 @@ fn tinyjuice_reaches_only_its_blob_prefix() {
         &grant,
         Object::Blobs,
         "Get",
-        json!({"key": "tinyjuice_ccr/abc"})
-    ));
-    assert!(!allowed(
-        &grant,
-        Object::Blobs,
-        "Get",
         json!({"key": "juice/ccr/abc"})
     ));
     assert!(!allowed(
         &grant,
         Object::Blobs,
         "Get",
-        json!({"key": "tinyjuice_ccr/abc"})
+        json!({"key": "tinyjuice_ccr_private/abc"})
     ));
 }
 
@@ -186,4 +204,107 @@ fn non_document_grants_match_the_owner_contracts_without_broad_prefixes() {
         ),
         Err(Denied::Target)
     );
+}
+
+/// Every call TinyWallet's x402 ledger makes when it opens (its own migration,
+/// `tinywallet-x402/src/ledger/schema.rs` `migrate`) and afterwards
+/// (`ledger/persist.rs`). The migration runs on every first open, whether or
+/// not a wallet exists and whether or not there is legacy data, so a target
+/// missing here fails every `x402_fetch` with `target-not-granted`.
+#[cfg(feature = "web3")]
+#[test]
+fn the_wallet_grant_covers_every_target_its_x402_ledger_opens_and_migrates() {
+    let wallet = declared(tinywallet::MODULE_ID).unwrap();
+    let calls = [
+        // Migration state.
+        (
+            Object::Documents,
+            "Get",
+            json!({"collection": "wallet.migrations", "id": "x402"}),
+        ),
+        (
+            Object::Documents,
+            "Put",
+            json!({"collection": "wallet.migrations", "id": "x402"}),
+        ),
+        // v1 budget holds, read and carried into `wallet.budgets`.
+        (
+            Object::Documents,
+            "Get",
+            json!({"collection": "x402_budget", "id": "holds"}),
+        ),
+        (
+            Object::Documents,
+            "Get",
+            json!({"collection": "wallet.budgets", "id": "holds"}),
+        ),
+        (
+            Object::Documents,
+            "Put",
+            json!({"collection": "wallet.budgets", "id": "holds"}),
+        ),
+        // v1 payments (what the host importer writes), copied to `wallet.payments`.
+        (Object::Streams, "Len", json!({"stream": "x402.payments"})),
+        (
+            Object::Streams,
+            "ReadWindow",
+            json!({"stream": "x402.payments"}),
+        ),
+        (Object::Streams, "Len", json!({"stream": "wallet.payments"})),
+        (
+            Object::Streams,
+            "ReadWindow",
+            json!({"stream": "wallet.payments"}),
+        ),
+        (
+            Object::Streams,
+            "AppendBatchIfOffset",
+            json!({"stream": "wallet.payments"}),
+        ),
+        (
+            Object::Streams,
+            "Append",
+            json!({"stream": "wallet.payments"}),
+        ),
+    ];
+    for (object, selector, request) in calls {
+        assert_eq!(
+            authorize(&wallet, object, selector, &request).map(|_| ()),
+            Ok(()),
+            "{object:?}.{selector} {request}"
+        );
+    }
+    // The migration's own `ensure_collection` calls repeat the host's specs.
+    for name in ["wallet.budgets", "wallet.migrations"] {
+        let spec = serde_json::to_value(CollectionSpec::new(name)).unwrap();
+        assert!(matches!(
+            authorize(
+                &wallet,
+                Object::Documents,
+                "EnsureCollection",
+                &json!({"spec": spec})
+            ),
+            Ok(Plan::Answer(_))
+        ));
+    }
+}
+
+#[test]
+fn connectors_may_read_the_v1_preferences_its_migration_moves() {
+    let connectors = declared("tinyconnectors").unwrap();
+    for collection in [
+        tinyconnectors_bus::storage::PREFS_NAMESPACE,
+        tinyconnectors_bus::storage::MIGRATIONS_NAMESPACE,
+        tinyconnectors_bus::storage::LEGACY_PREFS_NAMESPACE,
+    ] {
+        assert!(
+            allowed(
+                &connectors,
+                Object::Documents,
+                "Get",
+                json!({"collection": collection, "id": "gmail"})
+            ),
+            "{collection} is not granted"
+        );
+    }
 }

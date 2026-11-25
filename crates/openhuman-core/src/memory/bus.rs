@@ -147,7 +147,7 @@ async fn sync_live_agent_sources() {
 pub async fn run_system_job(ctx: &DispatchCtx, config: &crate::config::Config, job: &str) {
     match job {
         SOURCES_SYNC_JOB => {
-            let started = super::sources::sync_due(ctx, config, Utc::now());
+            let started = super::sources::sync_due(ctx, config, Utc::now()).await;
             tracing::debug!(
                 started = started.len(),
                 "[memory:bus] due source syncs started"

@@ -105,13 +105,80 @@ fn install_installed_and_clear() {
     let slot = Slot::default();
     assert!(slot.installed().is_none());
     let backend = test_support::memory_backend();
-    assert!(slot.install(Arc::clone(&backend)).is_none());
+    assert!(slot
+        .install_described(Arc::clone(&backend), None, None)
+        .is_none());
     assert!(slot
         .installed()
         .is_some_and(|got| Arc::ptr_eq(&got, &backend)));
-    assert!(slot.install(test_support::memory_backend()).is_some());
+    assert!(slot
+        .install_described(test_support::memory_backend(), None, None)
+        .is_some());
     assert!(slot.clear());
     assert!(!slot.clear());
+}
+
+/// The URL and driver are part of the installed state: replacing the backend
+/// replaces them, and clearing it forgets them.
+#[test]
+fn a_slot_keeps_the_url_and_driver_with_their_backend() {
+    let slot = Slot::default();
+    assert_eq!(slot.installed_url(), None);
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory".into()),
+        Some("memory".into()),
+    );
+    assert_eq!(slot.installed_url().as_deref(), Some("memory"));
+    assert_eq!(slot.installed_driver().as_deref(), Some("memory"));
+
+    slot.install_described(test_support::memory_backend(), None, Some("sqlite".into()));
+    assert_eq!(slot.installed_url(), None, "the new backend has no URL");
+    assert_eq!(slot.installed_driver().as_deref(), Some("sqlite"));
+
+    assert!(slot.clear());
+    assert_eq!(slot.installed_url(), None);
+    assert_eq!(slot.installed_driver(), None);
+}
+
+/// Readers cannot observe a half-published installation at the publication
+/// boundary. The checkpoint pauses the writer while it holds the slot lock.
+#[test]
+fn readers_cannot_observe_an_installation_at_its_publication_boundary() {
+    let slot = Arc::new(Slot::default());
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory://old".into()),
+        Some("memory".into()),
+    );
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let resume = Arc::new(std::sync::Barrier::new(2));
+    let writer = {
+        let slot = Arc::clone(&slot);
+        let entered = Arc::clone(&entered);
+        let resume = Arc::clone(&resume);
+        std::thread::spawn(move || {
+            slot.install_described_at_checkpoint(
+                test_support::memory_backend(),
+                Some("memory://new".into()),
+                Some("memory".into()),
+                || {
+                    entered.wait();
+                    resume.wait();
+                },
+            );
+        })
+    };
+
+    entered.wait();
+    assert_eq!(
+        slot.try_installed_url(),
+        Err(()),
+        "a reader must not inspect the slot during publication"
+    );
+    resume.wait();
+    writer.join().unwrap();
+    assert_eq!(slot.installed_url().as_deref(), Some("memory://new"));
 }
 
 #[test]
@@ -222,6 +289,37 @@ fn only_mongodb_is_shared_between_processes() {
     }
 }
 
+/// The installed backend is shared when its driver is, however the host
+/// installed it: by URL, with a driver name, or (not shared) with neither.
+#[test]
+fn the_installed_backend_is_shared_by_its_driver_however_it_was_installed() {
+    let _guard = test_support::install_backend_for_test(test_support::memory_backend());
+    assert!(!installed_is_shared(), "no driver known");
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(installed_is_shared());
+    assert_eq!(installed_driver().as_deref(), Some("mongodb"));
+    assert_eq!(
+        installed_url(),
+        None,
+        "a driver name never opts into rebind"
+    );
+
+    install_with_driver("sqlite", test_support::memory_backend());
+    assert!(!installed_is_shared());
+
+    install_for_url("mongodb://db.example/x", test_support::memory_backend());
+    assert!(installed_is_shared());
+
+    install(test_support::memory_backend());
+    assert!(!installed_is_shared(), "a plain install forgets the driver");
+    assert_eq!(installed_driver(), None);
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(clear());
+    assert!(!installed_is_shared(), "clearing forgets the driver");
+}
+
 #[test]
 fn only_mongodb_and_sqlite_have_cross_process_cas() {
     for driver in ["mongodb", "sqlite"] {
@@ -253,4 +351,213 @@ async fn local_drivers_do_not_claim_cross_process_cas() {
             "unexpected CAS capability for {url}"
         );
     }
+}
+
+mod storage_runtime {
+    use super::super::{block_on, connect_on_storage_runtime};
+    use super::StorageError;
+    use std::sync::mpsc as std_mpsc;
+    use std::time::Duration;
+    use tokio::sync::{mpsc, oneshot};
+
+    #[derive(Clone)]
+    struct FakePool {
+        requests: mpsc::UnboundedSender<oneshot::Sender<u32>>,
+    }
+
+    impl FakePool {
+        fn spawn() -> Self {
+            let (requests, mut receiver) = mpsc::unbounded_channel::<oneshot::Sender<u32>>();
+            tokio::spawn(async move {
+                while let Some(reply) = receiver.recv().await {
+                    let _ = reply.send(7);
+                }
+            });
+            Self { requests }
+        }
+
+        async fn ping(&self) -> Result<u32, StorageError> {
+            let (reply, answer) = oneshot::channel();
+            self.requests
+                .send(reply)
+                .map_err(|_| StorageError::backend("fake pool stopped"))?;
+            answer
+                .await
+                .map_err(|_| StorageError::backend("fake pool dropped the request"))
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_what_connect_built() {
+        let value = connect_on_storage_runtime(|| async { 41 + 1 })
+            .await
+            .expect("connect runs");
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn runs_from_inside_the_blocking_bridge() {
+        let value = block_on(async {
+            let pool = connect_on_storage_runtime(|| async { FakePool::spawn() }).await?;
+            pool.ping().await
+        })
+        .expect("bridged connect completes");
+        assert_eq!(value, 7);
+    }
+
+    #[tokio::test]
+    async fn a_panicking_connect_is_a_storage_error() {
+        let result = connect_on_storage_runtime(|| async {
+            if true {
+                panic!("connect blew up");
+            }
+        })
+        .await;
+        assert!(result.is_err(), "a panic surfaces as a StorageError");
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn open_connects_on_the_storage_runtime() {
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        let backend = super::super::open("memory").await;
+        drop(guard);
+        assert!(backend.is_ok(), "memory backend opens");
+        let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            log.contains("connecting on the storage runtime"),
+            "open must connect through the storage runtime, got: {log}"
+        );
+    }
+
+    #[test]
+    fn bridged_calls_do_not_starve_a_capped_host_runtime() {
+        let (done, outcome) = std_mpsc::channel();
+        let host = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .max_blocking_threads(1)
+                .enable_all()
+                .build()
+                .expect("host runtime");
+            let result = runtime.block_on(async {
+                let pool = connect_on_storage_runtime(|| async { FakePool::spawn() })
+                    .await
+                    .expect("connect");
+                let calls: Vec<_> = (0..8)
+                    .map(|_| {
+                        let pool = pool.clone();
+                        tokio::spawn(async move { block_on(async move { pool.ping().await }) })
+                    })
+                    .collect();
+                let mut answers = Vec::new();
+                for call in calls {
+                    answers.push(call.await.expect("call task").expect("ping"));
+                }
+                answers
+            });
+            let _ = done.send(result);
+            runtime
+        });
+        match outcome.recv_timeout(Duration::from_secs(20)) {
+            Ok(answers) => {
+                assert_eq!(answers, vec![7; 8]);
+                drop(host.join().expect("host thread"));
+            }
+            Err(_) => {
+                std::mem::forget(host);
+                panic!("storage bridge deadlocked");
+            }
+        }
+    }
+}
+
+/// A backend one test installs is not another concurrent test's storage: the
+/// slot is visible to its installer's thread only (MAIN-57).
+#[test]
+fn a_test_installed_slot_is_hidden_from_other_test_threads() {
+    let ready = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let installer = {
+        let (ready, done) = (ready.clone(), done.clone());
+        std::thread::Builder::new()
+            .name("storage::slot_probe::installer".into())
+            .spawn(move || {
+                let _guard = crate::storage::test_support::install_backend_for_test(
+                    crate::storage::test_support::memory_backend(),
+                );
+                let mine = crate::storage::installed().is_some();
+                ready.wait();
+                done.wait();
+                assert!(mine, "the installer sees its own slot");
+            })
+            .unwrap()
+    };
+    let other = std::thread::Builder::new()
+        .name("storage::slot_probe::other".into())
+        .spawn(move || {
+            ready.wait();
+            let seen = installed_url().is_some() || crate::storage::installed().is_some();
+            done.wait();
+            seen
+        })
+        .unwrap();
+    installer.join().unwrap();
+    assert!(
+        !other.join().unwrap(),
+        "another test's thread must not see the installer's backend"
+    );
+}
+
+/// A bridge call may wait on a bridge call made from another thread that is
+/// not on the storage runtime — a module runtime's blocking pool opening the
+/// workspace backend while the host's synchronous store awaits that module.
+/// The bridge must run both instead of queueing the second behind the first.
+#[test]
+fn a_bridge_call_can_wait_on_a_bridge_call_from_another_thread() {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = block_on(async move {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(block_on(async { Ok::<_, StorageError>(7) }));
+            });
+            let inner = rx
+                .await
+                .map_err(|error| StorageError::backend(error.to_string()))??;
+            Ok::<_, StorageError>(inner + 1)
+        });
+        let _ = done_tx.send(outcome);
+    });
+    let outcome = done_rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("a bridge call waiting on another thread's bridge call deadlocked");
+    assert_eq!(outcome.unwrap(), 8);
 }

@@ -40,6 +40,7 @@ async fn secure_open_rejects_parent_symlink_replaced_after_path_validation() {
     let scope = AttachmentAccessScope {
         external_channel: false,
         workspace: Some(root.clone()),
+        ..Default::default()
     };
     let validated = crate::attachments::resolve_path(&config, "nested/file.png", &scope)
         .await

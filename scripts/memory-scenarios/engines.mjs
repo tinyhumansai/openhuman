@@ -230,7 +230,7 @@ const KEY_FILE =
  * The account credential for the builtin engine, read at spawn time:
  * the app's session JWT from ~/.memscen-session when present (preferred: it
  * carries the memory scope), else the API key from ~/.memscen-key. It reaches
- * the core only through the environment (security/credentials/ops/boot_env.rs
+ * the core only through the environment (credentials/ops/boot_env.rs
  * seeds it); it is never printed, logged, written to the run dir or passed
  * to an RPC. `subject` (a session's user id) is returned for guard placement
  * only and is never printed either.

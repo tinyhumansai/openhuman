@@ -4,16 +4,17 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::credentials::api_key::get_api_key_read_only;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
+use openhuman_embed::__host::credentials::session_state::{
+    classify_session_token, is_local_session_token, load_app_session_profile_read_only,
+    session_token_for_config, SessionTokenCheck,
+};
 use openhuman_embed::__host::doctor::{
-    register_check_source, register_check_source_in, DoctorCheck, DoctorCheckSource, DoctorCtx,
-    DoctorTier, Finding, FindingSeverity,
+    register_check_source, register_check_source_in, ComponentId, DoctorCheck, DoctorCheckSource,
+    DoctorCtx, DoctorTier, Finding, FindingSeverity,
 };
 use openhuman_embed::__host::platform::socket::{global_socket_manager, ConnectionStatus};
-use openhuman_embed::__host::security::credentials::api_key::get_api_key_read_only;
-use openhuman_embed::__host::security::credentials::session_support::{
-    classify_session_token, is_local_session_token, load_app_session_profile_read_only,
-    session_token_for_config, BackendCredential, SessionTokenCheck,
-};
 use tinyhumans_sdk::{Error as SdkError, TinyHumansClient};
 
 use crate::backend::product::product_identity_headers;
@@ -100,6 +101,10 @@ impl DoctorCheck for BackendReachable {
         DoctorTier::Connect
     }
 
+    fn component_gate(&self) -> Option<ComponentId> {
+        Some(ComponentId::Hosting)
+    }
+
     async fn detect(&self, ctx: &DoctorCtx) -> Vec<Finding> {
         vec![match health_check(ctx.config()).await {
             Ok(()) => Finding::pass(self.id(), "The hosted backend is reachable."),
@@ -133,8 +138,12 @@ impl DoctorCheck for BackendCredentialCheck {
         DoctorTier::Connect
     }
 
+    fn component_gate(&self) -> Option<ComponentId> {
+        Some(ComponentId::Hosting)
+    }
+
     async fn detect(&self, ctx: &DoctorCtx) -> Vec<Finding> {
-        vec![match doctor_credential(ctx.config()) {
+        vec![match doctor_credential(ctx.config()).await {
             CredentialState::Usable(_) => {
                 Finding::pass(self.id(), "A usable hosted credential is configured.")
             }
@@ -183,16 +192,22 @@ impl DoctorCheck for BackendIdentity {
         DoctorTier::Connect
     }
 
+    fn component_gate(&self) -> Option<ComponentId> {
+        Some(ComponentId::Hosting)
+    }
+
     async fn detect(&self, ctx: &DoctorCtx) -> Vec<Finding> {
-        let credential = match doctor_credential(ctx.config()) {
+        let credential = match doctor_credential(ctx.config()).await {
             CredentialState::Usable(credential) => credential,
             _ => return vec![credential_skipped(self.id())],
         };
         if health_check(ctx.config()).await.is_err() {
             return vec![backend_dependent_skipped(self.id())];
         }
-
-        let client = hosted_client(ctx.config(), credential);
+        let client = match hosted_client(ctx.config(), credential) {
+            Ok(client) => client,
+            Err(reason) => return vec![endpoint_refused(self.id(), &reason)],
+        };
         vec![match client.sdk().auth().me().await {
             Ok(_) => Finding::pass(self.id(), "The backend accepted the configured identity."),
             Err(error) => auth_finding(self.id(), client.kind(), error, AUTH_FIX),
@@ -216,6 +231,10 @@ impl DoctorCheck for BackendSocket {
         DoctorTier::Connect
     }
 
+    fn component_gate(&self) -> Option<ComponentId> {
+        Some(ComponentId::Hosting)
+    }
+
     async fn detect(&self, ctx: &DoctorCtx) -> Vec<Finding> {
         let Some(url) = ctx.config().resolved_endpoints.control_plane_url.as_deref() else {
             return vec![Finding::skipped(
@@ -225,7 +244,7 @@ impl DoctorCheck for BackendSocket {
             )];
         };
         let CredentialState::Usable(BackendCredential::Session(token)) =
-            doctor_credential(ctx.config())
+            doctor_credential(ctx.config()).await
         else {
             return vec![Finding::skipped(
                 self.id(),
@@ -287,6 +306,10 @@ impl DoctorCheck for BackendApiUrl {
 
     fn tier(&self) -> DoctorTier {
         DoctorTier::Static
+    }
+
+    fn component_gate(&self) -> Option<ComponentId> {
+        Some(ComponentId::Hosting)
     }
 
     async fn detect(&self, ctx: &DoctorCtx) -> Vec<Finding> {
@@ -353,16 +376,22 @@ impl DoctorCheck for ManagedCatalog {
         DoctorTier::Connect
     }
 
+    fn component_gate(&self) -> Option<ComponentId> {
+        Some(ComponentId::Hosting)
+    }
+
     async fn detect(&self, ctx: &DoctorCtx) -> Vec<Finding> {
-        let credential = match doctor_credential(ctx.config()) {
+        let credential = match doctor_credential(ctx.config()).await {
             CredentialState::Usable(credential) => credential,
             _ => return vec![credential_skipped(self.id())],
         };
         if health_check(ctx.config()).await.is_err() {
             return vec![backend_dependent_skipped(self.id())];
         }
-
-        let client = hosted_client(ctx.config(), credential);
+        let client = match hosted_client(ctx.config(), credential) {
+            Ok(client) => client,
+            Err(reason) => return vec![endpoint_refused(self.id(), &reason)],
+        };
         let query = [("catalog", Some("openrouter".to_owned()))];
         vec![match client.sdk().inference().list_models(&query).await {
             Ok(_) => Finding::pass(self.id(), "The managed inference catalog is reachable."),
@@ -380,14 +409,14 @@ enum CredentialState {
     Unreadable,
 }
 
-fn doctor_credential(config: &Config) -> CredentialState {
-    match get_api_key_read_only(config) {
+async fn doctor_credential(config: &Config) -> CredentialState {
+    match get_api_key_read_only(config).await {
         Ok(Some(key)) => return CredentialState::Usable(BackendCredential::ApiKey(key)),
         Ok(None) => {}
         Err(_) => return CredentialState::Unreadable,
     }
 
-    let profile = match load_app_session_profile_read_only(config) {
+    let profile = match load_app_session_profile_read_only(config).await {
         Ok(profile) => profile,
         Err(_) => return CredentialState::Unreadable,
     };
@@ -407,8 +436,16 @@ fn doctor_credential(config: &Config) -> CredentialState {
     }
 }
 
-fn hosted_client(config: &Config, credential: BackendCredential) -> HostedClient {
+fn hosted_client(config: &Config, credential: BackendCredential) -> Result<HostedClient, String> {
     HostedClient::with_credential(&effective_backend_api_url(&config.api_url), credential)
+}
+
+fn endpoint_refused(id: &str, reason: &str) -> Finding {
+    Finding::error(
+        id,
+        format!("The hosted credential was not sent: {reason}."),
+        "Point the API URL at the managed backend over HTTPS, or at a loopback endpoint for local testing.",
+    )
 }
 
 fn credential_skipped(id: &str) -> Finding {

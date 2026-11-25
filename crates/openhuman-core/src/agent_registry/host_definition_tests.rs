@@ -187,7 +187,7 @@ fn registry_load_merges_builtins_and_custom() {
         "expected at least one built-in plus the custom definition"
     );
     assert!(reg.get("notion_specialist").is_some());
-    assert!(reg.get("critic").is_some());
+    assert!(reg.get("summarizer").is_some());
 }
 
 #[test]
@@ -216,11 +216,11 @@ fn custom_definition_overrides_same_id_builtin() {
     let ws = fresh_workspace();
     let agents_dir = ws.path().join("agents");
     fs::create_dir_all(&agents_dir).unwrap();
-    // Override the built-in `critic` with a custom one.
+    // Override the built-in `summarizer` with a custom one.
     write_toml(
-        &agents_dir.join("critic.toml"),
+        &agents_dir.join("summarizer.toml"),
         r#"
-id = "critic"
+id = "summarizer"
 when_to_use = "CUSTOM OVERRIDE"
 
 [system_prompt]
@@ -236,10 +236,10 @@ inline = "custom prompt"
     let expected_count = baseline.len();
 
     let reg = AgentDefinitionRegistry::load(ws.path()).unwrap();
-    // Same id replaced the built-in `critic` in place, so the
+    // Same id replaced the built-in `summarizer` in place, so the
     // registry size doesn't grow when the custom TOML collides.
     assert_eq!(reg.len(), expected_count);
-    let def = reg.get("critic").unwrap();
+    let def = reg.get("summarizer").unwrap();
     assert_eq!(def.when_to_use, "CUSTOM OVERRIDE");
     assert!(matches!(def.source, DefinitionSource::File(_)));
 }
@@ -265,7 +265,6 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
     let expected: &[(&str, usize)] = &[
         // Extended policy (or high `max_iterations`) -> effective cap raised.
         ("orchestrator", 200),
-        ("planner", 50),
         ("task_manager_agent", 50),
         // Gated with `flows` (#4797) — absent from a slim build.
         #[cfg(feature = "flows")]
@@ -274,7 +273,6 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("workflow_builder", 50),
         // Strict policy, declared `max_iterations` below the old global
         // default (10) -> effective cap lowered.
-        ("critic", 5),
         ("image_agent", 8),
         ("morning_briefing", 8),
         ("summarizer", 1),
@@ -363,7 +361,21 @@ when_to_use = "defaults"
     assert!(def.extensions.omit_safety_preamble);
     assert!(!def.extensions.searches_connected_mcp);
     assert!(!def.extensions.refresh_prompt_on_resume);
+    assert!(!def.extensions.omit_memory_log);
     assert!(def.extensions.prompt_builder.is_none());
+}
+
+#[test]
+fn omit_memory_log_parses_from_the_toml() {
+    let def: AgentDefinition = toml::from_str(
+        r#"
+id = "helper"
+when_to_use = "drafts"
+omit_memory_log = true
+"#,
+    )
+    .unwrap();
+    assert!(def.extensions.omit_memory_log);
 }
 
 #[test]
@@ -457,4 +469,53 @@ wildcard = {}
         defs[0].tools,
         tinyagents_definition::ToolScope::Wildcard
     ));
+}
+
+/// A sandboxed shell runs in a files-only jail (TinySecurity contract 2.2) only when the
+/// definition says so in as many words; a definition that does not name the field keeps
+/// the full sandbox requirements.
+#[test]
+fn a_definition_opts_its_shell_into_a_files_only_jail_only_by_naming_it() {
+    let base = r#"
+id = "builder_like"
+when_to_use = "Builds things on a schedule."
+sandbox_mode = "sandboxed"
+
+[tools]
+named = ["shell"]
+"#;
+    let def: AgentDefinition = toml::from_str(base).expect("a sandboxed definition parses");
+    assert!(!def.extensions.sandbox_filesystem_only);
+    let opted: AgentDefinition = toml::from_str(&format!("sandbox_filesystem_only = true\n{base}"))
+        .expect("the opt-in parses");
+    assert!(opted.extensions.sandbox_filesystem_only);
+}
+
+/// `browser_view_only` is authored in agent TOML, survives a round trip
+/// through serialisation, and is off (and not written back) when the
+/// definition does not name it, so an unchanged definition serialises as
+/// before.
+#[test]
+fn a_definition_makes_its_browser_view_only_only_by_naming_it() {
+    let base = r#"
+id = "reader_like"
+when_to_use = "Reads the web."
+
+[tools]
+named = ["browser"]
+"#;
+    let plain: AgentDefinition = toml::from_str(base).expect("a plain definition parses");
+    assert!(!plain.extensions.browser_view_only);
+    let plain_toml = toml::to_string(&plain).expect("serialises");
+    assert!(
+        !plain_toml.contains("browser_view_only"),
+        "an unset flag is not written: {plain_toml}"
+    );
+
+    let opted: AgentDefinition =
+        toml::from_str(&format!("browser_view_only = true\n{base}")).expect("the opt-in parses");
+    assert!(opted.extensions.browser_view_only);
+    let round_trip: AgentDefinition =
+        toml::from_str(&toml::to_string(&opted).expect("serialises")).expect("parses again");
+    assert!(round_trip.extensions.browser_view_only);
 }

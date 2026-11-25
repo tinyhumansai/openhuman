@@ -8,8 +8,8 @@ impl OpenHumanTurnPrelude {
     /// descriptor takes precedence over the session's own.
     pub(in crate::agent::session_host) fn parent_context(
         &self,
-        inherited: Option<&crate::agent::harness::ParentExecutionContext>,
-    ) -> crate::agent::harness::ParentExecutionContext {
+        inherited: Option<&crate::agent::subagent_host::ParentExecutionContext>,
+    ) -> crate::agent::subagent_host::ParentExecutionContext {
         let surface = self
             .tool_surface
             .lock()
@@ -25,7 +25,7 @@ impl OpenHumanTurnPrelude {
                 mutable.connected_integrations.clone(),
             )
         };
-        crate::agent::harness::ParentExecutionContext {
+        crate::agent::subagent_host::ParentExecutionContext {
             agent_definition_id: self.agent_definition_id.clone(),
             allowed_subagent_ids: self.allowed_subagent_ids.clone(),
             turn_model_source: self.turn_model_source.clone(),

@@ -35,6 +35,11 @@ fn method_error(error: impl std::fmt::Display) -> tinybus::Error {
 }
 
 pub(super) async fn install(connection: &tinybus::Connection) -> tinybus::Result<()> {
-    connection.serve_at(ObjectPath::new(PATH)?, MlHost).await?;
+    connection
+        .serve_at(
+            ObjectPath::new(PATH)?,
+            super::callback_owner::OwnedBy::new(MlHost, connection, tinyjuice_bus::names::BUS_NAME),
+        )
+        .await?;
     connection.request_name(NAME).await
 }

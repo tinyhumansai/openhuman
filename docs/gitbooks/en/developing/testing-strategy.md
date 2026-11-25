@@ -39,6 +39,12 @@ Is the change behind the JSON-RPC boundary (in `crates/openhuman-core/src/`, `cr
 
 If a change touches more than one layer, write a test in each layer it touches. Do not substitute one for another.
 
+### Test ownership
+
+OpenHuman tests composition, host policy, adapters, RPC wire contracts, and data compatibility. Module behavior is tested in the owning `vendor/tiny*` repository. A host test that calls a vendor module's internals (for example, `tinychannels::providers::*` or `tinyinference_local::service::*`) belongs upstream. When code moves upstream, move its tests in the same upstream PR, then delete them in the host PR. Keep one host smoke test per module: load it and make one call through the bus. That is enough to test the host integration.
+
+A PR that only deletes tests is exempt from changed-line coverage because it has no changed lines for diff-cover to measure. CI Lite runs that changed-line check at an 80 percent threshold.
+
 ---
 
 ## Failure-path requirement

@@ -31,14 +31,7 @@ fn tiny_oauth_config(config: &OAuthConfig, redirect_uri: &str) -> OAuthConfig {
 }
 
 fn test_config(tmp: &tempfile::TempDir) -> Config {
-    Config {
-        config_path: tmp.path().join("config.toml"),
-        ..Config::default()
-    }
-}
-
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Runtime::new().unwrap()
+    crate::credentials::test_support::plaintext_fixture_config(tmp.path())
 }
 
 fn unsigned_jwt(payload: serde_json::Value) -> String {

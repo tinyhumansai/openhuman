@@ -13,82 +13,108 @@ use tinytools::Tool;
 #[tokio::test]
 async fn threshold_persists_to_blobs_and_file_read_serves_the_key() {
     let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().join("workspace");
-    let project = tmp.path().join("project");
-    std::fs::create_dir_all(&workspace).unwrap();
-    std::fs::create_dir_all(&project).unwrap();
-    let root = crate::security::policy::tool_result_artifacts_dir(&workspace);
-    let store = in_memory_tool_result_store(root.clone(), "session/one");
-    let secret = "Bearer credential-marker-redact-me-123456";
-    let raw = format!("{} {}", "x".repeat(4096), secret);
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let workspace = tmp.path().join("workspace");
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let root = crate::security::policy::tool_result_artifacts_dir(&workspace);
+        let store = in_memory_tool_result_store(root.clone(), "session/one");
+        let secret = "Bearer credential-marker-redact-me-123456";
+        let raw = format!("{} {}", "x".repeat(4096), secret);
 
-    let (out, outcome) = apply_per_result_persistence(
-        raw.clone(),
-        None,
-        Some(&store),
-        "shell",
-        Some("call-1"),
-        1024,
-    )
+        let (out, outcome) = apply_per_result_persistence(
+            raw.clone(),
+            None,
+            Some(&store),
+            "shell",
+            Some("call-1"),
+            1024,
+        )
+        .await;
+
+        let key = "harness/tool_results/session_one/shell/call-1.txt";
+        assert!(outcome.persisted);
+        assert!(out.contains(&format!("artifact_path: {key}\n")), "{out}");
+        assert!(out.contains("[preview]"));
+        assert!(!out.contains(secret));
+        assert!(
+            !root.exists(),
+            "nothing is on disk until a read asks for it"
+        );
+        assert_eq!(std::fs::read_dir(&project).unwrap().count(), 0);
+
+        // The model's `file_read {"path": key}` is recognised and pointed at the
+        // materialised copy of the blob.
+        let mut args = json!({"path": key});
+        let read = artifact_read_target(Some(&store), "file_read", &args).expect("artifact read");
+        store.resolve_read(&mut args, &read).await;
+        let pointer = args["path"].as_str().unwrap().to_string();
+        assert_eq!(
+            std::path::Path::new(&pointer),
+            root.join("session_one/shell/call-1.txt")
+        );
+
+        let cfg = crate::config::AutonomyConfig {
+            enabled: true,
+            workspace_only: true,
+            ..crate::config::AutonomyConfig::default()
+        };
+        let policy = Arc::new(SecurityPolicy::from_config(&cfg, &workspace, &project));
+        // The real host authorizes the read first, refreshing the shared native
+        // budget snapshot consumed by TinyTools' synchronous compatibility gate.
+        use tinyagents_harness::host::security_gate::{SecurityGate, ToolCallRequest};
+        let readers: Arc<Vec<Box<dyn Tool>>> =
+            Arc::new(vec![Box::new(FileReadTool::new(policy.clone()))]);
+        let gate = crate::agent::tinyagents::host::OpenHumanSecurityGate::new(
+            policy,
+            vec![Arc::clone(&readers)],
+        )
+        .with_dispatch(crate::core::runtime::DispatchCtx::ambient());
+        let authorization = gate
+            .authorize_tool(&ToolCallRequest::new(
+                "file_read",
+                args.clone(),
+                "artifact-reader",
+            ))
+            .await
+            .unwrap();
+        assert!(authorization.is_allowed(), "{authorization:?}");
+        let read = readers[0].execute(args).await.unwrap();
+        assert!(!read.is_error, "{}", read.output());
+        assert!(read.output().contains("xxxx"));
+        assert!(!read.output().contains(secret));
+    })
     .await;
-
-    let key = "harness/tool_results/session_one/shell/call-1.txt";
-    assert!(outcome.persisted);
-    assert!(out.contains(&format!("artifact_path: {key}\n")), "{out}");
-    assert!(out.contains("[preview]"));
-    assert!(!out.contains(secret));
-    assert!(
-        !root.exists(),
-        "nothing is on disk until a read asks for it"
-    );
-    assert_eq!(std::fs::read_dir(&project).unwrap().count(), 0);
-
-    // The model's `file_read {"path": key}` is recognised and pointed at the
-    // materialised copy of the blob.
-    let mut args = json!({"path": key});
-    let read = artifact_read_target(Some(&store), "file_read", &args).expect("artifact read");
-    store.resolve_read(&mut args, &read).await;
-    let pointer = args["path"].as_str().unwrap().to_string();
-    assert_eq!(
-        std::path::Path::new(&pointer),
-        root.join("session_one/shell/call-1.txt")
-    );
-
-    let cfg = crate::config::AutonomyConfig {
-        enabled: true,
-        workspace_only: true,
-        ..crate::config::AutonomyConfig::default()
-    };
-    let policy = Arc::new(SecurityPolicy::from_config(&cfg, &workspace, &project));
-    let reader = FileReadTool::new(policy);
-    let read = reader.execute(args).await.unwrap();
-    assert!(!read.is_error, "{}", read.output());
-    assert!(read.output().contains("xxxx"));
-    assert!(!read.output().contains(secret));
 }
 
 /// A `use_skill`-wrapped read is rewritten at the call it wraps.
 #[tokio::test]
 async fn a_wrapped_read_is_pointed_at_the_materialised_file() {
     let tmp = tempfile::tempdir().unwrap();
-    let store = in_memory_tool_result_store(tmp.path().join("tool-results"), "s");
-    let (_, outcome) = apply_per_result_persistence(
-        "y".repeat(4096),
-        None,
-        Some(&store),
-        "shell",
-        Some("c"),
-        512,
-    )
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let store = in_memory_tool_result_store(tmp.path().join("tool-results"), "s");
+        let (_, outcome) = apply_per_result_persistence(
+            "y".repeat(4096),
+            None,
+            Some(&store),
+            "shell",
+            Some("c"),
+            512,
+        )
+        .await;
+        let key = outcome.artifact_path.unwrap();
+        let mut args =
+            json!({"skill": "files", "tool": "file_read", "args": {"path": key, "offset": 3}});
+        let read = artifact_read_target(Some(&store), "use_skill", &args).unwrap();
+        store.resolve_read(&mut args, &read).await;
+        assert_ne!(args["args"]["path"], json!(key));
+        assert_eq!(args["args"]["offset"], json!(3));
+        assert!(std::path::Path::new(args["args"]["path"].as_str().unwrap()).is_file());
+    })
     .await;
-    let key = outcome.artifact_path.unwrap();
-    let mut args =
-        json!({"skill": "files", "tool": "file_read", "args": {"path": key, "offset": 3}});
-    let read = artifact_read_target(Some(&store), "use_skill", &args).unwrap();
-    store.resolve_read(&mut args, &read).await;
-    assert_ne!(args["args"]["path"], json!(key));
-    assert_eq!(args["args"]["offset"], json!(3));
-    assert!(std::path::Path::new(args["args"]["path"].as_str().unwrap()).is_file());
 }
 
 /// A blob store is the tenant's: an artifact another tenant stored is absent
@@ -97,32 +123,36 @@ async fn a_wrapped_read_is_pointed_at_the_materialised_file() {
 async fn artifacts_are_tenant_scoped() {
     use crate::storage::{test_support::memory_backend, Scope};
     let tmp = tempfile::tempdir().unwrap();
-    let backend = memory_backend();
-    let scoped = |name: &str| {
-        let scope = Scope::new(name).unwrap();
-        Arc::clone(backend.for_scope(&scope).unwrap().blobs())
-    };
-    let store_a = new_tool_result_store(scoped("tenant-a"), tmp.path().join("a"), "s");
-    let store_b = new_tool_result_store(scoped("tenant-b"), tmp.path().join("b"), "s");
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let backend = memory_backend();
+        let scoped = |name: &str| {
+            let scope = Scope::new(name).unwrap();
+            Arc::clone(backend.for_scope(&scope).unwrap().blobs())
+        };
+        let store_a = new_tool_result_store(scoped("tenant-a"), tmp.path().join("a"), "s");
+        let store_b = new_tool_result_store(scoped("tenant-b"), tmp.path().join("b"), "s");
 
-    let (_, outcome) = apply_per_result_persistence(
-        "secret ".repeat(1000),
-        None,
-        Some(&store_a),
-        "shell",
-        Some("c"),
-        512,
-    )
+        let (_, outcome) = apply_per_result_persistence(
+            "secret ".repeat(1000),
+            None,
+            Some(&store_a),
+            "shell",
+            Some("c"),
+            512,
+        )
+        .await;
+        let key = outcome.artifact_path.unwrap();
+
+        assert!(store_a.read(&key).await.unwrap().is_some());
+        assert!(store_b.read(&key).await.unwrap().is_none());
+        let mut args = json!({"path": key});
+        let read = artifact_read_target(Some(&store_b), "file_read", &args).unwrap();
+        store_b.resolve_read(&mut args, &read).await;
+        assert_eq!(args["path"], json!(key), "left unresolved for tenant b");
+        assert!(!tmp.path().join("b").exists());
+    })
     .await;
-    let key = outcome.artifact_path.unwrap();
-
-    assert!(store_a.read(&key).await.unwrap().is_some());
-    assert!(store_b.read(&key).await.unwrap().is_none());
-    let mut args = json!({"path": key});
-    let read = artifact_read_target(Some(&store_b), "file_read", &args).unwrap();
-    store_b.resolve_read(&mut args, &read).await;
-    assert_eq!(args["path"], json!(key), "left unresolved for tenant b");
-    assert!(!tmp.path().join("b").exists());
 }
 
 /// The vocabulary passed to the crate is OpenHuman's: `file_read` reads,

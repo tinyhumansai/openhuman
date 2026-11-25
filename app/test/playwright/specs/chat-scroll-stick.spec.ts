@@ -43,7 +43,7 @@ const SECOND_PROMPT = 'Second long answer please';
 
 /** A long reply, so the transcript overflows and there is somewhere to scroll. */
 const LONG_REPLY = Array.from(
-  { length: 40 },
+  { length: 120 },
   (_, i) => `Line ${i + 1}: the transcript needs enough height to actually overflow the viewport. `
 ).join('\n\n');
 

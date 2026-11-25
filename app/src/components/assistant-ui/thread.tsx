@@ -34,6 +34,7 @@ import {
 import { onComposerPrefill } from '@/features/conversations/tools/mcpUi/composerPrefill';
 import { McpWidgetStrip } from '@/features/conversations/tools/mcpUi/McpWidgetStrip';
 import { collectMessageWidgets } from '@/features/conversations/tools/mcpUi/messageWidgets';
+import { MessageVoiceNote, useMessageVoiceNote } from '@/features/voiceNotes/MessageVoiceNote';
 import { useT } from '@/lib/i18n/I18nContext';
 import { CHAT_ERROR_METADATA_KEY } from '@/store/threadSlice';
 import { fullTimestamp, relativeTime } from '@/utils/relativeTime';
@@ -623,6 +624,52 @@ const ThreadScrollToBottom: FC = () => {
   return <ScrollAnchor label={t('chat.message.scrollToBottom')} />;
 };
 
+const ChannelMessageActivity: FC = () => {
+  const metadata = useAuiState(state => state.message.metadata?.custom) as
+    | { extraMetadata?: Record<string, unknown> }
+    | undefined;
+  const activity = metadata?.extraMetadata?.channelActivity;
+  if (!activity || typeof activity !== 'object') return null;
+  const value = activity as {
+    reactions?: Array<{ value?: unknown; customEmojiId?: unknown }> | Record<string, unknown>;
+    readReceipts?: unknown[] | Record<string, unknown>;
+  };
+  const storedItems = (items: unknown): unknown[] => {
+    if (Array.isArray(items)) return items;
+    if (items && typeof items === 'object') return Object.values(items);
+    return [];
+  };
+  const reactionCounts = new Map<string, number>();
+  for (const reaction of storedItems(value.reactions)) {
+    if (!reaction || typeof reaction !== 'object') continue;
+    const item = reaction as { value?: unknown };
+    if (typeof item.value !== 'string' || item.value.length === 0) continue;
+    reactionCounts.set(item.value, (reactionCounts.get(item.value) ?? 0) + 1);
+  }
+  const readCount = storedItems(value.readReceipts).length;
+  if (reactionCounts.size === 0 && readCount === 0) return null;
+  return (
+    <div data-slot="aui_channel-message-activity" className="mt-1 flex flex-wrap gap-1">
+      {[...reactionCounts].map(([reaction, count]) => (
+        <span
+          key={reaction}
+          data-testid="channel-message-reaction"
+          className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs">
+          {reaction} {count}
+        </span>
+      ))}
+      {readCount > 0 && (
+        <span
+          data-testid="channel-message-read-receipts"
+          aria-hidden="true"
+          className="text-muted-foreground px-1 py-0.5 text-xs">
+          ✓✓ {readCount}
+        </span>
+      )}
+    </div>
+  );
+};
+
 const ThreadWelcome: FC = () => {
   const { t } = useT();
   return (
@@ -1170,6 +1217,7 @@ const StoppedRunSlot: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  const voiceNote = useMessageVoiceNote();
   const {
     ToolFallback: ToolFallbackComponent = ToolFallback,
     ActivityGroup = DefaultActivityGroup,
@@ -1298,6 +1346,12 @@ const AssistantMessage: FC = () => {
             <MessageArtifacts />
           </div>
         )}
+        {voiceNote ? (
+          <div data-slot="aui_assistant-message-voice-note" className="mt-2">
+            <MessageVoiceNote note={voiceNote} withTranscript={false} />
+          </div>
+        ) : null}
+        <ChannelMessageActivity />
       </div>
 
       <div
@@ -1485,6 +1539,7 @@ const UserImagePart: ImageMessagePartComponent = part => (
 );
 
 const UserMessage: FC = () => {
+  const voiceNote = useMessageVoiceNote();
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
@@ -1504,9 +1559,13 @@ const UserMessage: FC = () => {
               `Text` component here that renders as raw syntax and is sent to the
               model verbatim. Assistant text is unaffected: it renders through
               `MarkdownText` on the part switch below, a different slot. */}
-          <MessagePrimitive.Parts
-            components={{ Text: DirectiveText, File: UserFilePart, Image: UserImagePart }}
-          />
+          {voiceNote ? (
+            <MessageVoiceNote note={voiceNote} withTranscript />
+          ) : (
+            <MessagePrimitive.Parts
+              components={{ Text: DirectiveText, File: UserFilePart, Image: UserImagePart }}
+            />
+          )}
         </div>
         <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
           <UserActionBar />
@@ -1517,6 +1576,7 @@ const UserMessage: FC = () => {
         data-slot="aui_user-branch-picker"
         className="col-span-full col-start-1 -me-1 justify-end"
       />
+      <ChannelMessageActivity />
     </MessagePrimitive.Root>
   );
 };

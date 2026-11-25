@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::storage::fence::{fence_error, FenceError, LeaseFence, ScopeMatch};
-use crate::storage::lease::{DocumentLeases, LeaseGrant, LeaseStore};
+use crate::storage::lease::{DocumentLeases, LeaseGrant, LeaseStore, LocalLeases};
 use serde_json::json;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -72,6 +72,60 @@ impl Node {
 
 fn shared() -> crate::storage::test_support::SqliteBackend {
     crate::storage::test_support::sqlite_backend().unwrap()
+}
+
+#[tokio::test]
+async fn a_file_lease_guards_profile_handles_until_release() {
+    let shared = shared();
+    let root = tempfile::tempdir().unwrap();
+    let leases: Arc<dyn LeaseStore> = Arc::new(LocalLeases::new(root.path(), "node-a"));
+    let grant = leases.acquire("alice", 0).await.unwrap();
+    let fences = Arc::new(FenceRegistry::new(crate::storage::fence::system_now_ms));
+    let fence = Arc::new(LeaseFence::new(
+        Arc::clone(&leases),
+        "alice",
+        "node-a",
+        grant.epoch,
+        grant.expires_at_ms,
+        0,
+        vec![ScopeMatch::Exact("profile:alice".into())],
+    ));
+    fences.register(Arc::clone(&fence));
+    let backend = FencedBackend::new(Arc::clone(&shared.backend), Arc::clone(&fences));
+    let scope = Scope::new("profile:alice").unwrap();
+    let storage = backend.for_scope(&scope).unwrap();
+    storage
+        .documents()
+        .ensure_collection(&CollectionSpec::new("items"))
+        .await
+        .unwrap();
+    storage
+        .documents()
+        .put(
+            "items",
+            "during-lease",
+            json!({"ok": true}),
+            Precondition::Absent,
+        )
+        .await
+        .unwrap();
+
+    fences.retire("alice", grant.epoch);
+    leases.release(grant).await.unwrap();
+    let error = storage
+        .documents()
+        .put(
+            "items",
+            "after-release",
+            json!({"ok": false}),
+            Precondition::Absent,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        fence_error(&error),
+        Some(FenceError::Fenced { .. })
+    ));
 }
 
 #[tokio::test]
@@ -174,7 +228,11 @@ async fn a_cached_handle_cannot_mutate_after_cross_process_takeover_on_any_port(
         .await
         .is_err());
     assert!(storage.kv().put("key", json!(1)).await.is_err());
-    assert!(!storage.queues().ack("work", &receipt).await.unwrap());
+    let error = storage.queues().ack("work", &receipt).await.unwrap_err();
+    assert!(matches!(
+        fence_error(&error),
+        Some(FenceError::Fenced { .. })
+    ));
 
     let raw = shared
         .backend
@@ -257,3 +315,89 @@ async fn captured_profile_sweeps_cannot_follow_a_replacement_epoch() {
 
 #[path = "fenced_backend_upstream_tests.rs"]
 mod upstream_tests;
+
+#[tokio::test]
+async fn fenced_handles_declare_collections_on_a_backend_that_refuses_conditioned_declarations() {
+    // Leases kept in the backend put a driver condition on every profile
+    // handle; MongoDB refuses to declare collections under one (#8422).
+    let shared = shared();
+    let refusing = crate::storage::test_support::refusing_conditioned_declarations(Arc::clone(
+        &shared.backend,
+    ));
+    let node = Node::new("node-a", Arc::clone(&refusing));
+    let (_grant, fence) = node.acquire("alice").await;
+    assert!(
+        fence.write_condition().is_some(),
+        "a lease kept in the backend has a driver condition"
+    );
+    let storage = node.storage();
+    let spec = CollectionSpec::new("declared_under_lease");
+    storage.documents().ensure_collection(&spec).await.unwrap();
+    storage
+        .documents()
+        .validate_collection_spec(&spec)
+        .await
+        .unwrap();
+    storage
+        .documents()
+        .put(
+            "declared_under_lease",
+            "row",
+            json!({}),
+            Precondition::Absent,
+        )
+        .await
+        .unwrap();
+
+    // An import claim on top of the lease (an admitted profile's import),
+    // taken through the fenced backend and released before it is used, so
+    // its condition no longer holds.
+    let profile = Scope::new("profile:alice").unwrap();
+    let fenced: Arc<dyn StorageBackend> = Arc::new(FencedBackend::new(
+        Arc::clone(&refusing),
+        Arc::clone(&node.fences),
+    ));
+    let claims = crate::storage::documents::Repo::on(
+        &fenced,
+        &crate::storage::Scope::from(profile.clone()),
+        "fence-claim-test",
+        Vec::new,
+    )
+    .unwrap();
+    let stale = tokio::task::spawn_blocking(move || {
+        crate::storage::import_state::with_claim(&claims, "fence_test", "import", |condition| {
+            Ok(condition.clone())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .expect("the claim is free");
+
+    let conditioned = node
+        .backend
+        .for_scope_conditioned(&profile, &stale)
+        .unwrap();
+    let docs = conditioned.documents();
+    docs.ensure_collection(&CollectionSpec::new("declared_under_claim"))
+        .await
+        .expect("a lease and a lost claim may still declare a collection");
+    let written = docs
+        .put(
+            "declared_under_claim",
+            "stale",
+            json!({}),
+            Precondition::Absent,
+        )
+        .await;
+    assert!(
+        written.is_err(),
+        "a lost claim cannot write under the lease"
+    );
+    assert!(storage
+        .documents()
+        .get("declared_under_claim", "stale")
+        .await
+        .unwrap()
+        .is_none());
+}

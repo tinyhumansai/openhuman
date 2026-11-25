@@ -20,6 +20,9 @@
 //!   within a parent agent's tool loop, enabling hierarchical delegation.
 pub use crate::attachments::HostAttachment;
 pub mod bus;
+/// `openhuman agent ...`: the developer CLI that dumps and sizes agent
+/// prompts, and the prompt-dump helpers `agent.context_breakdown` reuses.
+pub mod cli;
 pub mod context;
 pub(crate) mod cost;
 pub mod goals;
@@ -51,6 +54,9 @@ pub(crate) mod registration;
 /// session runtime. Generic history, transcript delta, prefix and tool
 /// snapshots are owned by `tinyagents-runtime`.
 pub mod session_host;
+/// Shared keyed leases preventing distinct host runners from checking out the
+/// same durable conversation concurrently.
+pub(crate) mod session_lease;
 /// Product-specific adapters around `tinyagents_orchestration::subagent`.
 /// Generic lifecycle ordering and task-key coalescing live in TinyAgents;
 /// definitions, prompts, tools, policy, checkpoints and progress remain here.
@@ -62,8 +68,16 @@ pub mod tinyagents;
 pub mod tools;
 /// Explicit per-turn host environment handed to the session an entry point runs.
 pub mod turn_env;
+/// Trusted host execution shared by web, native channels and other inbound
+/// surfaces. Presentation and delivery remain adapters at each surface.
+pub(crate) mod turn_host;
+/// Shared idle and backstop policy for top-level agent turns.
+pub(crate) mod turn_policy;
+/// Canonical mechanical projection from agent progress to channel output
+/// events, shared by web and native channel adapters.
+pub(crate) mod turn_progress;
 #[allow(unused_imports)]
 pub use session_host::{
-    HostOnlyToolPolicy, HostTools, HostTurnTools, OpenHumanSessionHost, SessionHostBuilder,
-    TurnContext, TurnOverrides,
+    CompactOptions, CompactOutcome, HostTools, HostTurnTools, MemoryBlockPrewarm,
+    OpenHumanSessionHost, SessionHostBuilder, TurnContext, TurnOverrides,
 };

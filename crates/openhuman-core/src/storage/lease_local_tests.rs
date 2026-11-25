@@ -35,6 +35,40 @@ async fn doctor_holder_inspection_does_not_create_a_lock_file() {
 }
 
 #[tokio::test]
+async fn doctor_inspection_sees_a_live_holder_as_live_and_a_dead_one_as_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = LocalLeases::new(dir.path(), "a");
+    let doctor = LocalLeases::new(dir.path(), "doctor");
+    let grant = a.acquire("k", 0).await.unwrap();
+
+    let live = doctor.holder_readonly("k").await.unwrap().unwrap();
+    assert_eq!(live.owner, "a");
+    assert!(live.is_live(0), "a held lock is a live holder");
+
+    // The lock is free again but the record says "not released": its holder
+    // died, so the record no longer excludes anyone.
+    a.release(grant).await.unwrap();
+    fs::write(
+        local_dir(dir.path(), "k").join(RECORD_FILE),
+        serde_json::to_vec(&LeaseRecord {
+            owner: "a".into(),
+            endpoint: None,
+            epoch: 1,
+            expires_at_ms: u64::MAX,
+            released: false,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let dead = doctor.holder_readonly("k").await.unwrap().unwrap();
+    assert_eq!(dead.owner, "a");
+    assert!(
+        !dead.is_live(0),
+        "a free lock under an unreleased record is dead"
+    );
+}
+
+#[tokio::test]
 async fn a_second_instance_on_one_root_is_held_out() {
     let dir = tempfile::tempdir().unwrap();
     let (a, b) = (
@@ -157,4 +191,52 @@ async fn a_failed_release_write_keeps_the_lock_and_the_holding() {
         other => panic!("expected Held, got {other:?}"),
     }
     a.release(grant).await.unwrap();
+}
+
+#[tokio::test]
+async fn acquire_rides_out_a_transient_inspection_lock() {
+    // The doctor's `holder_readonly` (often another process) checks liveness
+    // by taking the lock for an instant; an `acquire` landing in that window
+    // must not report the dead previous owner as the holder.
+    const KEY: &str = "probe-race";
+    let dir = tempfile::tempdir().unwrap();
+    let key_dir = local_dir(dir.path(), KEY);
+    fs::create_dir_all(&key_dir).unwrap();
+    fs::write(
+        key_dir.join(RECORD_FILE),
+        serde_json::to_vec(&LeaseRecord {
+            owner: "dead-node".into(),
+            endpoint: None,
+            epoch: 1,
+            expires_at_ms: u64::MAX,
+            released: false,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let probe = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(key_dir.join(LOCK_FILE))
+        .unwrap();
+    probe.try_lock_exclusive().unwrap();
+    // Release the stand-in probe only after this test's own `acquire` has met
+    // it contended (keyed, so other tests' retries can't trigger it), so the
+    // test always exercises the retry rather than racing a timer.
+    let met = || CONTENDED_KEYS.lock().unwrap().iter().any(|k| k == KEY);
+    let release = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !met() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        FileExt::unlock(&probe).unwrap();
+    });
+
+    let grant = LocalLeases::new(dir.path(), "b").acquire(KEY, 0).await;
+    release.join().unwrap();
+    let grant = grant.expect("a probe-length lock must not refuse the acquire");
+    assert_eq!((grant.epoch, grant.previous_unclean), (2, true));
+    assert!(met(), "the acquire never met the probe lock");
 }

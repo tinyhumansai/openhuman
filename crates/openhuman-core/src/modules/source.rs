@@ -87,6 +87,16 @@ pub fn local_artifact(id: &str) -> Option<PathBuf> {
     std::env::split_paths(&dirs).find_map(|dir| module_artifact_in(&dir, id))
 }
 
+/// Find a staged release artifact for tests that must verify published-module
+/// behavior, without preferring a local source build.
+#[doc(hidden)]
+#[must_use]
+pub fn staged_artifact(id: &str) -> Option<PathBuf> {
+    super::registry::find(id)?;
+    let dirs = std::env::var_os("OPENHUMAN_MODULE_PATH")?;
+    std::env::split_paths(&dirs).find_map(|dir| module_artifact_in(&dir, id))
+}
+
 /// Find either a locally built library or a released TinyBus module in one
 /// directory. Source builds use the crate library name; release archives use
 /// the module ABI name, which adds the `_module` suffix.
@@ -96,6 +106,12 @@ fn module_artifact_in(dir: &Path, id: &str) -> Option<PathBuf> {
     if source.is_file() {
         return Some(source);
     }
+
+    released_artifact_in(dir, id)
+}
+
+fn released_artifact_in(dir: &Path, id: &str) -> Option<PathBuf> {
+    super::registry::find(id)?;
 
     let released_name = if cfg!(target_os = "windows") {
         format!("{id}_module.dll")

@@ -1,38 +1,49 @@
-//! Digest gate for tests that load the published TinyFlows v0.8.29 module.
+//! Digest gate for tests that load the published TinyFlows v0.9.5 module.
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-const V0_8_29_MODULE_HASHES: &[&str] = &[
-    "04c3d8b0657719f9a5713bbe9bbad4554cd7e470a8c45e9119a60ab97c91c747",
-    "9e817d9d956f62e287bf049eb37ec538d54128e27ed2679d2e61059a6fd4050e",
-    "978d81646090706ef9b8007e024680b1c4f955e4f13d96546e7d2230bf1766dd",
-    "99638f3f299bb49c727b397c9420b937872e76026817630cfd8e182cbe504dcb",
-    "5dbe57f3cc3f2292eabaa085d8e4e33725f1071b15713ea343cae21eb4f513f3",
-    "3a9433c4d5bf955a5041cdcdc6bdc11b77a92b689161b6708f2e12e962fc2342",
-    "369378ca0b2cb340d127e04eb21e53d84dfc2f9248124a0e01b6285a9a208e54",
-    "bec7f05ac03851dfef4ae21147f3cb296f86e14f2907b1d1353451dbcd61414b",
-    "bd9de15b4072ba94acb120a607e0bdf5b50c93cb6769577e16bd826df4bbd3a0",
-    "58ca60ae95de633db68937e797284d908c1b36c7188e9c1fa39b86badf14d213",
-    "a0b3afdfb33745bae2a91cddb59ff4f02ceb6ed8157a4ea803350181b7ea3bdf",
+const V0_9_5_MODULE_HASHES: &[&str] = &[
+    // tinyflows-module-0.9.5-macos-15-arm64.tar.gz
+    "11a25c86bc23cae06766f4fcdfa206886735a407c29d115ec37127752bd76d45",
+    // tinyflows-module-0.9.5-macos-15-x86_64.tar.gz
+    "e519baae32a05f66e4d394cc97a5d77dbd6a205d68ddc3a8bf87af0592bdd6f0",
+    // tinyflows-module-0.9.5-macos-26-arm64.tar.gz
+    "90fcee41304eb7390024df346e0a223b607dda6e61830f50cef3cbb87f67ac84",
+    // tinyflows-module-0.9.5-macos-26-x86_64.tar.gz
+    "a7e4604bec9436a189f83c94787475c5df91bf314721ab239927b695a01d8c05",
+    // tinyflows-module-0.9.5-ubuntu-22.04-arm64.tar.gz
+    "c5bfc95cdbc4087efa0c451c3c75237f39e6eb087f3e68f020a6c593912fba5e",
+    // tinyflows-module-0.9.5-ubuntu-22.04-x86_64.tar.gz
+    "38733f7c6618567851fe327184c1f2ed2443ed4458896973f8950c91bf318824",
+    // tinyflows-module-0.9.5-ubuntu-24.04-arm64.tar.gz
+    "fcb38ed6aa6f1317363b8d2b965cf21bb1047eeb09970b631bf7807b0ef4c4b4",
+    // tinyflows-module-0.9.5-ubuntu-24.04-x86_64.tar.gz
+    "9cd8a93c94595e92afafd9c9c4820f76afa8347da4c3dfb97c27b7f1ee1691f9",
+    // tinyflows-module-0.9.5-windows-11-arm64.zip
+    "9d7eff99566ff1e54cf66e188e0948335ca4a0ceb19c6697f389b7dd3a52a2be",
+    // tinyflows-module-0.9.5-windows-2022-x86_64.zip
+    "cdbbd6fb591cf52e995936a9fc6559c8d1de06b2342635993bf315973f7dfd8c",
+    // tinyflows-module-0.9.5-windows-2025-x86_64.zip
+    "89b981fd1b7b2441e6670438d5c75ebc3a20456a33211f5c5b57602930e79e67",
 ];
 
-/// Finds the staged platform artifact and confirms it matches a published v0.8.29 bundle.
-pub fn staged_v0_8_29_module() -> (PathBuf, String) {
+/// Finds the staged platform artifact and confirms it matches a published v0.9.5 bundle.
+pub fn staged_v0_9_5_module() -> (PathBuf, String) {
     let artifact = openhuman_core::modules::local_artifact("tinyflows")
-        .expect("stage the published TinyFlows v0.8.29 module on OPENHUMAN_MODULE_PATH");
-    let digest = verify_v0_8_29_module(&artifact);
+        .expect("stage the published TinyFlows v0.9.5 module on OPENHUMAN_MODULE_PATH");
+    let digest = verify_v0_9_5_module(&artifact);
     (artifact, digest)
 }
 
-/// Confirms `artifact` is one of the public platform bundles for v0.8.29.
-pub fn verify_v0_8_29_module(artifact: &Path) -> String {
+/// Confirms `artifact` is one of the public platform bundles for v0.9.5.
+pub fn verify_v0_9_5_module(artifact: &Path) -> String {
     let digest = hex::encode(Sha256::digest(
         std::fs::read(artifact).expect("read staged TinyFlows native artifact"),
     ));
     assert!(
-        V0_8_29_MODULE_HASHES.contains(&digest.as_str()),
-        "staged TinyFlows library is not a published v0.8.29 module: {} sha256={digest}",
+        V0_9_5_MODULE_HASHES.contains(&digest.as_str()),
+        "staged TinyFlows library is not a published v0.9.5 module: {} sha256={digest}",
         artifact.display()
     );
     digest

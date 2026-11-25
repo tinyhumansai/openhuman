@@ -24,9 +24,9 @@ inference = ["openhuman-embed/inference"]
 documents = ["openhuman-embed/documents"]
 hosting = ["openhuman-embed/hosting"]
 oci-principals = ["openhuman-embed/oci-principals"]
-tinymemes = ["openhuman-embed/tinymemes"]
 inbound-queues = ["openhuman-embed/inbound-queues"]
 modules = ["openhuman-embed/modules"]
+security-module = ["openhuman-embed/security-module"]
 voice = ["openhuman-embed/voice", "dep:tinyagents-live"]
 web3 = ["openhuman-embed/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -55,9 +55,8 @@ e2e-test-support = ["openhuman-embed/e2e-test-support"]
 # `openhuman-core` edge (chain: core -> embed -> tinyhumans -> rpc -> hosts).
 openhuman-embed = { path = "../openhuman-embed", default-features = false }
 # The vendored TinyHumans SDK: the only crate in the tree that may depend on
-# it. `default-features = false` drops the Socket.IO client; realtime stays
-# on the core's own `platform::socket` transport.
-tinyhumans-sdk = { path = "../../vendor/tinyhumans-sdk", default-features = false }
+# it. The hosted socket port is implemented on the SDK supervisor.
+tinyhumans-sdk = { path = "../../vendor/tinyhumans-sdk", default-features = false, features = ["socket"] }
 # The `tool_search` ranker backed by TypeSafe's Jev, reached through the
 # backend's `/agent-integrations/openrouter/systemone` proxy with the same
 # credential every other backend call uses. Same vendored tree as the core's
@@ -81,6 +80,7 @@ async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 log = "0.4"
+parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -104,6 +104,11 @@ tinymemory-integrations = { path = "../../vendor/tinymemory/crates/tinymemory-in
 # video generators, over the same vendored crates the core's harness uses.
 tinyinference-image = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-image", optional = true }
 tinyinference-video = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-video", optional = true }
+# The Langfuse usage-data trace sink (`observability::langfuse_sink`): the
+# OTLP projection and proxy client. Same vendored path as the core's, which
+# builds it with default features (Langfuse included), so one copy resolves.
+# The managed-model stream tests also replay SSE through its harness loop.
+tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false, features = ["langfuse"] }
 directories = "6"
 urlencoding = "2.1"
 tracing = "0.1"
@@ -118,13 +123,20 @@ url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "native-tls"] }
 
 [dev-dependencies]
+# `test-keyring-consent` lets the suite answer TinySecurity's prompts as
+# openhuman-cli's does; dev-dependency features never reach a shipped build.
+openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false, features = ["test-keyring-consent"] }
+# Library-runtime tests use the embed facade's in-memory session provider.
+openhuman-embed = { path = "../openhuman-embed", features = ["testkit", "storage-sqlite"] }
 # The core's own axum feature set: axum's defaults would switch on extra axum,
 # tower and tracing features and force a separate core build (see below).
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }
 tempfile = "3"
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false }
-# The managed-model stream tests replay SSE through the real harness loop.
-tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
+# The in-memory session stores (`testkit`) the tests hand to a runtime. Same
+# features as openhuman-embed's and openhuman-cli's dev-dependency, so the dev
+# graphs stay equal (see the unification note below).
+tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["testkit"] }
 futures = "0.3"
 tokio = { version = "1", features = ["full", "test-util"] }
 wiremock = "0.6"

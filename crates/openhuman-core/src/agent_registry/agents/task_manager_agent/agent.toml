@@ -1,6 +1,5 @@
 id = "task_manager_agent"
 display_name = "Task Manager Agent"
-delegate_name = "manage_tasks"
 when_to_use = "Task-source and artifact specialist: proactive feeds from GitHub/Linear/Notion/ClickUp, and workspace artifacts. Use when the user asks to add, preview, fetch, update, remove or summarize task sources or artifacts."
 temperature = 0.2
 max_iterations = 8

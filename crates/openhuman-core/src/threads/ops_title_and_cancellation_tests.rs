@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 #[tokio::test]
 async fn thread_update_title_persists_new_title() {
@@ -25,6 +26,126 @@ async fn thread_update_title_persists_new_title() {
         "title must be trimmed and persisted"
     );
     assert_eq!(summary.id, thread_id);
+}
+
+/// The stored thread `thread_id` as it now stands.
+async fn stored_thread(thread_id: &str) -> ConversationThread {
+    let dir = crate::config::Config::load_or_init()
+        .await
+        .expect("load config")
+        .workspace_dir;
+    conversations_store::blocking::list_threads(DispatchCtx::ambient(), dir)
+        .await
+        .expect("list threads")
+        .into_iter()
+        .find(|thread| thread.id == thread_id)
+        .expect("thread exists")
+}
+
+/// Title generation reads the thread, then waits seconds on the model. A rename
+/// the user makes in that window must survive the generated title (#8134).
+#[tokio::test]
+async fn a_generated_title_does_not_overwrite_a_rename_made_while_titling() {
+    let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "t-rename-while-titling";
+    create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
+    let observed = stored_thread(thread_id).await;
+
+    thread_update_title(
+        &DispatchCtx::ambient(),
+        crate::threads::UpdateConversationThreadTitleRequest {
+            thread_id: thread_id.to_string(),
+            title: "Bug Test 2026".to_string(),
+        },
+    )
+    .await
+    .expect("rename");
+
+    let returned = crate::threads::ops::support::update_title_unless_renamed(
+        &DispatchCtx::ambient(),
+        workspace_dir_for_test().await,
+        observed,
+        "Summarized notes".to_string(),
+        "check my notes",
+    )
+    .await
+    .expect("title write");
+    assert_eq!(
+        returned.title, "Bug Test 2026",
+        "the caller sees the rename"
+    );
+    assert_eq!(
+        stored_thread(thread_id).await.title,
+        "Bug Test 2026",
+        "the generated title is not stored over the rename"
+    );
+}
+
+#[tokio::test]
+async fn a_generated_title_replaces_an_untouched_placeholder() {
+    let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "t-untouched-placeholder";
+    create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
+    let observed = stored_thread(thread_id).await;
+
+    let returned = crate::threads::ops::support::update_title_unless_renamed(
+        &DispatchCtx::ambient(),
+        workspace_dir_for_test().await,
+        observed,
+        "Summarized notes".to_string(),
+        "check my notes",
+    )
+    .await
+    .expect("title write");
+    assert_eq!(returned.title, "Summarized notes");
+    assert_eq!(stored_thread(thread_id).await.title, "Summarized notes");
+}
+
+/// Two titling calls can both read the placeholder; the interim title the
+/// first one writes is not a rename and the second still replaces it.
+#[tokio::test]
+async fn a_generated_title_replaces_an_interim_title_written_meanwhile() {
+    let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
+    let thread_id = "t-interim-meanwhile";
+    create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
+    let observed = stored_thread(thread_id).await;
+    let interim = tinyagents_harness::title::title_from_user_message("check my notes")
+        .expect("interim title");
+
+    thread_update_title(
+        &DispatchCtx::ambient(),
+        crate::threads::UpdateConversationThreadTitleRequest {
+            thread_id: thread_id.to_string(),
+            title: interim,
+        },
+    )
+    .await
+    .expect("interim write");
+
+    let returned = crate::threads::ops::support::update_title_unless_renamed(
+        &DispatchCtx::ambient(),
+        workspace_dir_for_test().await,
+        observed,
+        "Summarized notes".to_string(),
+        "check my notes",
+    )
+    .await
+    .expect("title write");
+    assert_eq!(returned.title, "Summarized notes");
+    assert_eq!(stored_thread(thread_id).await.title, "Summarized notes");
+}
+
+async fn workspace_dir_for_test() -> std::path::PathBuf {
+    crate::config::Config::load_or_init()
+        .await
+        .expect("load config")
+        .workspace_dir
 }
 
 #[tokio::test]

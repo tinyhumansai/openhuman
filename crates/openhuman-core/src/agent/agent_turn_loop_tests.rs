@@ -196,6 +196,10 @@ async fn turn_handles_unknown_tool_gracefully() {
 
 #[tokio::test(start_paused = true)]
 async fn turn_recovers_from_tool_failure_and_tool_error() {
+    // The subject is tool recovery, not the input screen. A module-bus scan
+    // would leave this paused runtime idle, so its clock would jump to the
+    // turn deadline before TinySecurity answered.
+    let _scan = crate::security::prompt_injection::install_allowing_prompt_scan();
     let cases: [(&str, Box<dyn Tool>); 2] = [
         ("fail", Box::new(FailingTool)),
         ("panicker", Box::new(PanickingTool)),
@@ -339,6 +343,7 @@ async fn turn_errors_on_empty_or_null_text_response() {
             tool_calls: vec![],
             usage: None,
             reasoning_content: None,
+            finish_reason: None,
         };
         let provider = Arc::new(ScriptedProvider::new(vec![empty(), empty()]));
         let script = Arc::clone(&provider);
@@ -378,6 +383,7 @@ async fn turn_preserves_text_alongside_tool_calls() {
             }],
             usage: None,
             reasoning_content: None,
+            finish_reason: None,
         },
         text_response("Here are the results"),
     ]));
@@ -468,6 +474,7 @@ async fn e2e_native_loop_executes_text_fallback_tool_calls_and_persists_history(
             tool_calls: vec![],
             usage: None,
             reasoning_content: None,
+            finish_reason: None,
         },
         text_response("Completed via tool"),
     ]));

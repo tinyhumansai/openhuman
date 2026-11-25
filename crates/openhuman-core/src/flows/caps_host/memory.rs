@@ -36,16 +36,16 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::config::Config;
+#[cfg(test)]
+use crate::core::runtime::turn_origin;
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use crate::flows::{
     cross_flow_filter, flow_filter, flow_key_of, flow_key_tag, forget_matching, remember_keyed,
     FLOWS_TAG,
 };
 use crate::memory::types::{FetchParams, RecallParams};
-use crate::security::approval::{redact_args, summarize_action, GateOutcome};
+use crate::security::approval::{summarize_action, GateOutcome};
 use crate::security::policy::CommandClass;
-#[cfg(test)]
-use crate::security::turn_origin;
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use crate::security::SecurityPolicy;
 use tinymemory_api::wrap_untrusted_for_agent;
 use tinymemory_api::Error;
@@ -156,14 +156,13 @@ impl OpenHumanMemory {
         )
         .await?;
         let summary = summarize_action(&tool_name, action);
-        let redacted = redact_args(action);
         let (outcome, audit_id) = gate_call_for_tier(
             &self.ctx,
             &self.approval,
             tier_decision,
             &tool_name,
             &summary,
-            redacted,
+            action.clone(),
         )
         .await;
         if let GateOutcome::Deny { reason } = outcome {

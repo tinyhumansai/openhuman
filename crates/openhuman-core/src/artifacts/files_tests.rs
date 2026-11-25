@@ -251,8 +251,19 @@ async fn tampered(workspace: &Path, file: &Path, file_root: &Path) -> String {
         .unwrap_err()
 }
 
+/// TinySecurity's protected floor answers no path as protected, so a case
+/// exercises the guard's own checks: with no module to ask, the floor fails
+/// closed and refuses every path before the guard under test runs.
+#[cfg(feature = "security-module")]
+fn open_floor() -> crate::modules::security::gap::PathFloorPortGuard {
+    use crate::modules::security::gap::{install_path_floor_port, ScriptedPathFloorPort};
+    install_path_floor_port(ScriptedPathFloorPort::new([], Vec::new()))
+}
+
 #[tokio::test]
 async fn the_escape_guard_rejects_a_file_outside_its_folder() {
+    #[cfg(feature = "security-module")]
+    let _floor = open_floor();
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -274,10 +285,16 @@ async fn the_escape_guard_keeps_the_credential_store_floor() {
     std::fs::create_dir_all(&ssh).unwrap();
     let key = ssh.join("id_ed25519");
     std::fs::write(&key, b"-----BEGIN").unwrap();
+    // TinySecurity's floor answers that the key is a credential store.
+    #[cfg(feature = "security-module")]
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([key.clone()], Vec::new()),
+    );
 
-    // Even a record whose root claims the key's parent is refused.
+    // Even a record whose root claims the key's parent is refused, by the floor
+    // (its own message), before the containment check runs.
     let err = tampered(tmp.path(), &key, tmp.path()).await;
-    assert!(err.contains("escape guard"), "{err}");
+    assert!(err.contains("protected location"), "{err}");
 }
 
 #[cfg(unix)]
@@ -315,6 +332,8 @@ async fn a_legacy_record_still_resolves_under_the_workspace() {
 /// guard must reject `..` components rather than rely on `starts_with`.
 #[tokio::test]
 async fn a_legacy_path_with_parent_components_is_rejected() {
+    #[cfg(feature = "security-module")]
+    let _floor = open_floor();
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::write(tmp.path().join("secret.txt"), b"private").unwrap();
@@ -431,4 +450,43 @@ async fn a_previously_trusted_folder_still_resolves() {
         .await
         .unwrap_err();
     assert!(err.contains("not a files folder"), "{err}");
+}
+
+/// A legacy record goes through the same escape guard: a symlink placed at its
+/// path must not serve a file from outside `artifacts/`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_legacy_record_symlinked_out_of_the_artifacts_root_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let secret = tmp.path().join("secret.txt");
+    std::fs::write(&secret, b"private").unwrap();
+    let meta = legacy_meta("legacy-3", "legacy-3/x.txt");
+    save_artifact_meta(tmp.path(), &meta).await.unwrap();
+    std::fs::create_dir_all(tmp.path().join("artifacts/legacy-3")).unwrap();
+    std::os::unix::fs::symlink(&secret, tmp.path().join("artifacts/legacy-3/x.txt")).unwrap();
+
+    let read = read_artifact_bytes(tmp.path(), tmp.path(), "legacy-3").await;
+    assert!(
+        read.is_err(),
+        "legacy symlink served: {:?}",
+        read.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    );
+}
+
+/// An embedder may pass a relative workspace; a legacy record must still
+/// resolve through the escape guard, which only accepts absolute paths.
+#[tokio::test]
+async fn a_legacy_record_in_a_relative_workspace_still_resolves() {
+    let tmp = tempfile::Builder::new()
+        .prefix("artifacts-relative-ws-")
+        .tempdir_in(".")
+        .unwrap();
+    let ws = Path::new(tmp.path().file_name().unwrap());
+    let meta = legacy_meta("legacy-4", "legacy-4/x.txt");
+    save_artifact_meta(ws, &meta).await.unwrap();
+    std::fs::create_dir_all(ws.join("artifacts/legacy-4")).unwrap();
+    std::fs::write(ws.join("artifacts/legacy-4/x.txt"), b"abc").unwrap();
+
+    let bytes = read_artifact_bytes(ws, ws, "legacy-4").await.unwrap();
+    assert_eq!(bytes, b"abc");
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::credentials::profiles::PROFILES_FILENAME;
 use crate::security::secret_storage::{
     clear_master_key_source, install_master_key_source, MasterKeySource, SecretStorageError,
 };
@@ -52,19 +53,19 @@ async fn a_migration_moves_the_credential_files_into_encrypted_secrets() {
         panic!("expected a migration");
     };
     clear_master_key_source();
-    for (file, secret) in FILES {
+    for &(file, secret) in FILES {
         assert!(
             !fx.target.profile_dir.join(file).exists(),
             "{file} is deleted once archived"
         );
         assert!(report.deleted.contains(&format!("{PROFILE_PREFIX}{file}")));
-        let expected = if file == PROFILES_FILENAME {
-            PROFILES
-        } else {
-            HTTP
-        };
-        assert_eq!(stored(&fx, secret).await.unwrap(), expected.as_bytes());
+        assert_eq!(stored(&fx, secret).await.unwrap(), HTTP.as_bytes());
     }
+    assert_eq!(
+        std::fs::read_to_string(fx.target.profile_dir.join(PROFILES_FILENAME)).unwrap(),
+        PROFILES,
+        "auth profiles stay in their profile-local encrypted file"
+    );
     // storage.db never holds the plaintext
     let db = std::fs::read(fx.target.storage_db()).unwrap();
     assert!(!db.windows(11).any(|w| w == b"openai:defa"));
@@ -93,7 +94,7 @@ async fn a_stored_record_under_another_key_stops_the_migration_and_keeps_the_fil
     let scoped = backend.for_scope(&scope).unwrap();
     let other = Arc::new(DerivedKeys::new(Zeroizing::new([0x99; 32])));
     storage::secrets::over(&scoped, scope, other)
-        .set(PROFILES_SECRET_NAME, b"{}")
+        .set(STORAGE_SECRET_NAME, b"{}")
         .await
         .unwrap();
     drop(backend);
@@ -114,17 +115,18 @@ async fn a_record_already_on_the_backend_wins_over_a_stale_file() {
     let scope = storage::tenant_scope(None);
     let scoped = backend.for_scope(&scope).unwrap();
     storage::secrets::over(&scoped, scope, storage::secrets::keys().unwrap())
-        .set(PROFILES_SECRET_NAME, br#"{"newer":true}"#)
+        .set(STORAGE_SECRET_NAME, br#"{"newer":true}"#)
         .await
         .unwrap();
     drop(backend);
     run(&fx).await.unwrap();
     clear_master_key_source();
     assert_eq!(
-        stored(&fx, PROFILES_SECRET_NAME).await.unwrap(),
+        stored(&fx, STORAGE_SECRET_NAME).await.unwrap(),
         br#"{"newer":true}"#
     );
-    assert!(!fx.target.profile_dir.join(PROFILES_FILENAME).exists());
+    assert!(fx.target.profile_dir.join(PROFILES_FILENAME).exists());
+    assert!(!fx.target.profile_dir.join(STORE_FILENAME).exists());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -157,10 +159,10 @@ fn a_key_is_resolvable_only_from_a_source_that_does_not_mint() {
 
 #[test]
 fn the_secret_names_match_the_stores_that_read_them() {
-    assert_eq!(PROFILES_SECRET_NAME, "file:auth-profiles.json");
     assert_eq!(STORAGE_SECRET_NAME, "file:http-credentials.json");
     assert_eq!(PROFILES_FILENAME, "auth-profiles.json");
     assert_eq!(STORE_FILENAME, "http-credentials.json");
+    assert_eq!(FILES, &[(STORE_FILENAME, STORAGE_SECRET_NAME)]);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -191,7 +193,7 @@ async fn a_resumed_dry_run_lists_what_the_finished_import_recorded() {
     install_master_key_source(Arc::new(FixedKey));
     let fx = with_credentials();
     let mut state = crate::storage::layout::state::LayoutState::new("u1", 0);
-    state.credentials = vec![PROFILES_FILENAME.to_owned()];
+    state.credentials = vec![STORE_FILENAME.to_owned()];
     state.done.push(crate::storage::layout::Step::Import);
     state.save(&fx.target.profile_dir).unwrap();
     let options = Options {
@@ -207,8 +209,8 @@ async fn a_resumed_dry_run_lists_what_the_finished_import_recorded() {
         .iter()
         .map(|e| e.path.as_str())
         .collect();
-    assert!(listed.contains(&"@profile/auth-profiles.json"));
-    assert!(!listed.contains(&"@profile/http-credentials.json"));
+    assert!(listed.contains(&"@profile/http-credentials.json"));
+    assert!(!listed.contains(&"@profile/auth-profiles.json"));
 }
 
 #[cfg(unix)]
@@ -217,7 +219,7 @@ async fn an_unreadable_credential_file_aborts_the_migration_before_v2_is_publish
     use std::os::unix::fs::PermissionsExt;
     install_master_key_source(Arc::new(FixedKey));
     let fx = with_credentials();
-    let path = fx.target.profile_dir.join(PROFILES_FILENAME);
+    let path = fx.target.profile_dir.join(STORE_FILENAME);
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
     if std::fs::read(&path).is_ok() {
         clear_master_key_source();

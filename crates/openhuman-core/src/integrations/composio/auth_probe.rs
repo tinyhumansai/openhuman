@@ -16,6 +16,8 @@
 /// Extracted as a free function so the regression suite can exercise
 /// the same probe the runner uses without spinning up the full
 /// `run_typed_mode` plumbing.
-pub(crate) fn user_is_signed_in_to_composio(config: &crate::config::Config) -> bool {
-    crate::integrations::composio::client::resolve_composio_route(config).is_ok()
+pub(crate) async fn user_is_signed_in_to_composio(config: &crate::config::Config) -> bool {
+    crate::integrations::composio::client::resolve_composio_route(config)
+        .await
+        .is_ok()
 }

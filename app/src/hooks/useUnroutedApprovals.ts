@@ -78,10 +78,19 @@ export interface UseUnroutedApprovalsResult {
   decide: (requestId: string, decision: ApprovalDecision) => Promise<void>;
 }
 
-export function useUnroutedApprovals(enabled = true): UseUnroutedApprovalsResult {
+/**
+ * @param enabled  Poll and return rows only while true.
+ * @param pollIntervalMs  How often to re-read the queue. A surface waiting on
+ *   a short-lived park (the Settings secret grant) asks for a faster cadence;
+ *   the shared store polls at its fastest consumer's interval.
+ */
+export function useUnroutedApprovals(
+  enabled = true,
+  pollIntervalMs: number = BACKGROUND_POLL_INTERVAL_MS
+): UseUnroutedApprovalsResult {
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const source = useFlowPendingApprovalsSource(enabled, BACKGROUND_POLL_INTERVAL_MS);
+  const source = useFlowPendingApprovalsSource(enabled, pollIntervalMs);
   const pendingApprovalByThread = useAppSelector(
     state => state.chatRuntime.pendingApprovalByThread
   );

@@ -1,6 +1,7 @@
 //! RPC controller schemas and handlers for the channels domain.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -13,8 +14,16 @@ use crate::core::Outcome;
 use super::backend::OpenHumanChannelBackend;
 use crate::channels::contract_schema::from_channel_controller_schema;
 use crate::security::credentials::channel_credential_provider;
-use tinychannels_bus::controllers::ChannelAuthMode;
-use tinychannels_bus::controllers::{all_channel_controller_schemas, channel_controller_schema};
+use tinychannels_bus::controllers::{
+    all_channel_controller_schemas, channel_controller_schema, ChannelAuthMode,
+    ChannelConnectRequest as ConnectParams, ChannelCreateThreadRequest as CreateThreadParams,
+    ChannelDescribeRequest as DescribeParams, ChannelDisconnectRequest as DisconnectParams,
+    ChannelListThreadsRequest as ListThreadsParams, ChannelSendMessageRequest as SendMessageParams,
+    ChannelSendReactionRequest as SendReactionParams, ChannelStatusRequest as StatusParams,
+    ChannelTestRequest as TestParams, ChannelUpdateThreadRequest as UpdateThreadParams,
+    DiscordCheckPermissionsRequest as DiscordCheckPermissionsParams,
+    DiscordListChannelsRequest as DiscordListChannelsParams,
+};
 
 // ---------------------------------------------------------------------------
 // Param structs
@@ -22,97 +31,8 @@ use tinychannels_bus::controllers::{all_channel_controller_schemas, channel_cont
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DescribeParams {
-    channel: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConnectParams {
-    channel: String,
-    auth_mode: String,
-    #[serde(default)]
-    credentials: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DisconnectParams {
-    channel: String,
-    auth_mode: String,
-    #[serde(default)]
-    clear_memory: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StatusParams {
-    #[serde(default)]
-    channel: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct SetDefaultParams {
     channel: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TestParams {
-    channel: String,
-    auth_mode: String,
-    credentials: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DiscordListChannelsParams {
-    guild_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DiscordCheckPermissionsParams {
-    guild_id: String,
-    channel_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SendMessageParams {
-    channel: String,
-    message: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SendReactionParams {
-    channel: String,
-    reaction: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CreateThreadParams {
-    channel: String,
-    title: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateThreadParams {
-    channel: String,
-    thread_id: String,
-    action: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ListThreadsParams {
-    channel: String,
-    #[serde(default)]
-    active: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -248,10 +168,7 @@ fn handle_connect(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFut
 
 async fn connect_with_config(config: &Config, p: ConnectParams) -> Result<Value, String> {
     let channel = p.channel.trim();
-    let mode: ChannelAuthMode = p
-        .auth_mode
-        .parse()
-        .map_err(|error: String| format!("invalid authMode: {error}"))?;
+    let mode: ChannelAuthMode = p.auth_mode;
     let creds = p.credentials.unwrap_or(Value::Object(Map::new()));
     let outcome = super::ops::connect_channel(config, channel, mode, creds).await?;
     let logs = connect_logs(channel, mode, outcome.value.auth_action.is_some());
@@ -263,10 +180,7 @@ fn handle_disconnect(ctx: DispatchCtx, params: Map<String, Value>) -> Controller
         let config = ctx.load_config().await?;
         let p = deserialize_params::<DisconnectParams>(params)?;
         let channel = p.channel.trim();
-        let mode: ChannelAuthMode = p
-            .auth_mode
-            .parse()
-            .map_err(|e: String| format!("invalid authMode: {e}"))?;
+        let mode: ChannelAuthMode = p.auth_mode;
         let backend = OpenHumanChannelBackend::new(config.clone());
         let result = backend
             .disconnect_channel(&config.channels_config, channel, mode, p.clear_memory)
@@ -328,10 +242,7 @@ fn handle_test(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture
 }
 
 async fn test_with_config(config: &Config, params: TestParams) -> Result<Value, String> {
-    let mode: ChannelAuthMode = params
-        .auth_mode
-        .parse()
-        .map_err(|e: String| format!("invalid authMode: {e}"))?;
+    let mode: ChannelAuthMode = params.auth_mode;
     to_json(
         super::ops::test_channel(config, params.channel.trim(), mode, params.credentials).await?,
     )
@@ -482,10 +393,6 @@ fn connect_logs(channel: &str, mode: ChannelAuthMode, pending_auth: bool) -> Vec
 fn raw_or_typed<T: serde::Serialize>(raw: Option<Value>, typed: &T) -> Result<Value, String> {
     raw.map(Ok)
         .unwrap_or_else(|| serde_json::to_value(typed).map_err(|e| e.to_string()))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

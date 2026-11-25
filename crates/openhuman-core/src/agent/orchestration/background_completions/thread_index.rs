@@ -21,7 +21,7 @@ pub(super) fn key(ctx: &DispatchCtx, id: &str) -> String {
 }
 
 /// Remember which workspace holds `thread_id`'s completions.
-pub(super) fn note_thread_workspace(ctx: &DispatchCtx, thread_id: &str, workspace_dir: &Path) {
+pub(crate) fn note_thread_workspace(ctx: &DispatchCtx, thread_id: &str, workspace_dir: &Path) {
     state()
         .thread_workspaces
         .insert(key(ctx, thread_id), workspace_dir.to_path_buf());

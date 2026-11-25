@@ -175,6 +175,9 @@ fn subagent_completed_persists_capped_output_on_the_activity() {
         parent_call_id: Some("call-3".into()),
     });
     m.observe(&AgentProgress::SubagentCompleted {
+        worktree_path: None,
+        changed_files: Vec::new(),
+        dirty_status: None,
         agent_id: "researcher".into(),
         task_id: "sub-3".into(),
         elapsed_ms: 5,
@@ -182,9 +185,6 @@ fn subagent_completed_persists_capped_output_on_the_activity() {
         output_chars: 11,
         usage: None,
         output: "final answer".into(),
-        worktree_path: None,
-        changed_files: Vec::new(),
-        dirty_status: None,
         stop: None,
     });
 

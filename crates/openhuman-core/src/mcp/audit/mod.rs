@@ -50,7 +50,7 @@ pub async fn record_write(
         .map_err(|error| anyhow::anyhow!("MCP module unavailable: {error}"))?;
     client
         .call(
-            &crate::mcp::host::client_config(config),
+            &crate::mcp::host::client_config(config).await,
             tinymcp_bus::names::methods::AUDIT_RECORD_WRITE,
             (record,),
         )
@@ -72,7 +72,7 @@ pub async fn list_writes(
         .map_err(|error| anyhow::anyhow!("MCP module unavailable: {error}"))?;
     client
         .call(
-            &crate::mcp::host::client_config(config),
+            &crate::mcp::host::client_config(config).await,
             tinymcp_bus::names::methods::AUDIT_LIST_WRITES,
             (query,),
         )

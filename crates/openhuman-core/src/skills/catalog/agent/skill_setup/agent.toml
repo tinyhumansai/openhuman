@@ -1,6 +1,5 @@
 id = "skill_setup"
 display_name = "Skill Setup Agent"
-delegate_name = "setup_skills"
 when_to_use = "Find, install, update or remove agent skills from the community registries. Hand it the whole request."
 temperature = 0.3
 max_iterations = 10

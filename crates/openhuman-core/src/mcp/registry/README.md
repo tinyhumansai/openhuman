@@ -20,7 +20,6 @@ RPC or agent install tool.
 | [`config_ops.rs`](./config_ops.rs) | `config_get` / `config_set` host adapter for the module-owned `mcp.json` document. |
 | `schemas/` and [`schemas_tests.rs`](./schemas_tests.rs) | OpenHuman controller schemas and dispatch. |
 | [`supervisor_events.rs`](./supervisor_events.rs) / tests | Converts module supervisor reports into OpenHuman domain events. |
-| [`bus.rs`](./bus.rs) / tests | Logs lifecycle events for observability. |
 | [`tools.rs`](./tools.rs) / tests | Maps module-provided registry tool specs to OpenHuman permissions and dispatch. |
 | [`action_tool.rs`](./action_tool.rs) / tests | Builds deferred installed-server action tools and rechecks admission before execution. |
 | [`stub.rs`](./stub.rs) | Empty/no-op registry facade when the `mcp` feature is disabled. |
@@ -39,11 +38,10 @@ serializes its open, call, and close transitions. It retains transition
 receipts across caller cancellation or lost replies so cleanup can be retried
 without exposing TinyMCP's internal service implementation to host code.
 
-`tools_safe_for_agent` is intentionally host-owned because it is the product's
-prompt-injection policy. Remote descriptions and schemas are scrubbed by the
-module before the host sees them; the host then applies this admission filter
-before advertising a tool. Execution rechecks that the configured tool is
-still present and safe.
+`tools_safe_for_agent` sends each complete remote tool definition to
+TinySecurity's `ScanToolDefinition` before advertising it. A finding or an
+unavailable scanner drops the tool; execution rechecks that the configured
+tool is still present and safe.
 
 `config_set` retains its replace semantics and existing credentials behavior:
 environment values and HTTP headers remain write-only, while reads expose

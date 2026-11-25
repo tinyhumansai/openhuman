@@ -86,6 +86,12 @@ behavior. There is no linked implementation fallback.
 - Contract crate: `tinyjuice-bus` ([`vendor/tinyjuice/crates/tinyjuice-bus`](../../../../../vendor/tinyjuice/crates/tinyjuice-bus/),
   path dependency in [`crates/openhuman-core/Cargo.toml`](../../../Cargo.toml)).
 
+`ccr_disk_enabled` projects to the bus's `ccr_durable` flag. The module's
+durable CCR data uses the host-granted storage schema; the previous
+`.tokenjuice/ccr` directory is read only by the host's guarded legacy import
+before installation and is never sent over the bus. `ccr_ttl_secs` remains a
+separate module cache retention setting.
+
 ## Further reading
 
 - [Parent module README](../README.md)

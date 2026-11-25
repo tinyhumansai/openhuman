@@ -40,7 +40,7 @@ async fn doctor_report_is_in_both_scoped_saas_dispatch_and_schema_surfaces() {
     let (unscoped_methods, unscoped_schemas) = (
         all_registered_controllers()
             .iter()
-            .map(RegisteredController::rpc_method_name)
+            .map(ControllerEntry::rpc_method_name)
             .collect::<Vec<_>>(),
         all_controller_schemas()
             .iter()
@@ -52,7 +52,7 @@ async fn doctor_report_is_in_both_scoped_saas_dispatch_and_schema_surfaces() {
             (
                 all_registered_controllers()
                     .iter()
-                    .map(RegisteredController::rpc_method_name)
+                    .map(ControllerEntry::rpc_method_name)
                     .collect::<Vec<_>>(),
                 all_controller_schemas()
                     .iter()
@@ -65,7 +65,7 @@ async fn doctor_report_is_in_both_scoped_saas_dispatch_and_schema_surfaces() {
         (
             all_registered_controllers()
                 .iter()
-                .map(RegisteredController::rpc_method_name)
+                .map(ControllerEntry::rpc_method_name)
                 .collect::<Vec<_>>(),
             all_controller_schemas()
                 .iter()

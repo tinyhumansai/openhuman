@@ -1,4 +1,4 @@
-//! Normal-host prompt composition against the checksum-verified TinyFlows v0.8.29 module.
+//! Normal-host prompt composition against the checksum-verified TinyFlows v0.9.5 module.
 
 #[path = "support/env_guard.rs"]
 mod env_guard;
@@ -8,18 +8,19 @@ mod published_tinyflows;
 mod tinyhumans_boot;
 
 use env_guard::EnvVarGuard;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
 #[cfg(feature = "skills")]
 use std::time::Duration;
 
-fn dump_published_prompt(
+fn run_prompt_dump(
     agent_id: &str,
     home: &Path,
     workspace: &Path,
-    module_search_path: &Path,
-) -> serde_json::Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+    module_search_path: &OsStr,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
         .args([
             "agent",
             "dump-prompt",
@@ -42,10 +43,21 @@ fn dump_published_prompt(
         .env_remove("OPENHUMAN_MODULE_SOURCE_DIR")
         .env_remove("OPENHUMAN_MODULE_SOURCE_TINYFLOWS")
         .output()
-        .expect("run the public prompt-dump command");
+        .expect("run the public prompt-dump command")
+}
+
+fn dump_published_prompt(
+    agent_id: &str,
+    home: &Path,
+    workspace: &Path,
+    module_search_path: &OsStr,
+) -> serde_json::Value {
+    let output = run_prompt_dump(agent_id, home, workspace, module_search_path);
     assert!(
         output.status.success(),
-        "prompt dump for {agent_id} failed: {}",
+        "prompt dump for {agent_id} failed ({}):\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("decode public prompt-dump JSON")
@@ -64,6 +76,7 @@ async fn prewarm_flow_authoring_in_parent(
         config,
         "orchestrator",
     )
+    .await
     .expect("build a normal host session to schedule resource prewarm");
     session.refresh_prompt_surface().await;
 
@@ -83,6 +96,17 @@ async fn prewarm_flow_authoring_in_parent(
     .expect("the normal host prewarm should expose the published builtin");
 }
 
+/// The staged TinyFlows directory first, then every other directory the
+/// runner staged on `OPENHUMAN_MODULE_PATH`. The child processes load
+/// TinySecurity as well; with TinyFlows' directory alone they cannot find the
+/// staged release and would fetch one from GitHub.
+fn module_search_path_with(tinyflows_dir: &Path) -> OsString {
+    let inherited = std::env::var_os("OPENHUMAN_MODULE_PATH").unwrap_or_default();
+    let staged = std::env::split_paths(&inherited).filter(|dir| dir != tinyflows_dir);
+    std::env::join_paths(std::iter::once(tinyflows_dir.to_path_buf()).chain(staged))
+        .expect("staged module directories form a valid search path")
+}
+
 #[tokio::test]
 async fn published_module_prompts_render_through_the_normal_host_path() {
     let _env_lock = env_guard::env_lock_async().await;
@@ -96,14 +120,16 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
     let _source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE");
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
-    let (library, _) = published_tinyflows::staged_v0_8_29_module();
-    let module_search_path = library
+    let (library, _) = published_tinyflows::staged_v0_9_5_module();
+    let tinyflows_dir = library
         .parent()
         .expect("staged module artifact has a search directory");
+    let module_search_path = module_search_path_with(tinyflows_dir);
+    let module_search_path = module_search_path.as_os_str();
     let workspace = temp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace directory");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
-    let _module_path_guard = EnvVarGuard::set_to_path("OPENHUMAN_MODULE_PATH", module_search_path);
+    let _module_path_guard = EnvVarGuard::set("OPENHUMAN_MODULE_PATH", module_search_path);
     let openhuman_home = temp.path().join(".openhuman");
     let local_config_dir = openhuman_home.join("users/local");
     std::fs::create_dir_all(&local_config_dir).expect("create isolated local config directory");
@@ -121,6 +147,37 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
     for path in [&config_path, &local_config_path] {
         std::fs::write(path, &enabled_config).expect("write enabled module override config");
     }
+
+    // `agent dump-prompt` reads the install it is pointed at and builds the real
+    // session agent, which needs a stored backend credential (`SESSION_EXPIRED`
+    // otherwise). Install a local-only key the way a host does, through
+    // `auth_set_credential`, under a per-run master key the child processes
+    // inherit. `api_url` is unroutable, so nothing leaves the machine.
+    let _master_key_guard =
+        EnvVarGuard::set("OPENHUMAN_KEYRING_MASTER_KEY", "5a".repeat(32).as_str());
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+    let credential = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+        .args([
+            "call",
+            "--method",
+            "openhuman.auth_set_credential",
+            "--params",
+            r#"{"token":"th_test_local_only","kind":"api-key"}"#,
+        ])
+        .env("HOME", temp.path())
+        .env("OPENHUMAN_WORKSPACE", &workspace)
+        .env("OPENHUMAN_MODULE_PATH", module_search_path)
+        .env_remove("BACKEND_URL")
+        .env_remove("VITE_BACKEND_URL")
+        .env_remove("OPENHUMAN_BACKEND_API_KEY")
+        .env_remove("OPENHUMAN_BACKEND_SESSION_TOKEN")
+        .output()
+        .expect("install the local test credential");
+    assert!(
+        credential.status.success(),
+        "installing the local test credential failed: {}",
+        String::from_utf8_lossy(&credential.stderr)
+    );
 
     for (agent_id, required, invariant) in [
         ("workflow_builder", "propose_workflow", "propose-only"),
@@ -147,10 +204,17 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
         // This is the actual published module path: the host must materialize the
         // bus-owned skill, then the normal TinySkills discovery and resource reader
         // must expose that Builtin under the separate dynamic root.
+        // The prompt-dump children resolve the active local user's config, so
+        // the parent loads that same file: its secret scope (derived from the
+        // config's directory) is then the one the children decrypt with, and
+        // the credential it stores stays readable by the later dumps.
         let config =
-            openhuman_core::config::Config::load_from_config_path(&config_path, &workspace)
+            openhuman_core::config::Config::load_from_config_path(&local_config_path, &workspace)
                 .await
                 .expect("load the same scoped Config used by the prompt dump");
+        openhuman_core::credentials::api_key::store_api_key(&config, "th_test_local_only")
+            .await
+            .expect("store a local test credential for the in-process host session");
         let ctx = openhuman_core::core::runtime::DispatchCtx::host_default();
         tinyhumans_boot::boot();
         prewarm_flow_authoring_in_parent(&ctx, &config).await;
@@ -209,15 +273,36 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
         );
         let disabled_text =
             std::fs::read_to_string(&disabled_config_path).expect("read disabled module config");
+        // The ordinary agent still renders when only TinyFlows is off and the
+        // security module that holds the credential keeps running.
+        let tinyflows_off = "api_url = \"http://127.0.0.1:1\"\n\n[components]\ntinyflows = false\n\n[modules]\nenabled = true\n";
         for path in [&config_path, &local_config_path] {
-            std::fs::write(path, &disabled_text).expect("disable module in active CLI config");
+            std::fs::write(path, tinyflows_off).expect("disable TinyFlows in active CLI config");
         }
         let ordinary_prompt =
             dump_published_prompt("orchestrator", temp.path(), &workspace, module_search_path);
-        assert!(ordinary_prompt["system_prompt"]
+        let ordinary_text = ordinary_prompt["system_prompt"]
             .as_str()
-            .expect("ordinary prompt text")
-            .contains("## Workspace"));
+            .expect("ordinary prompt text");
+        assert!(ordinary_text.contains("## Workspace"));
+        for path in [&config_path, &local_config_path] {
+            std::fs::write(path, &disabled_text).expect("disable module in active CLI config");
+        }
+        // With every module disabled TinySecurity is not loaded either, so the
+        // stored credential cannot be decrypted: the session agent fails
+        // closed instead of running without its credential, and the CLI
+        // reports the cause rather than only the outermost context.
+        let modules_off =
+            run_prompt_dump("orchestrator", temp.path(), &workspace, module_search_path);
+        let modules_off_stderr = String::from_utf8_lossy(&modules_off.stderr);
+        assert!(
+            !modules_off.status.success(),
+            "a modules-disabled profile cannot read its TinySecurity credential"
+        );
+        assert!(
+            modules_off_stderr.contains("SESSION_EXPIRED"),
+            "the CLI error names the cause: {modules_off_stderr}"
+        );
 
         // Re-enable the same profile after the disabled view and ensure the
         // async host preflight restores the module-backed catalogue.
@@ -306,7 +391,7 @@ async fn published_module_public_import_uses_authoring_bus_in_a_cold_process() {
     let _source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE");
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
-    let (library, digest) = published_tinyflows::staged_v0_8_29_module();
+    let (library, digest) = published_tinyflows::staged_v0_9_5_module();
     let workspace = temp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace directory");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);

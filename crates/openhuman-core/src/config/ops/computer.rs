@@ -16,10 +16,17 @@ pub struct ComputerSettingsPatch {
     pub planner_model: Option<String>,
     pub rescue_model: Option<String>,
     pub max_rescues: Option<u32>,
+    pub captcha_solver: Option<bool>,
+    pub captcha_provider: Option<String>,
+    pub captcha_model: Option<String>,
+    pub max_captcha_attempts: Option<u32>,
 }
 
 /// The most rescues TinyComputer allows one task.
 pub const MAX_RESCUES: u32 = 5;
+
+/// The most image challenges TinyComputer's captcha solver submits per try.
+pub const MAX_CAPTCHA_ATTEMPTS: u32 = 10;
 
 fn parse_decision_model(raw: &str) -> Result<DecisionModel, String> {
     match raw.trim().to_ascii_lowercase().replace('-', "_").as_str() {
@@ -28,6 +35,19 @@ fn parse_decision_model(raw: &str) -> Result<DecisionModel, String> {
         "sage" => Ok(DecisionModel::Sage),
         other => Err(format!(
             "Unsupported decision model '{other}'. Use jev, open_jev, or sage"
+        )),
+    }
+}
+
+/// The captcha solver's Jev provider in its wire spelling; empty restores
+/// the default (`type_safe`).
+fn parse_captcha_provider(raw: &str) -> Result<Option<String>, String> {
+    match raw.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "" => Ok(None),
+        "type_safe" | "typesafe" => Ok(Some("type_safe".into())),
+        "surplus" => Ok(Some("surplus".into())),
+        other => Err(format!(
+            "Unsupported captcha provider '{other}'. Use type_safe or surplus"
         )),
     }
 }
@@ -67,6 +87,23 @@ pub fn patched(
         }
         computer.max_rescues = Some(rescues);
     }
+    if let Some(enabled) = update.captcha_solver {
+        computer.captcha_solver = enabled;
+    }
+    if let Some(raw) = update.captcha_provider {
+        computer.captcha_provider = parse_captcha_provider(&raw)?;
+    }
+    if let Some(raw) = update.captcha_model {
+        computer.captcha_model = model_id(raw)?;
+    }
+    if let Some(attempts) = update.max_captcha_attempts {
+        if !(1..=MAX_CAPTCHA_ATTEMPTS).contains(&attempts) {
+            return Err(format!(
+                "max_captcha_attempts must be 1..={MAX_CAPTCHA_ATTEMPTS}"
+            ));
+        }
+        computer.max_captcha_attempts = Some(attempts);
+    }
     Ok(computer)
 }
 
@@ -80,10 +117,14 @@ pub async fn apply_computer_settings(
         decision_model = config.computer.decision_model.as_str(),
         rescue_model = ?config.computer.rescue_model,
         max_rescues = ?config.computer.max_rescues,
+        captcha_solver = config.computer.captcha_solver,
+        captcha_provider = ?config.computer.captcha_provider,
+        captcha_model = ?config.computer.captcha_model,
+        max_captcha_attempts = ?config.computer.max_captcha_attempts,
         "[config] computer settings updated"
     );
     config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(

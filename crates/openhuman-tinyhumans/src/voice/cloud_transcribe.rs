@@ -2,7 +2,7 @@
 
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::core::Outcome;
-use openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential;
+use openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential;
 
 use crate::client::{
     flatten_authed_error, is_managed_endpoint_for_api_key, is_safe_endpoint_for_managed_bearer,
@@ -22,7 +22,7 @@ pub async fn transcribe_cloud(
 ) -> Result<Outcome<CloudTranscribeResult>, String> {
     // The session JWT or the TinyHumans API key. The vendored client sends it
     // as `Authorization: Bearer`, which the backend accepts for either.
-    let credential = resolve_backend_credential(config)?;
+    let credential = resolve_backend_credential(config).await?;
     let is_api_key = credential.is_api_key();
     let client = BackendClient::from_config(config).map_err(|error| error.to_string())?;
     let url = client

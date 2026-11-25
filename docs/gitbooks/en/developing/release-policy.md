@@ -47,7 +47,7 @@ The code is in `app/src/utils/oauthAppVersionGate.ts`, `app/src/utils/desktopDee
 
 Two long-lived branches, two CI lanes:
 
-- `main`: where all feature and fix PRs land. Every PR runs CI Fast ([`ci-fast.yml`](https://github.com/tinyhumansai/openhuman/blob/main/.github/workflows/ci-fast.yml)), with quality checks and full unit-test suites for changed areas, gated at 80% diff coverage or more.
+- `main`: where all feature and fix PRs land. Every PR runs CI Fast ([`ci-fast-hosted.yml`](https://github.com/tinyhumansai/openhuman/blob/main/.github/workflows/ci-fast-hosted.yml)), with quality checks and full unit-test suites for changed areas, gated at 80% diff coverage or more.
 - `release`: a maintainer-promoted snapshot of `main` that releases are cut from. PRs targeting `release` and every push to `release` run CI Full ([`ci-full.yml`](https://github.com/tinyhumansai/openhuman/blob/main/.github/workflows/ci-full.yml)): complete unit suites, Rust mock-backend E2E, Playwright web E2E, and desktop E2E on Linux. macOS and Windows desktop E2E are manual dispatches that default to off until a native driver exists for each, so cross-platform desktop signal is opt-in. The `CI Full Gate` check aggregates every lane except the Playwright spec run. That run is non-blocking for now (`continue-on-error`, because it is flaky under CI contention), so a green gate does not prove the Playwright specs passed. Check that lane's result before cutting. Only the Playwright artifact build is gated.
 
 The cycle:

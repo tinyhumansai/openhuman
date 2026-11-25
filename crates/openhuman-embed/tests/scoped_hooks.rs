@@ -108,7 +108,7 @@ fn spec(id: &str, provider: &MockServer) -> AgentSpec {
                 .bare_prompt("Use probe once, then answer.")
                 .tools(ToolScopeSpec::HostOnly),
         )
-        .tools(|_| HostTurnTools::advertised(vec![Box::new(Probe)]))
+        .tools(|_| Box::pin(async { HostTurnTools::advertised(vec![Box::new(Probe)]) }))
 }
 
 async fn worker_provider(owner: &str) -> MockServer {
@@ -200,6 +200,7 @@ async fn scenario() {
         .expect("resumed a");
     let mut session = scheduled
         .session_host(&scheduled.config, Some("scheduled-a"))
+        .await
         .unwrap();
     scheduled
         .scope(async { session.turn_with_origin("a-scheduled", None).await })

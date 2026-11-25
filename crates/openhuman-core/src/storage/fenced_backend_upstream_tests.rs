@@ -98,6 +98,7 @@ async fn a_node_that_lost_the_lease_cannot_write_and_the_new_holder_can() {
     a.take("alice").await;
     a.put("profile:alice", "n1").await.unwrap();
     a.put("alice~default", "n1").await.unwrap();
+    let session = a.scoped("alice~default");
 
     // Node B's clock passes A's expiry and takes the profile over. Node A's
     // clock is still early (it was paused, or runs behind): its local check
@@ -108,9 +109,11 @@ async fn a_node_that_lost_the_lease_cannot_write_and_the_new_holder_can() {
     a.set_clock(base + 1_000);
 
     let refused = a.put("profile:alice", "n2").await.unwrap_err();
-    assert_eq!(refused.kind(), ErrorKind::Conflict, "{refused:?}");
+    assert!(matches!(
+        fence_error(&refused),
+        Some(FenceError::Superseded { .. })
+    ));
     // Every write port, and every session scope of the profile, is fenced.
-    let session = a.scoped("alice~default");
     assert!(session.streams().append("log", json!(1)).await.is_err());
     assert!(session.blobs().put("k", b"x".to_vec(), None).await.is_err());
     assert!(session
@@ -340,7 +343,10 @@ async fn driver_refuses_the_write_the_host_check_admitted(shared: Arc<dyn Storag
         .put("notes", "n1", json!({"v": 2}), Precondition::None)
         .await
         .unwrap_err();
-    assert_eq!(refused.kind(), ErrorKind::Conflict, "{refused:?}");
+    assert!(matches!(
+        fence_error(&refused),
+        Some(FenceError::Superseded { .. })
+    ));
     let stored = shared
         .for_scope(&Scope::new("profile:alice").unwrap())
         .unwrap()

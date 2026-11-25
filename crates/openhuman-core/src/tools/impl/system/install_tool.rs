@@ -1,263 +1,168 @@
-//! Tool: install_tool — install an OS / language package, heavily gated.
-//!
-//! This is the highest-blast-radius tool: it changes the user's machine. It is
-//! therefore gated on `SecurityPolicy.allow_tool_install` (intended to be set
-//! only in Full access mode), runs the package manager via an explicit argv
-//! (never a shell string, so the package name can't inject commands), validates
-//! the package name against a strict charset, and records an audit log line.
-//!
-//! It deliberately does NOT auto-prepend `sudo`: system managers that need root
-//! (apt/dnf/pacman) will surface a permissions error, which the agent should
-//! relay rather than silently escalate. User-scoped managers (brew, pipx,
-//! `npm -g`, `cargo install`) work without elevation.
-
-use crate::security::SecurityPolicy;
-use async_trait::async_trait;
-use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
-use tinytools::{PermissionLevel, Tool, ToolResult};
-use tokio::process::Command as TokioCommand;
 
-use tinytools_std::detect_tools::find_on_path;
+use async_trait::async_trait;
+use serde_json::Value;
+use tinyagents_harness_tools::exec::{ExecBackend, InstallTool};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolRunContext, ToolTimeout};
 
-/// Hard cap on an install before it is killed.
-const INSTALL_TIMEOUT_SECS: u64 = 300;
-/// Per-stream cap on captured installer output (1 MiB) — verbose package
-/// managers can emit very large stdout/stderr and spike memory.
-const MAX_OUTPUT_BYTES: usize = 1_048_576;
+use crate::config::Config;
+use crate::security::{AuditSink, SecurityPolicy};
 
+use super::exec_adapters::InstallGate;
+
+/// OpenHuman host adapter for TinyAgents' generic package installer.
 pub struct InstallToolTool {
-    security: Arc<SecurityPolicy>,
+    inner: InstallTool,
+    gate: Arc<InstallGate>,
+    backend: Arc<dyn ExecBackend>,
 }
 
 impl InstallToolTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
-        Self { security }
+        Self::with_audit(security, AuditSink::disabled())
+    }
+
+    pub fn with_audit(security: Arc<SecurityPolicy>, audit: Arc<AuditSink>) -> Self {
+        Self::with_audit_and_config(security, audit, Arc::new(Config::default()))
+    }
+
+    pub fn with_audit_and_config(
+        security: Arc<SecurityPolicy>,
+        audit: Arc<AuditSink>,
+        config: Arc<Config>,
+    ) -> Self {
+        Self::with_backend_and_environment(
+            security,
+            audit,
+            config,
+            Arc::new(tinyagents_harness_tools::exec::NativeExecBackend::new(
+                tinyagents_harness_tools::exec::ShellFlavor::Posix,
+            )),
+            install_environment(),
+        )
+    }
+
+    fn with_backend_and_environment(
+        security: Arc<SecurityPolicy>,
+        audit: Arc<AuditSink>,
+        config: Arc<Config>,
+        backend: Arc<dyn ExecBackend>,
+        environment: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
+    ) -> Self {
+        let gate = Arc::new(InstallGate {
+            security,
+            audit,
+            config,
+            audit_context: crate::core::runtime::DispatchCtx::unbound(),
+            environment,
+        });
+        let inner = InstallTool::new(gate.clone(), Arc::clone(&backend));
+        Self {
+            inner,
+            gate,
+            backend,
+        }
+    }
+
+    fn invocation(&self, context: Option<&dyn ToolRunContext>) -> InstallTool {
+        InstallTool::new(
+            Arc::new(self.gate.for_tool_context(context)),
+            Arc::clone(&self.backend),
+        )
     }
 }
 
-/// Map a manager id to its binary + the argv prefix that precedes the package.
-fn manager_argv(manager: &str) -> Option<(&'static str, Vec<&'static str>)> {
-    match manager {
-        "apt" | "apt-get" => Some(("apt-get", vec!["install", "-y"])),
-        "dnf" => Some(("dnf", vec!["install", "-y"])),
-        "yum" => Some(("yum", vec!["install", "-y"])),
-        "pacman" => Some(("pacman", vec!["-S", "--noconfirm"])),
-        "apk" => Some(("apk", vec!["add"])),
-        "brew" => Some(("brew", vec!["install"])),
-        "winget" => Some(("winget", vec!["install", "-e", "--id"])),
-        "pipx" => Some(("pipx", vec!["install"])),
-        "npm" => Some(("npm", vec!["install", "-g"])),
-        "cargo" => Some(("cargo", vec!["install"])),
-        _ => None,
-    }
+fn install_environment() -> std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> {
+    filter_install_environment(std::env::vars_os())
 }
 
-/// Best-effort detection of the host's system package manager.
-fn detect_system_manager() -> Option<&'static str> {
-    ["apt-get", "dnf", "yum", "pacman", "apk", "brew", "winget"]
+fn filter_install_environment(
+    variables: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> {
+    const ALLOWED: &[&str] = &[
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "WINDIR",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "PIPX_HOME",
+        "PIPX_BIN_DIR",
+        "NPM_CONFIG_PREFIX",
+        "HOMEBREW_PREFIX",
+        "HOMEBREW_CELLAR",
+        "HOMEBREW_REPOSITORY",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+    ];
+    variables
         .into_iter()
-        .find(|&m| find_on_path(m).is_some())
-        .map(|v| v as _)
-}
-
-/// A package name is accepted only if it contains exclusively characters that
-/// appear in real package identifiers — letters, digits and `._+-@/:`. This
-/// blocks shell metacharacters even though we never build a shell string.
-fn is_valid_package_name(pkg: &str) -> bool {
-    !pkg.is_empty()
-        && pkg.len() <= 200
-        && pkg.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-' | '@' | '/' | ':')
+        .filter(|(name, _)| {
+            name.to_str().is_some_and(|name| {
+                ALLOWED
+                    .iter()
+                    .any(|allowed| name.eq_ignore_ascii_case(allowed))
+            })
         })
+        .collect()
 }
 
 #[async_trait]
 impl Tool for InstallToolTool {
     fn name(&self) -> &str {
-        "install_tool"
+        self.inner.name()
     }
 
     fn description(&self) -> &str {
-        "Install an OS or language package on the host (apt/dnf/pacman/apk/brew/winget/pipx/\
-         npm -g/cargo). HIGH IMPACT: only available when the user has enabled tool installation \
-         (Full access mode). Prefer detect_tools first; only install what's actually missing."
+        self.inner.description()
     }
 
-    fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "package": {
-                    "type": "string",
-                    "description": "Package name to install (e.g. 'ripgrep', 'jq', '@scope/cli')."
-                },
-                "manager": {
-                    "type": "string",
-                    "enum": ["apt", "apt-get", "dnf", "yum", "pacman", "apk", "brew", "winget", "pipx", "npm", "cargo"],
-                    "description": "Package manager to use. If omitted, the host's system package manager is auto-detected."
-                }
-            },
-            "required": ["package"]
-        })
+    fn parameters_schema(&self) -> Value {
+        self.inner.parameters_schema()
     }
 
     fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::Dangerous
+        self.inner.permission_level()
     }
 
     fn external_effect(&self) -> bool {
-        true
+        self.inner.external_effect()
     }
 
-    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
-            .await
+    fn external_effect_with_args(&self, args: &Value) -> bool {
+        self.inner.external_effect_with_args(args)
+    }
+
+    fn timeout_policy(&self, args: &Value) -> ToolTimeout {
+        self.inner.timeout_policy(args)
+    }
+
+    async fn prepare_authorization(&self, args: &Value) -> anyhow::Result<Option<Value>> {
+        self.inner.prepare_authorization(args).await
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.invocation(None).execute(args).await
     }
 
     async fn execute_with_context(
         &self,
-        args: serde_json::Value,
-        _options: tinytools::ToolCallOptions,
-        context: Option<&dyn tinytools::ToolRunContext>,
+        args: Value,
+        options: ToolCallOptions,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
-        self.run(args, &approval).await
-    }
-}
-
-impl InstallToolTool {
-    /// Runs the install for a turn whose approval context is `approval`.
-    pub(crate) async fn run(
-        &self,
-        args: serde_json::Value,
-        approval: &crate::security::approval::ApprovalTurnContext,
-    ) -> anyhow::Result<ToolResult> {
-        // Gate 0: installs mutate the host (not the workspace), so they must
-        // never run without an explicit human Approve. The ApprovalGate only
-        // parks for an interactive turn (a chat context on the turn's approval
-        // context, set on the web-chat path); background / triage / cron turns
-        // bypass the gate entirely. Fail closed there — a doomed retry is
-        // short-circuited by the `[policy-denied]` marker.
-        if !approval.is_interactive() {
-            return Ok(ToolResult::error(
-                "[policy-denied] install_tool requires interactive approval and is not available \
-                 in autonomous (background) turns.",
-            ));
-        }
-        // Gate 1: feature must be explicitly enabled (Full access mode).
-        if !self.security.allow_tool_install {
-            return Ok(ToolResult::error(
-                "[policy-denied] OS package installation is disabled. Enable it in the agent access settings \
-                 (Full access mode / allow_tool_install) before installing tools.",
-            ));
-        }
-        // Gate 2: read-only autonomy never installs.
-        if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "[policy-blocked] Action blocked: autonomy is read-only.",
-            ));
-        }
-        // Gate 3: rate limit.
-        if self.security.is_rate_limited() {
-            return Ok(ToolResult::error(
-                "Rate limit exceeded: too many actions in the last hour",
-            ));
-        }
-
-        let package = match args.get("package").and_then(|v| v.as_str()) {
-            Some(p) => p.trim(),
-            None => return Ok(ToolResult::error("Missing 'package' parameter")),
-        };
-        if !is_valid_package_name(package) {
-            return Ok(ToolResult::error(format!(
-                "Invalid package name '{package}': only letters, digits and ._+-@/: are allowed"
-            )));
-        }
-
-        let manager = match args.get("manager").and_then(|v| v.as_str()) {
-            Some(m) => m.to_string(),
-            None => match detect_system_manager() {
-                Some(m) => m.to_string(),
-                None => {
-                    return Ok(ToolResult::error(
-                        "No supported package manager detected on PATH. Pass 'manager' explicitly \
-                         (e.g. brew, pipx, npm, cargo).",
-                    ));
-                }
-            },
-        };
-
-        let Some((program, prefix)) = manager_argv(&manager) else {
-            return Ok(ToolResult::error(format!(
-                "Unsupported package manager '{manager}'"
-            )));
-        };
-        if find_on_path(program).is_none() {
-            return Ok(ToolResult::error(format!(
-                "Package manager '{program}' is not installed on PATH"
-            )));
-        }
-
-        // Spend an action against the rate budget.
-        if !self.security.record_action() {
-            return Ok(ToolResult::error(
-                "Rate limit exceeded: action budget exhausted",
-            ));
-        }
-
-        tracing::warn!(
-            channel = "tool:install_tool",
-            manager = %program,
-            package = %package,
-            "[install_tool] installing OS package (gated by allow_tool_install)"
-        );
-
-        let mut cmd = TokioCommand::new(program);
-        cmd.args(&prefix).arg(package);
-        cmd.current_dir(&self.security.workspace_dir);
-
-        let output = match tinytools_std::timeout::output_or_kill(
-            &mut cmd,
-            Duration::from_secs(INSTALL_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(Ok(out)) => out,
-            Ok(Err(e)) => {
-                return Ok(ToolResult::error(format!(
-                    "Failed to launch {program}: {e}"
-                )));
-            }
-            Err(_) => {
-                return Ok(ToolResult::error(format!(
-                    "Install timed out after {INSTALL_TIMEOUT_SECS}s and was killed"
-                )));
-            }
-        };
-
-        let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        if stdout.len() > MAX_OUTPUT_BYTES {
-            stdout.truncate(crate::util::floor_char_boundary(&stdout, MAX_OUTPUT_BYTES));
-            stdout.push_str("\n... [stdout truncated at 1 MiB]");
-        }
-        if stderr.len() > MAX_OUTPUT_BYTES {
-            stderr.truncate(crate::util::floor_char_boundary(&stderr, MAX_OUTPUT_BYTES));
-            stderr.push_str("\n... [stderr truncated at 1 MiB]");
-        }
-        if output.status.success() {
-            Ok(ToolResult::success(format!(
-                "Installed '{package}' via {program}.\n{stdout}"
-            )))
-        } else {
-            Ok(ToolResult::error(format!(
-                "{program} failed to install '{package}' (exit {:?}).\n{}",
-                output.status.code(),
-                if stderr.is_empty() { stdout } else { stderr }
-            )))
-        }
+        self.invocation(context)
+            .execute_with_context(args, options, context)
+            .await
     }
 }
 

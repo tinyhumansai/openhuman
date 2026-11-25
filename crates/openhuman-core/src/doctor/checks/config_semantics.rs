@@ -180,9 +180,7 @@ fn referenced_but_disabled(config: &Config) -> Vec<Finding> {
         || channels.discord.is_some()
         || channels.slack.is_some()
         || channels.mattermost.is_some()
-        || channels.webhook.is_some()
         || channels.imessage.is_some()
-        || channels.matrix.is_some()
         || channels.signal.is_some()
         || channels.whatsapp.is_some()
         || channels.linq.is_some()
@@ -263,12 +261,6 @@ fn referenced_but_disabled(config: &Config) -> Vec<Finding> {
         || explicitly_configured(config, "hosting.provider")
     {
         references.push(("hosting", "hosting"));
-    }
-
-    if config.memes != crate::config::schema::MemesConfig::default()
-        || explicitly_configured(config, "memes")
-    {
-        references.push(("memes", "memes"));
     }
 
     if tokenjuice_is_custom(config) {

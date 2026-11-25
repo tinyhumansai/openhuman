@@ -407,9 +407,9 @@ async fn run_job_now_reports_an_unknown_job() {
     .is_err());
 }
 
+#[cfg(feature = "channels")]
 #[tokio::test]
 async fn run_job_now_records_required_delivery_failure_as_error() {
-    let _bridge_lock = crate::cron::channel_bridge::TEST_BRIDGE_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.channels_config.telegram = Some(crate::config::TelegramConfig {

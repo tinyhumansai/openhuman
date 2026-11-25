@@ -27,7 +27,7 @@ pub struct WorkflowRunStarted {
     pub log_path: std::path::PathBuf,
 }
 
-/// Spawn a single autonomous workflow_run as a detached `tokio::spawn`. Used by
+/// Spawn a single autonomous workflow_run as a detached task acting for `ctx`. Used by
 /// both the `openhuman.skills_run` JSON-RPC controller and the `run_workflow`
 /// agent tool (which lets the orchestrator chain one skill into another —
 /// e.g. `github-issue-crusher` → `pr-review-shepherd` once the draft PR is
@@ -41,7 +41,7 @@ pub async fn spawn_workflow_run_background(
     ctx: &crate::core::runtime::DispatchCtx,
     skill_id_param: String,
     inputs_param: Option<Value>,
-    parent_origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+    parent_origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> Result<WorkflowRunStarted, String> {
     let workspace = resolve_workspace_dir().await;
     let skill = registry::get_workflow(&workspace, &skill_id_param)
@@ -154,7 +154,7 @@ pub async fn spawn_workflow_run_background(
     // immediately. Same flow handle_skills_run used to inline — extracted
     // so the `run_workflow` agent tool can re-use it for skill chaining.
     let inherited_origin =
-        parent_origin.unwrap_or(crate::security::turn_origin::AgentTurnOrigin::Unknown);
+        parent_origin.unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::Unknown);
     {
         let run_id = run_id.clone();
         let workflow_id = workflow_id.clone();
@@ -163,7 +163,8 @@ pub async fn spawn_workflow_run_background(
         let workspace = workspace.clone();
         let inherited_origin = inherited_origin.clone();
         let ctx = ctx.clone();
-        tokio::spawn(async move {
+        let dispatch = ctx.clone();
+        dispatch.spawn(async move {
             if let Err(e) = run_log::write_header(
                 &workspace,
                 &log_path,
@@ -197,7 +198,9 @@ pub async fn spawn_workflow_run_background(
                 config.http_request.allowed_domains = vec!["*".to_string()];
             }
             let mut agent =
-                match OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator") {
+                match OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+                    .await
+                {
                     Ok(a) => a,
                     Err(e) => {
                         let _ = run_log::write_footer(
@@ -232,11 +235,8 @@ pub async fn spawn_workflow_run_background(
             ));
             let (tx, rx) = tokio::sync::mpsc::channel(256);
             agent.set_on_progress(Some(tx));
-            let bridge = tokio::spawn(run_log::drain_to_log(
-                rx,
-                workspace.clone(),
-                log_path.clone(),
-            ));
+            let bridge =
+                run_log::spawn_drain_to_log(&ctx, rx, workspace.clone(), log_path.clone());
 
             // Register the cancellation token now (after the run can actually
             // start) so `skills_cancel` can stop it; a config/agent-build
@@ -256,7 +256,7 @@ pub async fn spawn_workflow_run_background(
             let result = tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => None,
-                r = crate::security::turn_origin::with_origin(
+                r = crate::core::runtime::turn_origin::with_origin(
                     inherited_origin,
                     agent.run_single(&task_prompt),
                 ) => Some(r),

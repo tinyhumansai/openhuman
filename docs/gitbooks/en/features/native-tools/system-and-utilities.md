@@ -15,9 +15,8 @@ Use the `shell` tool for Node.js, npm, and Python commands. OpenHuman uses the h
 | --- | --- |
 | `shell` | Run a shell command. Output is bounded and the exit code is captured. |
 | `current_time` | Get the current time in any timezone, with formatting options. |
-| `schedule` | Do something once at a given time. For recurring jobs see [Cron](cron.md). |
+| `schedule` | Create, inspect, or cancel one-shot and recurring scheduled tasks. |
 | `pushover` | Send a push notification to your devices. |
-| `lsp` | Query a language server for definitions, references and diagnostics. |
 | `read_workspace_state` | Inspect the current working folder: open files, recent edits, environment. |
 | `proxy_config` | Read or change proxy configuration for outbound requests. |
 | `tool_stats` | Show which tools were used in this session and how often. |

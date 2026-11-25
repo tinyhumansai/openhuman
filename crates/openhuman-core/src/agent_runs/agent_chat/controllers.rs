@@ -1,3 +1,4 @@
+use crate::util::params::{json_output, optional_string, required_string};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -17,6 +18,10 @@ struct InferenceAgentChatParams {
     api_key: Option<String>,
     #[serde(default)]
     inference_headers: Vec<(String, String)>,
+    #[serde(default)]
+    inference_provider_options: Option<Value>,
+    #[serde(default)]
+    inference_reasoning_effort: Option<String>,
 }
 
 pub(crate) fn schemas(function: &str) -> ControllerSchema {
@@ -61,6 +66,19 @@ pub(crate) fn schemas(function: &str) -> ControllerSchema {
                         "Custom header name/value pairs for inference_url only; never persisted.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "inference_provider_options",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment:
+                        "Provider-specific defaults for inference_url; request options override them by key.",
+                    required: false,
+                },
+                optional_string(
+                    "inference_reasoning_effort",
+                    "Reasoning effort for this turn's model (none, minimal, low, medium, \
+                     high, xhigh): the inference_url route's model when one is given, else \
+                     the model the turn resolves (model_override or the configured model).",
+                ),
             ],
             outputs: vec![json_output(
                 "response",
@@ -119,11 +137,33 @@ fn handle_agent_chat(
     Box::pin(async move {
         let params = deserialize_params::<InferenceAgentChatParams>(params)?;
         let mut config = ctx.load_config().await?;
+        // Keep the resolved owner alive until the one-shot turn (including
+        // spawned tools) has settled. The run context carries only a weak
+        // reference so a persisted session cannot pin a tenant indefinitely.
+        let core_lease = ctx.resolved();
         let target = match params.agent_id.as_deref().map(str::trim) {
             Some(id) if !id.is_empty() => super::AgentChatTarget::AgentId(id),
             _ => super::AgentChatTarget::Orchestrator,
         };
-        super::agent_chat_reply_for(
+        let headless = ctx.is_headless_agent_chat();
+        let route = crate::config::schema::EphemeralRoute::from_params(
+            params.inference_url,
+            params.api_key,
+        );
+        // Without an `inference_url` there is no route to carry the effort;
+        // set it on this call's config instead of dropping it.
+        let reasoning_effort = match route {
+            Some(_) => params.inference_reasoning_effort,
+            None => {
+                super::turn_overrides::apply_turn_reasoning_effort(
+                    &mut config,
+                    params.common.model_override.as_deref(),
+                    params.inference_reasoning_effort,
+                );
+                None
+            }
+        };
+        let reply = super::session_turn::agent_chat_reply_for_with_headless(
             &mut config,
             target,
             &params.common.message,
@@ -131,15 +171,24 @@ fn handle_agent_chat(
             params.common.temperature,
             params.common.thread_id,
             params.common.cwd,
-            crate::config::schema::EphemeralRoute::from_params(
-                params.inference_url,
-                params.api_key,
-            )
-            .map(|route| route.with_headers(params.inference_headers)),
-            super::AgentChatEnv::default(),
+            route.map(|route| {
+                route
+                    .with_headers(params.inference_headers)
+                    .with_provider_options(params.inference_provider_options)
+                    .with_reasoning_effort(reasoning_effort)
+            }),
+            super::AgentChatEnv {
+                host: crate::agent::turn_env::HostTurnEnv {
+                    core: core_lease.as_ref().map(std::sync::Arc::downgrade),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            headless,
         )
-        .await?
-        .into_rpc_json()
+        .await?;
+        drop(core_lease);
+        reply.into_rpc_json()
     })
 }
 
@@ -169,39 +218,12 @@ fn deserialize_params<T: serde::de::DeserializeOwned>(
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
 }
 
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
 fn optional_f64(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
         comment,
         required: false,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }
 

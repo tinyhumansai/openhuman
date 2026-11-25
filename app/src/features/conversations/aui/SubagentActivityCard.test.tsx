@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
+import type { SubagentActivity } from '../../../store/chatRuntimeSlice';
 import { SubagentActivityCard } from './SubagentActivityCard';
 
 function openDisclosure() {
@@ -91,6 +92,28 @@ describe('SubagentActivityCard', () => {
       />
     );
     expect(screen.getByText('Delegated to Researcher')).toBeInTheDocument();
+  });
+
+  it('keeps completed output and ignores legacy worktree fields', () => {
+    const legacyActivity: SubagentActivity & {
+      worktreePath: string;
+      changedFiles: string[];
+      isDirty: boolean;
+    } = {
+      taskId: 't',
+      agentId: 'researcher',
+      status: 'success',
+      output: 'Research is complete.',
+      toolCalls: [],
+      worktreePath: '/repo/.claude/worktrees/worker',
+      changedFiles: ['notes.md'],
+      isDirty: true,
+    };
+    render(<SubagentActivityCard activity={legacyActivity} />);
+
+    expect(screen.getByText('Research is complete.')).toBeInTheDocument();
+    expect(screen.queryByTestId('worktree-actions')).toBeNull();
+    expect(screen.queryByText(/worker/)).toBeNull();
   });
 
   it('renders child tool calls (from `toolCalls`) inside the nested transcript once opened', () => {

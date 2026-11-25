@@ -289,7 +289,7 @@ async fn sdk_backed_channel_typing_surfaces_unauthorized_on_401() {
 
     let client = BackendClient::new(&format!("http://{addr}")).unwrap();
     let err = client
-        .send_channel_typing("telegram", "mock-jwt")
+        .send_channel_typing("telegram", "mock-jwt", json!({}))
         .await
         .unwrap_err();
 
@@ -387,7 +387,7 @@ async fn message_not_found_becomes_message_not_found() {
         message_id: "abc".into(),
     });
     let err = client
-        .send_channel_delete("discord", "abc", "mock-jwt")
+        .send_channel_delete("discord", "abc", "mock-jwt", None)
         .await
         .unwrap_err();
     let typed = err.downcast_ref::<HostedApiError>().unwrap();
@@ -427,6 +427,6 @@ fn api_key_rejected_flattens_to_its_own_prefix_not_session_expired() {
         method: "GET".into(),
         path: "/x".into(),
     }));
-    assert!(flat.starts_with(openhuman_embed::__host::core::observability::API_KEY_REJECTED_PREFIX));
+    assert!(flat.starts_with(crate::errors::API_KEY_REJECTED_PREFIX));
     assert!(!flat.contains("SESSION_EXPIRED"));
 }

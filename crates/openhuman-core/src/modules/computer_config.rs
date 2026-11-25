@@ -9,6 +9,9 @@
 //! - `planner` — the planner, rescue and output models: through the
 //!   TinyHumans proxy when signed in, else the user's OpenRouter key.
 //! - `browser` — the Chrome executable the user picked, if any.
+//! - `captcha` — the captcha solver's image-reading Jev route, on TypeSafe
+//!   or Surplus (`[computer] captcha_provider`) with the user's key for it,
+//!   when `[computer] captcha_solver` is on.
 //! - `trace_path` — where desktop commands are traced, when tracing is on.
 
 #[cfg(unix)]
@@ -18,14 +21,14 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Map, Value};
 
 use crate::config::{Config, DecisionModel};
+use crate::credentials::backend_credential::{resolve_backend_credential, BackendCredential};
+use crate::credentials::session_state::is_local_session_token;
 use crate::inference::provider::factory::lookup_key_for_slug;
-use crate::security::credentials::session_support::{
-    is_local_session_token, resolve_backend_credential, BackendCredential,
-};
 
 /// A stored provider key, falling back to its environment variable.
-fn provider_key(config: &Config, slug: &str, env: &str) -> Option<String> {
+pub(super) async fn provider_key(config: &Config, slug: &str, env: &str) -> Option<String> {
     lookup_key_for_slug(slug, config)
+        .await
         .ok()
         .filter(|key| !key.trim().is_empty())
         .or_else(|| std::env::var(env).ok().filter(|key| !key.trim().is_empty()))
@@ -33,14 +36,15 @@ fn provider_key(config: &Config, slug: &str, env: &str) -> Option<String> {
 
 /// The signed-in TinyHumans bearer, if any. The offline local token is not
 /// a backend credential.
-fn tinyhumans_bearer(config: &Config) -> Option<String> {
+pub(super) async fn tinyhumans_bearer(config: &Config) -> Option<String> {
     resolve_backend_credential(config)
+        .await
         .ok()
         .map(BackendCredential::into_secret)
         .filter(|token| !is_local_session_token(token))
 }
 
-fn jev(config: &Config, hosted: Option<&str>) -> Option<Value> {
+async fn jev(config: &Config, hosted: Option<&str>) -> Option<Value> {
     match config.computer.decision_model {
         DecisionModel::Jev => match hosted {
             Some(api_key) => Some(json!({
@@ -51,14 +55,68 @@ fn jev(config: &Config, hosted: Option<&str>) -> Option<Value> {
             // A headless or BYOK host may have no TinyHumans session. Direct
             // OpenRouter Jev remains usable with its own scoped credential.
             None => provider_key(config, "openrouter", "OPENROUTER_API_KEY")
+                .await
                 .map(|api_key| json!({ "api_key": api_key, "provider": "open_router" })),
         },
         DecisionModel::OpenJev => provider_key(config, "openjev", "OPENJEV_API_KEY")
+            .await
             .map(|api_key| json!({ "api_key": api_key, "provider": "open_jev" })),
-        DecisionModel::Sage => provider_key(config, "sage", "SAGE_API_KEY").map(|api_key| {
-            json!({ "api_key": api_key, "provider": "sage", "fast": config.computer.sage_fast })
-        }),
+        DecisionModel::Sage => provider_key(config, "sage", "SAGE_API_KEY")
+            .await
+            .map(|api_key| {
+                json!({ "api_key": api_key, "provider": "sage", "fast": config.computer.sage_fast })
+            }),
     }
+}
+
+/// The captcha solver's section: the chosen provider's Jev route (one that
+/// takes images) with its key, the chosen image model and attempt bound.
+/// `None` when the solver is off, the provider is unknown, or there is no key
+/// for it.
+async fn captcha(config: &Config) -> Option<Value> {
+    let computer = &config.computer;
+    if !computer.captcha_solver {
+        return None;
+    }
+    let provider = computer
+        .captcha_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())
+        .unwrap_or("type_safe");
+    let (slug, env) = match provider {
+        "type_safe" => ("typesafe", "TYPESAFE_API_KEY"),
+        "surplus" => ("surplus", "SURPLUS_API_KEY"),
+        other => {
+            tracing::warn!(
+                captcha_provider = other,
+                "[computer] captcha_solver is on but captcha_provider is unknown; use type_safe or surplus"
+            );
+            return None;
+        }
+    };
+    let Some(api_key) = provider_key(config, slug, env).await else {
+        tracing::debug!(
+            captcha_provider = provider,
+            "[computer] captcha_solver is on but no {provider} key is configured"
+        );
+        return None;
+    };
+    tracing::debug!("[computer] captcha solver provider={provider}");
+    let mut jev = json!({ "api_key": api_key, "provider": provider });
+    if let Some(model) = computer
+        .captcha_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        jev["model"] = json!(model);
+    }
+    let mut section = json!({ "jev": jev });
+    if let Some(attempts) = computer.max_captcha_attempts {
+        section["max_attempts"] = json!(attempts);
+    }
+    Some(section)
 }
 
 /// The model the TinyHumans gateway runs the planner, rescue and output
@@ -73,7 +131,7 @@ pub const HOSTED_REASONING_MODEL: &str = "agentic-v1";
 /// The `planner` configuration: the hosted route with the session's bearer
 /// when signed in, else the user's OpenRouter key; the user's chosen models,
 /// with [`HOSTED_REASONING_MODEL`] for any unchosen role on the hosted route.
-fn planner(config: &Config, hosted: Option<&str>) -> Option<Value> {
+async fn planner(config: &Config, hosted: Option<&str>) -> Option<Value> {
     let mut planner = match hosted {
         Some(api_key) => json!({
             "api_key": api_key,
@@ -81,7 +139,7 @@ fn planner(config: &Config, hosted: Option<&str>) -> Option<Value> {
             "sdk_name": config.resolved_endpoints.product_identity.clone()
         }),
         None => {
-            let api_key = provider_key(config, "openrouter", "OPENROUTER_API_KEY")?;
+            let api_key = provider_key(config, "openrouter", "OPENROUTER_API_KEY").await?;
             json!({ "api_key": api_key, "provider": "open_router" })
         }
     };
@@ -134,19 +192,41 @@ fn create_trace_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The absolute profile folder a persistent `[browser]` keeps, if any.
+fn persistent_profile(config: &Config) -> Option<&str> {
+    let browser = &config.browser;
+    (browser.profile_mode == "persistent")
+        .then_some(browser.profile_path.as_deref())
+        .flatten()
+        .filter(|path| Path::new(path).is_absolute())
+}
+
 /// Build the module configuration for `config`.
 #[must_use]
-pub fn module_config(config: &Config) -> Value {
-    let hosted = tinyhumans_bearer(config);
+pub async fn module_config(config: &Config) -> Value {
+    let hosted = tinyhumans_bearer(config).await;
     let mut out = Map::new();
-    if let Some(jev) = jev(config, hosted.as_deref()) {
+    if let Some(jev) = jev(config, hosted.as_deref()).await {
         out.insert("jev".into(), jev);
     }
-    if let Some(planner) = planner(config, hosted.as_deref()) {
+    if let Some(planner) = planner(config, hosted.as_deref()).await {
         out.insert("planner".into(), planner);
     }
+    if let Some(captcha) = captcha(config).await {
+        out.insert("captcha".into(), captcha);
+    }
+    let mut browser = Map::new();
     if let Some(executable) = config.browser.chrome_path.as_ref() {
-        out.insert("browser".into(), json!({ "executable": executable }));
+        browser.insert("executable".into(), json!(executable));
+    }
+    // The persistent profile folder is host control, like the executable:
+    // TinyComputer's egress-enforced launcher lets a session name this
+    // folder and no other, so cookies and sign-ins survive between sessions.
+    if let Some(profile) = persistent_profile(config) {
+        browser.insert("profile".into(), json!(profile));
+    }
+    if !browser.is_empty() {
+        out.insert("browser".into(), Value::Object(browser));
     }
     let traced = tracing_enabled(config);
     if traced {
@@ -163,6 +243,8 @@ pub fn module_config(config: &Config) -> Value {
         decision_model = config.computer.decision_model.as_str(),
         jev = out.contains_key("jev"),
         planner = out.contains_key("planner"),
+        profile = persistent_profile(config).is_some(),
+        captcha = out.contains_key("captcha"),
         hosted = hosted.is_some(),
         traced,
         "[computer] module config built"
@@ -174,8 +256,8 @@ pub fn module_config(config: &Config) -> Value {
 /// `hosted` (TinyHumans credits), `direct_openrouter` (the user's key),
 /// `open_jev` or `sage` (their own keys), or `unavailable` (no credential).
 #[must_use]
-pub fn billing_route(config: &Config) -> &'static str {
-    match module_config(config)["jev"]["provider"].as_str() {
+pub async fn billing_route(config: &Config) -> &'static str {
+    match module_config(config).await["jev"]["provider"].as_str() {
         Some("tiny_humans_open_router") => "hosted",
         Some("open_router") => "direct_openrouter",
         Some("open_jev") => "open_jev",

@@ -1,5 +1,6 @@
 use super::*;
 use tinyagents_harness::run_queue::QueueLane;
+use tinyagents_harness::run_queue::QueuedMessage;
 
 #[test]
 fn recovered_steer_becomes_a_queued_turn_on_the_forwarders_thread() {
@@ -7,9 +8,13 @@ fn recovered_steer_becomes_a_queued_turn_on_the_forwarders_thread() {
     assert_eq!(turn.id(), "id-1");
     assert_eq!(turn.text(), "text");
     assert_eq!(turn.thread_id, "thread-9");
-    assert_eq!(turn.queued_at_ms, 42);
-    assert!(turn.client_id.is_empty());
-    assert!(turn.model_override.is_none() && turn.temperature.is_none() && turn.locale.is_none());
+    assert_eq!(turn.payload.queued_at_ms, 42);
+    assert!(turn.payload.client_id.is_empty());
+    assert!(
+        turn.payload.model_override.is_none()
+            && turn.payload.temperature.is_none()
+            && turn.payload.locale.is_none()
+    );
 }
 
 #[tokio::test]

@@ -10,9 +10,11 @@ use common::{
     tool_call_completion, tool_results,
 };
 use openhuman_embed::{
-    Access, Agent, AgentDefinitionSpec, AgentSpec, Runtime, ToolScopeSpec, Workspace,
+    Access, Agent, AgentDefinitionSpec, AgentSpec, Runtime, SessionStoreProvider, ToolScopeSpec,
+    Workspace,
 };
 use serde_json::json;
+use tinyagents_session::InMemorySessionStores;
 
 const SESSION: &str = "same-session";
 
@@ -32,10 +34,10 @@ fn transcript_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 
 /// Whether `agent` has a root transcript for the test thread in its own store
 /// under the workspace.
-fn has_transcript(agent: &Agent) -> bool {
-    tinyagents_session::port::WorkspaceStores::open(agent.workspace_dir(), agent.id())
-        .expect("the agent's workspace store")
-        .transcripts()
+fn has_transcript(store: &dyn SessionStoreProvider, agent: &Agent) -> bool {
+    store
+        .for_agent(agent.id())
+        .transcripts
         .root_for_thread(SESSION)
         .is_some()
 }
@@ -59,10 +61,12 @@ fn agents_on_one_workspace_keep_their_own_state() {
     runtime().block_on(async {
         tokio::spawn(async move {
             let backend = stub_backend().await;
+            let session_store = std::sync::Arc::new(InMemorySessionStores::new());
             let runtime = Runtime::builder()
                 .config(offline_config())
-                .workspace(Workspace::Ephemeral)
+                .workspace(Workspace::Stateless)
                 .backend_url(backend.uri())
+                .session_store(session_store.clone())
                 .access(Access::full())
                 .build()
                 .await
@@ -123,8 +127,14 @@ fn agents_on_one_workspace_keep_their_own_state() {
             assert_ne!(a.transcripts_dir(), b.transcripts_dir());
             assert!(a.transcripts_dir().starts_with(a.home_dir()));
             assert!(b.transcripts_dir().starts_with(b.home_dir()));
-            assert!(has_transcript(&a), "a's turns are stored under a");
-            assert!(has_transcript(&b), "b's turns are stored under b");
+            assert!(
+                has_transcript(session_store.as_ref(), &a),
+                "a's turns are stored under a"
+            );
+            assert!(
+                has_transcript(session_store.as_ref(), &b),
+                "b's turns are stored under b"
+            );
             assert!(
                 transcript_files(&a.workspace_dir().join("session_raw")).is_empty(),
                 "nothing is written to the shared transcript directory"

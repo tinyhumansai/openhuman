@@ -107,7 +107,7 @@ fn missing_provider_error(slug: &str) -> anyhow::Error {
 }
 
 /// Create an STT provider by looking up a slug in `config.voice_providers`.
-pub(super) fn create_stt_provider_by_slug(
+pub(super) async fn create_stt_provider_by_slug(
     slug: &str,
     model: &str,
     config: &Config,
@@ -132,8 +132,9 @@ pub(super) fn create_stt_provider_by_slug(
         model
     };
 
-    let api_key =
-        crate::inference::provider::factory::lookup_key_for_slug(slug, config).unwrap_or_default();
+    let api_key = crate::inference::provider::factory::lookup_key_for_slug(slug, config)
+        .await
+        .unwrap_or_default();
 
     debug!(
         "{LOG_PREFIX} creating external STT provider slug={slug} model={effective_model} \
@@ -152,7 +153,7 @@ pub(super) fn create_stt_provider_by_slug(
 }
 
 /// Create a TTS provider by looking up a slug in `config.voice_providers`.
-pub(super) fn create_tts_provider_by_slug(
+pub(super) async fn create_tts_provider_by_slug(
     slug: &str,
     voice: &str,
     config: &Config,
@@ -177,8 +178,9 @@ pub(super) fn create_tts_provider_by_slug(
         voice
     };
 
-    let api_key =
-        crate::inference::provider::factory::lookup_key_for_slug(slug, config).unwrap_or_default();
+    let api_key = crate::inference::provider::factory::lookup_key_for_slug(slug, config)
+        .await
+        .unwrap_or_default();
 
     debug!(
         "{LOG_PREFIX} creating external TTS provider slug={slug} voice={effective_voice} \

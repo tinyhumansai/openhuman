@@ -45,4 +45,35 @@ test.describe('Command Palette', () => {
     await page.keyboard.press('Escape');
     await expect(page.locator(PALETTE_INPUT)).toHaveCount(0);
   });
+
+  test('keeps the shortcut listener active after closing and reopening', async ({ page }) => {
+    await openPalette(page);
+    await page.keyboard.press('Escape');
+    await expect(page.locator(PALETTE_INPUT)).toHaveCount(0);
+    await openPalette(page);
+    await expect(page.getByText('Go to Chat')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator(PALETTE_INPUT)).toHaveCount(0);
+  });
+
+  test('opens keyboard shortcuts with mod+/ and shows registered actions', async ({ page }) => {
+    const shortcut = process.platform === 'darwin' ? 'Meta+/' : 'Control+/';
+    await page.keyboard.press(shortcut);
+    const list = page.getByTestId('keyboard-shortcuts-list');
+    await expect(list).toBeVisible();
+    await expect(list).toContainText('New Chat');
+    await expect(list).toContainText('Toggle Sidebar');
+    await expect(list).toContainText('Navigation');
+    await page.keyboard.press('Escape');
+    await expect(list).toHaveCount(0);
+  });
+
+  test('opens keyboard shortcuts with ? when focus is outside a text field', async ({ page }) => {
+    await page.locator('body').click({ position: { x: 1, y: 1 } });
+    await page.keyboard.press('?');
+    const list = page.getByTestId('keyboard-shortcuts-list');
+    await expect(list).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(list).toHaveCount(0);
+  });
 });

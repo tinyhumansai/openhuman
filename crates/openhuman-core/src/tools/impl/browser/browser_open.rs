@@ -27,6 +27,18 @@ impl BrowserOpenTool {
         }
         self.client.check_url(raw).map_err(anyhow::Error::new)
     }
+
+    /// The client a call opens its session with: one on a fresh profile in a
+    /// run whose agent's browser is view-only (`AgentExt::browser_view_only`),
+    /// so such a run never reaches the persistent, signed-in profile.
+    fn client_for(&self, context: Option<&dyn tinytools::ToolRunContext>) -> Arc<BrowserClient> {
+        if crate::agent::tinyagents::host::run_context::browser_view_only_for_tool(context) {
+            tracing::debug!("[tool.browser_open] view-only run: fresh profile");
+            Arc::new(self.client.with_fresh_profile())
+        } else {
+            self.client.clone()
+        }
+    }
 }
 
 #[async_trait]
@@ -44,26 +56,41 @@ impl Tool for BrowserOpenTool {
         json!({"type":"object","properties":{"url":{"type":"string","description":"HTTPS URL to open"}},"required":["url"]})
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "[policy-blocked] Action blocked: autonomy is read-only",
-            ));
-        }
-        if !self.security.record_action() {
-            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
-        }
+        self.open(args, &self.client).await
+    }
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.open(args, &self.client_for(context)).await
+    }
+}
+
+impl BrowserOpenTool {
+    async fn open(
+        &self,
+        args: serde_json::Value,
+        client: &BrowserClient,
+    ) -> anyhow::Result<ToolResult> {
         let url = args["url"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
+        if !self.security.can_act() {
+            return Ok(ToolResult::error(format!(
+                "{} Action blocked: autonomy is read-only",
+                tinytools::status::POLICY_BLOCKED_MARKER
+            )));
+        }
         if let Err(error) = self.validate_url(url) {
             return Ok(ToolResult::error(error.to_string()));
         }
-        let session = self.client.open_session_for_url(url).await?;
-        let result = self
-            .client
+        let session = client.open_session_for_url(url).await?;
+        let result = client
             .navigate(&session.id, NavigateRequest::new(url))
             .await;
-        let close = self.client.close_session(&session.id).await;
+        let close = client.close_session(&session.id).await;
         match (result, close) {
             (Ok(page), Ok(())) => Ok(ToolResult::success(serde_json::to_string_pretty(&page)?)),
             (Err(error), _) => Ok(ToolResult::error(error.to_string())),

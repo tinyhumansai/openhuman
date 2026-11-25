@@ -251,6 +251,7 @@ async fn concurrent_operations_complete_without_stalling_the_single_async_worker
 async fn title_labels_delete_and_purge_round_trip() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path().to_path_buf();
+    crate::storage::local::use_persistent_default_for_test(&dir);
     ensure_thread(
         crate::core::runtime::DispatchCtx::ambient(),
         dir.clone(),
@@ -345,6 +346,7 @@ async fn update_message_patches_metadata_and_search_finds_content() {
         "m1".to_string(),
         ConversationMessagePatch {
             extra_metadata: Some(json!({"pinned": true})),
+            ..Default::default()
         },
     )
     .await

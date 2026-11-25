@@ -65,7 +65,7 @@ pub fn effective_stt_provider(_config: &Config) -> String {
 
 /// Always errors: no STT provider can be constructed when voice is compiled
 /// out. Callers `?`-propagate the error, so the boxed provider is never used.
-pub fn create_stt_provider(
+pub async fn create_stt_provider(
     _provider: &str,
     _model: &str,
     _config: &Config,

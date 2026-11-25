@@ -116,6 +116,10 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Ajanlar ve özerklik',
   'settings.devGroups.automationIntegrations': 'Otomasyon ve entegrasyonlar',
   'settings.tokenUsage.title': 'Token tasarrufu',
+  'settings.secretGrant.title':
+    "OpenHuman'ın kayıtlı gizli bilgilerinizin kilidini açmasına izin verilsin mi?",
+  'settings.secretGrant.subtitle':
+    'Bu ayarı kaydetmek için şifrelenmesine tek seferlik onayınız gerekiyor. Kaydetmeyi iptal etmek için reddedin.',
   'settings.tokenUsage.menuDesc':
     'Sıkıştırma ayarları ve bunların ne kadar token ve dolar tasarruf sağladığı',
   'settings.tokenUsage.saving': 'Kaydediliyor…',
@@ -1673,6 +1677,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Tuvalde aç',
   'chat.flowProposal.dismiss': 'Kapat',
   'chat.flowProposal.error': 'İş akışı kaydedilemedi. Lütfen yeniden deneyin.',
+  'chat.flowProposal.versionConflict':
+    'Bu iş akışı öneri oluşturulduktan sonra değişti, bu yüzden üzerine yazılmadı. Yeni bir revizyon isteyin.',
   'chat.flowProposal.enableError':
     'İş akışı kaydedildi ancak etkinleştirilemedi. Yeniden deneyin veya İş akışları sayfasından etkinleştirin.',
   'chat.flowProposal.savedConfirmation': 'Kaydedildi',
@@ -1866,11 +1872,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} / {total}',
   'chat.todos.receipt': 'İlerleme güncellendi · {done}/{total}',
   'chat.subagents.ranFor': '{duration} çalıştı',
-  'chat.subagents.ofTotal': '{complete} / {total}',
-  'chat.subagents.runningCount': '{count} çalışıyor',
-  'chat.subagents.failedCount': '{count} başarısız',
-  'chat.subagents.incompleteCount': '{count} tamamlanmadı',
-  'chat.subagents.settled': 'Alt çalıştırmalar tamamlandı. Sonuçları işleniyor.',
   'conversations.planReview.title': 'Planı incele',
   'conversations.planReview.subtitle':
     'Çalıştırmak için onaylayın, atmak için reddedin veya düzeltilmesi için geri bildirim gönderin.',
@@ -1905,7 +1906,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'İzin ver',
   'conversations.mcpUi.confirmDeny': 'Reddet',
   'conversations.tools.delegatedTo': 'Devredilen ajan: {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'Sonuçlar birleştiriliyor',
   'conversations.tools.openInBrowser': 'Tarayıcıda aç',
   'conversations.tools.status.running': 'çalışıyor',
   'conversations.tools.status.done': 'tamamlandı',
@@ -1997,23 +1997,6 @@ const messages: TranslationMap = {
     'Yeniden deneme başarısız oldu. Uygulamanın en son sürümünü indirip yeniden deneyin.',
   'daemon.serviceBlockingGate.retrying': 'Yeniden deneniyor...',
   'daemon.serviceBlockingGate.title': 'OpenHuman çekirdeği kullanılamıyor',
-  'worktree.label': 'Çalışma ağacı',
-  'worktree.dirty': 'İşlenmemiş değişiklikler',
-  'worktree.clean': 'Temiz',
-  'worktree.removing': 'Kaldırılıyor…',
-  'worktree.removeFailed': 'Çalışma ağacı kaldırılamadı',
-  'worktree.diffFailed': 'Fark yüklenemedi',
-  'worktree.diffLoading': 'Fark yükleniyor…',
-  'worktree.diffEmpty': 'HEAD ile fark yok.',
-  'worktree.dirtyConfirm':
-    'Bu çalışma ağacında işlenmemiş değişiklikler var. Kaldırırsanız bu çalışma silinir. Çalışan dalı korunur.',
-  'worktree.action.open': 'Klasörü aç',
-  'worktree.action.diff': 'Fark',
-  'worktree.action.hideDiff': 'Farkı gizle',
-  'worktree.action.remove': 'Kaldır',
-  'worktree.action.removeAnyway': 'Değişiklikleri sil ve kaldır',
-  'worktree.action.preserve': 'Koru',
-  'orchestration.detail.stop': 'Durdur',
   'notifications.card.dismiss': 'Bildirimi kapat',
   'notifications.card.importanceTitle': 'Önem: %{pct}',
   'notifications.center.empty': 'Henüz bildirim yok',
@@ -3696,6 +3679,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Modeller yükleniyor…',
   'composer.voiceMode': 'Ses modu',
   'composer.humanMode': 'İnsan modu',
+  'voiceNote.record': 'Sesli not kaydet',
+  'voiceNote.stop': 'Kaydı durdur',
+  'voiceNote.discard': 'Sesli notu sil',
+  'voiceNote.send': 'Sesli notu gönder',
+  'voiceNote.recording': 'Kaydediliyor…',
+  'voiceNote.play': 'Sesli notu oynat',
+  'voiceNote.pause': 'Sesli notu duraklat',
+  'voiceNote.seek': 'Sesli notta gezin',
+  'voiceNote.transcript': 'Transkript',
+  'voiceNote.noTranscript': 'Transkript mevcut değil',
+  'voiceNote.label': 'Sesli not {duration}',
+  'voiceNote.micDenied': 'Mikrofon erişimi reddedildi veya kullanılamıyor.',
+  'voiceNote.transcribeFailed': 'Sesli not metne dönüştürülemedi.',
+  'voiceNote.loadFailed': 'Bu sesli not yüklenemedi.',
+  'voiceNote.sendFailed': 'Sesli not gönderilemedi.',
   'security.approvalGateDisabled.title': 'Onay kapısı devre dışı',
   'security.approvalGateDisabled.body':
     'Ortamınızda OPENHUMAN_APPROVAL_GATE=0 ayarlı. Dış etkili araçlar onay istemeden çalışacak.',
@@ -3784,6 +3782,10 @@ const messages: TranslationMap = {
     'Ajan, tek bir turda izin verilen en fazla araç adımını tamamlamadan çalıştırdı. Bu genellikle bir aracın sürekli başarısız olduğu anlamına gelir (çoğunlukla bir web isteğindeki hız sınırı). Alttaki sınır kalktığında aynı soruyu bu sohbet dizisinde yeniden deneyebilirsiniz.',
   'chat_error.turn_timeout':
     'Bu tur, tamamlanmadan süre bütçesini aştı ve takılı kalmaması için durduruldu. Bu genellikle bir araç çağrısının veya görev devredilen bir alt ajanın takıldığı anlamına gelir. Sorunuzu bu sohbet dizisinde yeniden deneyebilirsiniz.',
+  'chat_error.disk_full':
+    'Diskiniz dolu, bu yüzden bu sohbet kaydedilemedi. Diskte biraz yer açın, ardından mesajınızı bu sohbet dizisinde yeniden gönderin.',
+  'chat_error.prompt_screened':
+    "OpenHuman'ın güvenlik denetimi bu mesajı tuttuğu için mesaj modele gönderilmedi. Mesaj bir asistana yönelik talimatlardan alıntı içeriyorsa (örneğin bir web sayfasından veya e-postadan), yalnızca bu alıntıyı kaldırıp yeniden deneyin. Sıradan mesajlar da tutuluyorsa güvenlik modülü kullanılamıyor olabilir: OpenHuman'ı yeniden başlatıp tekrar deneyin.",
   'chat_error.empty_response':
     'Model boş bir yanıt döndürdü. Lütfen yeniden deneyin. Sorun devam ederse farklı bir model deneyin veya Bağlantılar → API anahtarları → LLM bölümünden kurulumunu kontrol edin.',
   'chat_error.chat_template_rejected':
@@ -4295,6 +4297,10 @@ const messages: TranslationMap = {
     'Mikrofon erişimi reddedildi. Sistem ayarlarınızdan izin verip yeniden deneyin.',
   'voice.live.error.micUnavailable': 'Kullanılabilir mikrofon yok.',
   'voice.live.error.connection': 'Ses ajanına bağlanılamadı.',
+  'voice.live.error.insufficientCredits':
+    'Canlı ses için daha fazla kredi gerekiyor. Devam etmek için kredi ekleyin.',
+  'voice.live.error.paidPlanRequired':
+    'Canlı ses ücretli bir plan gerektirir. Devam etmek için planınızı yükseltin.',
   'voice.live.toolRunning': '{name} çalışıyor',
   'voice.live.toolOk': '{name} tamamlandı',
   'voice.live.toolFailed': '{name} başarısız oldu',
@@ -4650,11 +4656,6 @@ const messages: TranslationMap = {
   'userErrors.scope.workspace': 'Çalışma alanı',
   'userErrors.scope.memory': 'Bellek',
 
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Araç envanteri',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Toplam araç',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Etkin araçlar',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio araçları',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC araçları',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Politika durumu',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Özerklik düzeyi',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Yalnızca çalışma alanı',
@@ -4873,11 +4874,10 @@ const messages: TranslationMap = {
   'conversations.tools.reviewLearnings.active': 'Öğrenilenler inceleniyor',
   'conversations.tools.reviewLearnings.done': 'Öğrenilenler incelendi',
   'conversations.tools.updateLearnings.active': 'Öğrenilenler güncelleniyor',
+  'orchestration.detail.stop': 'Durdur',
   'conversations.tools.updateLearnings.done': 'Öğrenilenler güncellendi',
   'conversations.tools.delegateTask.active': 'Görev devrediliyor',
   'conversations.tools.delegateTask.done': 'Görev devredildi',
-  'conversations.tools.runAgentsInParallel.active': 'Ajanlar paralel çalıştırılıyor',
-  'conversations.tools.runAgentsInParallel.done': 'Ajanlar paralel çalıştırıldı',
   'conversations.tools.messageAgent.active': 'Ajana mesaj gönderiliyor',
   'conversations.tools.messageAgent.done': 'Ajana mesaj gönderildi',
   'conversations.tools.waitForAgent.active': 'Ajan bekleniyor',
@@ -4914,6 +4914,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Hedef kontrol edildi',
   'conversations.tools.completeGoal.active': 'Hedef tamamlanıyor',
   'conversations.tools.completeGoal.done': 'Hedef tamamlandı',
+  'conversations.tools.resumeGoal.active': 'Hedefe devam ediliyor',
+  'conversations.tools.resumeGoal.done': 'Hedefe devam edildi',
   'conversations.tools.scheduleTask.active': 'Görev zamanlanıyor',
   'conversations.tools.scheduleTask.done': 'Görev zamanlandı',
   'conversations.tools.checkSchedules.active': 'Zamanlamalar kontrol ediliyor',
@@ -5099,6 +5101,53 @@ const messages: TranslationMap = {
   'settings.appearance.showChatMascot': "Tiny'yi mesaj kutusunda göster",
   'onboarding.custom.localDefaultDisabledReason':
     'Yönetilen kurulum için bir OpenHuman hesabı gerekir. Yerel oturumda her hizmeti kendiniz yapılandırırsınız.',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'İlke tanılaması bu çekirdekte yer almıyor.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Etkin güvenlik ilkesi',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Özerklik',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Yalnızca çalışma alanında',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Saat başına en fazla eylem',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'Orta risk için onay iste',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Yüksek riskli komutları engelle',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'İzin verilen komutlar',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'Açıkça izin verilen komut yok.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'İlke',
+  'settings.approvalHistory.judgeScores':
+    'Amaç {intent} · Geri alınabilirlik {reversible} · Veri sızdırma {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'önbellekte',
+  'settings.approvalHistory.judgeExpires': 'Son kullanma {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Her zaman izin verilen araçlar',
+  'keyring.settings.toolTrustDescription':
+    'Bu araçlar, bu güvenlik kapsamında onay istemeden çalışabilir.',
+  'keyring.settings.toolTrustLoading': 'İzin verilen araçlar yükleniyor…',
+  'keyring.settings.toolTrustLoadFailed': 'İzin verilen araçlar yüklenemedi.',
+  'keyring.settings.toolTrustRevokeFailed': 'Bu araç izni geri alınamadı.',
+  'keyring.settings.toolTrustEmpty': 'Her zaman izin verilen araç yok.',
+  'keyring.settings.toolTrustRetry': 'Yeniden dene',
+  'keyring.settings.toolTrustRevoke': 'Geri al',
+  'keyring.settings.toolTrustRevoking': 'Geri alınıyor…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Anahtarlık erişim isteği',
+  'keyring.operation.description':
+    'TinySecurity bir anahtarlık öğesine erişim istiyor. Karar vermeden önce işlemi inceleyin.',
+  'keyring.operation.access': 'Erişim',
+  'keyring.operation.requester': 'İsteyen',
+  'keyring.operation.origin': 'Kaynak',
+  'keyring.operation.purpose': 'Amaç',
+  'keyring.operation.name': 'Anahtarlık öğesi',
+  'keyring.operation.access.read': 'Oku',
+  'keyring.operation.access.write': 'Yaz',
+  'keyring.operation.access.delete': 'Sil',
+  'keyring.operation.allow': 'Bir kez izin ver',
+  'keyring.operation.deny': 'Reddet',
+  'keyring.operation.submitting': 'Gönderiliyor…',
+  'keyring.operation.expires': 'İstek {seconds} sn içinde sona erecek.',
+  'keyring.operation.error': 'Kararınız gönderilemedi. İsteğin süresi dolmuş olabilir.',
 
   'settings.ai.oci.description':
     'Oracle Cloud Infrastructure Generative AI hizmetine bağlanın. İsteklerin nasıl doğrulanacağını ve hangi protokolün kullanılacağını seçin.',

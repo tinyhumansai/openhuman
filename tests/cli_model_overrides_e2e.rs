@@ -7,6 +7,19 @@ use serde_json::Value;
 #[test]
 fn cli_model_and_provider_flags_override_the_loaded_session_without_persisting() {
     let workspace = tempfile::tempdir().expect("temporary OpenHuman workspace");
+    let baseline = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+        .args(["inference", "get_client_config"])
+        .env("OPENHUMAN_WORKSPACE", workspace.path())
+        .output()
+        .expect("read the workspace's baseline inference config");
+    assert!(
+        baseline.status.success(),
+        "baseline CLI failed: {}",
+        String::from_utf8_lossy(&baseline.stderr)
+    );
+    let baseline: Value = serde_json::from_slice(&baseline.stdout).expect("baseline JSON response");
+    let baseline_result = baseline.get("result").expect("baseline RPC result");
+
     let output = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
         .args([
             "--provider",
@@ -40,9 +53,9 @@ fn cli_model_and_provider_flags_override_the_loaded_session_without_persisting()
         );
     }
     assert_eq!(
-        result.get("default_model").and_then(Value::as_str),
-        Some("openrouter/deepseek/deepseek-v4-flash"),
-        "a local route override must not replace the managed default model"
+        result.get("default_model"),
+        baseline_result.get("default_model"),
+        "a local route override must not replace the workspace's default model"
     );
 
     let persisted =

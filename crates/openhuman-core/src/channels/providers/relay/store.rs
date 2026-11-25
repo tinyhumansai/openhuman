@@ -15,7 +15,6 @@ type ThreadLocks = Mutex<HashMap<(PathBuf, String), Arc<tokio::sync::Mutex<()>>>
 
 use chrono::Utc;
 use serde_json::json;
-use tinychannels_bus::context::ChatMessage;
 
 use super::params::RelayInboundParams;
 use crate::threads::store::blocking as conversations;
@@ -156,7 +155,7 @@ pub async fn prior_turns(
     thread_id: &str,
     message_id: &str,
     limit: usize,
-) -> Result<Vec<ChatMessage>, String> {
+) -> Result<Vec<tinyagents_session::transcript::TranscriptMessage>, String> {
     let current = inbound_message_id(message_id);
     let messages = conversations::get_messages(
         ctx.clone(),
@@ -170,13 +169,22 @@ pub async fn prior_turns(
 }
 
 /// `messages` up to (not including) the one with id `current`, as history.
-fn to_history(messages: &[ConversationMessage], current: &str) -> Vec<ChatMessage> {
+fn to_history(
+    messages: &[ConversationMessage],
+    current: &str,
+) -> Vec<tinyagents_session::transcript::TranscriptMessage> {
     messages
         .iter()
         .take_while(|message| message.id != current)
         .filter_map(|message| match message.sender.as_str() {
-            "user" => Some(ChatMessage::user(&message.content)),
-            "assistant" => Some(ChatMessage::assistant(&message.content)),
+            "user" => Some(tinyagents_session::transcript::TranscriptMessage::user(
+                message.content.clone(),
+            )),
+            "assistant" => Some(
+                tinyagents_session::transcript::TranscriptMessage::assistant(
+                    message.content.clone(),
+                ),
+            ),
             _ => None,
         })
         .collect()

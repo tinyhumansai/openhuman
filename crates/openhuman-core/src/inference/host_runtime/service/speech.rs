@@ -5,7 +5,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use log::debug;
 
 use crate::config::Config;
-use crate::voice::{create_stt_provider, effective_stt_provider, SttProvider};
+use crate::voice::{create_stt_provider, effective_stt_provider};
 use tinyinference_local::models as model_ids;
 use tinyinference_local::status::{LocalAiSpeechResult, LocalAiTtsResult};
 
@@ -95,22 +95,16 @@ pub async fn transcribe_bytes(
     })
 }
 
-type ConfiguredProviderFactory<'a> =
-    dyn Fn(&Config) -> Result<Box<dyn SttProvider>, String> + Send + Sync + 'a;
-
 fn selected_stt_provider<'a>(config: &'a Config, provider_name: &str) -> ConfiguredSttProvider<'a> {
-    let provider_name = provider_name.to_owned();
     ConfiguredSttProvider {
         config,
-        provider_factory: Box::new(move |config| {
-            create_stt_provider(&provider_name, "", config).map_err(|error| error.to_string())
-        }),
+        provider_name: provider_name.to_owned(),
     }
 }
 
 struct ConfiguredSttProvider<'a> {
     config: &'a Config,
-    provider_factory: Box<ConfiguredProviderFactory<'a>>,
+    provider_name: String,
 }
 
 #[async_trait::async_trait]
@@ -121,7 +115,9 @@ impl tinyinference_voice::transcription::TranscriptionProvider for ConfiguredStt
         mime_type: &str,
         file_name: &str,
     ) -> Result<String, String> {
-        let provider = (self.provider_factory)(self.config)?;
+        let provider = create_stt_provider(&self.provider_name, "", self.config)
+            .await
+            .map_err(|error| error.to_string())?;
         let audio_base64 = BASE64.encode(audio);
         let outcome = provider
             .transcribe(
@@ -228,7 +224,7 @@ async fn validated_tts_output_path(
         );
     };
     let canonical_root = canonicalize_path_with_missing_suffix(allowed_root).await?;
-    if crate::security::SecurityPolicy::is_always_forbidden(&canonical_root) {
+    if crate::security::SecurityPolicy::is_always_forbidden_async(&canonical_root).await {
         return Err("invalid output_path: allowed root resolves to a protected path".into());
     }
     tokio::fs::create_dir_all(allowed_root)

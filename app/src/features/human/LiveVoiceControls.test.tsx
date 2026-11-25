@@ -114,6 +114,8 @@ describe('LiveVoiceControls', () => {
     ['mic_denied', /Microphone access was denied/],
     ['mic_unavailable', /No microphone is available/],
     ['connection_failed', /Couldn't connect/],
+    ['insufficient_credits', /Add credits to continue/],
+    ['paid_plan_required', /requires a paid plan/],
     ['provider_down', /provider exploded/],
   ])('shows the %s error with a retry', (code, text) => {
     session.current = makeSession({

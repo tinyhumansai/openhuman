@@ -20,9 +20,8 @@ pub(crate) async fn bootstrap_core_runtime(
     config: Option<crate::config::Config>,
     domains: crate::core::runtime::DomainSet,
     ctx: &DispatchCtx,
+    defer_credentials: bool,
 ) {
-    use crate::platform::socket::{set_global_socket_manager, SocketManager};
-    use std::sync::Arc;
     // `embedded_core` derived from host_kind so the rest of the function (which
     // already keys behavior off the boolean) stays unchanged.
     let embedded_core = host_kind.is_desktop_shell();
@@ -67,7 +66,7 @@ pub(crate) async fn bootstrap_core_runtime(
         if guard_disabled {
             log::debug!("[file_state] guard disabled via OPENHUMAN_FILE_STATE_GUARD");
         }
-        tinytools_std::file_state::init_global(!guard_disabled);
+        tinyagents_harness_tools::fs::file_state::init_global(!guard_disabled);
     } else {
         log::debug!("[boot] agent file-state coordinator SKIPPED — Agent domain disabled");
     }
@@ -82,6 +81,7 @@ pub(crate) async fn bootstrap_core_runtime(
         embedded_core,
         domains,
         ctx,
+        defer_credentials,
     );
 
     // Latch the config-corruption recovery signal (#5167) so `app_state_snapshot`
@@ -128,7 +128,7 @@ pub(crate) async fn bootstrap_core_runtime(
     }
 
     // --- Run-ledger recovery -------------------------------------------
-    // Detached sub-agent runs (`spawn_async_subagent`) from a previous process
+    // Detached sub-agent runs (`spawn_subagent`) from a previous process
     // are gone with that process. Any `agent_runs` row still marked `running`
     // at boot is orphaned — its driver died without firing a terminal event, so
     // the finalizer never settled it. Stamp such rows `interrupted` so they stop
@@ -376,10 +376,8 @@ pub(crate) async fn bootstrap_core_runtime(
     // placement rationale as the bridges above. Idempotent (OnceLock-guarded).
     crate::web_chat::register_memory_activity_surface_subscriber();
 
-    // --- Socket manager bootstrap ---
-    let socket_mgr = Arc::new(SocketManager::new());
-    set_global_socket_manager(socket_mgr.clone());
-    log::info!("[socket] SocketManager initialized and registered globally");
+    // Socket.IO is installed by the host layer (TinyHumans); core owns only
+    // the port and keeps boot independent of the SDK implementation.
 }
 
 /// Starts selected background jobs after the runtime has entered `serve()`.
@@ -412,7 +410,7 @@ pub(crate) async fn start_core_runtime_services(
         }
         None => {
             log::warn!(
-                "[socket] SocketManager unavailable during runtime service startup; auto-connect skipped"
+                "[socket] SocketPort unavailable during runtime service startup; auto-connect skipped"
             );
         }
     }

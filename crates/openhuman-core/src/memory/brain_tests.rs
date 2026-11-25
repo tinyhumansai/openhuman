@@ -1,9 +1,9 @@
 use super::*;
 
+use tinymemory_tools::layout::identity::Identity as MemoryIdentity;
 use tinymemory_tools::layout::placement::file_into;
 
 use tinymemory_api::{ItemKind, MemoryMeta, MetaFilter};
-use tinymemory_integrations::brain::MAX_INGEST_BYTES;
 
 use crate::memory::test_fixtures::{bind_reference, config_in, stored};
 
@@ -57,12 +57,7 @@ async fn a_sources_collections_count_and_forget_with_it() {
         };
         engine.store(StoreItem::document(text, meta)).await.unwrap();
     }
-    let view = sources(
-        &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
-    )
-    .await
-    .unwrap();
+    let view = sources(&config, &MemoryIdentity::root()).await.unwrap();
     let counts: Vec<(&str, u64)> = view
         .sources
         .iter()
@@ -73,7 +68,7 @@ async fn a_sources_collections_count_and_forget_with_it() {
 
     let gone = forget(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainForgetParams {
             source: "github".into(),
         },
@@ -99,7 +94,7 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
 
     let ingested = ingest(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainIngestParams {
             path: None,
             text: Some("Refunds are issued within 14 days.".into()),
@@ -112,7 +107,7 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
     assert_eq!(ingested.source, "notion");
     ingest(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainIngestParams {
             path: None,
             text: Some("Onboarding takes a week.".into()),
@@ -131,19 +126,14 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
         "one belief build per source"
     );
 
-    let counts = sources(
-        &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
-    )
-    .await
-    .unwrap();
+    let counts = sources(&config, &MemoryIdentity::root()).await.unwrap();
     assert_eq!(counts.root, "root");
     assert_eq!(counts.sources.len(), 2);
     assert_eq!(counts.unfiled, 0);
 
     let found = search(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainSearchParams {
             query: "refunds".into(),
             source: Some("notion".into()),
@@ -156,7 +146,7 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
 
     let gone = forget(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainForgetParams {
             source: "notion".into(),
         },
@@ -198,18 +188,13 @@ async fn ingest_refuses_bad_input() {
         },
     ] {
         assert!(matches!(
-            ingest(
-                &config,
-                &tinymemory_tools::layout::identity::Identity::root(),
-                params
-            )
-            .await,
+            ingest(&config, &MemoryIdentity::root(), params).await,
             Err(Error::InvalidRequest(_))
         ));
     }
     assert!(search(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainSearchParams {
             query: " ".into(),
             source: None,
@@ -221,50 +206,33 @@ async fn ingest_refuses_bad_input() {
 }
 
 #[tokio::test]
-async fn ingest_keeps_the_legacy_blank_source_error() {
+async fn ingest_rejects_path_and_text_together_without_ingesting() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
-    bind_reference(&config);
+    let engine = bind_reference(&config);
+    let path = tmp.path().join("valid.md");
+    std::fs::write(&path, "valid file content").unwrap();
+
     let error = ingest(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainIngestParams {
-            path: None,
-            text: Some("body".into()),
-            source: Some(" ".into()),
+            path: Some(path.display().to_string()),
+            text: Some("valid text content".into()),
+            source: Some("files".into()),
             title: None,
         },
     )
     .await
     .unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        "invalid request: invalid request: a brain source id must not be blank"
-    );
-}
-
-#[tokio::test]
-async fn ingest_keeps_the_legacy_oversized_file_error() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    bind_reference(&config);
-    let path = tmp.path().join("oversized.bin");
-    let size = MAX_INGEST_BYTES + 1;
-    std::fs::File::create(&path).unwrap().set_len(size).unwrap();
-
-    let error = ingest(
-        &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
-        path_params(path.display().to_string()),
-    )
-    .await
-    .unwrap_err();
-
-    assert_eq!(
-        error.to_string(),
-        format!("invalid request: the file is {size} bytes; the limit is {MAX_INGEST_BYTES}")
-    );
+    assert!(matches!(
+        error,
+        Error::InvalidRequest(message)
+            if message == "pass exactly one of `path` or `text`"
+    ));
+    assert!(stored(&engine, MetaFilter::kinds([ItemKind::Document]))
+        .await
+        .is_empty());
 }
 
 #[tokio::test]
@@ -276,7 +244,7 @@ async fn a_file_is_converted_and_filed_under_files() {
     std::fs::write(&path, "# Guide\n\nAlways tag releases.").unwrap();
     let ingested = ingest(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         BrainIngestParams {
             path: Some(path.display().to_string()),
             text: None,
@@ -306,7 +274,7 @@ async fn an_ingest_queues_a_belief_build_only_for_an_engine_that_waits_for_one()
         );
         ingest(
             &config,
-            &tinymemory_tools::layout::identity::Identity::root(),
+            &MemoryIdentity::root(),
             BrainIngestParams {
                 path: None,
                 text: Some("Refunds are issued within 14 days.".into()),
@@ -351,12 +319,7 @@ async fn ingest_refuses_a_credential_store_a_system_root_traversal_and_null_byte
         format!("{}/../guide.md", notes.display()),
         format!("{}\0.md", tmp.path().join("guide").display()),
     ] {
-        let result = ingest(
-            &config,
-            &tinymemory_tools::layout::identity::Identity::root(),
-            path_params(path.clone()),
-        )
-        .await;
+        let result = ingest(&config, &MemoryIdentity::root(), path_params(path.clone())).await;
         assert!(
             matches!(result, Err(Error::InvalidRequest(_))),
             "{path:?}: {result:?}"
@@ -379,7 +342,7 @@ async fn ingest_refuses_a_symlink_into_a_credential_store() {
 
     let result = ingest(
         &config,
-        &tinymemory_tools::layout::identity::Identity::root(),
+        &MemoryIdentity::root(),
         path_params(link.display().to_string()),
     )
     .await;
@@ -388,4 +351,51 @@ async fn ingest_refuses_a_symlink_into_a_credential_store() {
         "{result:?}"
     );
     assert!(engine.is_empty());
+}
+
+#[tokio::test]
+async fn ingest_keeps_the_legacy_blank_source_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    bind_reference(&config);
+    let error = ingest(
+        &config,
+        &MemoryIdentity::root(),
+        BrainIngestParams {
+            path: None,
+            text: Some("body".into()),
+            source: Some(" ".into()),
+            title: None,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "invalid request: invalid request: a brain source id must not be blank"
+    );
+}
+
+#[tokio::test]
+async fn ingest_keeps_the_legacy_oversized_file_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    bind_reference(&config);
+    let path = tmp.path().join("oversized.bin");
+    let size = MAX_INGEST_BYTES + 1;
+    std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+
+    let error = ingest(
+        &config,
+        &MemoryIdentity::root(),
+        path_params(path.display().to_string()),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        format!("invalid request: the file is {size} bytes; the limit is {MAX_INGEST_BYTES}")
+    );
 }

@@ -13,7 +13,6 @@ icon: toggle-on
 [components]
 flows = true       # tinyflows: saved workflows
 tinyflows = true   # tinyflows module: scheduled jobs (cron) runtime, store and schedule maths
-memes = true       # tinymemes
 documents = true   # tinydocs
 search = true      # tinysearch
 mcp = true         # tinymcp
@@ -62,7 +61,6 @@ The first load of an older config moves these once into `[components]`, and the 
 | `[search] enabled = false` | `components.search = false` |
 | `[mcp_client] enabled = false` | `components.mcp = false` |
 | `[memory] engine = "none"` | `components.memory = false` (`engine` is kept) |
-| `OPENHUMAN_TINYMEMES` set to an off value | `components.memes = false` |
 | `OPENHUMAN_DISABLE_CHANNEL_LISTENERS=1` | `components.channels = false` at load (env override, kept for one release; `OPENHUMAN_COMPONENT_CHANNELS` wins) |
 | `[dictation] enabled`, `[voice_server] auto_start` and `always_on_enabled` all explicitly `false` | `components.voice = false` (any other mix keeps voice on); these legacy keys are migration inputs only |
 | `[sandbox] enabled = false` (or `[security.sandbox] enabled = false`) | `components.sandbox = false` (`enabled = true` or unset keeps it on; the old key is kept) |
@@ -70,11 +68,9 @@ The first load of an older config moves these once into `[components]`, and the 
 
 A `components.*` key already present in the file always wins over its legacy flag, so the migration is idempotent and turning a component back on sticks.
 
-## Memes
+## Removed components
 
-`components.memes` is the master switch: off means no remix and no module load, and the A/B arm is ignored. When on, `OPENHUMAN_TINYMEMES` (`off`, `on`, `ab`, `ab:NN`; build-time default `OPENHUMAN_TINYMEMES_DEFAULT`) picks the threads that are remixed. The `[memes]` section tunes it: `timeout_ms` (default 20000) and `meme_cooldown` (default 3). `OPENHUMAN_TINYMEMES_TIMEOUT_MS` and `OPENHUMAN_TINYMEMES_MEME_COOLDOWN` override them when set.
-
-The module reads its own `TINYMEMES_*` overrides from the process environment, so credentials never cross the bus: `TINYMEMES_OPENROUTER_KEY` (and `TINYMEMES_MODEL`) route the rewrite model and slang research through OpenRouter, `TINYMEMES_JEV` (`auto`, `typesafe`, `openrouter`, `openjev`, `llm`) with `TINYMEMES_TYPESAFE_KEY` / `TINYMEMES_OPENJEV_KEY` picks the Jev route. Without any override the module asks OpenHuman for Jev; when OpenHuman has none (signed out, offline session) the chat model answers Jev's questions instead. After the reply is delivered the module may run slang and meme research in the background through OpenHuman web search. Learned slang, memes and the remixed-message ring are documents on the storage port (older `<workspace>/tinymemes/*.json` files are adopted once and renamed `*.migrated`).
+TinyMemes (final-reply slang and meme remixing) is no longer part of OpenHuman. A config that still has `components.memes` or a `[memes]` section loads normally; the keys are ignored and dropped on the next save. `OPENHUMAN_TINYMEMES*` and `OPENHUMAN_COMPONENT_MEMES` are no longer read.
 
 ## Event queues
 

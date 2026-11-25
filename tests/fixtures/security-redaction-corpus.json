@@ -1,0 +1,125 @@
+{
+  "text": [
+    {
+      "case": "anthropic_key",
+      "needle": "abcdefghijklmnopqrstuvwxyz0123456789",
+      "removed_by": [
+        "log",
+        "denials",
+        "credential_middleware"
+      ],
+      "input_parts": [
+        "sk-a",
+        "nt-a",
+        "pi03",
+        "-abc",
+        "defg",
+        "hijk",
+        "lmno",
+        "pqrs",
+        "tuvw",
+        "xyz0",
+        "1234",
+        "5678",
+        "9"
+      ],
+      "composio_secret_parts": [
+        "sk-a",
+        "nt-a",
+        "pi03",
+        "-abc",
+        "defg",
+        "hijk",
+        "lmno",
+        "pqrs",
+        "tuvw",
+        "xyz0",
+        "1234",
+        "5678",
+        "9"
+      ]
+    },
+    {
+      "case": "email",
+      "input": "alice@example.com",
+      "needle": "alice@example.com",
+      "removed_by": [
+        "pii"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "linux_home",
+      "input": "/home/alice/report.txt",
+      "needle": "alice",
+      "removed_by": [
+        "log"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "macos_home",
+      "input": "/Users/alice/report.txt",
+      "needle": "alice",
+      "removed_by": [
+        "log"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "windows_home",
+      "input": "C:\\Users\\alice\\report.txt",
+      "needle": "alice",
+      "removed_by": [
+        "log"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "windows_home_doubled",
+      "input": "C:\\\\Users\\\\alice\\\\report.txt",
+      "needle": "alice",
+      "removed_by": [],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "ordinary_text",
+      "input": "hello world",
+      "needle": "hello world",
+      "removed_by": [],
+      "composio_secret": "unrelated-configured-key"
+    }
+  ],
+  "urls": [
+    {
+      "case": "basic_auth_and_query",
+      "endpoint": "https://api.example.com",
+      "inference": "api.example.com",
+      "wallet": "https://api.example.com",
+      "input_parts": [
+        "http",
+        "s://",
+        "alic",
+        "e:hu",
+        "nter",
+        "2@ap",
+        "i.ex",
+        "ampl",
+        "e.co",
+        "m/v1",
+        "?key",
+        "=sec",
+        "ret#",
+        "priv",
+        "ate"
+      ]
+    },
+    {
+      "case": "plain_url",
+      "input": "https://api.example.com/v1",
+      "endpoint": "https://api.example.com",
+      "inference": "api.example.com",
+      "wallet": "https://api.example.com"
+    }
+  ]
+}

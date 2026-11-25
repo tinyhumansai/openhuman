@@ -181,6 +181,22 @@ async fn a_symlinked_route_into_the_data_folder_is_rejected() {
     assert!(err.contains("OpenHuman data folder"), "{err}");
 }
 
+/// TS-E2E-016: a symlink into a credential store is the credential store; the
+/// floor is asked about the resolved path, not only the spelling.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlink_into_a_credential_folder_is_rejected() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let ssh = tmp.path().join(".ssh");
+    std::fs::create_dir_all(&ssh).unwrap();
+    let link = tmp.path().join("Documents-link");
+    std::os::unix::fs::symlink(&ssh, &link).unwrap();
+
+    let err = rejected(&mut cfg, &link.to_string_lossy()).await;
+    assert!(err.contains("protected"), "{err}");
+}
+
 /// Changing the folder affects new files only: a file made in the previous
 /// folder keeps resolving, because that folder is recorded as trusted.
 #[tokio::test]

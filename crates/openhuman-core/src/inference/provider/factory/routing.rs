@@ -139,12 +139,12 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
 }
 
 /// Whether the role's selected provider can be funded directly by the user.
-pub fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
+pub async fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
     let resolved = provider_for_role(role, config);
     let r = resolved.trim();
     let is_managed =
         r.is_empty() || r == "cloud" || r == PROVIDER_OPENHUMAN || r == BYOK_INCOMPLETE_SENTINEL;
-    let usable_byo = !is_managed && route_has_usable_credentials(r, config);
+    let usable_byo = !is_managed && route_has_usable_credentials(r, config).await;
     log::debug!(
         "[billing] role_bypasses_managed_credits role={role} resolved={resolved} \
          is_managed={is_managed} usable_byo={usable_byo}"
@@ -191,7 +191,7 @@ fn is_explicit_provider_default(model: &str, config: &Config) -> bool {
 /// True when a resolved chat-tier provider string can actually run on the
 /// user's own funding: local runtimes / claude-code carry their own creds; a
 /// concrete cloud slug requires a non-empty stored key.
-pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
+pub(super) async fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
     let r = resolved.trim();
     if tinyinference_local::profile::is_local_provider_string(r)
         || r.starts_with(tinyagents_harness::providers::claude_code::PROVIDER_PREFIX)
@@ -214,7 +214,7 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
                 );
                 return true;
             }
-            match lookup_key_for_slug(slug, config) {
+            match lookup_key_for_slug(slug, config).await {
                 Ok(key) => {
                     let usable = !key.trim().is_empty();
                     log::debug!(
@@ -232,6 +232,69 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
         }
     }
     false
+}
+
+/// `provider` with its model replaced by `model`, when one is given: the same
+/// provider (and so the same credentials, endpoint and route temperature)
+/// serving another model. A provider string with no model of its own (a
+/// routing sentinel such as `cloud`, or the managed backend's bare
+/// `openhuman`) is returned as is; those routes take the model from the
+/// request's pin instead.
+pub(super) fn route_with_model(provider: String, model: Option<&str>) -> String {
+    use tinyinference_providers::route::{ProviderRoute, RouteKind};
+    let Some(model) = model else {
+        return provider;
+    };
+    match ProviderRoute::parse(&provider) {
+        Some(route) if route.kind() != RouteKind::Sentinel => match route.temperature {
+            Some(temperature) => format!("{}:{model}@{temperature}", route.provider),
+            None => format!("{}:{model}", route.provider),
+        },
+        _ => provider,
+    }
+}
+
+/// The route a pinned role should use for one turn whose caller asked for
+/// `model` (`model_override`).
+///
+/// A pinned role route (`chat_provider = "local-openai:A"`) outranks
+/// `default_model` in [`provider_for_role`], so an override written only to
+/// `default_model` never reaches the endpoint. This rewrites the pin instead:
+///
+/// * `model` that is itself an explicit provider route (`ollama:llama3.1:8b`,
+///   a configured `<slug>:<model>`, `claude-code:…`) replaces the pin, the way
+///   it would be routed with nothing pinned;
+/// * a bare model id keeps the pinned provider, its credentials, endpoint and
+///   `@temperature`, and swaps only the model ([`route_with_model`]);
+/// * a `cloud` pin resolves to the configured primary route before applying
+///   a bare override, so a primary BYOK provider's default model cannot win;
+/// * a pin with no model of its own (`openhuman`) is returned unchanged: the
+///   managed backend already takes the model from `default_model` / request.
+///
+/// `hint:<role>` overrides select a workload rather than a model and must not
+/// be passed here.
+pub(crate) fn route_for_turn_model(pinned: &str, model: &str, config: &Config) -> String {
+    let model = model.trim();
+    if is_explicit_provider_default(model, config) {
+        return model.to_string();
+    }
+    if pinned.trim() == "cloud" {
+        let primary = crate::config::ops::resolve_primary_cloud_provider_string(config);
+        if primary == BYOK_INCOMPLETE_SENTINEL {
+            // The primary BYOK entry's model is optional when the caller
+            // supplies a per-turn model. Resolve the provider from the entry
+            // itself so the incomplete sentinel does not swallow that model.
+            if let Some(entry) = config
+                .primary_cloud
+                .as_deref()
+                .and_then(|id| config.cloud_providers.iter().find(|entry| entry.id == id))
+            {
+                return format!("{}:{model}", entry.slug);
+            }
+        }
+        return route_with_model(primary, Some(model));
+    }
+    route_with_model(pinned.to_string(), Some(model))
 }
 
 #[cfg(test)]

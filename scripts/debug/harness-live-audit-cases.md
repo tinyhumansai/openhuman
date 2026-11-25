@@ -15,7 +15,6 @@ The optional `--provider-mode direct-openai` control path writes a temporary dir
 ## Cases
 
 - `async-steer`: starts a durable async subagent with `spawn_subagent`, waits until the live registry shows it running, then sends `openhuman.subagent_steer` mid-run and verifies the steer was accepted.
-- `parallel-research-code`: asks the orchestrator to call `spawn_parallel_agents` with two workers. One researches `https://example.com`; the other writes a small Python code snippet. The audit checks that the parent turn completed and at least two subagent transcripts changed.
 - `reuse-parent-comm`: runs two parent prompts. The first prompt spawns two blocking durable subagents that return parent-facing status updates. The second prompt uses the same durable task keys and verifies that the same subagent sessions are reused. Each turn prints transcript usage deltas: input tokens, cached input tokens, output tokens, and charged USD.
 - `all`: runs every case against the same spawned core.
 
@@ -23,7 +22,6 @@ Useful focused commands:
 
 ```bash
 node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --model hint:agentic --scenario async-steer
-node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --model hint:agentic --scenario parallel-research-code
 node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --model hint:agentic --scenario reuse-parent-comm
 node scripts/debug/harness-subagent-rpc-audit.mjs --spawn-core --isolated-workspace --provider-mode direct-openai --model gpt-4.1-mini --scenario reuse-parent-comm
 ```

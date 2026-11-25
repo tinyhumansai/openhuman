@@ -12,7 +12,7 @@ use super::list_connections::ComposioListConnectionsTool;
 use super::list_toolkits::ComposioListToolkitsTool;
 use super::list_tools::ComposioListToolsTool;
 
-pub fn all_composio_agent_tools(config: &crate::config::Config) -> Vec<Box<dyn Tool>> {
+pub async fn all_composio_agent_tools(config: &crate::config::Config) -> Vec<Box<dyn Tool>> {
     // Registration gate: ask the mode-aware probe "can this user call
     // composio at all?" — true when EITHER a backend session token OR a
     // stored/inline direct-mode API key is present. The pre-fix path
@@ -21,7 +21,7 @@ pub fn all_composio_agent_tools(config: &crate::config::Config) -> Vec<Box<dyn T
     // direct-mode users (#1710). Per-action dispatch inside each tool
     // re-resolves through the factory so the live `composio.mode`
     // toggle keeps winning.
-    if !crate::integrations::composio::user_is_signed_in_to_composio(config) {
+    if !crate::integrations::composio::user_is_signed_in_to_composio(config).await {
         tracing::debug!(
             "[composio] agent tools not registered — user is not signed in to composio \
              (no backend session and no direct API key)"

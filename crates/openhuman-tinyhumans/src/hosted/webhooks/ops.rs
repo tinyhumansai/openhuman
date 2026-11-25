@@ -22,7 +22,7 @@ fn require_id(id: &str) -> Result<&str, String> {
 
 /// `GET /webhooks/core` — the user's tunnels.
 pub async fn list_tunnels(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /webhooks/core",
         client.sdk().webhooks().list_tunnels().await,
@@ -47,7 +47,7 @@ pub async fn create_tunnel(
             .map(|d| d.trim().to_string())
             .filter(|d| !d.is_empty()),
     };
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /webhooks/core",
         client.sdk().webhooks().create_tunnel(&request).await,
@@ -58,7 +58,7 @@ pub async fn create_tunnel(
 /// `GET /webhooks/core/{id}`.
 pub async fn get_tunnel(config: &Config, id: &str) -> Result<Outcome<Value>, String> {
     let id = require_id(id)?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /webhooks/core/{id}",
         client.sdk().webhooks().get_tunnel(id).await,
@@ -73,7 +73,7 @@ pub async fn update_tunnel(
     request: UpdateWebhookTunnelRequest,
 ) -> Result<Outcome<Value>, String> {
     let id = require_id(id)?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "PATCH /webhooks/core/{id}",
         client.sdk().webhooks().update_tunnel(id, &request).await,
@@ -84,7 +84,7 @@ pub async fn update_tunnel(
 /// `DELETE /webhooks/core/{id}`.
 pub async fn delete_tunnel(config: &Config, id: &str) -> Result<Outcome<Value>, String> {
     let id = require_id(id)?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "DELETE /webhooks/core/{id}",
         client.sdk().webhooks().delete_tunnel(id).await,
@@ -94,7 +94,7 @@ pub async fn delete_tunnel(config: &Config, id: &str) -> Result<Outcome<Value>, 
 
 /// `GET /webhooks/core/bandwidth` — the remaining bandwidth budget.
 pub async fn get_bandwidth(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /webhooks/core/bandwidth",
         client.sdk().webhooks().get_bandwidth().await,

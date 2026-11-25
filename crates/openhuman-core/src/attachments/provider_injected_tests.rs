@@ -20,6 +20,7 @@ async fn injected_turn_source_uses_bound_workspace_and_explicit_model_facts() {
         .with_attachment_config(Arc::new(config));
     let models = source
         .build("explicit-injected-model", 0.0, None, None)
+        .await
         .unwrap();
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
@@ -82,6 +83,7 @@ async fn configured_injected_builder_stages_and_resolves_in_explicit_acting_work
     let models = agent
         .turn_model_source()
         .build("explicit-injected", 0.0, None, None)
+        .await
         .unwrap();
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {

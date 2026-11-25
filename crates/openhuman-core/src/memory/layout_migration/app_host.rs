@@ -69,16 +69,16 @@ impl lm::LayoutHost for AppHost {
         &self.store
     }
 
-    fn engines(&self) -> lm::Result<Engines> {
+    async fn engines(&self) -> lm::Result<Engines> {
         let config = &self.config;
-        let bind = || -> Result<Engines> {
-            let root = signed_in_root(config)?;
-            Ok(Engines {
-                legacy: bind_engine(config, None)?.engine,
-                tree: bind_engine(config, Some(&root))?.engine,
-            })
-        };
-        bind().map_err(to_module)
+        let root = signed_in_root(config).map_err(to_module)?;
+        Ok(Engines {
+            legacy: bind_engine(config, None).await.map_err(to_module)?.engine,
+            tree: bind_engine(config, Some(&root))
+                .await
+                .map_err(to_module)?
+                .engine,
+        })
     }
 
     fn placement(&self) -> lm::Result<Placement> {
@@ -112,8 +112,9 @@ impl lm::LayoutHost for AppHost {
         crate::memory::billing::free_period_active(&self.config).await
     }
 
-    fn legacy_claim(&self) -> lm::Result<Option<Box<dyn LegacyClaim>>> {
+    async fn legacy_claim(&self) -> lm::Result<Option<Box<dyn LegacyClaim>>> {
         claim(&self.config)
+            .await
             .map(|claim| claim.map(|claim| Box::new(claim) as Box<dyn LegacyClaim>))
             .map_err(to_module)
     }
@@ -129,7 +130,7 @@ impl lm::LayoutHost for AppHost {
 
 /// The claim on the legacy tree `config`'s account would move, if it is
 /// shared by every account on the machine.
-pub(super) fn claim(config: &Config) -> Result<Option<FsLegacyClaim>> {
+pub(super) async fn claim(config: &Config) -> Result<Option<FsLegacyClaim>> {
     // A self-hosted key is the operator's: every local account using it
     // shares one legacy tree. The hosted engine is one tenant per person.
     if config.memory.engine.trim() != CORTEXDB_ENGINE {
@@ -145,7 +146,7 @@ pub(super) fn claim(config: &Config) -> Result<Option<FsLegacyClaim>> {
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .ok_or_else(signed_out)?;
-    let endpoint = bind_engine(config, None)?.endpoint;
+    let endpoint = bind_engine(config, None).await?.endpoint;
     Ok(Some(FsLegacyClaim::new(app_dir, &endpoint, &owner)))
 }
 
@@ -157,8 +158,10 @@ fn signed_out() -> Error {
     Error::Off("sign in to move memory into its own layout".to_string())
 }
 
-fn bind_engine(config: &Config, root: Option<&str>) -> Result<engine::BoundEngine> {
-    engine::bind_with_root(config, root).map_err(memory_error_to_engine)
+async fn bind_engine(config: &Config, root: Option<&str>) -> Result<engine::BoundEngine> {
+    engine::bind_with_root(config, root)
+        .await
+        .map_err(memory_error_to_engine)
 }
 
 fn memory_error_to_engine(error: MemoryError) -> Error {

@@ -84,7 +84,7 @@ impl Session {
 
     /// Whether this is the offline form.
     pub fn is_local(&self) -> bool {
-        openhuman_core::security::credentials::session_support::is_local_session_token(&self.token)
+        openhuman_core::credentials::session_state::is_local_session_token(&self.token)
     }
 }
 

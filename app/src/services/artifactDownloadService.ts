@@ -70,7 +70,7 @@ interface DeleteArtifactOutcome {
   error?: string;
 }
 
-type ListedArtifactKind = 'presentation' | 'document' | 'image' | 'video' | 'other';
+type ListedArtifactKind = import('../types/threadWire.generated').ArtifactKind;
 
 interface ListedThreadArtifact {
   artifactId: string;
@@ -123,6 +123,7 @@ function listedArtifactKind(raw: string | undefined): ListedArtifactKind | null 
     case 'presentation':
     case 'document':
     case 'image':
+    case 'video':
     case 'other':
       return raw;
     default:

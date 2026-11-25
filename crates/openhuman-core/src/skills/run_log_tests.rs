@@ -122,3 +122,62 @@ fn a_compaction_is_logged_as_a_step() {
         "{line}"
     );
 }
+
+/// The run's progress bridge is spawned from the detached run task. The log
+/// store resolves its storage scope from the acting context, so the bridge
+/// must act for the dispatching agent: spawned bare, its steps land under the
+/// default scope while the header sits under the agent's, and the agent's log
+/// never shows them.
+#[tokio::test]
+async fn the_progress_bridge_writes_under_the_dispatching_agents_scope() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
+
+    let ctx = CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            DomainSet::full(),
+            Default::default(),
+        )
+        .session_agent("u-asha"),
+    );
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = run_log_path(dir.path(), "workflow", "run-scope-123");
+    CoreContext::scope(
+        ctx.clone(),
+        write_header(
+            dir.path(),
+            &path,
+            "workflow",
+            "run-scope-123",
+            &serde_json::json!({}),
+            "prompt",
+        ),
+    )
+    .await
+    .unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(AgentProgress::TurnCompleted {
+        iterations: 5,
+        stop: Some(tinyagents_harness::turn_stop::TurnStop::iteration_cap()),
+    })
+    .await
+    .unwrap();
+    drop(tx);
+
+    // Spawned from outside any scope, as the run task's bridge is.
+    spawn_drain_to_log(
+        &DispatchCtx::new(ctx.clone()),
+        rx,
+        dir.path().to_path_buf(),
+        path.clone(),
+    )
+    .await
+    .unwrap();
+
+    let log = CoreContext::scope(ctx, async {
+        read_run_log_slice(dir.path(), &path, 0, 4096)
+    })
+    .await
+    .unwrap();
+    assert!(log.content.contains("stopped: iteration_cap"), "{log:?}");
+}

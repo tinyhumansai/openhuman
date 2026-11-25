@@ -1,7 +1,6 @@
 id = "flow_discovery"
 display_name = "Flow Scout"
-delegate_name = "discover_workflows"
-when_to_use = "Workflow discovery specialist — the 'Flow Scout'. Reads the user's memory, past threads, connected integrations, and existing flows (and the web when it helps) to figure out which automations would genuinely help THIS user, then proposes a handful of concrete, buildable workflow suggestions. Read-only: it never creates, enables, or runs a flow — it ends by calling `suggest_workflows`, which records ideas for the user to review on the Flows page and build with one click. Route here for 'what workflows should I set up?', 'suggest some automations', 'discover flows for me', or the Flows page 'Discover' action. NOT for building a specific named workflow (that is `build_workflow` / workflow_builder)."
+when_to_use = "Workflow discovery specialist — the 'Flow Scout'. Reads the user's memory, past threads, connected integrations, and existing flows (and the web when it helps) to figure out which automations would genuinely help THIS user, then proposes a handful of concrete, buildable workflow suggestions. Read-only: it never creates, enables, or runs a flow — it ends by calling `suggest_workflows`, which records ideas for the user to review on the Flows page and build with one click. Route here for 'what workflows should I set up?', 'suggest some automations', 'discover flows for me', or the Flows page 'Discover' action. NOT for building a specific named workflow; use `spawn_subagent` with `agent_id: workflow_builder`."
 temperature = 0.4
 # Multi-step read → correlate → ground → propose loop. It reads the memory
 # context, skims recent threads, lists connections + existing flows, grounds a couple of

@@ -121,6 +121,7 @@ async fn run_turn_failing_from(
         fail_from_call,
     });
     let (mut agent, tmp) = build_agent_with(provider.clone(), tools, Box::new(NativeDialect));
+    crate::storage::local::use_persistent_default_for_test(tmp.path());
     let outcome = agent.turn("do the thing").await;
     assert_eq!(
         outcome.is_err(),
@@ -230,6 +231,7 @@ fn committed_rows_mentioning_nudge(history: &[TranscriptEntry]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "legacy-import")]
 /// Every persisted file under the workspace, as (lossy) text. A session
 /// store database is also read row by row, because TinyAgents keeps transcript
 /// entries zstd-compressed and a byte search of the file would
@@ -250,6 +252,7 @@ fn persisted_text(root: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
         .collect()
 }
 
+#[cfg(feature = "legacy-import")]
 /// The document bodies of the storage database at `path`, decompressed.
 fn database_rows_text(path: &std::path::Path) -> String {
     use crate::storage::rusqlite::{types::Value, Connection, OpenFlags};
@@ -281,6 +284,7 @@ fn database_rows_text(path: &std::path::Path) -> String {
     out
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn a_failed_nudged_request_does_not_persist_the_nudge() {
     // When the nudged request itself fails, the driver persists a display-only

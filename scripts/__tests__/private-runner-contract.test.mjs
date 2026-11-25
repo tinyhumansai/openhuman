@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   writeFileSync,
@@ -11,6 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { classifyElf } from "../ci/self-hosted/verify-linkage.mjs";
+import {
+  assertGithubHostedRunners,
+  jobBlock,
+} from "../ci/workflow-contract.mjs";
 
 const helper = new URL("../ci/self-hosted/verify-runner.sh", import.meta.url);
 const pin = readFileSync(
@@ -39,62 +44,51 @@ test("private runner rejects missing, stale and unqualified guest image metadata
   }
 });
 
-test("private workflow pins checkout, image and signed Tinymold without artifact caches", () => {
-  const workflow = readFileSync(
-    new URL("../../.github/workflows/ci-lanes.yml", import.meta.url),
-    "utf8",
-  );
-  const privateJob = workflow.split("  # ── hosted:")[0];
-  assert.match(privateJob, /group: openhuman-ex63/);
-  assert.match(privateJob, /labels: \[self-hosted, openhuman-ex63\]/);
-  assert.match(
-    privateJob,
-    /tinyhumansai\/\.github\/actions\/checkout@[a-f0-9]{40}/,
-  );
-  assert.match(privateJob, /submodules: recursive/);
-  assert.match(privateJob, /exclude-submodules: wiki/);
-  assert.match(privateJob, /fetch-depth: 0/);
-  assert.match(privateJob, /submodule-depth: 0/);
-  assert.match(privateJob, /allow-unsafe-pr-checkout: true/);
-  assert.match(privateJob, /tinyhumansai\/tinymold@[a-f0-9]{40}/);
-  assert.match(privateJob, /install: none/);
-  // The per-compile log is what ranks misses and uncacheable compiles.
-  assert.match(
-    privateJob,
-    /TINYMOLD_LOG=\$RUNNER_TEMP\/tinymold\.log.*GITHUB_ENV/s,
-  );
-  assert.ok(
-    privateJob.indexOf("TINYMOLD_LOG=$RUNNER_TEMP/tinymold.log") <
-      privateJob.indexOf("- name: Setup Tinymold"),
-  );
-  assert.match(privateJob, /backend: remote/);
-  assert.match(privateJob, /remote-signing-key:/);
-  assert.match(privateJob, /remote-trusted-keys:/);
-  assert.match(privateJob, /tinyhumansai\/tinymold\/save@[a-f0-9]{40}/);
-  assert.doesNotMatch(
-    privateJob,
-    /Swatinem\/rust-cache|sccache|actions\/cache/,
-  );
-  assert.ok(
-    privateJob.indexOf("verify-runner.sh") <
-      privateJob.indexOf("- name: Start lanes"),
-  );
-  assert.match(
-    privateJob,
-    /name: Save Tinymold cache\n\s+if:.*always\(\).*\n\s+continue-on-error: true/,
-  );
+test("every PR runs the hosted lanes, with nothing routing it to another runner", () => {
+  const root = new URL("../../.github/workflows/", import.meta.url);
+  const hosted = readFileSync(new URL("ci-fast-hosted.yml", root), "utf8");
+  const lanes = readFileSync(new URL("ci-lanes.yml", root), "utf8");
+  assert.match(hosted, /^  pull_request:$/m);
+  assert.match(hosted, /uses: \.\/\.github\/workflows\/ci-lanes\.yml/);
+  // A condition or dependency on the lanes job can skip them, and the gate
+  // never counts a skipped job as a pass. jobBlock throws when the job is
+  // missing, so renaming it cannot make these checks vacuous.
+  const lanesJob = jobBlock(hosted, "lanes");
+  assert.doesNotMatch(lanesJob, /^    (if|needs):/m);
+  assert.doesNotMatch(hosted, /ci-fast-route/);
+  assert.equal(existsSync(new URL("ci-fast.yml", root)), false);
+  assertGithubHostedRunners(lanes);
+  assert.doesNotMatch(lanes, /openhuman-ex63/);
 });
 
-test("private routing requires both trusted identities and retains outsider hosted fallback", () => {
-  const root = new URL("../../.github/workflows/", import.meta.url);
-  const route = readFileSync(new URL("ci-fast.yml", root), "utf8");
-  const hosted = readFileSync(new URL("ci-fast-hosted.yml", root), "utf8");
-  assert.match(route, /pull_request_target:/);
-  assert.match(route, /is_member "\$\{AUTHOR\}" && is_member "\$\{ACTOR\}"/);
-  assert.match(route, /contents: read/);
-  assert.match(route, /needs.route.outputs.member == 'true'/);
-  assert.match(hosted, /profile: hosted/);
-  assert.doesNotMatch(route, /contents: write|secrets: inherit/);
+test("the workflow contract helpers fail loudly instead of passing vacuously", () => {
+  const renamed = "jobs:\n  gate:\n    if: false\n    name: Lanes\n";
+  assert.throws(() => jobBlock(renamed, "lanes"), /no job "lanes"/);
+  // The block of a job stops at the next job, so a sibling's condition is not
+  // attributed to it.
+  const two = "jobs:\n  lanes:\n    name: L\n  other:\n    if: false\n";
+  assert.doesNotMatch(jobBlock(two, "lanes"), /if:/);
+  assert.match(jobBlock(two, "other"), /if: false/);
+  const wrap = (runsOn) => `jobs:\n  a:\n    runs-on: ${runsOn}\n`;
+  for (const ok of ["ubuntu-latest", "ubuntu-22.04", "windows-2022", "macos-15"])
+    assert.doesNotThrow(() => assertGithubHostedRunners(wrap(ok)), ok);
+  for (const bad of [
+    "self-hosted",
+    "[ self-hosted, linux ]",
+    "[self-hosted]",
+    "openhuman-ex63",
+    "{ group: private }",
+    "${{ inputs.runner }}",
+  ])
+    assert.throws(() => assertGithubHostedRunners(wrap(bad)), /runs-on/, bad);
+  assert.throws(
+    () => assertGithubHostedRunners("jobs:\n  a:\n    runs-on:\n      group: x\n"),
+    /runs-on/,
+  );
+  assert.throws(
+    () => assertGithubHostedRunners("jobs:\n  a:\n    name: no runner\n"),
+    /no runs-on/,
+  );
 });
 
 test("mold proof distinguishes instrumented binaries from ordinary executables", () => {
@@ -118,96 +112,6 @@ test("mold proof distinguishes instrumented binaries from ordinary executables",
     classifyElf(" [1] .text PROGBITS", "mold 2.40.4").executable,
     false,
   );
-});
-
-test("membership gate routes mixed identities, outsiders and bots away from EX63", () => {
-  const route = readFileSync(
-    new URL("../../.github/workflows/ci-fast.yml", import.meta.url),
-    "utf8",
-  );
-  const body = route
-    .split("        run: |\n")[1]
-    .split("\n  lanes:")[0]
-    .split("\n")
-    .map((line) => line.slice(10))
-    .join("\n");
-  const dir = mkdtempSync(join(tmpdir(), "ci-membership-"));
-  try {
-    writeFileSync(
-      join(dir, "curl"),
-      '#!/usr/bin/env bash\nurl="${!#}"\ncase "$url" in */members/alice|*/members/bob) echo 204;; *) echo 404;; esac\n',
-      { mode: 0o755 },
-    );
-    for (const [author, actor, association, token, expected, event, draft] of [
-      ["alice", "bob", "MEMBER", "fixture", true],
-      // Draft PRs stay off the EX63, even an org member's.
-      ["alice", "bob", "MEMBER", "fixture", false, undefined, "true"],
-      ["alice", "alice", "MEMBER", "", false, undefined, "true"],
-      ["alice", "bob", "MEMBER", "fixture", true, undefined, "false"],
-      ["alice", "outsider", "MEMBER", "fixture", false],
-      ["outsider", "alice", "NONE", "fixture", false],
-      ["dependabot[bot]", "dependabot[bot]", "NONE", "fixture", false],
-      ["alice", "alice", "MEMBER", "", true],
-      ["alice", "bob", "MEMBER", "", false],
-      // A manual dispatch has no PR author: only the dispatcher is checked,
-      // and only when the membership token can check it.
-      ["", "alice", "", "fixture", true, "workflow_dispatch"],
-      ["", "outsider", "", "fixture", false, "workflow_dispatch"],
-      ["", "alice", "", "", false, "workflow_dispatch"],
-    ]) {
-      const output = join(dir, "output");
-      writeFileSync(output, "");
-      const result = spawnSync("bash", ["-c", body], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${dir}:${process.env.PATH}`,
-          ORG: "fixture",
-          AUTHOR: author,
-          ACTOR: actor,
-          ASSOCIATION: association,
-          MEMBERSHIP_TOKEN: token,
-          GITHUB_OUTPUT: output,
-          GITHUB_EVENT_NAME: event ?? "pull_request_target",
-          DRAFT: draft ?? "",
-        },
-      });
-      assert.equal(result.status, 0, result.stderr);
-      assert.equal(
-        readFileSync(output, "utf8").trim(),
-        `member=${expected}`,
-        `${author}/${actor}`,
-      );
-    }
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("private validation and cache save have measured budgets without suppressing artifacts", () => {
-  const workflow = readFileSync(
-    new URL("../../.github/workflows/ci-lanes.yml", import.meta.url),
-    "utf8",
-  ).split("  # ── hosted:")[0];
-  const saveStart = workflow.indexOf("      - name: Save Tinymold cache");
-  const saveEnd = workflow.indexOf("\n      - name:", saveStart + 1);
-  const save = workflow.slice(saveStart, saveEnd);
-  assert.match(save, /timeout-minutes: 15/);
-  const job = workflow.slice(
-    workflow.indexOf("  ex63:"),
-    workflow.indexOf("    steps:"),
-  );
-  assert.match(job, /timeout-minutes: 180/);
-  assert.match(save, /continue-on-error: true/);
-  const upload = workflow.slice(
-    workflow.indexOf("      - name: Upload lane logs, timings and coverage"),
-  );
-  assert.match(upload, /if: always\(\)/);
-  assert.ok(
-    workflow.indexOf("      - name: Upload lane logs, timings and coverage") >
-      saveEnd,
-  );
-  assert.doesNotMatch(upload, /tinymold\.outcome|success\(\)/);
 });
 
 test("private LLVM preflight rejects missing tools before publishing environment", () => {
@@ -289,5 +193,6 @@ printf "%s\\n" "$FIXTURE_LIBDIR"
   }
   const invocation = source.indexOf('\nverify_llvm_tools "$channel"\n');
   assert.ok(invocation > source.indexOf("channel="));
-  assert.ok(invocation < source.indexOf("for key in TINYMOLD_REMOTE_URL"));
+  assert.ok(invocation < source.indexOf('echo "RUSTUP_TOOLCHAIN=$channel"'));
+  assert.doesNotMatch(source, /TINYMOLD|tinymold/);
 });

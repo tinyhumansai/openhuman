@@ -28,6 +28,57 @@ use state::{
     to_status, LOG_PREFIX, WALLET_STATE_FILE_LOCK,
 };
 
+/// The primary (index 0) account of each chain and its derivation path.
+pub(crate) const PRIMARY_ACCOUNTS: [(WalletChain, &str); 4] = [
+    (WalletChain::Evm, "m/44'/60'/0'/0/0"),
+    (WalletChain::Btc, "m/44'/0'/0'/0/0"),
+    (WalletChain::Solana, "m/44'/501'/0'/0'"),
+    (WalletChain::Tron, "m/44'/195'/0'/0/0"),
+];
+
+/// A secondary account derived from the same recovery phrase as the primary
+/// accounts. It never signs module transfers; it signs only host-built
+/// transactions through `wallet.execute_prepared_program`, under its own
+/// `[wallet_policy.accounts.<chain>_<index>]` section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SecondaryAccount {
+    pub chain: WalletChain,
+    pub index: u32,
+    pub derivation_path: &'static str,
+    pub label: &'static str,
+}
+
+/// Every secondary account the host knows how to derive. Recovery and import
+/// derive them all; a wallet set up before an entry existed derives it on
+/// first use ([`ensure_account`]).
+///
+/// Solana index 1 follows the account-index convention Phantom and
+/// `solana-keygen` use (`m/44'/501'/<index>'/0'`).
+pub(crate) const SECONDARY_ACCOUNTS: [SecondaryAccount; 1] = [SecondaryAccount {
+    chain: WalletChain::Solana,
+    index: 1,
+    derivation_path: "m/44'/501'/1'/0'",
+    label: "giveaway",
+}];
+
+/// The canonical derivation path of `chain`'s account `index`, if the host
+/// knows that account.
+pub(crate) fn account_derivation_path(chain: WalletChain, index: u32) -> Option<&'static str> {
+    if index == 0 {
+        return PRIMARY_ACCOUNTS
+            .iter()
+            .find(|(candidate, _)| *candidate == chain)
+            .map(|(_, path)| *path);
+    }
+    secondary_account(chain, index).map(|account| account.derivation_path)
+}
+
+fn secondary_account(chain: WalletChain, index: u32) -> Option<&'static SecondaryAccount> {
+    SECONDARY_ACCOUNTS
+        .iter()
+        .find(|account| account.chain == chain && account.index == index)
+}
+
 fn supported_word_counts() -> String {
     tinywallet_bus::MNEMONIC_WORD_COUNTS
         .iter()
@@ -83,27 +134,12 @@ pub async fn derive_recovery_material(
         return Err("wallet module returned an invalid BIP-39 seed length".to_string());
     }
 
-    let accounts = [
-        (WalletChain::Evm, ModuleChain::Evm, "m/44'/60'/0'/0/0"),
-        (WalletChain::Btc, ModuleChain::Btc, "m/44'/0'/0'/0/0"),
-        (WalletChain::Solana, ModuleChain::Solana, "m/44'/501'/0'/0'"),
-        (WalletChain::Tron, ModuleChain::Tron, "m/44'/195'/0'/0/0"),
-    ];
-    let mut derived_accounts = Vec::with_capacity(accounts.len());
-    for (chain, module_chain, derivation_path) in accounts {
-        let mut secret = SecretMaterial {
-            mnemonic: mnemonic.to_string(),
-            derivation_path: derivation_path.to_string(),
-            chain: module_chain,
-        };
-        let derived = crate::modules::wallet::derive_account(&config, &secret).await;
-        secret.mnemonic.zeroize();
-        let derived = derived.map_err(|error| error.to_string())?;
-        derived_accounts.push(WalletAccount {
-            chain,
-            address: derived.address,
-            derivation_path: derivation_path.to_string(),
-        });
+    let plan = derivation_plan();
+    let mut derived_accounts = Vec::with_capacity(plan.len());
+    for planned in plan {
+        let address =
+            derive_address(&config, &mnemonic, planned.chain, &planned.derivation_path).await?;
+        derived_accounts.push(WalletAccount { address, ..planned });
     }
 
     Ok(Outcome::new(
@@ -113,6 +149,53 @@ pub async fn derive_recovery_material(
         },
         vec!["recovery phrase validated and wallet accounts derived".to_string()],
     ))
+}
+
+/// Every account recovery and import derive, address left blank: the primary
+/// account of each chain in [`PRIMARY_ACCOUNTS`] order, then
+/// [`SECONDARY_ACCOUNTS`].
+pub(crate) fn derivation_plan() -> Vec<WalletAccount> {
+    let primary = PRIMARY_ACCOUNTS.iter().map(|(chain, path)| WalletAccount {
+        chain: *chain,
+        address: String::new(),
+        derivation_path: (*path).to_string(),
+        index: 0,
+        label: None,
+    });
+    let secondary = SECONDARY_ACCOUNTS.iter().map(|account| WalletAccount {
+        chain: account.chain,
+        address: String::new(),
+        derivation_path: account.derivation_path.to_string(),
+        index: account.index,
+        label: Some(account.label.to_string()),
+    });
+    primary.chain(secondary).collect()
+}
+
+fn module_chain(chain: WalletChain) -> ModuleChain {
+    match chain {
+        WalletChain::Evm => ModuleChain::Evm,
+        WalletChain::Btc => ModuleChain::Btc,
+        WalletChain::Solana => ModuleChain::Solana,
+        WalletChain::Tron => ModuleChain::Tron,
+    }
+}
+
+/// Ask the module for the address at `derivation_path`.
+async fn derive_address(
+    config: &crate::config::Config,
+    mnemonic: &str,
+    chain: WalletChain,
+    derivation_path: &str,
+) -> Result<String, String> {
+    let mut secret = SecretMaterial {
+        mnemonic: mnemonic.to_string(),
+        derivation_path: derivation_path.to_string(),
+        chain: module_chain(chain),
+    };
+    let derived = crate::modules::wallet::derive_account(config, &secret).await;
+    secret.mnemonic.zeroize();
+    Ok(derived.map_err(|error| error.to_string())?.address)
 }
 
 /// Check whether a phrase is valid BIP-39 input without deriving account data.
@@ -180,17 +263,56 @@ fn validate_setup(params: &WalletSetupParams) -> Result<Vec<WalletAccount>, Stri
                 account.chain.as_str()
             ));
         }
+        if account.index == 0
+            && SECONDARY_ACCOUNTS.iter().any(|secondary| {
+                secondary.chain == account.chain && secondary.derivation_path == derivation_path
+            })
+        {
+            // A primary at a secondary path resolves to that secondary account's
+            // key, so the secondary's program policy would sign for the primary.
+            return Err(format!(
+                "wallet setup account '{}' index 0 uses a secondary account path; a primary account must not alias one",
+                account.chain.as_str()
+            ));
+        }
+        if account.index > 0 {
+            // A secondary account must be one the host knows, at its canonical
+            // path, so the key it later signs with is the one its policy names.
+            let expected = account_derivation_path(account.chain, account.index);
+            if expected != Some(derivation_path) {
+                return Err(format!(
+                    "wallet setup account '{}' index {} is not a known secondary account",
+                    account.chain.as_str(),
+                    account.index
+                ));
+            }
+            if normalized.iter().any(|existing: &WalletAccount| {
+                existing.chain == account.chain && existing.index == account.index
+            }) {
+                return Err(format!(
+                    "wallet setup lists '{}' index {} more than once",
+                    account.chain.as_str(),
+                    account.index
+                ));
+            }
+        }
         normalized.push(WalletAccount {
             chain: account.chain,
             address: address.to_string(),
             derivation_path: derivation_path.to_string(),
+            index: account.index,
+            label: account
+                .label
+                .as_ref()
+                .map(|label| label.trim().to_string())
+                .filter(|label| !label.is_empty()),
         });
     }
 
     for chain in WalletChain::ALL {
         let count = normalized
             .iter()
-            .filter(|account| account.chain == chain)
+            .filter(|account| account.chain == chain && account.is_primary())
             .count();
         if count != 1 {
             return Err(format!(
@@ -335,7 +457,7 @@ pub async fn reveal_recovery_phrase(
 
     debug!("{LOG_PREFIX} reveal_recovery_phrase decrypting mnemonic");
 
-    let phrase = crate::security::credentials::ops::decrypt_secret(&config, &ciphertext)
+    let phrase = crate::credentials::ops::decrypt_secret(&config, &ciphertext)
         .await
         .map_err(|e| {
             log::warn!("{LOG_PREFIX} reveal_recovery_phrase decrypt failed: {e}");
@@ -356,9 +478,15 @@ pub async fn reveal_recovery_phrase(
     ))
 }
 
+/// The encrypted phrase and the derivation path of `chain`'s account `index`.
+///
+/// A secondary account missing from state written before it existed resolves
+/// to its canonical path ([`SECONDARY_ACCOUNTS`]), so signing never needs the
+/// address to have been stored first.
 pub(crate) async fn secret_material(
     ctx: &DispatchCtx,
     chain: WalletChain,
+    index: u32,
 ) -> Result<WalletSecretMaterial, String> {
     debug!(
         "{LOG_PREFIX} secret_material loading config chain={}",
@@ -396,17 +524,30 @@ pub(crate) async fn secret_material(
     let derivation_path = state
         .accounts
         .iter()
-        .find(|account| account.chain == chain)
+        .find(|account| account.chain == chain && account.index == index)
         .map(|account| account.derivation_path.clone())
+        .or_else(|| {
+            (index > 0)
+                .then(|| secondary_account(chain, index))
+                .flatten()
+                .map(|account| account.derivation_path.to_string())
+        })
         .ok_or_else(|| {
             debug!(
-                "{LOG_PREFIX} secret_material missing account chain={}",
+                "{LOG_PREFIX} secret_material missing account chain={} index={index}",
                 chain.as_str()
             );
-            format!("no wallet account derived for chain '{}'", chain.as_str())
+            if index == 0 {
+                format!("no wallet account derived for chain '{}'", chain.as_str())
+            } else {
+                format!(
+                    "no wallet account derived for chain '{}' index {index}",
+                    chain.as_str()
+                )
+            }
         })?;
     debug!(
-        "{LOG_PREFIX} secret_material loaded chain={} derivation_path={}",
+        "{LOG_PREFIX} secret_material loaded chain={} index={index} derivation_path={}",
         chain.as_str(),
         derivation_path
     );
@@ -414,6 +555,94 @@ pub(crate) async fn secret_material(
         encrypted_mnemonic,
         derivation_path,
     })
+}
+
+/// The stored account `index` of `chain`, deriving and storing it first when
+/// it is a known secondary account that this wallet's state predates.
+///
+/// This is the migration path for wallets imported before a secondary account
+/// existed: the encrypted phrase is decrypted, the module derives the address,
+/// and the account is added to the stored state.
+pub async fn ensure_account(
+    ctx: &DispatchCtx,
+    chain: WalletChain,
+    index: u32,
+) -> Result<WalletAccount, String> {
+    let config = ctx.load_config().await?;
+    let encrypted_mnemonic = {
+        let _guard = WALLET_STATE_FILE_LOCK.lock();
+        let state = load_stored_wallet_state_unlocked(&config)?
+            .ok_or_else(|| WALLET_NOT_CONFIGURED_MESSAGE.to_string())?;
+        if let Some(account) = state
+            .accounts
+            .iter()
+            .find(|account| account.chain == chain && account.index == index)
+        {
+            return Ok(account.clone());
+        }
+        if index == 0 || secondary_account(chain, index).is_none() {
+            return Err(format!(
+                "no wallet account '{}' index {index}; secondary accounts are: {}",
+                chain.as_str(),
+                SECONDARY_ACCOUNTS
+                    .iter()
+                    .map(|account| format!("{} index {}", account.chain.as_str(), account.index))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        state
+            .encrypted_mnemonic
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| keychain_load_mnemonic(&config))
+            .ok_or_else(|| {
+                "wallet secret material is missing; re-import the recovery phrase to enable signing"
+                    .to_string()
+            })?
+    };
+    let Some(planned) = derivation_plan()
+        .into_iter()
+        .find(|account| account.chain == chain && account.index == index)
+    else {
+        return Err(format!(
+            "no derivation for '{}' index {index}",
+            chain.as_str()
+        ));
+    };
+    let mnemonic = Zeroizing::new(
+        crate::credentials::ops::decrypt_secret(&config, &encrypted_mnemonic)
+            .await
+            .map_err(|error| format!("failed to decrypt the recovery phrase: {error}"))?
+            .value,
+    );
+    let address = derive_address(&config, &mnemonic, chain, &planned.derivation_path).await?;
+    let account = WalletAccount { address, ..planned };
+
+    let _guard = WALLET_STATE_FILE_LOCK.lock();
+    let mut state = load_stored_wallet_state_unlocked(&config)?
+        .ok_or_else(|| WALLET_NOT_CONFIGURED_MESSAGE.to_string())?;
+    if state.encrypted_mnemonic.is_some()
+        && state.encrypted_mnemonic.as_deref().map(str::trim) != Some(encrypted_mnemonic.as_str())
+    {
+        return Err("the wallet changed while its account was being derived; retry".to_string());
+    }
+    if let Some(existing) = state
+        .accounts
+        .iter()
+        .find(|existing| existing.chain == chain && existing.index == index)
+    {
+        return Ok(existing.clone());
+    }
+    state.accounts.push(account.clone());
+    state.updated_at_ms = state::current_time_ms();
+    save_stored_wallet_state_unlocked(&config, &state)?;
+    debug!(
+        "{LOG_PREFIX} ensure_account stored chain={} index={index}",
+        chain.as_str()
+    );
+    Ok(account)
 }
 
 #[cfg(test)]

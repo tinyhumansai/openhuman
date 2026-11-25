@@ -1,5 +1,3 @@
-#![cfg(feature = "testkit")]
-
 //! An embedded agent on the harness domains gets the scheduler and clock tools
 //! it names, although their domain family is off, and nothing else from that
 //! family: not the shell or file tools, even when it names them too. `cron` is
@@ -17,17 +15,18 @@ use common::{
     chat_requests, offline_config, runtime, stub_backend, tool_call_completion, tool_names,
 };
 use openhuman_embed::{
-    AgentDefinitionSpec, AgentSpec, DomainSet, GroupMode, HostTurnTools, InMemorySessionStores,
-    Runtime, ToolGroups, ToolScopeSpec, Workspace,
+    AgentDefinitionSpec, AgentSpec, DomainSet, GroupMode, HostTurnTools, Runtime, ToolGroups,
+    ToolScopeSpec, Workspace,
 };
+use tinyagents_session::port::InMemorySessionStores;
 
 #[test]
 fn a_named_scope_admits_the_clock_and_scheduler_but_never_the_shell() {
     runtime().block_on(async {
         tokio::spawn(async {
             let backend = stub_backend().await;
-            // The turn calls `cron` (a deferred tool, so not listed up front)
-            // and then answers.
+            // The turn calls `cron` (deferred, so not listed up front, but run
+            // when called by name) and then answers.
             let model = common::scripted_provider(
                 vec![tool_call_completion("cron", r#"{"action":"list"}"#)],
                 "ok",
@@ -55,14 +54,23 @@ fn a_named_scope_admits_the_clock_and_scheduler_but_never_the_shell() {
                         .definition(AgentDefinitionSpec::new().system_prompt("TEENY").tools(
                             ToolScopeSpec::Named(named.iter().map(|n| (*n).to_string()).collect()),
                         ))
-                        .tools(|_| HostTurnTools::advertised(Vec::new())),
+                        .tools(|_| Box::pin(async { HostTurnTools::advertised(Vec::new()) })),
                 )
                 .expect("agent instantiates");
             agent.run("hello").await.expect("the turn runs");
 
             let requests = chat_requests(&model).await;
             let offered = tool_names(&requests[0]);
-            for admitted in ["current_time", "resolve_time", "tool_search"] {
+            // Naming `cron` lists the scheduler's per-operation tools.
+            for admitted in [
+                "current_time",
+                "resolve_time",
+                "tool_search",
+                "cron_add",
+                "cron_list",
+                "cron_update",
+                "cron_remove",
+            ] {
                 assert!(
                     offered.iter().any(|name| name == admitted),
                     "{admitted} missing: {offered:?}"

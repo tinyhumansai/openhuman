@@ -148,7 +148,7 @@ attribution headers from `ClientHeaders` (`x-sdk-name`, plus
   rather than importing it, so this crate does not depend on
   `openhuman-rpc`.
 - The core's side of the handoff (`auth.set_credential` and friends) lives in
-  [`crates/openhuman-core/src/security/credentials/`](../../../openhuman-core/src/security/credentials/).
+  [`crates/openhuman-core/src/credentials/`](../../../openhuman-core/src/credentials/).
 - Library and headless hosts that authenticate with an API key do not need
   this module; see
   [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md).

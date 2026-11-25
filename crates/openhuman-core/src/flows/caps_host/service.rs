@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tinyflows_bus::runs;
 
-use crate::security::credentials::HttpCredentialsStore;
+use crate::flows::http_credentials::HttpCredentialsStore;
 
 #[path = "service_agent.rs"]
 mod service_agent;

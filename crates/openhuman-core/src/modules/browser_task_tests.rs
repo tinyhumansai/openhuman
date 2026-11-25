@@ -107,12 +107,14 @@ fn the_module_is_told_the_site_only_while_learning_is_on() {
 #[test]
 fn unwrap_response_returns_data_or_the_structured_error() {
     let ok = AgentResponse {
+        version: tinycomputer_bus::agent::AGENT_ENVELOPE_VERSION.to_owned(),
         ok: true,
         data: Some(7),
         error: None,
     };
     assert_eq!(unwrap_response("StartTask", ok), Ok(7));
     let failed: AgentResponse<u32> = AgentResponse {
+        version: tinycomputer_bus::agent::AGENT_ENVELOPE_VERSION.to_owned(),
         ok: false,
         data: None,
         error: Some(AgentError::new(
@@ -125,6 +127,7 @@ fn unwrap_response_returns_data_or_the_structured_error() {
     let error = unwrap_response("StartTask", failed).unwrap_err();
     assert!(error.contains("PLANNER_UNAVAILABLE"), "{error}");
     let empty: AgentResponse<u32> = AgentResponse {
+        version: tinycomputer_bus::agent::AGENT_ENVELOPE_VERSION.to_owned(),
         ok: true,
         data: None,
         error: None,
@@ -139,6 +142,7 @@ fn a_chrome_path_the_module_refuses_says_where_the_user_fixes_it() {
     // TinyComputer refuses a task whose Chrome path names no program in its
     // own words; the agent is told where the user sets that path.
     let refused: AgentResponse<u32> = AgentResponse {
+        version: tinycomputer_bus::agent::AGENT_ENVELOPE_VERSION.to_owned(),
         ok: false,
         data: None,
         error: Some(AgentError::new(

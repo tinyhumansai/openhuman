@@ -153,8 +153,18 @@ impl ChannelRuntimeLease {
             .request_name(HOST_BUS_NAME)
             .await
             .map_err(|_| ModuleCallError::TransportFailed)?;
+        // The runtime's channel host answers only the TinyChannels module: any
+        // other peer on the shared connection could otherwise inject inbound
+        // messages or persist an allowed identity.
         connection
-            .serve_at(callback_path, callback)
+            .serve_at(
+                callback_path,
+                super::callback_owner::OwnedBy::new(
+                    callback,
+                    &connection,
+                    tinychannels_bus::BUS_NAME,
+                ),
+            )
             .await
             .map_err(|_| ModuleCallError::TransportFailed)?;
         client

@@ -77,6 +77,7 @@ fn controlled_wrapper(
         inner,
         config,
         Some(profile),
+        None,
     )
 }
 fn user_request(blocks: Vec<ContentBlock>) -> ModelRequest {

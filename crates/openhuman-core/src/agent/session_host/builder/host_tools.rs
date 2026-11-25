@@ -93,7 +93,7 @@ impl HostTurnTools {
     /// specifically, and a host that cannot override a tool it collides with
     /// has no way to correct one.
     ///
-    /// First and not last because [`dedup_visible_tool_specs`] keeps the first
+    /// First and not last because TinyAgents' `dedup_visible_tool_specs` keeps the first
     /// occurrence. Appending would advertise the config-derived spec while the
     /// host believed it had replaced it -- the model told about one tool and a
     /// different one answering, which is the version of this bug that is
@@ -102,7 +102,8 @@ impl HostTurnTools {
     /// Returns `None` for an empty belt, which is also a host that supplied no
     /// gate: there is nothing to admit.
     ///
-    /// [`dedup_visible_tool_specs`]: super::dedup_visible_tool_specs
+    /// Tool schema deduplication is owned by
+    /// `tinyagents_runtime::dedup_visible_tool_specs`.
     pub(super) fn merge_into(
         self,
         agent_id: &str,
@@ -243,7 +244,7 @@ pub(super) fn scope_def(
     Some(definition)
 }
 
-pub(super) fn merge_for_turn(
+pub(super) async fn merge_for_turn(
     dispatch: &crate::core::runtime::DispatchCtx,
     host: Option<&HostTools>,
     agent_id: &str,
@@ -251,10 +252,13 @@ pub(super) fn merge_for_turn(
     tools: &mut Vec<Box<dyn Tool>>,
     visible: &mut HashSet<String>,
 ) -> Result<MergedHostTurnTools> {
-    match host
-        .map(|build| build(TurnContext::new(agent_id, session_id).with_dispatch(dispatch)))
-        .map(|host_tools| host_tools.merge_into(agent_id, tools, visible))
-    {
+    let host_tools = match host {
+        Some(build) => {
+            Some(build(TurnContext::new(agent_id, session_id).with_dispatch(dispatch)).await)
+        }
+        None => None,
+    };
+    match host_tools.map(|host_tools| host_tools.merge_into(agent_id, tools, visible)) {
         Some(merged) => merged,
         None => Ok(MergedHostTurnTools {
             policy: None,
@@ -368,7 +372,9 @@ impl<'a> TurnContext<'a> {
 /// belt it was built with.
 ///
 /// See [`TurnContext`] for what the factory is told about the occasion.
-pub type HostTools = Arc<dyn for<'a> Fn(TurnContext<'a>) -> HostTurnTools + Send + Sync>;
+pub type HostTools = Arc<
+    dyn for<'a> Fn(TurnContext<'a>) -> futures::future::BoxFuture<'a, HostTurnTools> + Send + Sync,
+>;
 
 /// The constructor the host-tools seam exists for, kept beside the types it
 /// takes rather than with the config-derived constructors it sits among.
@@ -394,7 +400,7 @@ impl OpenHumanSessionHost {
     ///
     /// `session_id` is the conversation this turn runs in, reaching the
     /// factory as [`TurnContext::session_id`]; `None` when none is named yet.
-    pub fn from_config_with_host_tools(
+    pub async fn from_config_with_host_tools(
         ctx: &crate::core::runtime::DispatchCtx,
         config: &Config,
         definition: &crate::agent_registry::host_definition::AgentDefinition,
@@ -410,6 +416,7 @@ impl OpenHumanSessionHost {
             Some(host),
             session_id,
         )
+        .await
     }
 
     /// Build a session agent from a definition the caller already holds,
@@ -422,7 +429,7 @@ impl OpenHumanSessionHost {
     /// registry entry that happens to share its id. This is the constructor a
     /// library host uses to run many independently specified agents on one
     /// booted core.
-    pub fn from_config_with_definition(
+    pub async fn from_config_with_definition(
         ctx: &crate::core::runtime::DispatchCtx,
         config: &Config,
         definition: &crate::agent_registry::host_definition::AgentDefinition,
@@ -441,5 +448,26 @@ impl OpenHumanSessionHost {
             None,
             None,
         )
+        .await
+    }
+
+    pub(crate) async fn from_config_with_definition_and_turn_model_source(
+        ctx: &crate::core::runtime::DispatchCtx,
+        config: &Config,
+        definition: &crate::agent_registry::host_definition::AgentDefinition,
+        source: crate::agent::tinyagents::TurnModelSource,
+        model: String,
+    ) -> Result<Self> {
+        OpenHumanSessionHost::build_session_agent_inner_with_turn_model_source(
+            ctx,
+            config,
+            &definition.id,
+            Some(definition),
+            false,
+            None,
+            None,
+            Some((source, model)),
+        )
+        .await
     }
 }

@@ -1,5 +1,15 @@
 use super::*;
 
+#[test]
+fn model_call_timeout_environment_override_reaches_run_limits() {
+    let overrides = env_overrides_from(|name| {
+        (name == "OPENHUMAN_MODEL_CALL_TIMEOUT_SECS").then(|| "2".to_owned())
+    });
+    let policy = run_policy_for_provider_with_overrides(10, false, false, None, overrides);
+
+    assert_eq!(policy.limits.max_model_call_ms, Some(2_000));
+}
+
 #[tokio::test]
 async fn per_turn_tool_limit_reaches_the_execution_policy() {
     let policy = run_policy_for_provider(10, false, false, Some(2));
@@ -74,20 +84,29 @@ fn hosted_openai_is_not_treated_as_self_hosted() {
     ));
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[test]
-fn local_runtimes_and_private_endpoints_are_self_hosted() {
+fn local_runtimes_are_self_hosted_and_endpoint_classification_fails_closed() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     assert!(provider_is_self_hosted("ollama:llama3", None));
     assert!(provider_is_self_hosted("lmstudio:m", None));
     assert!(provider_is_self_hosted("mlx:m", None));
-    assert!(provider_is_self_hosted(
+    assert!(!provider_is_self_hosted(
         "llamacpp:m",
         Some("http://127.0.0.1:8080/v1")
     ));
-    assert!(provider_is_self_hosted(
+    assert!(!provider_is_self_hosted(
         "vllm:m",
         Some("http://192.168.1.20:8000/v1")
     ));
-    assert!(provider_is_self_hosted(
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://0.0.0.0:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
         "openai",
         Some("http://localhost:8080/v1")
     ));
@@ -133,4 +152,57 @@ fn retry_backoff_override_shrinks_the_schedule_and_ignores_junk() {
     assert_eq!(policy.retry.initial_backoff_ms, 20);
     assert_eq!(policy.retry.max_backoff_ms, 200);
     assert_eq!(policy.retry.max_attempts, production.max_attempts);
+}
+
+#[test]
+fn a_dead_call_is_retried_at_the_same_cap_without_reasoning_and_new_calls_keep_it() {
+    for local_provider in [false, true] {
+        let policy = run_policy_for_provider(50, false, local_provider, None);
+        assert!(
+            policy.truncated_empty_constant_cap,
+            "no doubling past the cap"
+        );
+        assert!(
+            policy.truncated_empty_reasoning_off,
+            "the retry after a dead one runs without reasoning"
+        );
+        assert_eq!(
+            policy.truncated_empty_reasoning_off_sticky_after, 0,
+            "new calls keep their reasoning"
+        );
+    }
+}
+
+/// With security disabled the endpoint is classified on the host: a loopback
+/// endpoint is self-hosted, a LAN one is not.
+fn assert_endpoints_classified_by_loopback() {
+    assert!(provider_is_self_hosted(
+        "llamacpp:m",
+        Some("http://127.0.0.1:8080/v1")
+    ));
+    assert!(provider_is_self_hosted(
+        "vllm:m",
+        Some("http://0.0.0.0:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://192.168.1.20:8000/v1")
+    ));
+    assert!(provider_is_self_hosted(
+        "openai",
+        Some("http://localhost:8080/v1")
+    ));
+}
+
+#[cfg(not(feature = "security-module"))]
+#[test]
+fn a_build_without_the_module_classifies_local_endpoints_by_loopback() {
+    assert_endpoints_classified_by_loopback();
+}
+
+#[cfg(feature = "security-module")]
+#[test]
+fn security_configured_off_classifies_local_endpoints_by_loopback() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_endpoints_classified_by_loopback();
 }

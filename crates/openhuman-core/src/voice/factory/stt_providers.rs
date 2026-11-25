@@ -78,7 +78,8 @@ impl SttProvider for ExternalSttProvider {
         let text = self
             .client
             .transcribe(&audio_bytes, mime, file_name, language)
-            .await?;
+            .await
+            .map_err(crate::core::observability::map_voice_provider_error)?;
 
         Ok(Outcome::single_log(
             SttResult {

@@ -8,8 +8,7 @@ use crate::core::runtime::DispatchCtx;
 /// the helper in `tools_tests.rs`.
 fn fake_config() -> Arc<Config> {
     let tmp = tempfile::tempdir().expect("tempdir for fake_config");
-    let mut config = Config::default();
-    config.config_path = tmp.path().join("config.toml");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     // Leak the tempdir so the path remains valid for the test's
     // lifetime — `Config::config_path` is just used as a lookup key
     // here, not actually written to.
@@ -72,8 +71,8 @@ where
         .expect("big-stack test thread panicked")
 }
 
-#[test]
-fn humanize_composio_action_sentence_cases_slug() {
+#[tokio::test]
+async fn humanize_composio_action_sentence_cases_slug() {
     assert_eq!(
         humanize_composio_action("GMAIL_SEND_EMAIL"),
         "Gmail send email"
@@ -85,8 +84,8 @@ fn humanize_composio_action_sentence_cases_slug() {
     assert_eq!(humanize_composio_action(""), "");
 }
 
-#[test]
-fn display_label_is_human_and_detail_pulls_recipient() {
+#[tokio::test]
+async fn display_label_is_human_and_detail_pulls_recipient() {
     let tool = ComposioActionTool::new(
         fake_config(),
         "GMAIL_SEND_EMAIL".to_string(),
@@ -104,8 +103,8 @@ fn display_label_is_human_and_detail_pulls_recipient() {
     );
 }
 
-#[test]
-fn per_action_tool_requires_approval_for_external_writes_only() {
+#[tokio::test]
+async fn per_action_tool_requires_approval_for_external_writes_only() {
     let write = ComposioActionTool::new(
         fake_config(),
         "GMAIL_SEND_EMAIL".to_string(),
@@ -123,8 +122,8 @@ fn per_action_tool_requires_approval_for_external_writes_only() {
     assert!(!read.external_effect_with_args(&serde_json::Value::Null));
 }
 
-#[test]
-fn sandbox_read_only_blocks_per_action_write_call() {
+#[tokio::test]
+async fn sandbox_read_only_blocks_per_action_write_call() {
     run_with_big_stack(|| async {
         let t = ComposioActionTool::new(
             fake_config(),
@@ -153,8 +152,8 @@ fn sandbox_read_only_blocks_per_action_write_call() {
     });
 }
 
-#[test]
-fn sandbox_read_only_blocks_per_action_admin_call() {
+#[tokio::test]
+async fn sandbox_read_only_blocks_per_action_admin_call() {
     run_with_big_stack(|| async {
         let t = ComposioActionTool::new(
             fake_config(),
@@ -179,8 +178,8 @@ fn sandbox_read_only_blocks_per_action_admin_call() {
     });
 }
 
-#[test]
-fn sandbox_unset_leaves_per_action_execute_to_downstream() {
+#[tokio::test]
+async fn sandbox_unset_leaves_per_action_execute_to_downstream() {
     run_with_big_stack(|| async {
         use crate::config::TEST_ENV_LOCK;
         // Lock order module -> env, matching the ops tests (no inversion).
@@ -190,9 +189,8 @@ fn sandbox_unset_leaves_per_action_execute_to_downstream() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
 
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.workspace_dir = tmp.path().join("workspace");
+        let config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         config.save().await.expect("save fake config to disk");
 
         let t = ComposioActionTool::new(
@@ -210,8 +208,8 @@ fn sandbox_unset_leaves_per_action_execute_to_downstream() {
     });
 }
 
-#[test]
-fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
+#[tokio::test]
+async fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
     run_with_big_stack(|| async {
         // The FIRST per-action execute this turn must return the action's FULL
         // live contract (so the model composes a well-formed query) instead of
@@ -245,9 +243,8 @@ fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.workspace_dir = tmp.path().join("workspace");
+        let config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         config.save().await.expect("save fake config to disk");
 
         let t = ComposioActionTool::new(
@@ -288,7 +285,7 @@ fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
 // honoured on the very next per-action execute.
 
 // These two tests assert the *factory routing decision* by mode. They
-// call `resolve_composio_route(&Config)` directly — the pure routing
+// call `resolve_composio_route(&Config).await` directly — the pure routing
 // function — instead of going through `tool.execute()`, which reloads
 // config via `load_config_with_timeout()` (reads `OPENHUMAN_WORKSPACE`)
 // and was therefore subject to a parallel-test env-var race: another
@@ -299,16 +296,14 @@ fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
 // derived from the config's own paths, not the env var), so pointing
 // those at a fresh tempdir is fully isolated, deterministic, and needs
 // no env mutation / `TEST_ENV_LOCK` / async.
-#[test]
-fn factory_routes_through_backend_when_mode_is_backend() {
+#[tokio::test]
+async fn factory_routes_through_backend_when_mode_is_backend() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = Config::default(); // composio.mode defaults to "backend"
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
 
     // `ComposioRoute` isn't `Debug`, so match rather than
     // `expect_err` (which would need to format the unexpected `Ok`).
-    let msg = match crate::integrations::composio::client::resolve_composio_route(&config) {
+    let msg = match crate::integrations::composio::client::resolve_composio_route(&config).await {
         Ok(_) => panic!("backend mode with no session must error, but a client resolved"),
         Err(e) => e.to_string(),
     };
@@ -322,12 +317,11 @@ fn factory_routes_through_backend_when_mode_is_backend() {
     );
 }
 
-#[test]
-fn factory_routes_through_direct_when_mode_is_direct() {
+#[tokio::test]
+async fn factory_routes_through_direct_when_mode_is_direct() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
 
@@ -335,6 +329,7 @@ fn factory_routes_through_direct_when_mode_is_direct() {
     // never the backend branch. (Deterministic: pure factory call, no
     // env / reload / await; see the note on the backend test.)
     let kind = crate::integrations::composio::client::resolve_composio_route(&config)
+        .await
         .expect("direct mode with an api key must resolve");
     assert!(
         matches!(
@@ -345,8 +340,8 @@ fn factory_routes_through_direct_when_mode_is_direct() {
     );
 }
 
-#[test]
-fn mode_toggle_between_calls_is_observed() {
+#[tokio::test]
+async fn mode_toggle_between_calls_is_observed() {
     run_with_big_stack(|| async {
         // Building the tool once with one mode and toggling the config
         // mid-session must take effect on the next execute. We can't trivially
@@ -378,9 +373,9 @@ fn mode_toggle_between_calls_is_observed() {
         // ── Backend half ────────────────────────────────────────────
         let tmp_backend = tempfile::tempdir().expect("tempdir backend");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp_backend.path());
-        let mut backend_config = Config::default();
-        backend_config.config_path = tmp_backend.path().join("config.toml");
-        backend_config.workspace_dir = tmp_backend.path().join("workspace");
+        let backend_config = crate::integrations::composio::module_client::test_support::config_in(
+            tmp_backend.path(),
+        );
         backend_config
             .save()
             .await
@@ -408,9 +403,10 @@ fn mode_toggle_between_calls_is_observed() {
         // ── Direct half ─────────────────────────────────────────────
         let tmp_direct = tempfile::tempdir().expect("tempdir direct");
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp_direct.path());
-        let mut direct_config = Config::default();
-        direct_config.config_path = tmp_direct.path().join("config.toml");
-        direct_config.workspace_dir = tmp_direct.path().join("workspace");
+        let mut direct_config =
+            crate::integrations::composio::module_client::test_support::config_in(
+                tmp_direct.path(),
+            );
         direct_config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
         direct_config.composio.api_key = Some("test-direct-key".to_string());
         direct_config
@@ -446,8 +442,8 @@ fn mode_toggle_between_calls_is_observed() {
 // above) so the FIRST call surfaces the contract and returns right after
 // resolving `live_config`, never reaching real dispatch.
 
-#[test]
-fn deferred_instance_returns_live_config_for_redaction() {
+#[tokio::test]
+async fn deferred_instance_returns_live_config_for_redaction() {
     run_with_big_stack(|| async {
         use crate::config::TEST_ENV_LOCK;
         use crate::integrations::composio::catalog::{seed_live_catalog_cache, ToolContract};
@@ -478,9 +474,8 @@ fn deferred_instance_returns_live_config_for_redaction() {
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.workspace_dir = tmp.path().join("workspace");
+        let mut config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
         config.composio.api_key = Some("test-direct-key-for-deferred-redaction".to_string());
         config.save().await.expect("save config to disk");
@@ -500,6 +495,7 @@ fn deferred_instance_returns_live_config_for_redaction() {
             &DispatchCtx::process_default(),
             serde_json::json!({}),
             None,
+            None,
         ))
         .await;
         let first = outcome.expect("contract-gate surface is Ok(error result)");
@@ -517,8 +513,8 @@ fn deferred_instance_returns_live_config_for_redaction() {
     });
 }
 
-#[test]
-fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
+#[tokio::test]
+async fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
     run_with_big_stack(|| async {
         // `execute_unredacted` assigns its `live_config` local from exactly
         // this private helper (`self.live_config().await`) before ever touching
@@ -532,9 +528,8 @@ fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
 
         // The on-disk config is the source of truth `live_composio_config`
         // reloads from; it holds the CURRENT (rotated) key.
-        let mut on_disk = Config::default();
-        on_disk.config_path = tmp.path().join("config.toml");
-        on_disk.workspace_dir = tmp.path().join("workspace");
+        let mut on_disk =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         on_disk.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
         on_disk.composio.api_key = Some("rotated-key-after-registration".to_string());
         on_disk.save().await.expect("save config to disk");
@@ -563,5 +558,84 @@ fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
          spawn-time snapshot — execute_unredacted feeds this exact value to both dispatch \
          and, after this fix, redaction"
         );
+    });
+}
+
+/// A per-action call in a web-chat turn discloses its transfer in that chat:
+/// the tool hands the turn's chat context to the shared dispatch, as
+/// `composio_execute` does, so `ExternalTransferPending` carries the thread
+/// (`web_chat/egress_surface.rs` drops an unrouted one).
+#[tokio::test]
+async fn per_action_transfer_is_routed_to_the_turns_chat() {
+    run_with_big_stack(|| async {
+        use crate::config::TEST_ENV_LOCK;
+        use crate::core::events::DomainEvent;
+        use crate::security::approval::{ApprovalChatContext, ApprovalTurnContext};
+        let _serialised = super::super::module_client::module_guard().await;
+        let _env_guard = TEST_ENV_LOCK.lock().await;
+        crate::core::bus::init().await.expect("bus init");
+        let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
+        let mut config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
+        config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+        config.composio.api_key = Some("test-direct-key".to_string());
+        config.save().await.expect("save config to disk");
+
+        let slug = "GMAIL_TSE2E_ROUTED_FETCH";
+        let tool = ComposioActionTool::new(
+            Arc::new(config),
+            slug.to_string(),
+            "read-shaped slug".to_string(),
+            None,
+        );
+        let context = crate::agent::tinyagents::host::run_context::tool_context_with_approval(
+            ApprovalTurnContext::chat(ApprovalChatContext {
+                thread_id: "t-tse2e-008".into(),
+                client_id: "c-tse2e-008".into(),
+                request_id: None,
+            }),
+        );
+        // What `execute_with_context` runs, minus the result redaction, which
+        // in a one-process run may be served another test's workspace and
+        // would hide why no transfer was disclosed. The module call itself
+        // may fail with no provider; the disclosure is published before it.
+        let approval =
+            crate::agent::tinyagents::host::run_context::approval_for_tool(Some(&context));
+        let (_, outcome) = Box::pin(tool.execute_unredacted(
+            &DispatchCtx::process_default(),
+            serde_json::json!({}),
+            None,
+            approval.chat.as_ref(),
+        ))
+        .await;
+
+        // In a one-process run the security module may serve another test's
+        // workspace and cannot confirm the egress, so the action is refused
+        // before anything is sent and there is no transfer to disclose.
+        if let Ok(result) = &outcome {
+            if result.is_error && error_text(result).contains("could not confirm") {
+                eprintln!("[test] egress unconfirmed in this process, nothing sent: skipping");
+                return;
+            }
+        }
+        let routed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                match rx.recv().await {
+                    Some(DomainEvent::ExternalTransferPending {
+                        descriptor,
+                        thread_id,
+                        ..
+                    }) if descriptor.service == slug => return thread_id,
+                    Some(_) => continue,
+                    None => panic!("the bus closed before the transfer was disclosed"),
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the per-action call disclosed no transfer: {outcome:?}"));
+        assert_eq!(routed.as_deref(), Some("t-tse2e-008"));
     });
 }

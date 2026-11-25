@@ -2,16 +2,16 @@ use super::*;
 
 #[tokio::test]
 async fn byte_policy_projects_a_parent_readable_artifact_before_the_result_cap() {
-    use crate::agent::subagent_host::types::{SubagentMode, SubagentRunStatus, SubagentUsage};
+    use crate::agent::subagent_host::types::{SubagentMode, SubagentRunStatus};
+    use crate::agent::subagent_host::SubagentUsage;
     use crate::core::runtime::agent_scope::test_agent_context;
     use crate::core::runtime::{CoreContext, DomainSet};
     use crate::security::{SecurityPolicy, TrustedAccess, TrustedRoot};
 
     let scratch = tempfile::tempdir().expect("artifact workspace");
     let parent_action_dir = scratch.path().join("parent-action");
-    let worktree_action_dir = scratch.path().join("worker-checkout");
     let workspace_dir = scratch.path().join("workspace");
-    for path in [&parent_action_dir, &worktree_action_dir, &workspace_dir] {
+    for path in [&parent_action_dir, &workspace_dir] {
         std::fs::create_dir_all(path).expect("create artifact root");
     }
     let trusted_action_dir = parent_action_dir
@@ -32,7 +32,6 @@ async fn byte_policy_projects_a_parent_readable_artifact_before_the_result_cap()
         .with_core(Some(Arc::clone(&scoped)));
     let options = SubagentRunOptions {
         run_context,
-        worktree_action_dir: Some(worktree_action_dir.clone()),
         ..SubagentRunOptions::default()
     };
     let mut definition = crate::agent::harness::test_support::test_main_def();
@@ -100,9 +99,5 @@ async fn byte_policy_projects_a_parent_readable_artifact_before_the_result_cap()
         std::fs::read_to_string(parent_copy).expect("read parent artifact"),
         original,
         "the byte-policy store writes the complete pre-cap result"
-    );
-    assert!(
-        !worktree_action_dir.join(stored_path).exists(),
-        "a worktree worker returns an artifact readable from its parent's root"
     );
 }

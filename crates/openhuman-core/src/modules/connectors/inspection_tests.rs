@@ -217,23 +217,23 @@ async fn a_matching_config_binding_is_pinned_to_workspace_policy_and_credential(
         "offered_toolkits": super::super::offered_toolkits(&selected),
     });
 
-    record_configured_route_for_test(&selected, &route);
-    assert!(binding_matches_config(&selected));
+    record_configured_route_for_test(&selected, &route).await;
+    assert!(binding_matches_config(&selected).await);
 
     let mut other_workspace = selected.clone();
     other_workspace.workspace_dir = scratch.path().join("workspace-b");
-    assert!(!binding_matches_config(&other_workspace));
+    assert!(!binding_matches_config(&other_workspace).await);
 
     let mut other_credential = selected.clone();
     other_credential.composio.api_key = Some("doctor-binding-key-b".to_owned());
-    assert!(!binding_matches_config(&other_credential));
+    assert!(!binding_matches_config(&other_credential).await);
 
     let mut other_policy = selected.clone();
     other_policy
         .composio
         .offered_toolkits_allow
         .push("slack".to_owned());
-    assert!(!binding_matches_config(&other_policy));
+    assert!(!binding_matches_config(&other_policy).await);
 
     let mut reconfigured_b = selected.clone();
     reconfigured_b.workspace_dir = scratch.path().join("workspace-b");
@@ -245,9 +245,9 @@ async fn a_matching_config_binding_is_pinned_to_workspace_policy_and_credential(
         "state_dir": reconfigured_b.workspace_dir.join("state"),
         "offered_toolkits": super::super::offered_toolkits(&reconfigured_b),
     });
-    record_configured_route_for_test(&reconfigured_b, &route_b);
+    record_configured_route_for_test(&reconfigured_b, &route_b).await;
     assert!(
-        !binding_matches_config(&reconfigured_b),
+        !binding_matches_config(&reconfigured_b).await,
         "reconfiguring a module loaded under A cannot relabel its state/policy as B"
     );
 
@@ -281,7 +281,7 @@ async fn a_session_from_another_issuer_is_not_a_matching_connector_credential() 
     .to_string();
     std::fs::write(&profiles, &raw).expect("seed selected issuer profile");
 
-    assert!(selected_credential(&config).is_none());
+    assert!(selected_credential(&config).await.is_none());
     assert_eq!(std::fs::read_to_string(&profiles).unwrap(), raw);
     assert!(!scratch.path().join("auth-profiles.lock").exists());
 }
@@ -387,7 +387,7 @@ async fn existing_readonly_call_returns_a_matching_ready_response_with_a_bound()
         "state_dir": config.workspace_dir.join("state"),
         "offered_toolkits": super::super::offered_toolkits(&config),
     });
-    record_configured_route_for_test(&config, &accepted_route);
+    record_configured_route_for_test(&config, &accepted_route).await;
 
     let bus = MemoryBus::new();
     let broker = tinybus::broker::Broker::new();
@@ -401,6 +401,7 @@ async fn existing_readonly_call_returns_a_matching_ready_response_with_a_bound()
             ),
             manifest: linked_fixture_manifest(),
             init: linked_fixture_init,
+            init_with_setup: None,
         },
         serde_json::json!({
             "reply": { "integrations": [{ "toolkit": "github", "connected": true }] }

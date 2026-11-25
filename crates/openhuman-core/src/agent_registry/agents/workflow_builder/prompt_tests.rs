@@ -30,4 +30,5 @@ fn builder_prompt_composes_supplied_archetype_tools_and_workspace() {
     assert!(prompt.starts_with("module-owned builder archetype"));
     assert!(prompt.contains("save_workflow"));
     assert!(prompt.contains("## Workspace"));
+    assert!(prompt.contains("## Passing graphs to tools"));
 }

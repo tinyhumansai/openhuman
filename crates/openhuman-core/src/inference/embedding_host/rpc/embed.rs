@@ -21,7 +21,7 @@ pub async fn embed(
     let model = &config.memory.embedding_model;
     let dims = config.memory.embedding_dimensions;
 
-    let api_key = resolve_api_key(config, provider_name);
+    let api_key = resolve_api_key(config, provider_name).await;
 
     let (provider_slug, custom_endpoint) = split_custom_provider(provider_name);
 
@@ -39,6 +39,7 @@ pub async fn embed(
         &api_key,
         custom_endpoint.as_deref(),
     )
+    .await
     .map_err(|e| e.to_string())?;
 
     let vectors = embedder.embed(inputs).await.map_err(|e| e.to_string())?;
@@ -102,7 +103,8 @@ pub async fn test_connection(
             config.local_ai.base_url.as_deref(),
         ),
     );
-    let credentials = credential_resolver(config);
+    let api_key = resolve_api_key(config, slug).await;
+    let credentials = credential_resolver(api_key);
     let managed = managed_factory(Some(config.clone()), None);
     let result = test_embedding_connection_detailed(
         &selected,
@@ -167,6 +169,7 @@ pub(crate) async fn probe_dimensions_for_inspection(
     let model = config.memory.embedding_model.trim();
     let configured = config.memory.embedding_dimensions;
     let api_key = super::resolve_api_key_read_only(config, provider_name)
+        .await
         .map_err(|_| InspectionEmbeddingError::CredentialStoreUnavailable)?;
     let custom_endpoint = provider_name.strip_prefix("custom:").map(str::to_owned);
     let provider_slug = if custom_endpoint.is_some() {
@@ -196,7 +199,15 @@ pub(crate) async fn probe_dimensions_for_inspection(
                 1,
             )
             .await
-            .map_err(|_| InspectionEmbeddingError::ProbeFailed)?;
+            .map_err(|error| {
+                // Keep the cause: the probe input is a fixed string and the
+                // sanitizer scrubs credentials from any echoed provider reply.
+                log::warn!(
+                    "[embedding-inspect] probe failed provider={provider_slug} model={model}: {}",
+                    tinyinference_core::sanitize::sanitize_api_error(&error.to_string())
+                );
+                InspectionEmbeddingError::ProbeFailed
+            })?;
         vectors.first().map_or(0, Vec::len)
     } else {
         let embedder = create_embedding_provider_for_inspection(
@@ -207,11 +218,20 @@ pub(crate) async fn probe_dimensions_for_inspection(
             &api_key,
             custom_endpoint.as_deref(),
         )
+        .await
         .map_err(|_| InspectionEmbeddingError::ProviderUnavailable)?;
         let vectors = embedder
             .embed(&["OpenHuman doctor embedding probe".to_owned()])
             .await
-            .map_err(|_| InspectionEmbeddingError::ProbeFailed)?;
+            .map_err(|error| {
+                // Keep the cause: the probe input is a fixed string and the
+                // sanitizer scrubs credentials from any echoed provider reply.
+                log::warn!(
+                    "[embedding-inspect] probe failed provider={provider_slug} model={model}: {}",
+                    tinyinference_core::sanitize::sanitize_api_error(&error.to_string())
+                );
+                InspectionEmbeddingError::ProbeFailed
+            })?;
         vectors.first().map_or(0, Vec::len)
     };
     Ok(InspectionEmbeddingDimensions { configured, actual })

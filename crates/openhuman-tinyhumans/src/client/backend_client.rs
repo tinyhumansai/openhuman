@@ -7,7 +7,7 @@ use crate::transport::BackendRequest;
 use crate::transport::{BackendTransport, TransportProfile};
 use anyhow::{Context, Result};
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 use reqwest::{Client, Method, Url};
 use serde_json::Value;
 

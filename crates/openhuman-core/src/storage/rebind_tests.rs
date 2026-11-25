@@ -18,11 +18,15 @@ fn config_in(dir: &TempDir) -> Config {
 struct Installed(Mutex<Vec<(String, Arc<dyn StorageBackend>)>>);
 
 impl Installed {
-    fn install(&self) -> impl FnOnce(&str, Arc<dyn StorageBackend>) -> usize + '_ {
+    fn install(&self) -> impl FnOnce(&str, Arc<dyn StorageBackend>) -> Result<usize> + '_ {
         |url, backend| {
             self.0.lock().unwrap().push((url.to_string(), backend));
-            0
+            Ok(0)
         }
+    }
+
+    fn reject_install(&self) -> impl FnOnce(&str, Arc<dyn StorageBackend>) -> Result<usize> + '_ {
+        |_url, _backend| Err(anyhow::anyhow!("session stores refused the backend"))
     }
 
     fn urls(&self) -> Vec<String> {

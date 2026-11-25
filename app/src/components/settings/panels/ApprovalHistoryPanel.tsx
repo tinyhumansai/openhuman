@@ -34,6 +34,39 @@ const DateTimeCell = ({ value }: { value: string }) => {
   );
 };
 
+const pct = (millis: number | null) =>
+  millis === null ? '–' : `${(millis / 10).toFixed(millis % 10 === 0 ? 0 : 1)}%`;
+
+const AutoDecision = ({ entry }: { entry: ApprovalAuditEntry }) => {
+  const { t } = useT();
+  if (!entry.decided_by?.startsWith('auto:')) return null;
+  const isJev = entry.decided_by === 'auto:jev';
+  return (
+    <div className="mt-1 flex flex-col items-end gap-0.5" data-testid="approval-history-auto">
+      <Badge variant="primary" data-testid="approval-history-auto-badge">
+        {t(isJev ? 'settings.approvalHistory.autoJev' : 'settings.approvalHistory.autoPolicy')}
+      </Badge>
+      {isJev && entry.judge && (
+        <span className="text-xs text-content-muted" data-testid="approval-history-judge-scores">
+          {t('settings.approvalHistory.judgeScores')
+            .replace('{intent}', pct(entry.judge.intent_millis))
+            .replace('{reversible}', pct(entry.judge.reversible_millis))
+            .replace('{exfiltrate}', pct(entry.judge.exfiltrate_millis))}
+          {entry.judge.cached ? ` · ${t('settings.approvalHistory.judgeCached')}` : ''}
+        </span>
+      )}
+      {entry.expires_at && (
+        <span className="text-xs text-content-muted" data-testid="approval-history-expiry">
+          {t('settings.approvalHistory.judgeExpires').replace(
+            '{time}',
+            new Date(entry.expires_at).toLocaleString()
+          )}
+        </span>
+      )}
+    </div>
+  );
+};
+
 /** Badge tone per decision: approvals read sage, a denial coral. */
 const DECISION_VARIANT: Record<ApprovalDecision, 'success' | 'danger'> = {
   approve_once: 'success',
@@ -150,11 +183,14 @@ const ApprovalHistoryPanel = () => {
       align: 'right',
       className: 'w-px whitespace-nowrap',
       cell: entry => (
-        <Badge
-          variant={DECISION_VARIANT[entry.decision]}
-          data-testid={`approval-history-decision-${entry.decision}`}>
-          {t(DECISION_LABEL_KEY[entry.decision])}
-        </Badge>
+        <div className="flex flex-col items-end">
+          <Badge
+            variant={DECISION_VARIANT[entry.decision]}
+            data-testid={`approval-history-decision-${entry.decision}`}>
+            {t(DECISION_LABEL_KEY[entry.decision])}
+          </Badge>
+          <AutoDecision entry={entry} />
+        </div>
       ),
     },
   ];

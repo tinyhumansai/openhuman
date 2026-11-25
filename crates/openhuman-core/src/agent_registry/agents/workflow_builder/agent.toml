@@ -1,6 +1,5 @@
 id = "workflow_builder"
 display_name = "Workflow Builder"
-delegate_name = "build_workflow"
 when_to_use = "Workflow authoring specialist — owns building tinyflows automation graphs from a natural-language description. Route any request to 'set up a workflow that…', 'automate…', 'when X happens do Y', 'build/create/edit an automation or flow', or to iterate on a proposed workflow here. It grounds nodes in real tool slugs + connections, dry-runs a draft in a sandbox to self-check, and returns a workflow PROPOSAL for review. Persistence stays with the user's Accept + Save; when the user explicitly asks the agent to save (or test-run) onto an existing flow id it may `save_workflow` / `run_flow` — but never on its own. It CAN create a new flow (`create_workflow`) or clone one (`duplicate_flow`) when the user explicitly asks, but every flow it creates is always born DISABLED — it can never enable a flow, or run one without the user's confirmation first. Not for running an already-saved flow (that is a direct flows_run) and not for the legacy skill 'workflows'."
 temperature = 0.2
 max_iterations = 12

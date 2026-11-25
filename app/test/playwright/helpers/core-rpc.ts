@@ -52,9 +52,9 @@ export async function callCoreRpc<T>(
   return payload.result;
 }
 
-async function resetCoreForWebUser(userId: string): Promise<void> {
+async function resetCoreForWebUser(userId: string, onboardingCompleted = true): Promise<void> {
   await callCoreRpc('openhuman.auth_clear_session', {});
-  await callCoreRpc('openhuman.config_set_onboarding_completed', { value: true });
+  await callCoreRpc('openhuman.config_set_onboarding_completed', { value: onboardingCompleted });
   await callCoreRpc('openhuman.auth_store_session', {
     token: buildBypassJwt(userId),
     userId,
@@ -62,16 +62,25 @@ async function resetCoreForWebUser(userId: string): Promise<void> {
   });
 }
 
-export async function seedBrowserCoreMode(page: Page): Promise<void> {
+export async function seedBrowserCoreMode(
+  page: Page,
+  options: { markWalkthroughComplete?: boolean } = {}
+): Promise<void> {
   await page.addInitScript(
-    ({ rpcUrl, token }) => {
+    ({ rpcUrl, token, markWalkthroughComplete }) => {
       window.localStorage.setItem('openhuman_core_mode', 'cloud');
       window.localStorage.setItem('openhuman_core_rpc_url', rpcUrl);
       window.localStorage.setItem('openhuman_core_rpc_token', token);
-      window.localStorage.setItem('openhuman:walkthrough_completed', 'true');
-      window.localStorage.removeItem('openhuman:walkthrough_pending');
+      if (markWalkthroughComplete) {
+        window.localStorage.setItem('openhuman:walkthrough_completed', 'true');
+        window.localStorage.removeItem('openhuman:walkthrough_pending');
+      }
     },
-    { rpcUrl: CORE_RPC_URL, token: CORE_RPC_TOKEN }
+    {
+      rpcUrl: CORE_RPC_URL,
+      token: CORE_RPC_TOKEN,
+      markWalkthroughComplete: options.markWalkthroughComplete !== false,
+    }
   );
 }
 
@@ -162,9 +171,9 @@ export async function signInViaCallbackToken(page: Page, token: string): Promise
 export async function signInViaBypassUser(
   page: Page,
   userId: string,
-  options: { waitForInitialThread?: boolean } = {}
+  options: { waitForInitialThread?: boolean; onboardingCompleted?: boolean } = {}
 ): Promise<void> {
-  await resetCoreForWebUser(userId);
+  await resetCoreForWebUser(userId, options.onboardingCompleted ?? true);
   await applyBrowserCoreModeInPage(page);
   await page.goto('/#/home');
   await waitForAuthenticatedSnapshot(page);
@@ -206,13 +215,35 @@ export async function signInViaBypassUser(
   }
 }
 
+/** Re-authenticate the same local test user without resetting persisted config. */
+export async function signInViaBypassUserPreservingConfig(
+  page: Page,
+  userId: string
+): Promise<void> {
+  await callCoreRpc('openhuman.auth_store_session', {
+    token: buildBypassJwt(userId),
+    userId,
+    user: { _id: userId, id: userId, displayName: 'Playwright User' },
+  });
+  await applyBrowserCoreModeInPage(page);
+  await page.goto('/#/home');
+  await waitForAuthenticatedSnapshot(page);
+  await expect
+    .poll(async () => page.evaluate(() => window.location.hash), {
+      timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
+    })
+    .toMatch(/^#\/chat/);
+  await waitForAppReady(page);
+}
+
 export async function bootAuthenticatedPage(
   page: Page,
   userId: string,
-  hash: string = '/home'
+  hash: string = '/home',
+  options: { markWalkthroughComplete?: boolean } = {}
 ): Promise<void> {
   await resetCoreForWebUser(userId);
-  await seedBrowserCoreMode(page);
+  await seedBrowserCoreMode(page, options);
   await page.goto('/#/home');
   await waitForAuthenticatedSnapshot(page);
   await page.goto(`/#${hash}`);

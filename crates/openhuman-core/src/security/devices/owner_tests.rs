@@ -5,7 +5,10 @@ fn session(agent: Option<&str>) -> PairingSession {
     PairingSession {
         channel_id: "owner-test".to_string(),
         pairing_token: "token".to_string(),
+        connection_nonce: "nonce".to_string(),
         core_pubkey: "pk".to_string(),
+        pairing_receipt: "receipt".to_string(),
+        label: "phone".to_string(),
         rpc_url: None,
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         agent: agent.map(str::to_string),
@@ -177,11 +180,14 @@ async fn a_revoked_device_with_a_live_cipher_is_dropped() {
         crate::core::runtime::DomainSet::full(),
         scoped_config(tmp.path()),
     );
-    super::super::rpc::ACTIVE_CIPHERS.lock().unwrap().insert(
+    super::super::rpc::ACTIVE_SESSIONS.lock().unwrap().insert(
         "owner-test-cipher".to_string(),
-        std::sync::Arc::new(std::sync::Mutex::new(
-            super::super::crypto::TunnelCipher::new(&[7u8; 32]),
-        )),
+        super::super::rpc::ActiveDeviceSession {
+            scope_id: "scope".into(),
+            session_id: "session".into(),
+            pairing_token: "token".into(),
+            connection_nonce: "nonce".into(),
+        },
     );
     let owner = crate::core::runtime::CoreContext::scope(
         context.clone(),
@@ -192,7 +198,7 @@ async fn a_revoked_device_with_a_live_cipher_is_dropped() {
         ),
     )
     .await;
-    super::super::rpc::ACTIVE_CIPHERS
+    super::super::rpc::ACTIVE_SESSIONS
         .lock()
         .unwrap()
         .remove("owner-test-cipher");
@@ -222,11 +228,14 @@ async fn a_leftover_pairing_session_does_not_outlive_a_revocation() {
         .await,
         Ok(None)
     );
-    super::super::rpc::ACTIVE_CIPHERS.lock().unwrap().insert(
+    super::super::rpc::ACTIVE_SESSIONS.lock().unwrap().insert(
         "owner-test-leftover".to_string(),
-        std::sync::Arc::new(std::sync::Mutex::new(
-            super::super::crypto::TunnelCipher::new(&[9u8; 32]),
-        )),
+        super::super::rpc::ActiveDeviceSession {
+            scope_id: "scope".into(),
+            session_id: "session".into(),
+            pairing_token: "token".into(),
+            connection_nonce: "nonce".into(),
+        },
     );
     // Cipher live, row not persisted yet: still the session's agent.
     let racing = crate::core::runtime::CoreContext::scope(
@@ -252,7 +261,7 @@ async fn a_leftover_pairing_session_does_not_outlive_a_revocation() {
         ),
     )
     .await;
-    super::super::rpc::ACTIVE_CIPHERS
+    super::super::rpc::ACTIVE_SESSIONS
         .lock()
         .unwrap()
         .remove("owner-test-leftover");
@@ -268,16 +277,19 @@ fn an_unpersisted_pairing_is_abandoned() {
         .lock()
         .unwrap()
         .insert(id.to_string(), session(None));
-    super::super::rpc::ACTIVE_CIPHERS.lock().unwrap().insert(
+    super::super::rpc::ACTIVE_SESSIONS.lock().unwrap().insert(
         id.to_string(),
-        std::sync::Arc::new(std::sync::Mutex::new(
-            super::super::crypto::TunnelCipher::new(&[5u8; 32]),
-        )),
+        super::super::rpc::ActiveDeviceSession {
+            scope_id: "scope".into(),
+            session_id: "session".into(),
+            pairing_token: "token".into(),
+            connection_nonce: "nonce".into(),
+        },
     );
     super::super::bus::abandon_unpersisted_pairing(id);
     assert!(!super::super::rpc::PENDING_SESSIONS
         .lock()
         .unwrap()
         .contains_key(id));
-    assert!(!has_active_cipher(id));
+    assert!(!has_active_session(id));
 }

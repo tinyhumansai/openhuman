@@ -19,11 +19,20 @@ fn send_message(writer: &mut impl Write, message: &Value) {
     writer.flush().expect("flush MCP message");
 }
 
-fn wait_for_response(receiver: &Receiver<Result<Value, String>>, request_id: u64) -> Value {
+fn wait_for_response(
+    receiver: &Receiver<Result<Value, String>>,
+    request_id: u64,
+    stderr_path: &std::path::Path,
+) -> Value {
     loop {
         let message = receiver
             .recv_timeout(Duration::from_secs(60))
-            .expect("stdio MCP response arrives before the deadline")
+            .unwrap_or_else(|error| {
+                panic!(
+                    "stdio MCP response {request_id} did not arrive ({error}); child stderr: {}",
+                    std::fs::read_to_string(stderr_path).unwrap_or_default()
+                )
+            })
             .expect("stdio MCP server writes valid JSON-RPC to stdout");
         if message.get("id") == Some(&json!(request_id)) {
             return message;
@@ -36,7 +45,14 @@ fn stdio_server_initializes_and_lists_core_tools() {
     let workspace = tempfile::tempdir().expect("temporary MCP workspace");
     let workspace_path =
         std::fs::canonicalize(workspace.path()).expect("canonicalize temporary MCP workspace");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+    let stderr_path = workspace_path.join("mcp.stderr");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_openhuman-core"));
+    if let Some(module) = std::env::var_os("OPENHUMAN_TINYMCP_TEST_MODULE") {
+        if let Some(module_dir) = std::path::Path::new(&module).parent() {
+            command.env("OPENHUMAN_MODULE_PATH", module_dir);
+        }
+    }
+    let mut child = command
         .arg("mcp")
         .current_dir(&workspace_path)
         .env("OPENHUMAN_WORKSPACE", &workspace_path)
@@ -47,7 +63,9 @@ fn stdio_server_initializes_and_lists_core_tools() {
         .env_remove("OPENHUMAN_MODE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(
+            std::fs::File::create(&stderr_path).expect("create child stderr log"),
+        ))
         .spawn()
         .expect("spawn OpenHuman's stdio MCP server");
     let mut stdin = child.stdin.take().expect("child stdin");
@@ -81,7 +99,7 @@ fn stdio_server_initializes_and_lists_core_tools() {
             },
         }),
     );
-    let initialized = wait_for_response(&receiver, 1);
+    let initialized = wait_for_response(&receiver, 1, &stderr_path);
     assert!(initialized.get("error").is_none(), "{initialized}");
     assert_eq!(
         initialized["result"]["protocolVersion"],
@@ -105,7 +123,7 @@ fn stdio_server_initializes_and_lists_core_tools() {
             "params": {},
         }),
     );
-    let listed = wait_for_response(&receiver, 2);
+    let listed = wait_for_response(&receiver, 2, &stderr_path);
     assert!(listed.get("error").is_none(), "{listed}");
     assert!(
         listed["result"]["tools"]

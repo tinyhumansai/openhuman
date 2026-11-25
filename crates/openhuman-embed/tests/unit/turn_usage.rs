@@ -1,8 +1,8 @@
 //! Provider-root overlays retain session metadata and child spend.
 use super::overlay_response_usage;
-use openhuman_core::agent::subagent_host::SubagentUsage;
 use openhuman_core::agent::tinyagents::host::{LastTurnUsage, SubagentUsageEntry};
 use tinyagents_harness::middleware::ResponseUsage;
+use tinyagents_harness::progress::SubagentUsage;
 
 #[test]
 fn reported_root_usage_preserves_children_and_session_context_without_double_counting() {

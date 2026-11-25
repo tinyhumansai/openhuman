@@ -50,7 +50,7 @@ pub async fn read_body(config: &Config, id: &str) -> Result<ArtifactBody, String
     let files = super::files::FileRoots::from_config(config);
     let mut roots =
         super::tiny_store::file_roots(&config.workspace_dir, &files, Some(&config.action_dir));
-    let versioned = super::tiny_store::artifacts_service(
+    let versioned = super::tiny_store::artifacts_service_current(
         &config.workspace_dir,
         files.clone(),
         Some(&config.action_dir),
@@ -75,12 +75,18 @@ pub async fn read_body(config: &Config, id: &str) -> Result<ArtifactBody, String
             record
         }
     };
-    // A version's file is kept under a storage key inside the version files
-    // folder; show it by the path it has on disk. A legacy absolute key stays
-    // as it is, since joining an absolute path replaces the base.
-    let kept = super::tiny_store::version_files_dir(&config.workspace_dir);
     if let Some(file) = record.versions.last_mut().and_then(|v| v.file.as_mut()) {
-        file.key = kept.join(&file.key).display().to_string();
+        // Version bytes live in the acting tenant's blob store. The legacy
+        // card bridge materializes the current version into its guarded,
+        // user-visible file path; preview reads that same path.
+        if let Ok(path) = super::files::resolve_ready_file(&config.workspace_dir, &files, id).await
+        {
+            file.key = path.display().to_string();
+        } else {
+            file.key = super::tiny_store::stored_file_path(&config.workspace_dir, file)
+                .display()
+                .to_string();
+        }
     }
     let converter = DocumentConverter::for_config(config);
     Ok(body_of(

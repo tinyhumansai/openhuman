@@ -4,8 +4,8 @@
 //! open for as long as it holds the key; the OS drops it when the process
 //! dies, so liveness needs no clock and these leases never expire
 //! (`expires_at_ms == u64::MAX`). The record itself sits beside the lock in
-//! `.lease.json`, written only by the lock holder (temp file + rename), so
-//! others can name the owner.
+//! `.lease.json`, written only by the lock holder (fsynced temp file +
+//! durable rename), so others can name the owner.
 //!
 //! A free lock over a record that is not released means the previous holder
 //! died holding it: the next grant is `previous_unclean`.
@@ -30,7 +30,11 @@ use super::StorageError;
 
 const LOCK_FILE: &str = ".lease";
 const RECORD_FILE: &str = ".lease.json";
-const RECORD_TMP: &str = ".lease.json.tmp";
+/// Inspections (`holder`, the doctor's `holder_readonly`) test liveness by
+/// taking the lock for an instant, so `acquire` retries a contended lock
+/// for up to `PROBE_ATTEMPTS × PROBE_WAIT` before calling the key held.
+const PROBE_ATTEMPTS: u32 = 10;
+const PROBE_WAIT: std::time::Duration = std::time::Duration::from_millis(5);
 
 struct Holding {
     /// Kept open: closing it drops the lock.
@@ -64,6 +68,44 @@ fn is_contended(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::WouldBlock
         || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
 }
+
+/// `try_lock_exclusive`, riding out a lock held only by an inspection probe.
+/// A blocking sleep: the caller holds the `held` std mutex, so it can't await.
+// ponytail: a bounded retry absorbs probes; a probe that takes no lock
+// (F_GETLK) would remove the race outright.
+fn lock_past_probes(file: &File, key: &str, node: &str) -> io::Result<()> {
+    let mut retries = 0;
+    let result = loop {
+        match file.try_lock_exclusive() {
+            Err(error) if is_contended(&error) && retries + 1 < PROBE_ATTEMPTS => {
+                #[cfg(test)]
+                CONTENDED_KEYS
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(key.to_string());
+                retries += 1;
+                std::thread::sleep(PROBE_WAIT);
+            }
+            other => break other,
+        }
+    };
+    if retries > 0 {
+        tracing::debug!(
+            target: "openhuman::storage::lease",
+            key,
+            node,
+            retries,
+            locked = result.is_ok(),
+            "[lease] local acquire retried a contended lock"
+        );
+    }
+    result
+}
+
+/// Keys whose contended lock `lock_past_probes` retried, so a test can
+/// release its stand-in probe lock only once its own `acquire` has met it.
+#[cfg(test)]
+static CONTENDED_KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 impl LocalLeases {
     /// Leases under `root` for `node`.
@@ -119,13 +161,14 @@ impl LocalLeases {
     }
 
     fn write_record(&self, key: &str, record: &LeaseRecord) -> Result<(), StorageError> {
-        let dir = local_dir(&self.root, key);
-        let tmp = dir.join(RECORD_TMP);
+        let path = local_dir(&self.root, key).join(RECORD_FILE);
         let bytes = serde_json::to_vec(record)
             .map_err(|error| StorageError::serialization(error.to_string()))?;
-        fs::write(&tmp, bytes).map_err(|error| io_error("write", &tmp, &error))?;
-        let path = dir.join(RECORD_FILE);
-        fs::rename(&tmp, &path).map_err(|error| io_error("rename", &path, &error))
+        // fsync + durable rename: a crash must not leave an empty record,
+        // which would read as malformed and block the key.
+        crate::security::secret_storage::file_store::write_atomic(&path, &bytes).map_err(|error| {
+            StorageError::backend(format!("lease write {}: {error}", path.display()))
+        })
     }
 
     /// Checks that `grant` is the one this instance holds and applies
@@ -169,7 +212,7 @@ impl LeaseStore for LocalLeases {
             });
         }
         let file = self.open_lock(key)?;
-        if let Err(error) = file.try_lock_exclusive() {
+        if let Err(error) = lock_past_probes(&file, key, &self.node) {
             if !is_contended(&error) {
                 let path = local_dir(&self.root, key).join(LOCK_FILE);
                 return Err(io_error("lock", &path, &error).into());

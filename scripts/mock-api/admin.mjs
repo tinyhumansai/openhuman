@@ -1,6 +1,5 @@
 import { json } from "./http.mjs";
 import { resetConversationFixturesState } from "./routes/conversations.mjs";
-import { resetCronFixturesState } from "./routes/cron.mjs";
 import { resetMockMemory } from "./routes/memory.mjs";
 import {
   clearSocketEventLog,
@@ -13,15 +12,12 @@ import {
   getMockMessages,
   listMockLlmThreads,
   getMockWebhookTriggers,
-  getMockTelegramSent,
   getRequestLog,
-  pushMockTelegramUpdate,
   resetMockBehavior,
   resetMockConversations,
   resetMockCronJobs,
   resetMockMessages,
   resetMockLlmThreads,
-  resetMockTelegram,
   resetSocketSessions,
   resetMockTunnels,
   resetMockWebhookTriggers,
@@ -51,8 +47,8 @@ export function handleAdmin(ctx) {
       data: {
         requestCount: getRequestLog().length,
         conversations: getMockConversations(),
-        messages: getMockMessages(),
         cronJobs: getMockCronJobs(),
+        messages: getMockMessages(),
         webhookTriggers: getMockWebhookTriggers(),
         llmThreads: listMockLlmThreads(),
         socketSessions: listSocketSessions(),
@@ -76,15 +72,13 @@ export function handleAdmin(ctx) {
     if (!keepRequests) clearRequestLog();
     resetMockTunnels();
     resetMockConversations();
-    resetMockMessages();
     resetMockCronJobs();
+    resetMockMessages();
     resetMockMemory();
     resetMockWebhookTriggers();
     resetMockLlmThreads();
     resetConversationFixturesState();
-    resetCronFixturesState();
     resetSocketSessions();
-    resetMockTelegram();
     json(res, 200, {
       success: true,
       data: {
@@ -126,31 +120,6 @@ export function handleAdmin(ctx) {
   if (method === "POST" && /^\/__admin\/socket\/clear-events\/?$/.test(url)) {
     clearSocketEventLog();
     json(res, 200, { success: true, data: [] });
-    return true;
-  }
-
-  // ── Telegram admin endpoints ───────────────────────────────────────────
-  if (method === "POST" && /^\/__admin\/telegram\/inject-update\/?$/.test(url)) {
-    const updates = Array.isArray(parsedBody?.updates)
-      ? parsedBody.updates
-      : parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
-        ? [parsedBody]
-        : [];
-    for (const update of updates) {
-      pushMockTelegramUpdate(update);
-    }
-    console.log(`[telegram-mock] inject-update: queued ${updates.length} update(s)`);
-    json(res, 200, { ok: true, queued: updates.length });
-    return true;
-  }
-  if (method === "GET" && /^\/__admin\/telegram\/sent\/?$/.test(url)) {
-    json(res, 200, { ok: true, messages: getMockTelegramSent() });
-    return true;
-  }
-  if (method === "POST" && /^\/__admin\/telegram\/reset\/?$/.test(url)) {
-    resetMockTelegram();
-    console.log("[telegram-mock] admin reset: telegram state cleared");
-    json(res, 200, { ok: true });
     return true;
   }
 

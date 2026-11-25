@@ -3,7 +3,11 @@ use crate::agent::subagent_host::types::SubagentCheckpointData;
 
 pub(in crate::agent::subagent_host) struct OpenHumanPersistence {
     checkpoint_dir: std::path::PathBuf,
-    dispatch: crate::core::runtime::DispatchCtx,
+    /// Weak: this persistence lives in the session's sub-agent runtime, which a
+    /// web-chat thread caches. A strong context here would keep the tenant's
+    /// agent state alive after its turn (`CoreContext::tenant_in_use`) and pin
+    /// the profile slot.
+    core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
     host_outcome: Arc<Mutex<HashMap<SubagentTaskKey, SubagentRunOutcome>>>,
 }
 
@@ -27,7 +31,7 @@ impl OpenHumanPersistence {
     pub(in crate::agent::subagent_host) fn new(checkpoint_dir: std::path::PathBuf) -> Self {
         Self {
             checkpoint_dir,
-            dispatch: crate::core::runtime::DispatchCtx::ambient(),
+            core: crate::core::runtime::DispatchCtx::ambient().downgrade(),
             host_outcome: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -36,7 +40,7 @@ impl OpenHumanPersistence {
         mut self,
         dispatch: crate::core::runtime::DispatchCtx,
     ) -> Self {
-        self.dispatch = dispatch;
+        self.core = dispatch.downgrade();
         self
     }
 
@@ -114,7 +118,9 @@ impl OpenHumanPersistence {
         // The generic driver may run in a detached Tokio task. Storage reads
         // before execution and commits after execution must use the actor the
         // authenticated parent carried, even outside the executor's scope.
-        if let Some(core) = self.dispatch.resolved() {
+        if let Some(core) =
+            crate::core::runtime::DispatchCtx::from_weak(self.core.as_ref()).resolved()
+        {
             crate::core::runtime::CoreContext::sync_scope(core, open)
         } else if crate::core::runtime::is_saas() {
             Err(SubagentError::Persistence(

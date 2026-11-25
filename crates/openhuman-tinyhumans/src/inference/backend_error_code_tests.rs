@@ -287,3 +287,30 @@ fn classification_keeps_provider_ownership_separate_from_raw_token_and_reportabi
     assert!(malformed.reportable);
     assert!(malformed.malformed_bad_request);
 }
+
+#[test]
+fn hosted_voice_unavailable_copy_is_backend_owned_and_not_reported_again() {
+    // `authed_json` already reported (or demoted as transient) the failure the
+    // neutral copy replaces; the RPC boundary must not report it a second time.
+    let message = super::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
+    for err in [
+        message.to_string(),
+        format!("voice.reply_synthesize: {message}"),
+    ] {
+        let classification = classify(None, &err);
+        assert!(
+            classification.backend_owned && !classification.reportable,
+            "{err}"
+        );
+        assert_eq!(classification.kind, None, "{err}");
+    }
+    // Another provider's error that merely quotes the sentence is not exempt.
+    for err in [
+        format!("custom provider error 500: {message}"),
+        format!("{message} (upstream said so)"),
+    ] {
+        let classification = classify(None, &err);
+        assert!(!classification.backend_owned, "{err}");
+        assert!(classification.reportable, "{err}");
+    }
+}

@@ -1,6 +1,8 @@
 use super::*;
 use serde_json::json;
 
+const RELAY_THREAD_ID: &str = "channel:telegram/42/-100";
+
 fn params(message_id: &str, text: &str) -> RelayInboundParams {
     serde_json::from_value(json!({
         "channel": "telegram",
@@ -16,7 +18,7 @@ fn params(message_id: &str, text: &str) -> RelayInboundParams {
 async fn an_inbound_message_is_recorded_once() {
     let tmp = tempfile::tempdir().unwrap();
     let p = params("m1", "hello");
-    let thread = p.thread_id();
+    let thread = RELAY_THREAD_ID.to_owned();
     assert_eq!(
         record_inbound(
             &crate::core::runtime::DispatchCtx::ambient(),
@@ -63,7 +65,7 @@ async fn an_inbound_message_is_recorded_once() {
 async fn replies_are_recorded_and_seed_the_next_turn() {
     let tmp = tempfile::tempdir().unwrap();
     let first = params("m1", "hello");
-    let thread = first.thread_id();
+    let thread = RELAY_THREAD_ID.to_owned();
     record_inbound(
         &crate::core::runtime::DispatchCtx::ambient(),
         tmp.path(),
@@ -138,7 +140,7 @@ async fn replies_are_recorded_and_seed_the_next_turn() {
 async fn concurrent_retries_of_one_message_record_it_once() {
     let tmp = tempfile::tempdir().unwrap();
     let p = params("race", "hello");
-    let thread = p.thread_id();
+    let thread = RELAY_THREAD_ID.to_owned();
     let mut tasks = Vec::new();
     for _ in 0..8 {
         let dir = tmp.path().to_path_buf();

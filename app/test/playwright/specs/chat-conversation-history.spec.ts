@@ -1,5 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { selectedThreadTranscript } from '../helpers/chat-transcript';
+import { persistedThreadMessages } from '../helpers/chat-transcript';
 import {
   bootAuthenticatedPage,
   callCoreRpc,
@@ -131,7 +133,7 @@ test.describe('Chat Conversation History', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await openChat(page);
-    await createNewThread(page);
+    const threadId = await createNewThread(page);
 
     await sendMessage(page, FIRST_PROMPT);
     // The assistant bubble's Tailwind class carries an opacity modifier
@@ -215,5 +217,19 @@ test.describe('Chat Conversation History', () => {
     expect(modelContext).toContain(SECOND_PROMPT);
 
     await expect(page.getByText(TURN_TWO_CANARY)).toBeVisible();
+    const transcript = await selectedThreadTranscript(page);
+    expect(transcript.content).toContain(FIRST_PROMPT);
+    expect(transcript.content).toContain(FIRST_RESPONSE);
+    expect(transcript.content).toContain(SECOND_PROMPT);
+    expect(transcript.content).toContain(TURN_TWO_CANARY);
+    await expect
+      .poll(async () => {
+        const messages = await persistedThreadMessages(threadId);
+        const content = messages.map(message => message.content).join('\n');
+        return [FIRST_PROMPT, FIRST_RESPONSE, SECOND_PROMPT, TURN_TWO_CANARY].every(text =>
+          content.includes(text)
+        );
+      })
+      .toBe(true);
   });
 });

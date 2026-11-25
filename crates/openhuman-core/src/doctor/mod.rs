@@ -19,6 +19,9 @@ pub use ops::*;
 pub use registry::{
     register_check_source, register_check_source_in, registered_checks_for, DoctorCheckSource,
 };
+pub(crate) use schemas::all_controller_entries as all_doctor_controller_entries;
+#[cfg(test)]
+pub(crate) use schemas::doctor_parameter_contracts;
 pub use schemas::{
     all_controller_schemas as all_doctor_controller_schemas,
     all_registered_controllers as all_doctor_registered_controllers,

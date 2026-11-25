@@ -30,7 +30,9 @@ impl DateHintModel for HostDateHintModel {
             let (model, model_id) =
                 match crate::inference::provider::create_chat_model_with_model_id_in(
                     &ctx, "chat", &config, 0.0,
-                ) {
+                )
+                .await
+                {
                     Ok(model) => model,
                     Err(error) => {
                         tracing::debug!(%error, "[memory:date_hint] no chat model");

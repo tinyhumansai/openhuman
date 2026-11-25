@@ -31,16 +31,18 @@ pub(crate) async fn connected_toolkit_slugs(config: &Config) -> Option<Vec<Strin
 
     let integrations = match fetch_connected_integrations_status(config).await {
         FetchConnectedIntegrationsStatus::Authoritative(items) => items,
-        FetchConnectedIntegrationsStatus::Unavailable => match cached_active_integrations(config) {
-            Some(items) => {
-                tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable — using last-known (possibly stale) cached connections for the tool_call allowlist");
-                items
+        FetchConnectedIntegrationsStatus::Unavailable => {
+            match cached_active_integrations(config).await {
+                Some(items) => {
+                    tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable — using last-known (possibly stale) cached connections for the tool_call allowlist");
+                    items
+                }
+                None => {
+                    tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable and no cached snapshot — connected-toolkit allowlist is empty this call");
+                    return None;
+                }
             }
-            None => {
-                tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable and no cached snapshot — connected-toolkit allowlist is empty this call");
-                return None;
-            }
-        },
+        }
     };
     Some(
         integrations
@@ -72,9 +74,10 @@ pub(crate) async fn flow_tool_allowed(
             tracing::debug!(target: "flows", %slug, %toolkit, "[flows] tool_call curation: reject — slug is not a curated action of this toolkit");
             return false;
         };
+        // A pref that cannot be read admits nothing (fail closed).
         let allowed = load_user_scope_pref(ctx, config, &toolkit)
             .await
-            .allows(curated.scope);
+            .is_ok_and(|pref| pref.allows(curated.scope));
         tracing::debug!(target: "flows", %slug, %toolkit, allowed, "[flows] tool_call curation: static curated catalog decision");
         return allowed;
     }
@@ -102,7 +105,7 @@ pub(crate) async fn flow_tool_allowed(
     }
     let allowed = load_user_scope_pref(ctx, config, &toolkit)
         .await
-        .allows(classify_unknown(slug));
+        .is_ok_and(|pref| pref.allows(classify_unknown(slug)));
     tracing::debug!(target: "flows", %slug, %toolkit, allowed, "[flows] tool_call curation: live catalog + scope decision");
     allowed
 }

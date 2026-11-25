@@ -9,6 +9,34 @@ pub(super) fn doctor_report_body(invoke_result: &Value) -> Result<&Value, String
         .ok_or_else(|| "doctor RPC response did not include a report".into())
 }
 
+/// Why the CLI doctor produced no report. Each class is a fixed, safe summary:
+/// the underlying errors can carry endpoints or credential context, so they are
+/// never printed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DoctorFailure {
+    /// The async runtime could not be created.
+    Runtime,
+    /// The doctor host could not start (profile selection, config, or boot).
+    Host,
+    /// The core rejected or failed the `doctor_report` call.
+    Rpc,
+    /// The core answered without a report.
+    NoReport,
+}
+
+impl DoctorFailure {
+    pub(super) fn reason(self) -> &'static str {
+        match self {
+            Self::Runtime => "the async runtime could not start",
+            Self::Host => {
+                "the doctor host could not start (profile selection, config or core boot)"
+            }
+            Self::Rpc => "the doctor_report call failed",
+            Self::NoReport => "the core answered without a report",
+        }
+    }
+}
+
 pub(super) fn exit_code(options: &DoctorArgs, report: Result<&Value, ()>) -> u8 {
     let Ok(report) = report else {
         return 2;
@@ -52,10 +80,15 @@ pub(crate) fn run(args: &[String]) -> u8 {
         }
     };
 
+    if options.help {
+        print!("{}", super::args::USAGE);
+        return 0;
+    }
+
     let tokio = match openhuman_rpc::embed::process::tokio_runtime() {
         Ok(runtime) => runtime,
         Err(_) => {
-            print_runtime_failure(options.json);
+            print_runtime_failure(options.json, DoctorFailure::Runtime);
             return 2;
         }
     };
@@ -77,29 +110,39 @@ pub(crate) fn run(args: &[String]) -> u8 {
             }
             exit_code(&options, Ok(&report))
         }
-        Err(()) => {
-            print_runtime_failure(options.json);
+        Err(failure) => {
+            print_runtime_failure(options.json, failure);
             exit_code(&options, Err(()))
         }
     }
 }
 
-async fn invoke_report(options: &DoctorArgs) -> Result<Value, ()> {
+async fn invoke_report(options: &DoctorArgs) -> Result<Value, DoctorFailure> {
     let runtime = openhuman_rpc::host::doctor_runtime(options.profile.as_deref())
         .await
-        .map_err(|_| ())?;
+        .map_err(|_| DoctorFailure::Host)?;
     let invoke_result = runtime
         .core_runtime()
         .invoke("openhuman.doctor_report", options.rpc_params())
         .await
-        .map_err(|_| ())?;
-    doctor_report_body(&invoke_result).cloned().map_err(|_| ())
+        .map_err(|_| DoctorFailure::Rpc)?;
+    doctor_report_body(&invoke_result)
+        .cloned()
+        .map_err(|_| DoctorFailure::NoReport)
 }
 
-fn print_runtime_failure(json: bool) {
+pub(super) fn failure_output(json: bool, failure: DoctorFailure) -> String {
     if json {
-        println!("{{\"ok\":false}}");
+        serde_json::json!({ "ok": false, "reason": failure.reason() }).to_string()
     } else {
-        eprintln!("doctor could not produce a report");
+        format!("doctor could not produce a report: {}", failure.reason())
+    }
+}
+
+fn print_runtime_failure(json: bool, failure: DoctorFailure) {
+    if json {
+        println!("{}", failure_output(json, failure));
+    } else {
+        eprintln!("{}", failure_output(json, failure));
     }
 }

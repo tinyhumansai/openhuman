@@ -150,6 +150,13 @@ impl LegacyScopeInventory {
                     deleted,
                     body,
                 ) = row?;
+                // Driver bookkeeping (`tsd.migrations`, `tsd.leases`) describes
+                // the source database, not the profile's data; copying it would
+                // claim migrations ran in the destination and admit scopes that
+                // hold nothing else.
+                if collection.starts_with("tsd.") {
+                    continue;
+                }
                 scopes.insert(scope.clone());
                 if deleted {
                     continue;

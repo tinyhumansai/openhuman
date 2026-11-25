@@ -1,522 +1,455 @@
-use super::{ArchetypeDelegationTool, DelegationTarget, SpawnSubagentTool};
-use crate::agent::harness::ParentExecutionContext;
+use super::*;
+use crate::agent::subagent_host::ParentExecutionContext;
 use crate::agent_registry::host_definition::AgentDefinitionRegistry;
 use crate::integrations::ConnectedIntegration;
-use crate::threads::store as conversations;
-use crate::tools::implementations::threads::SpawnWorkerThreadTool;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
-use tinyagents_harness::context::RunConfig;
-use tinyagents_session::transcript::TranscriptMessage;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinytools_agent::dialect::ToolCallFormat;
 
 const SPAWN_SUBAGENT_CANARY: &str = "tool-e2e-spawn-subagent-canary";
-const ARCHETYPE_DELEGATION_CANARY: &str = "tool-e2e-archetype-delegation-canary";
-const WORKER_THREAD_CANARY: &str = "tool-e2e-worker-thread-canary";
+
+pub(super) async fn driver_sessions_for_parent(
+    ctx: &crate::core::runtime::DispatchCtx,
+    workspace_dir: &Path,
+    parent_session: &str,
+    parent_thread_id: Option<&str>,
+) -> Result<Vec<crate::agent::orchestration::subagent_sessions::DurableSubagentSession>, String> {
+    use crate::agent::orchestration::subagent_sessions::{
+        host_projection, open_for_context, parent_epoch_for_context,
+    };
+
+    let sessions = open_for_context(
+        ctx,
+        workspace_dir.to_path_buf(),
+        parent_session,
+        parent_thread_id.map(str::to_owned),
+        None,
+    )
+    .map_err(|error| error.to_string())?
+    .list_for_parent(parent_session, parent_thread_id)
+    .await
+    .map_err(|error| error.to_string())?;
+    sessions
+        .into_iter()
+        .map(|session| {
+            let parent_epoch =
+                parent_epoch_for_context(ctx, workspace_dir, session.subagent_session_id.clone())
+                    .map_err(|error| error.to_string())?;
+            Ok(host_projection(session, parent_epoch))
+        })
+        .collect()
+}
 
 #[tokio::test]
-async fn spawn_subagent_tool_runs_child_agent_e2e() {
-    // nextest runs each test in its own process, so the registry the other
-    // tests in this file initialise is not there for this one.
-    let _ = AgentDefinitionRegistry::init_global_builtins();
+async fn spawn_subagent_returns_async_reference_and_runs_child_e2e() {
     let workspace = tempfile::TempDir::new().expect("workspace");
     let provider = Arc::new(ScriptedModel::new(vec![(
         SPAWN_SUBAGENT_CANARY,
         "spawn-subagent-child-answer",
     )]));
-
-    let live = super::live_parent_run_context(
-        "spawn-subagent-e2e",
-        parent_context(workspace.path(), provider.clone(), vec![]),
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(16);
+    let mut parent = parent_context(workspace.path(), provider.clone(), vec![]);
+    parent.on_progress = Some(progress_tx);
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = workspace.path().to_path_buf();
+    config.components.juice = false;
+    let definitions = Arc::new(AgentDefinitionRegistry::builtins_only());
+    let core = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config.clone(),
+    )
+    .derive_with(
+        crate::core::runtime::ContextOverlay::new(
+            config,
+            crate::core::runtime::DomainSet::full(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )
+        .definitions(definitions),
+    );
+    let host = crate::agent::tinyagents::host::OpenHumanRunContext::new()
+        .with_core(Some(Arc::clone(&core)))
+        .with_parent(parent);
+    let live = tinyagents_harness::context::RunContext::new(
+        tinyagents_harness::context::RunConfig::new("spawn-subagent-e2e"),
+        host,
     );
     // Boxed: the inline spawn future is too large for a test thread's stack.
-    let result = Box::pin(SpawnSubagentTool::new().execute_with_live_parent_context(
-        json!({
-            "agent_id": "task_manager_agent",
-            "prompt": format!("Investigate {SPAWN_SUBAGENT_CANARY}"),
-            "context": "parent supplied context",
-            "model": "test-model",
-            "blocking": true
-        }),
-        None,
-        live.data.child(),
-        Some(&live),
-    ))
+    let result = crate::core::runtime::CoreContext::scope(
+        Arc::clone(&core),
+        Box::pin(
+            SpawnSubagentTool::new().execute_with_live_parent_context(
+                json!({
+                    "agent_id": "task_manager_agent",
+                    "prompt": format!("Investigate {SPAWN_SUBAGENT_CANARY}"),
+                    "context": "parent supplied context",
+                    "model": "test-model",
+                }),
+                None,
+                live.data.child(),
+                crate::agent::subagent_host::detached_subagent_parent(
+                    &live,
+                    "spawn-subagent-child",
+                )
+                .expect("detached parent"),
+            ),
+        ),
+    )
     .await
     .expect("tool execution");
 
     assert!(!result.is_error, "{}", result.output());
-    assert_eq!(result.output(), "spawn-subagent-child-answer");
+    assert!(
+        result.output().contains("[async_subagent_ref]"),
+        "spawn returns an async task reference before its child result: {}",
+        result.output()
+    );
+    let task_ref = result
+        .output()
+        .split("[async_subagent_ref]\n")
+        .nth(1)
+        .and_then(|value| value.split("\n[/async_subagent_ref]").next())
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .expect("accepted async envelope contains the child task reference");
+    let task_id = task_ref["task_id"].as_str().expect("public task id");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match progress_rx.recv().await {
+                Some(crate::progress::AgentProgress::SubagentCompleted {
+                    task_id: event_task_id,
+                    ..
+                }) if event_task_id == task_id => break,
+                Some(crate::progress::AgentProgress::SubagentFailed {
+                    task_id: event_task_id,
+                    error,
+                    ..
+                }) if event_task_id == task_id => {
+                    panic!("scripted child failed before completing: {error}")
+                }
+                Some(_) => {}
+                None => panic!("parent progress stream closed before child completion"),
+            }
+        }
+    })
+    .await
+    .expect("matching completion progress follows durable settlement");
     assert!(provider.saw(SPAWN_SUBAGENT_CANARY));
     assert!(provider.saw("parent supplied context"));
     let jobs = crate::core::runtime::slot_for::<
         tinyagents_orchestration::subagent::SubAgentJobRegistry,
     >(&live.data.dispatch_ctx());
-    assert!(
-        jobs.list().iter().any(|job| {
-            job.agent == "task_manager_agent"
-                && job.output.as_deref() == Some("spawn-subagent-child-answer")
-                && job.status == tinyagents_orchestration::subagent::SubAgentJobStatus::Completed
-        }),
-        "spawn_subagent must register its real target and terminal state in shared Jobs"
+    let job = jobs
+        .list()
+        .into_iter()
+        .find(|job| {
+            job.extensions
+                .get("task_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(task_id)
+        })
+        .expect("spawn registers its accepted child in shared Jobs");
+    let terminal = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        jobs.wait_owned(
+            job.id.as_str(),
+            crate::agent::tinyagents::tool_registration::subagent_owner_key(
+                workspace.path(),
+                "tools-e2e-session",
+                None,
+            ),
+        ),
+    )
+    .await
+    .expect("accepted child completes asynchronously")
+    .expect("accepted job remains in the shared registry");
+    assert_eq!(
+        terminal.status,
+        tinyagents_orchestration::subagent::SubAgentJobStatus::Completed
+    );
+    assert_eq!(
+        terminal.output.as_deref(),
+        Some("spawn-subagent-child-answer")
     );
 }
 
 /// A child the harness stops early (failure breaker / iteration cap) is not a
-/// finished delegation: the parent's tool result must be a failure, so its own
-/// failure policy and its trace see it, and the `SubagentCompleted` progress
-/// event must say how the child was stopped.
+/// successful result: asynchronous completion preserves the incomplete marker
+/// for delivery and reports the child's stop through parent progress.
 #[tokio::test(start_paused = true)]
-async fn spawn_subagent_reports_a_stopped_child_as_a_failed_tool_result() {
+async fn spawn_subagent_reports_a_stopped_child_as_incomplete_progress() {
     let _ = AgentDefinitionRegistry::init_global_builtins();
     let workspace = tempfile::TempDir::new().expect("workspace");
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(512);
-    let parent = parent_context(workspace.path(), Arc::new(LoopingToolModel), vec![]);
-    // The live parent run a real turn hands the tool, with the turn's
-    // progress channel on the child's run context.
-    let mut live = super::live_parent_run_context("stopped-child-test", parent);
-    // The shared driver derives its child context from the live parent, so
-    // install the observer there as a real harness turn would.
-    live.data.progress = Some(progress_tx.clone());
+    let mut parent = parent_context(workspace.path(), Arc::new(LoopingToolModel), vec![]);
+    parent.session_id = "stopped-child-test".into();
+    parent.on_progress = Some(progress_tx);
+    let thread_id = "stopped-child-test-thread";
+    let (live, _core) = continuation_tests::core_backed_live_parent(
+        workspace.path(),
+        parent,
+        "stopped-child-test",
+        thread_id,
+    );
+    assert!(live.data.dispatch_ctx().resolved().is_some());
     let run_context = live.data.child();
     // Boxed: the inline spawn future is too large for a test thread's
     // stack (the trait `execute` path boxes it the same way).
     let tool = SpawnSubagentTool::new();
-    let result = Box::pin(tool.execute_with_live_parent_context(
-        json!({
-            "agent_id": "task_manager_agent",
-            "prompt": "List the task sources",
-            "model": "test-model",
-            "blocking": true
-        }),
-        None,
-        run_context,
-        Some(&live),
-    ))
+    let result = Box::pin(
+        tool.execute_with_live_parent_context(
+            json!({
+                "agent_id": "task_manager_agent",
+                "prompt": "List the task sources",
+                "model": "test-model"
+            }),
+            None,
+            run_context,
+            crate::agent::subagent_host::detached_subagent_parent(&live, "stopped-child")
+                .expect("detached parent"),
+        ),
+    )
     .await
     .expect("tool execution");
 
     assert!(
-        result.is_error,
-        "a stopped child must fail the parent's tool call: {}",
+        !result.is_error,
+        "the asynchronous spawn is accepted before the child settles: {}",
         result.output()
     );
-    assert!(
-        result.output().contains("[SUBAGENT_INCOMPLETE]"),
-        "{}",
-        result.output()
-    );
+    let task_id = result
+        .output()
+        .split("[async_subagent_ref]\n")
+        .nth(1)
+        .and_then(|value| value.split("\n[/async_subagent_ref]").next())
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .and_then(|payload| payload.get("task_id")?.as_str().map(str::to_owned))
+        .expect("accepted result carries the child task id");
 
-    let mut stop = None;
-    while let Ok(event) = progress_rx.try_recv() {
-        if let crate::progress::AgentProgress::SubagentCompleted { stop: s, .. } = event {
-            stop = Some(s);
+    let (_output, stop) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match progress_rx.recv().await {
+                Some(crate::progress::AgentProgress::SubagentCompleted {
+                    agent_id,
+                    task_id: event_task_id,
+                    output,
+                    stop,
+                    ..
+                }) if agent_id == "task_manager_agent" && event_task_id == task_id => {
+                    break (output, stop);
+                }
+                Some(crate::progress::AgentProgress::SubagentFailed {
+                    agent_id,
+                    task_id: event_task_id,
+                    error,
+                }) if agent_id == "task_manager_agent" && event_task_id == task_id => {
+                    panic!("stopped child was reported as a provider failure: {error}")
+                }
+                Some(_) => {}
+                None => panic!("parent progress stream closed before child stop"),
+            }
         }
-    }
-    let stop = stop
-        .expect("SubagentCompleted was emitted")
-        .expect("SubagentCompleted carries the child's stop");
+    })
+    .await
+    .expect("the async completion reaches the parent");
+    let stop = stop.expect("SubagentCompleted carries the child's stop");
     assert!(matches!(
         stop.kind,
         tinyagents_harness::turn_stop::TurnStopKind::Breaker
             | tinyagents_harness::turn_stop::TurnStopKind::IterationCap
     ));
-}
-
-#[tokio::test]
-async fn archetype_delegation_tool_runs_child_agent_e2e() {
-    let _ = AgentDefinitionRegistry::init_global_builtins();
-    let workspace = tempfile::TempDir::new().expect("workspace");
-    let provider = Arc::new(ScriptedModel::new(vec![(
-        ARCHETYPE_DELEGATION_CANARY,
-        "archetype-delegation-child-answer",
-    )]));
-    let tool = ArchetypeDelegationTool {
-        tool_name: "delegate_task_manager_agent".to_string(),
-        agent_id: DelegationTarget("task_manager_agent".to_string()),
-        tool_description: "Delegate research work.".to_string(),
-    };
-
-    let live = super::live_parent_run_context(
-        "archetype-delegation-e2e",
-        parent_context(workspace.path(), provider.clone(), vec![]),
-    );
-    let result = super::archetype_delegation::execute_archetype_delegation_with_live_parent(
-        &tool.agent_id.0,
-        &tool.tool_name,
-        json!({
-            "prompt": format!("Research {ARCHETYPE_DELEGATION_CANARY}"),
-            "model": "test-model"
-        }),
-        None,
-        live.data.child(),
-        Some(&live),
-    )
-    .await
-    .expect("tool execution");
-
-    assert!(!result.is_error, "{}", result.output());
-    // This archetype delegation asks for async but has no delivery thread in
-    // a test, so it falls back to running inline — and a fallback registers
-    // no durable worker either, so the result says so (#6033).
-    let output = result.output();
-    assert!(
-        output.starts_with("archetype-delegation-child-answer"),
-        "the child's answer must lead the result: {output}"
-    );
-    assert!(
-        output.contains("[INLINE_RESULT]"),
-        "an async delegation that fell back to blocking must disclose that no worker exists: {output}"
-    );
-    assert!(provider.saw(ARCHETYPE_DELEGATION_CANARY));
-
-    let jobs = crate::core::runtime::slot_for::<
-        tinyagents_orchestration::subagent::SubAgentJobRegistry,
-    >(&live.data.dispatch_ctx());
-    let completed = jobs.list();
-    assert!(
-        completed.iter().any(|job| {
-            job.agent == "task_manager_agent"
-                && job.output.as_deref() == Some("archetype-delegation-child-answer")
-                && job.status == tinyagents_orchestration::subagent::SubAgentJobStatus::Completed
-        }),
-        "blocking delegation must register its real target and terminal state in shared Jobs"
-    );
-}
-
-#[tokio::test]
-async fn archetype_delegation_defaults_to_async_with_durable_session_e2e() {
-    // The continuity contract: with a parent turn AND a chat thread to
-    // deliver into, a delegate_* call must NOT run inline — it returns an
-    // [async_subagent_ref] immediately (task_id + subagent_session_id the
-    // orchestrator can steer/wait/continue by) and persists a durable
-    // session in the workspace store. The finished result is then queued
-    // for background delivery as a new chat turn.
-    let _ = AgentDefinitionRegistry::init_global_builtins();
-    let workspace = tempfile::TempDir::new().expect("workspace");
-    let provider = Arc::new(ScriptedModel::new(vec![(
-        ARCHETYPE_DELEGATION_CANARY,
-        "async-delegation-child-answer",
-    )]));
-    let tool = ArchetypeDelegationTool {
-        tool_name: "delegate_task_manager_agent".to_string(),
-        agent_id: DelegationTarget("task_manager_agent".to_string()),
-        tool_description: "Delegate research work.".to_string(),
-    };
-
-    let mut ctx = parent_context(workspace.path(), provider.clone(), vec![]);
-    ctx.session_id = "tools-e2e-async-session".into();
-    let mut parent_data = crate::agent::tinyagents::host::OpenHumanRunContext::new();
-    parent_data.thread_id = Some("thread-async-parent".into());
-    let parent_run = parent_data
-        .with_parent(ctx.clone())
-        .into_tinyagents(RunConfig::new("archetype-async-e2e").with_thread("thread-async-parent"));
-    let result = super::archetype_delegation::execute_archetype_delegation_with_live_parent(
-        &tool.agent_id.0,
-        &tool.tool_name,
-        json!({
-            "prompt": format!("Research {ARCHETYPE_DELEGATION_CANARY} in the background"),
-            "model": "test-model"
-        }),
-        None,
-        parent_run.data.child(),
-        Some(&parent_run),
-    )
-    .await
-    .expect("tool execution");
-
-    assert!(!result.is_error, "{}", result.output());
-    let out = result.output();
-    assert!(
-        out.contains("[async_subagent_ref]"),
-        "async ref returned immediately, not the child's answer: {out}"
-    );
-    assert!(out.contains("\"task_id\":\"sub-"), "carries task_id: {out}");
-    assert!(
-        out.contains("subagent_session_id"),
-        "carries durable id: {out}"
-    );
-
-    // The durable session must exist for this parent, and reach a terminal
-    // reusable state once the (scripted, near-instant) child finishes.
-    use crate::agent::orchestration::subagent_sessions::{
-        self, DurableSubagentStatus, SubagentSessionStore,
-    };
-    let store = SubagentSessionStore::new(workspace.path().to_path_buf());
-    let mut finished = None;
-    for _ in 0..600 {
-        let sessions = subagent_sessions::list_for_parent(&store, "tools-e2e-async-session", None)
-            .expect("durable store readable");
-        if let Some(session) = sessions.first() {
-            if session.status == DurableSubagentStatus::Idle {
-                finished = Some(session.clone());
-                break;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let session = finished.expect("durable session reached Idle after background completion");
-    assert_eq!(session.agent_id, "task_manager_agent");
-    assert!(
-        session
-            .latest_history
-            .as_ref()
-            .is_some_and(|h| !h.is_empty()),
-        "resumable history persisted"
-    );
-    // Completion queued for delivery back into the parent chat as a new turn.
-    assert!(
-        !crate::agent::orchestration::background_completions::pending_for(
+    let incomplete_completion =
+        crate::agent::orchestration::background_completions::pending_for_ctx(
+            &live.data.dispatch_ctx(),
             workspace.path(),
-            "thread-async-parent",
+            thread_id,
         )
-        .is_empty(),
-        "finished result queued for background delivery"
+        .into_iter()
+        .find(|record| record.task_id == task_id)
+        .expect("the asynchronous incomplete result is retained for delivery");
+    assert!(
+        incomplete_completion
+            .result
+            .text
+            .contains("[SUBAGENT_INCOMPLETE]"),
+        "the delivered result remains explicitly incomplete: {}",
+        incomplete_completion.result.text
     );
-    crate::agent::orchestration::background_completions::forget_workspace_for_test(
+}
+
+#[tokio::test(start_paused = true)]
+#[cfg(feature = "storage-sqlite")]
+async fn failed_async_child_is_reported_to_the_parent_without_a_success_result() {
+    let _ = AgentDefinitionRegistry::init_global_builtins();
+    let workspace = tempfile::TempDir::new().expect("workspace");
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(32);
+    let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut parent = parent_context(
         workspace.path(),
+        Arc::new(FailingModel {
+            invocations: Arc::clone(&invocations),
+        }),
+        vec![],
     );
-}
-
-#[tokio::test]
-async fn continue_subagent_resumes_idle_durable_session_e2e() {
-    // The "looks good" flow: a workflow_builder-style worker finished in an
-    // EARLIER turn (durable session Idle, history persisted, no pause
-    // checkpoint on disk). continue_subagent must resume that same session
-    // with the follow-up — seeding the persisted history — instead of
-    // erroring "no checkpoint" or spawning a stateless fresh worker.
-    use super::ContinueSubagentTool;
-    use crate::agent::orchestration::subagent_sessions::{
-        self, SubagentSessionSelector, SubagentSessionStore, SubagentSessionUpsert,
-    };
-
-    let _ = env_logger::builder().is_test(true).try_init();
-    let _ = AgentDefinitionRegistry::init_global_builtins();
-    let registry = AgentDefinitionRegistry::global().expect("registry");
-    let definition = registry
-        .get("task_manager_agent")
-        .expect("task_manager_agent definition");
-    let workspace = tempfile::TempDir::new().expect("workspace");
-    let provider = Arc::new(ScriptedModel::new(vec![(
-        "continue-durable-canary",
-        "resumed-child-answer",
-    )]));
-
-    // Seed the durable session exactly as an earlier async run would have
-    // left it, with a selector matching what the resume path will compute.
-    let store = SubagentSessionStore::new(workspace.path().to_path_buf());
-    let action_root = subagent_sessions::action_root_key(
-        crate::security::live_policy::current()
-            .map(|policy| policy.action_dir.clone())
-            .as_deref(),
-    );
-    let session = subagent_sessions::upsert_running(
-        &store,
-        SubagentSessionUpsert {
-            selector: SubagentSessionSelector {
-                parent_session: "tools-e2e-continue-session".into(),
-                parent_thread_id: Some("thread-continue-parent".into()),
-                agent_id: "task_manager_agent".into(),
-                // Pin the seeded session to the parent's scripted provider —
-                // continue_subagent forwards session.model into the resume, so
-                // without this the child would resolve the definition's managed
-                // tier and dial a REAL provider instead of the test double.
-                model: Some("test-model".into()),
-                sandbox_mode: format!("{:?}", definition.sandbox_mode),
-                action_root,
-                task_key: "durable-resume-task".into(),
-            },
-            display_name: Some("Researcher".into()),
-            task_title: "Durable resume task".into(),
-            worker_thread_id: None,
-            task_id: "sub-earlier-task".into(),
-            lifecycle_key: None,
-        },
-        None,
-    )
-    .expect("seed durable session");
-    subagent_sessions::mark_finished(
-        &store,
-        &session.subagent_session_id,
-        "sub-earlier-task",
-        &crate::agent::subagent_host::SubagentRunStatus::Completed,
-        vec![
-            TranscriptMessage::user("original task from an earlier turn"),
-            TranscriptMessage::assistant("earlier proposal result"),
-        ],
-    )
-    .expect("mark idle with history");
-
-    let mut ctx = parent_context(workspace.path(), provider.clone(), vec![]);
-    ctx.session_id = "tools-e2e-continue-session".into();
-    let mut parent_data = crate::agent::tinyagents::host::OpenHumanRunContext::new();
-    parent_data.thread_id = Some("thread-continue-parent".into());
-    let parent_run = parent_data.with_parent(ctx.clone()).into_tinyagents(
-        RunConfig::new("continue-async-e2e").with_thread("thread-continue-parent"),
-    );
-    let session_id = session.subagent_session_id.clone();
-    let (wrong_agent, result) = (async {
-        let tool = ContinueSubagentTool::new();
-        let wrong_agent = tool
-            .execute_with_live_parent_context(
-                json!({
-                    "task_id": session_id,
-                    "agent_id": "unrelated_agent",
-                    "message": "this must not resume the worker"
-                }),
-                None,
-                parent_run.data.child(),
-                Some(&parent_run),
-            )
-            .await?;
-        let result = tool
-            .execute_with_live_parent_context(
-                json!({
-                    "task_id": session_id,
-                    // Production callers sometimes copy the roster's session
-                    // id into both fields; this is the regression case.
-                    "agent_id": session.subagent_session_id,
-                    "message": "looks good — proceed with continue-durable-canary"
-                }),
-                None,
-                parent_run.data.child(),
-                Some(&parent_run),
-            )
-            .await?;
-        Ok::<_, anyhow::Error>((wrong_agent, result))
-    })
-    .await
-    .expect("tool execution");
-
-    assert!(wrong_agent.is_error, "unrelated agent id must be rejected");
-    assert!(!result.is_error, "{}", result.output());
-    let out = result.output();
-    assert!(
-        out.contains("[async_subagent_ref]"),
-        "resume goes async with a durable ref: {out}"
-    );
-    assert!(
-        out.contains(&session.subagent_session_id),
-        "resume keeps the SAME durable session id: {out}"
-    );
-
-    // The background resume must reach the provider carrying BOTH the
-    // persisted prior history and the new follow-up.
-    for _ in 0..600 {
-        if provider.saw("continue-durable-canary") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    assert!(
-        provider.saw("continue-durable-canary"),
-        "follow-up reached the resumed child"
-    );
-    assert!(
-        provider.saw("original task from an earlier turn"),
-        "persisted history was replayed into the resumed run"
-    );
-    crate::agent::orchestration::background_completions::forget_workspace_for_test(
+    parent.on_progress = Some(progress_tx);
+    let storage = crate::storage::test_support::sqlite_backend()
+        .expect("SQLite backend supports durable child claims");
+    let _storage_guard =
+        crate::storage::test_support::install_for_test(&storage.url, Arc::clone(&storage.backend));
+    let mut config = crate::config::Config::default();
+    config.storage.url = Some(storage.url.clone());
+    let (live, _core) = continuation_tests::core_backed_live_parent_with_config(
         workspace.path(),
+        parent,
+        "failed-async-child-session",
+        "failed-async-child-thread",
+        config,
     );
-}
-
-#[tokio::test]
-async fn continue_subagent_without_checkpoint_or_durable_session_names_the_roster() {
-    use super::ContinueSubagentTool;
-    let _ = AgentDefinitionRegistry::init_global_builtins();
-    let workspace = tempfile::TempDir::new().expect("workspace");
-    let provider = Arc::new(ScriptedModel::new(vec![]));
-
-    let mut ctx = parent_context(workspace.path(), provider, vec![]);
-    ctx.session_id = "tools-e2e-continue-missing".into();
-    let live = super::live_parent_run_context("continue-missing-e2e", ctx);
-    let result = ContinueSubagentTool::new()
-        .execute_with_live_parent_context(
-            json!({
-                "task_id": "sub-does-not-exist",
-                "agent_id": "task_manager_agent",
-                "message": "hello?"
-            }),
-            None,
-            live.data.child(),
-            Some(&live),
-        )
-        .await
-        .expect("tool execution");
-
-    assert!(result.is_error);
-    let out = result.output();
-    assert!(
-        out.contains("no checkpoint and no durable session"),
-        "explains both lookups failed: {out}"
-    );
-    assert!(
-        out.contains("[active_subagents]"),
-        "points the model at the roster: {out}"
-    );
-}
-
-#[tokio::test]
-async fn spawn_worker_thread_tool_persists_worker_thread_e2e() {
-    let _ = AgentDefinitionRegistry::init_global_builtins();
-    let workspace = tempfile::TempDir::new().expect("workspace");
-    let provider = Arc::new(ScriptedModel::new(vec![(
-        WORKER_THREAD_CANARY,
-        "worker-thread-child-answer",
-    )]));
-
-    let live = super::live_parent_run_context(
-        "worker-thread-e2e",
-        parent_context(workspace.path(), provider.clone(), vec![]),
-    );
-    let result = SpawnWorkerThreadTool::new()
+    let accepted = SpawnSubagentTool::new()
         .execute_with_live_parent_context(
             json!({
                 "agent_id": "task_manager_agent",
-                "prompt": format!("Handle long task {WORKER_THREAD_CANARY}"),
-                "task_title": "Long delegated task",
+                "prompt": "exercise provider failure",
                 "model": "test-model"
             }),
             None,
             live.data.child(),
-            Some(&live),
+            crate::agent::subagent_host::detached_subagent_parent(&live, "failed-child")
+                .expect("detached parent"),
         )
         .await
-        .expect("tool execution");
+        .expect("the asynchronous spawn request is accepted");
+    assert!(
+        !accepted.is_error,
+        "child failure is delivered asynchronously: {}",
+        accepted.output()
+    );
 
-    assert!(!result.is_error, "{}", result.output());
-    assert!(result.output().contains("[worker_thread_ref]"));
-    assert!(result.output().contains("\"status\":\"completed\""));
-    assert!(provider.saw(WORKER_THREAD_CANARY));
+    let failure_result = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        loop {
+            match progress_rx.recv().await {
+                Some(crate::progress::AgentProgress::SubagentFailed {
+                    agent_id, error, ..
+                }) if agent_id == "task_manager_agent" => break error,
+                Some(_) => {}
+                None => panic!("parent progress stream closed before child failure"),
+            }
+        }
+    })
+    .await;
+    let failure = failure_result.unwrap_or_else(|elapsed| {
+        let invocation_count = invocations.load(std::sync::atomic::Ordering::SeqCst);
+        panic!("asynchronous child failure reaches the parent after {elapsed}; provider calls={invocation_count}")
+    });
+    let invocation_count = invocations.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        invocation_count > 0,
+        "the injected provider must be called before reporting a child failure: {failure}"
+    );
+    assert!(
+        failure.starts_with("spawn_subagent failed and did not complete"),
+        "failure copy remains recognizable to the parent: {failure}"
+    );
+    assert!(failure.contains("scripted provider outage"), "{failure}");
+    assert!(!failure.contains("completed successfully"), "{failure}");
+}
 
-    let threads = conversations::list_threads(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        workspace.path().to_path_buf(),
-    )
-    .expect("worker threads");
-    let worker = threads
-        .iter()
-        .find(|thread| thread.labels.contains(&"tasks".to_string()))
-        .expect("worker thread was persisted");
-    assert_eq!(worker.title, "Long delegated task");
+#[tokio::test]
+async fn unexecuted_tool_call_stub_is_projected_as_incomplete_not_success() {
+    const STUB_CANARY: &str = "unexecuted-tool-call-stub-canary";
+    let _ = AgentDefinitionRegistry::init_global_builtins();
+    let workspace = tempfile::TempDir::new().expect("workspace");
+    let provider = Arc::new(ScriptedModel::new(vec![(
+        STUB_CANARY,
+        r#"{"tool_calls":[{"type":"function","function":{"name":"missing","arguments":"{}"}}]}"#,
+    )]));
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(32);
+    let mut parent = parent_context(workspace.path(), provider.clone(), vec![]);
+    parent.on_progress = Some(progress_tx);
+    let (live, _core) = continuation_tests::core_backed_live_parent(
+        workspace.path(),
+        parent,
+        "stub-async-child-session",
+        "stub-async-child-thread",
+    );
+    let accepted = SpawnSubagentTool::new()
+        .execute_with_live_parent_context(
+            json!({
+                "agent_id": "task_manager_agent",
+                "prompt": format!("return {STUB_CANARY}"),
+                "model": "test-model"
+            }),
+            None,
+            live.data.child(),
+            crate::agent::subagent_host::detached_subagent_parent(&live, "stub-child")
+                .expect("detached parent"),
+        )
+        .await
+        .expect("the asynchronous spawn request is accepted");
+    assert!(
+        !accepted.is_error,
+        "completion is asynchronous: {}",
+        accepted.output()
+    );
 
-    let messages = conversations::get_messages(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        workspace.path().to_path_buf(),
-        &worker.id,
-    )
-    .expect("worker messages");
-    assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].sender, "user");
-    assert!(messages[0].content.contains(WORKER_THREAD_CANARY));
-    assert_eq!(messages[1].sender, "agent");
-    assert_eq!(messages[1].content, "worker-thread-child-answer");
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match progress_rx.recv().await {
+                Some(crate::progress::AgentProgress::SubagentCompleted {
+                    agent_id,
+                    output,
+                    stop,
+                    ..
+                }) if agent_id == "task_manager_agent" => break (output, stop),
+                Some(crate::progress::AgentProgress::SubagentFailed {
+                    agent_id, error, ..
+                }) if agent_id == "task_manager_agent" => {
+                    panic!("stub should be incomplete, not an inference failure: {error}")
+                }
+                Some(_) => {}
+                None => panic!("parent progress stream closed before stub settlement"),
+            }
+        }
+    })
+    .await
+    .expect("the completion guard projects the stub to the parent");
+    assert!(provider.saw(STUB_CANARY));
+    assert!(completed.0.contains("tool_calls"), "{}", completed.0);
+    assert!(
+        completed.1.is_some(),
+        "a stub is incomplete, not successful"
+    );
+}
+
+struct FailingModel {
+    invocations: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl ChatModel<()> for FailingModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: std::sync::OnceLock<ModelProfile> = std::sync::OnceLock::new();
+        Some(PROFILE.get_or_init(|| {
+            let mut profile = ModelProfile::default();
+            profile.tool_calling = true;
+            profile
+        }))
+    }
+
+    async fn invoke(
+        &self,
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyinference_llm::Result<ModelResponse> {
+        self.invocations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(tinyinference_llm::Error::Model(
+            "scripted provider outage".into(),
+        ))
+    }
 }
 
 fn parent_context(
@@ -691,11 +624,24 @@ impl ChatModel<()> for LoopingToolModel {
     }
 }
 
+#[path = "tools_e2e_driver_reuse_tests.rs"]
+mod driver_reuse_tests;
 #[path = "tools_e2e_driver_tests.rs"]
 mod driver_tests;
+#[path = "tools_e2e_profile_cancel_tests.rs"]
+mod profile_cancel_tests;
+#[path = "tools_e2e_thread_cancel_settled_tests.rs"]
+mod thread_cancel_settled_tests;
+#[path = "tools_e2e_thread_delete_tests.rs"]
+mod thread_delete_tests;
 
 #[path = "tools_e2e_continuation_tests.rs"]
 mod continuation_tests;
+#[path = "tools_e2e_resume_owner_tests.rs"]
+mod resume_owner_tests;
 
-#[path = "tools_e2e_workspace_owner_tests.rs"]
-mod workspace_owner_tests;
+#[path = "tools_e2e_paused_cancel_tests.rs"]
+mod paused_cancel_tests;
+
+#[path = "tools_e2e_control_tests.rs"]
+mod control_tests;

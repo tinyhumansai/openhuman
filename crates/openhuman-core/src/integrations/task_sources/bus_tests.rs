@@ -121,3 +121,11 @@ async fn a_connection_event_is_handled_per_scope() {
     )
     .await;
 }
+
+/// With no fetch-capable provider the Composio-connect hook is never
+/// subscribed: every fetch it fired would fail (senamakel/openhuman#324).
+#[test]
+fn the_connect_hook_is_not_registered_while_no_provider_can_fetch() {
+    register_subscriber_when(false);
+    assert!(CONNECTION_HANDLE.get().is_none());
+}

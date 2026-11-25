@@ -1,7 +1,7 @@
 use super::*;
 
-#[test]
-fn empty_uncurated_toolkits_message_uses_contract_catalog() {
+#[tokio::test]
+async fn empty_uncurated_toolkits_message_uses_contract_catalog() {
     // Used to register a stub `ComposioProvider` under the engine's
     // provider registry and assert a toolkit answered only by that
     // provider's `curated_tools()` (not the static catalog) still counted
@@ -15,8 +15,8 @@ fn empty_uncurated_toolkits_message_uses_contract_catalog() {
     assert!(empty_uncurated_toolkits_message(&["not-a-real-toolkit-xyz".to_string()]).is_some());
 }
 
-#[test]
-fn render_tools_markdown_handles_empty_response() {
+#[tokio::test]
+async fn render_tools_markdown_handles_empty_response() {
     use crate::integrations::composio::types::ComposioToolsResponse;
 
     let resp = ComposioToolsResponse { tools: vec![] };
@@ -24,8 +24,8 @@ fn render_tools_markdown_handles_empty_response() {
     assert!(md.contains("No composio tools available"));
 }
 
-#[test]
-fn execute_tool_resolves_to_direct_kind_when_mode_is_direct() {
+#[tokio::test]
+async fn execute_tool_resolves_to_direct_kind_when_mode_is_direct() {
     // The whole point of fix #1710: the live `config.composio.mode`
     // governs which client variant `ComposioExecuteTool` dispatches
     // through. The pre-baked-client version of this code would have
@@ -34,6 +34,7 @@ fn execute_tool_resolves_to_direct_kind_when_mode_is_direct() {
     // tool calls per-execute.
     let config = direct_mode_config();
     let kind = crate::integrations::composio::client::resolve_composio_route(&config)
+        .await
         .expect("direct mode with inline api_key must resolve");
     assert_eq!(
         kind.mode(),
@@ -42,26 +43,27 @@ fn execute_tool_resolves_to_direct_kind_when_mode_is_direct() {
     );
 }
 
-#[test]
-fn execute_tool_resolves_to_backend_kind_when_mode_is_backend() {
+#[tokio::test]
+async fn execute_tool_resolves_to_backend_kind_when_mode_is_backend() {
     // Reverse of the above — confirms the backend path still wins when
     // the user is on default (mode = "backend") and a session token is
     // present. Without the token, `resolve_composio_route` returns
     // Err("no backend session"); store one to get past that gate.
     crate::integrations::composio::test_backend_route::register();
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = crate::config::Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    crate::security::credentials::AuthService::from_config(&config)
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
+    crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
-            crate::security::credentials::APP_SESSION_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             "test-token",
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store test session token");
     let kind = crate::integrations::composio::client::resolve_composio_route(&config)
+        .await
         .expect("backend mode with session token must resolve");
     assert_eq!(
         kind.mode(),
@@ -90,9 +92,8 @@ async fn list_tools_in_direct_mode_returns_empty_without_hitting_backend() {
     let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
     let _home_guard = EnvVarGuard::set("HOME", tmp.path());
 
-    let mut config = crate::config::Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
@@ -142,26 +143,36 @@ async fn execute_tool_per_call_factory_means_no_baked_client() {
     // `Config` to that tempdir's `config.toml` before invoking the tool.
     use crate::config::TEST_ENV_LOCK;
     let _env_guard = TEST_ENV_LOCK.lock().await;
+    // The scope gate reads the user's scope preference from the connector
+    // module's storage and fails closed when it cannot; hold the module with
+    // that storage in place so the gate answers and dispatch is reached. The
+    // guard is not reentrant: taking it twice self-deadlocks.
+    let _module = crate::integrations::composio::module_client::module_guard().await;
 
     let tmp = tempfile::tempdir().unwrap();
     let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
     let _home_guard = EnvVarGuard::set("HOME", tmp.path());
 
-    let mut config = crate::config::Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     // No api_key here — direct-mode factory must reject.
     config.save().await.expect("save fake config to disk");
 
+    let context = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config.clone(),
+    );
     let tool = ComposioExecuteTool::new(Arc::new(config));
     // Use a read-scoped slug so the scope/sandbox gates don't short-
     // circuit before the dispatch site.
-    let result = tool
-        .execute(serde_json::json!({ "tool": "GMAIL_FETCH_EMAILS" }))
-        .await
-        .unwrap();
+    let result = crate::core::runtime::CoreContext::scope(
+        context,
+        tool.execute(serde_json::json!({ "tool": "GMAIL_FETCH_EMAILS" })),
+    )
+    .await
+    .unwrap();
     assert!(result.is_error, "direct mode without key must error");
     let msg = error_text(&result);
     // Error must mention direct-mode key configuration, NOT a backend
@@ -195,9 +206,8 @@ async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
     let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
     let _home_guard = EnvVarGuard::set("HOME", tmp.path());
 
-    let mut config = crate::config::Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
@@ -227,8 +237,8 @@ async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
     );
 }
 
-#[test]
-fn list_connections_in_direct_mode_resolves_to_direct_client_kind() {
+#[tokio::test]
+async fn list_connections_in_direct_mode_resolves_to_direct_client_kind() {
     // Verifies the routing property without making a network call:
     // when mode=direct with an inline api_key, resolve_composio_route
     // returns a Direct variant. The list_connections tool uses the same
@@ -238,6 +248,7 @@ fn list_connections_in_direct_mode_resolves_to_direct_client_kind() {
     // which caused the agent to incorrectly see no connections (#1710).
     let config = direct_mode_config();
     let kind = crate::integrations::composio::client::resolve_composio_route(&config)
+        .await
         .expect("direct mode with inline api_key must resolve");
     assert_eq!(
         kind.mode(),
@@ -269,9 +280,8 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
     let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
     let _home_guard = EnvVarGuard::set("HOME", tmp.path());
 
-    let mut config = crate::config::Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
@@ -305,8 +315,8 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
 // path returns a graceful "not connected" prompt fast. The park is now bounded
 // by `composio_connect_timeout()`; these cover its pure env parser.
 
-#[test]
-fn parse_composio_connect_timeout_defaults_when_absent_or_garbage() {
+#[tokio::test]
+async fn parse_composio_connect_timeout_defaults_when_absent_or_garbage() {
     let default = std::time::Duration::from_secs(DEFAULT_COMPOSIO_CONNECT_TIMEOUT_SECS);
     // Absent → default bound (never unbounded by accident).
     assert_eq!(parse_composio_connect_timeout(None), Some(default));
@@ -315,8 +325,8 @@ fn parse_composio_connect_timeout_defaults_when_absent_or_garbage() {
     assert_eq!(parse_composio_connect_timeout(Some("")), Some(default));
 }
 
-#[test]
-fn composio_connect_outlives_its_approval_park() {
+#[tokio::test]
+async fn composio_connect_outlives_its_approval_park() {
     // The per-tool deadline must not race the in-execute approval park: the
     // tool's budget is the park bound plus slack, and unbounded when the
     // operator opted out of the bound.
@@ -336,8 +346,8 @@ fn composio_connect_outlives_its_approval_park() {
     );
 }
 
-#[test]
-fn composio_connect_timeout_saturates_instead_of_overflowing() {
+#[tokio::test]
+async fn composio_connect_timeout_saturates_instead_of_overflowing() {
     // `u64::MAX` seconds plus the slack must not panic in `Duration` addition.
     let bound = std::time::Duration::from_secs(u64::MAX);
     assert_eq!(
@@ -346,8 +356,8 @@ fn composio_connect_timeout_saturates_instead_of_overflowing() {
     );
 }
 
-#[test]
-fn parse_composio_connect_timeout_honors_override_and_zero_opt_out() {
+#[tokio::test]
+async fn parse_composio_connect_timeout_honors_override_and_zero_opt_out() {
     // Explicit value → that many seconds.
     assert_eq!(
         parse_composio_connect_timeout(Some("45")),
@@ -362,8 +372,8 @@ fn parse_composio_connect_timeout_honors_override_and_zero_opt_out() {
     assert_eq!(parse_composio_connect_timeout(Some("0")), None);
 }
 
-#[test]
-fn composio_connect_charges_pre_gate_work_to_the_park_bound() {
+#[tokio::test]
+async fn composio_connect_charges_pre_gate_work_to_the_park_bound() {
     use std::time::Duration;
     let bound = Duration::from_secs(DEFAULT_COMPOSIO_CONNECT_TIMEOUT_SECS);
     let tool_budget = match composio_connect_tool_timeout(Some(bound)) {
@@ -401,9 +411,8 @@ async fn list_tools_with_a_run_context_carrier_matches_the_bare_call() {
     let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
     let _home_guard = EnvVarGuard::set("HOME", tmp.path());
 
-    let mut config = crate::config::Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());

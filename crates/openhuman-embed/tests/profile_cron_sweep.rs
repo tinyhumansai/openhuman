@@ -13,7 +13,8 @@ use openhuman_embed::profiles::ProfileCredentialKind;
 use openhuman_embed::{CronDelivery, CronReply, JobOrigin, ProfileRuntime, SaasConfig};
 use wiremock::{Mock, Request, Respond, ResponseTemplate};
 
-/// Answers each job by its prompt: `quiet` says nothing, others name their owner.
+/// Answers each job by its prompt: `quiet` (which allows `NO_REPLY`) says
+/// nothing, others name their owner.
 struct Reply;
 impl Respond for Reply {
     fn respond(&self, request: &Request) -> ResponseTemplate {
@@ -64,7 +65,7 @@ async fn scenario() {
         .await;
     PointedInference::install(&inference.uri());
     // The shared backend every sweeper would contend on.
-    openhuman_core::storage::install(Arc::new(openhuman_core::storage::MemoryStorage::new()));
+    openhuman_core::storage::install(Arc::new(tinystoragedrivers_testkit::MemoryBackend::new()));
 
     let root = tempfile::tempdir().unwrap();
     let recorder = Arc::new(Recorder::default());
@@ -79,7 +80,10 @@ async fn scenario() {
     let soon = chrono::Utc::now() + chrono::Duration::seconds(5);
     for (user, prompts) in [
         ("alice", vec!["alice reminder"]),
-        ("bob", vec!["bob reminder", "bob quiet"]),
+        (
+            "bob",
+            vec!["bob reminder", "bob quiet: otherwise reply NO_REPLY"],
+        ),
     ] {
         let provisioned = runtime.provision(user).await.unwrap();
         runtime

@@ -151,7 +151,7 @@ fn classifies_tls_handshake_eof_as_network_unreachable() {
     // Windows): `native-tls` renders a peer / firewall / antivirus /
     // corporate-proxy TCP close mid-TLS-handshake as
     // `"TLS error: native-tls error: unexpected EOF during handshake"`,
-    // which `socket::ws_loop::run_connection` wraps as
+    // which the SDK socket connection supervisor wraps as
     // `"WebSocket connect: <inner>"` and the supervisor's
     // sustained-outage escalation wraps again. The existing
     // `"tls handshake"` arm misses it because the words are not
@@ -183,7 +183,7 @@ fn classifies_ws_protocol_wrong_http_version_as_network_unreachable() {
     // self-hosted `core-rust`): tungstenite renders
     // `ProtocolError::WrongHttpVersion` as
     // `"WebSocket protocol error: HTTP version must be 1.1 or higher"`,
-    // wrapped by `socket::ws_loop::run_connection` as
+    // wrapped by the SDK socket connection supervisor as
     // `"WebSocket connect: <inner>"` and then by the supervisor's
     // sustained-outage escalation as
     // `"[socket] Connection failed (sustained outage after N attempts):

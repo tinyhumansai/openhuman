@@ -16,15 +16,15 @@ use crate::config::Config;
 /// `app_key` in `config.toml` would silently pair a fresh key with a
 /// stale secret on next startup, and the channel would fail auth until
 /// the user reconnected or cleared credentials manually.
-pub(super) fn resolve_yuanbao_app_secret(
+pub(super) async fn resolve_yuanbao_app_secret(
     mut yb_cfg: tinychannels_bus::config::YuanbaoConfig,
     config: &Config,
 ) -> tinychannels_bus::config::YuanbaoConfig {
     if !yb_cfg.app_secret.is_empty() {
         return yb_cfg;
     }
-    let auth = crate::security::credentials::AuthService::from_config(config);
-    match auth.get_profile("channel:yuanbao:api_key", None) {
+    let auth = crate::credentials::AuthService::from_config(config);
+    match auth.get_profile("channel:yuanbao:api_key", None).await {
         Ok(Some(profile)) => {
             let stored_app_key = profile.metadata.get("app_key").map(String::as_str);
             if stored_app_key != Some(yb_cfg.app_key.as_str()) {
@@ -56,13 +56,15 @@ use crate::channels::credentials::resolve_email_password;
 /// Secrets may sit in the keyring, an environment variable or the config, and
 /// only this host knows which. Hydration operates on a clone so the persisted
 /// config is never mutated before the module receives it confidentially.
-pub(crate) fn hydrate_channel_credentials(config: &Config) -> tinychannels_bus::ChannelsConfig {
+pub(crate) async fn hydrate_channel_credentials(
+    config: &Config,
+) -> tinychannels_bus::ChannelsConfig {
     let mut hydrated = config.channels_config.clone();
     if let Some(email_cfg) = hydrated.email.take() {
-        hydrated.email = Some(resolve_email_password(email_cfg, config));
+        hydrated.email = Some(resolve_email_password(email_cfg, config).await);
     }
     if let Some(yb_cfg) = hydrated.yuanbao.take() {
-        hydrated.yuanbao = Some(resolve_yuanbao_app_secret(yb_cfg, config));
+        hydrated.yuanbao = Some(resolve_yuanbao_app_secret(yb_cfg, config).await);
     }
     hydrated
 }

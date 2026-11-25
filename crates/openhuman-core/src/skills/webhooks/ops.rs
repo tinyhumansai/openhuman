@@ -169,7 +169,7 @@ pub async fn trigger_agent(
             let origin = crate::triage::remote_trigger_origin(&envelope);
             tokio::time::timeout(
                 std::time::Duration::from_secs(60),
-                crate::security::turn_origin::with_origin(
+                crate::core::runtime::turn_origin::with_origin(
                     origin,
                     crate::triage::apply_decision(ctx, run.clone(), &envelope),
                 ),

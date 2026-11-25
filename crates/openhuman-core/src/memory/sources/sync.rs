@@ -127,12 +127,13 @@ fn syncer_for(config: &Config) -> Syncer {
 
 /// Reads `source` and stores what it yields. Returns the number stored.
 pub async fn sync_one(config: &Config, source: &MemorySourceConfig) -> Result<u64> {
-    engine::resolve(config).engine()?;
+    engine::resolve(config).await.engine()?;
     run(config, source).await.map_err(host_error)
 }
 
 async fn run(config: &Config, source: &MemorySourceConfig) -> std::result::Result<u64, SyncError> {
     let bound = engine::resolve(config)
+        .await
         .engine()
         .map_err(|error| SyncError::Invalid(error.to_string()))?;
     let collected = module::read_source(
@@ -172,12 +173,12 @@ pub(crate) async fn place_and_store(
 
 /// `memory_sources_sync`: starts a background sync of source `id`, or of
 /// every source, and returns the ids whose sync started.
-pub fn start_sync(
+pub async fn start_sync(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     id: Option<&str>,
 ) -> Result<Vec<String>> {
-    engine::resolve(config).engine()?;
+    engine::resolve(config).await.engine()?;
     let claims = syncer_for(config).start(id).map_err(host_error)?;
     let mut started = Vec::new();
     for claim in claims {
@@ -211,17 +212,17 @@ pub fn start_sync(
 
 /// The scheduled tick: starts every source whose `schedule_mins` has elapsed.
 /// Returns the ids started. Memory off starts nothing.
-pub fn sync_due(
+pub async fn sync_due(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     now: DateTime<Utc>,
 ) -> Vec<String> {
-    if !engine::is_on(config) {
+    if !engine::is_on(config).await {
         return Vec::new();
     }
     let mut started = Vec::new();
     for id in syncer_for(config).due(now) {
-        match start_sync(ctx, config, Some(&id)) {
+        match start_sync(ctx, config, Some(&id)).await {
             Ok(ids) => started.extend(ids),
             Err(error) => {
                 tracing::debug!(id = %id, code = error.code(), "[memory:sources] due sync not started")

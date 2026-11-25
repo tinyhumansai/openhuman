@@ -20,8 +20,9 @@ use crate::config::Config;
 use crate::mcp::host;
 use crate::mcp::module_client::McpConfiguredClient;
 
-use super::resolve::{presentation_from_view, view_from_envelope};
-use super::types::MCP_RESULT_KIND;
+use super::resolve::presentation_from_view;
+use tinymcp_bus::ui::view_from_envelope;
+use tinymcp_bus::MCP_RESULT_KIND;
 
 /// Whether `metadata` is an `mcp_result` envelope.
 #[must_use]
@@ -71,7 +72,7 @@ impl MetaLookup {
 
 async fn configured_tool_meta(config: &Config, server: &str, tool: &str) -> Option<Value> {
     let client = McpConfiguredClient::for_config(config).ok()?;
-    let client_config = host::client_config(config);
+    let client_config = host::client_config(config).await;
     let listed: Vec<tinymcp_bus::McpRemoteTool> = client
         .call(
             &client_config,
@@ -112,6 +113,7 @@ pub(crate) async fn installed_tool(
         .ok()?;
     let candidate = listed.into_iter().find(|listed| listed.name == tool)?;
     crate::mcp::registry::tools_safe_for_agent(server_id, vec![candidate])
+        .await
         .into_iter()
         .next()
 }
@@ -123,7 +125,7 @@ pub(crate) async fn installed_tool_meta(
     tool: &str,
 ) -> Option<Value> {
     let client = McpConfiguredClient::for_config(config).ok()?;
-    let client_config = host::client_config(config);
+    let client_config = host::client_config(config).await;
     installed_tool(&client, &client_config, server_id, tool)
         .await
         .and_then(|listed| listed.meta)

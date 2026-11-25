@@ -27,7 +27,7 @@ pub struct ThreadSearchRequest {
 }
 
 /// One matched message.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadSearchHit {
     pub thread_id: String,
@@ -39,7 +39,7 @@ pub struct ThreadSearchHit {
 }
 
 /// Response for [`thread_search`]: hits newest first.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct ThreadSearchResponse {
     pub hits: Vec<ThreadSearchHit>,
 }

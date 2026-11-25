@@ -41,7 +41,7 @@ async fn backend_composio_config(config: &Config, toolkit: &str) -> anyhow::Resu
             .map_err(|e| {
                 anyhow::anyhow!("composio backend client: failed to reload live config: {e}")
             })?;
-    match resolve_composio_route(&live_config)? {
+    match resolve_composio_route(&live_config).await? {
         ComposioRoute::Backend => Ok(live_config),
         ComposioRoute::Direct(_) => Err(anyhow::anyhow!(
             "composio direct mode is not supported on this helper path; toolkit={toolkit}"
@@ -127,7 +127,7 @@ async fn on_connection_created(ctx: &DispatchCtx, toolkit: String, connection_id
             return;
         }
     };
-    if resolve_composio_route(&config).is_err() {
+    if resolve_composio_route(&config).await.is_err() {
         tracing::debug!(
             toolkit = %toolkit,
             "[composio:bus] no composio client (not signed in?), skipping hook"
