@@ -22,6 +22,7 @@ import { useState } from 'react';
 import { useManagedInferenceAvailable } from '../../../../hooks/useLocalSession';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { ProviderAuthError } from '../../../../services/api/aiSettingsApi';
+import type { OciSettings } from '../../../../utils/tauriCommands/config';
 import Alert, { AlertDescription } from '../../../ui/Alert';
 import Badge from '../../../ui/Badge';
 import Button from '../../../ui/Button';
@@ -46,6 +47,8 @@ import {
   providerToggleAriaLabel,
 } from './aiPanelTypes';
 import { ClaudeCodeConnect } from './ClaudeCodeStatusCard';
+import { OCI_PROVIDER_SLUG, ociSettingsSummary } from './ociSettings';
+import { OciSettingsDialog } from './OciSettingsDialog';
 import { ProviderCatalog } from './ProviderCatalog';
 import { ProviderGroup, ProviderListRow, type ProviderRowAction } from './ProviderListRow';
 
@@ -127,7 +130,8 @@ export const ProviderAuthSection = ({
     slug: string;
     localLabel?: string | null;
     value: string;
-    credentialMode: 'api_key' | 'endpoint' | 'endpoint_key' | 'cli_login' | 'oauth';
+    credentialMode: 'api_key' | 'endpoint' | 'endpoint_key' | 'cli_login' | 'oauth' | 'oci';
+    oci?: OciSettings;
   }) => Promise<void>;
   onOpenKeyDialog: (slug: string, localLabel: string | null) => void;
   onAddCustomProvider: () => void;
@@ -153,6 +157,9 @@ export const ProviderAuthSection = ({
   const { t } = useT();
   const managedAvailable = useManagedInferenceAvailable();
   const [localAddOpen, setLocalAddOpen] = useState(false);
+  // Slug of the OCI entry whose settings dialog is open: the built-in `oci`
+  // or a custom slug with `authStyle: 'oci'` (e.g. `oci-cohere`).
+  const [ociDialogSlug, setOciDialogSlug] = useState<string | null>(null);
   const hostControlsAdd = controlledAddOpen !== undefined;
   const addOpen = controlledAddOpen ?? localAddOpen;
   const setAddOpen = (open: boolean) => {
@@ -243,6 +250,12 @@ export const ProviderAuthSection = ({
     }
     if (slug === 'claude-code') {
       void onConnectProvider({ slug, value: 'cli_login', credentialMode: 'cli_login' });
+      return;
+    }
+    if (slug === OCI_PROVIDER_SLUG) {
+      // OCI is configured through its own settings form (auth mode, profile,
+      // region, compartment), not the single-field key dialog.
+      setOciDialogSlug(OCI_PROVIDER_SLUG);
       return;
     }
     const localLabel = LOCAL_RUNTIME_SLUGS.includes(slug as (typeof LOCAL_RUNTIME_SLUGS)[number])
@@ -336,11 +349,17 @@ export const ProviderAuthSection = ({
               const existing = bySlug(slug)!;
               const meta = BUILTIN_PROVIDER_META[slug];
               const label = meta?.label ?? slug;
+              const isOci = slug === OCI_PROVIDER_SLUG;
               const actions: ProviderRowAction[] = [
-                {
-                  label: t('settings.ai.providers.replaceKey'),
-                  onSelect: () => onOpenKeyDialog(slug, null),
-                },
+                isOci
+                  ? {
+                      label: t('settings.ai.oci.editSettings'),
+                      onSelect: () => setOciDialogSlug(slug),
+                    }
+                  : {
+                      label: t('settings.ai.providers.replaceKey'),
+                      onSelect: () => onOpenKeyDialog(slug, null),
+                    },
               ];
               return (
                 <ProviderListRow
@@ -348,7 +367,11 @@ export const ProviderAuthSection = ({
                   slug={slug}
                   label={label}
                   tone={meta?.tone ?? ''}
-                  detail={existing.maskedKey || hostOf(existing.endpoint)}
+                  detail={
+                    (isOci ? ociSettingsSummary(existing.oci, t) : '') ||
+                    existing.maskedKey ||
+                    hostOf(existing.endpoint)
+                  }
                   detailMono
                   control={
                     <Switch
@@ -374,7 +397,11 @@ export const ProviderAuthSection = ({
                 slug={existing.slug}
                 label={existing.label}
                 tone={BUILTIN_PROVIDER_META.custom?.tone ?? ''}
-                detail={hostOf(existing.endpoint) || existing.maskedKey}
+                detail={
+                  (existing.authStyle === 'oci' ? ociSettingsSummary(existing.oci, t) : '') ||
+                  hostOf(existing.endpoint) ||
+                  existing.maskedKey
+                }
                 detailMono
                 badge={<Badge variant="primary">{t('settings.ai.providers.custom')}</Badge>}
                 control={
@@ -387,7 +414,15 @@ export const ProviderAuthSection = ({
                   />
                 }
                 actions={[
-                  { label: t('common.edit'), onSelect: () => onEditCustomProvider(existing) },
+                  {
+                    label: t('common.edit'),
+                    // OCI entries keep their settings in the `oci` block, which
+                    // only the OCI dialog edits; the generic editor would drop it.
+                    onSelect: () =>
+                      existing.authStyle === 'oci'
+                        ? setOciDialogSlug(existing.slug)
+                        : onEditCustomProvider(existing),
+                  },
                   {
                     label: t('common.remove'),
                     destructive: true,
@@ -488,6 +523,28 @@ export const ProviderAuthSection = ({
           onAddCustom={onAddCustomProvider}
         />
       </div>
+
+      {ociDialogSlug && (
+        <OciSettingsDialog
+          label={
+            BUILTIN_PROVIDER_META[ociDialogSlug]?.label ??
+            bySlug(ociDialogSlug)?.label ??
+            ociDialogSlug
+          }
+          initial={bySlug(ociDialogSlug)?.oci}
+          hasStoredKey={Boolean(bySlug(ociDialogSlug)?.maskedKey.startsWith('••••'))}
+          onCancel={() => setOciDialogSlug(null)}
+          onSubmit={async (oci, apiKey) => {
+            await onConnectProvider({
+              slug: ociDialogSlug,
+              value: apiKey,
+              credentialMode: 'oci',
+              oci,
+            });
+            setOciDialogSlug(null);
+          }}
+        />
+      )}
 
       {addOpen && (
         <AddProviderDialog

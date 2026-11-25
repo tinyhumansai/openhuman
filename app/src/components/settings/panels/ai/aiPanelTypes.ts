@@ -7,7 +7,11 @@
  * stays trivially unit-testable.
  */
 import type { ModelRegistryEntry } from '../../../../services/api/aiSettingsApi';
-import type { AuthStyle } from '../../../../utils/tauriCommands/config';
+import type {
+  AuthStyle,
+  CloudProviderCreds,
+  OciSettings,
+} from '../../../../utils/tauriCommands/config';
 import {
   authStyleForBuiltinCloudProvider,
   BUILTIN_CLOUD_PROVIDER_META,
@@ -27,7 +31,25 @@ export type CloudProvider = {
   authStyle: AuthStyle;
   maskedKey: string;
   caCertPem?: string;
+  /** Non-secret OCI Generative AI settings; present only for `authStyle: 'oci'`. */
+  oci?: OciSettings;
 };
+
+/**
+ * The wire shape of a panel provider. Every place that writes `cloud_providers`
+ * goes through this so the optional `oci` block is never silently dropped.
+ */
+export function toWireCloudProvider(p: CloudProvider): CloudProviderCreds {
+  return {
+    id: p.id,
+    slug: p.slug,
+    label: p.label,
+    endpoint: p.endpoint,
+    ca_cert_pem: p.caCertPem ?? '',
+    auth_style: p.authStyle,
+    ...(p.oci ? { oci: p.oci } : {}),
+  };
+}
 
 /**
  * State of the user-run local endpoint. `unreachable` and `stopped` are both

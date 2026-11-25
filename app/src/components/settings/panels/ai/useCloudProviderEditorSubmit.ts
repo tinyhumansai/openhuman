@@ -17,6 +17,7 @@ import {
   type CloudProvider,
   maskKeyLabel,
   ProviderProbeError,
+  toWireCloudProvider,
 } from './aiPanelTypes';
 
 export function useCloudProviderEditorSubmit({
@@ -48,14 +49,7 @@ export function useCloudProviderEditorSubmit({
 
       // Snapshot the prior persisted cloud_providers list so we can restore
       // it if the live probe fails.
-      const priorWireProviders = saved.cloudProviders.map(p => ({
-        id: p.id,
-        slug: p.slug,
-        label: p.label,
-        endpoint: p.endpoint,
-        ca_cert_pem: p.caCertPem ?? '',
-        auth_style: p.authStyle,
-      }));
+      const priorWireProviders = saved.cloudProviders.map(toWireCloudProvider);
 
       // Live verification — flush the new cloud_providers list and call
       // `/models` through the Rust controller. Flush first so Rust validates
@@ -67,14 +61,7 @@ export function useCloudProviderEditorSubmit({
             : draft.cloudProviders.map(p => (p.id === editing.id ? upserted : p));
         const nextWireProviders = list
           .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug))
-          .map(p => ({
-            id: p.id,
-            slug: p.slug,
-            label: p.label,
-            endpoint: p.endpoint,
-            ca_cert_pem: p.caCertPem ?? '',
-            auth_style: p.authStyle,
-          }));
+          .map(toWireCloudProvider);
         try {
           await flushCloudProviders(nextWireProviders);
           // The provider must be configured before probing, and its CA has now

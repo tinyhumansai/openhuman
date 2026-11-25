@@ -24,6 +24,10 @@ Supported routes:
   `moonshot`, `gmi`, `huggingface`, `nvidia`, `zai`, `minimax`, `stepfun`,
   `kilocode`, `deepinfra`, `novita`, `venice`, `vercel-ai-gateway`, `sumopod`,
   `modelscope`.
+- OCI Generative AI (`oci`): the host follows the entry's `region`, and the
+  sign-in method is an API key, an OCI config profile, a session token or a
+  principal, so most setups store no key. See
+  [Local models and bring your own key](../features/model-routing/local-and-byok-models.md#oci-generative-ai).
 
 Provider definitions live under `crates/openhuman-core/src/inference/provider/`
 (`factory.rs` turns a `<slug>:<model>` string into a client, and `types.rs` holds the provider shapes). Setup and the local-model capability table are in [Local models and bring your own key](../features/model-routing/local-and-byok-models.md). Routing and fallback order are in [Automatic model routing](../features/model-routing/README.md).
@@ -47,10 +51,10 @@ Memory is Recall, Fetch and Store over a pluggable engine. The contract is `tiny
 
 Two engines ship, both served by `tinymemory-integrations`:
 
-| id | what | endpoint | key |
-| --- | --- | --- | --- |
-| `tinyhumans` | CortexDB hosted behind the TinyHumans backend (`/memory/*`) | the backend origin | the signed-in session or API key, resolved per request through the host credential seam |
-| `cortexdb` | the user's own CortexDB (direct `/v1/*`) | `[memory.engines.cortexdb] endpoint` (default `https://api-v1.cortexdb.ai`) | stored in the OS keychain as `memory-cortexdb` |
+| id           | what                                                        | endpoint                                                                    | key                                                                                     |
+| ------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `tinyhumans` | CortexDB hosted behind the TinyHumans backend (`/memory/*`) | the backend origin                                                          | the signed-in session or API key, resolved per request through the host credential seam |
+| `cortexdb`   | the user's own CortexDB (direct `/v1/*`)                    | `[memory.engines.cortexdb] endpoint` (default `https://api-v1.cortexdb.ai`) | stored in the OS keychain as `memory-cortexdb`                                          |
 
 Select one with `[memory] engine` or from Connections > Memory > Engine (`openhuman.memory_engine_set`). `memory::engine::resolve` binds it. If you are signed out and have no CortexDB key, memory is off: the `memory` tool is not registered, ingestion does nothing and RPCs answer `MEMORY_OFF`.
 

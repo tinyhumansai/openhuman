@@ -51,5 +51,6 @@ pub fn synthesize_local_runtime_entry(
         // `AuthStyle::None` ignores it (see auth-style match below).
         auth_style: AuthStyle::None,
         default_model: None,
+        oci: None,
     })
 }

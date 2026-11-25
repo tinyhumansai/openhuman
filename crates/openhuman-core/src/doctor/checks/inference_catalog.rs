@@ -68,6 +68,7 @@ fn configured_entries(config: &crate::config::Config) -> Vec<CloudProviderCreds>
             endpoint: config.api_url.clone().unwrap_or_default(),
             auth_style: AuthStyle::OpenhumanJwt,
             default_model: None,
+            oci: None,
         });
     }
     entries
@@ -115,6 +116,10 @@ async fn prepare(
     if entry.auth_style == AuthStyle::OpenhumanJwt {
         return Err(InspectionCatalogError::Unavailable);
     }
+    // OCI Generative AI has no OpenAI-style `/models` listing.
+    if entry.auth_style == AuthStyle::Oci {
+        return Err(InspectionCatalogError::NoCatalog);
+    }
     let endpoint = entry.endpoint.trim_end_matches('/');
     let Ok(url) = reqwest::Url::parse(&format!("{endpoint}/models")) else {
         return Err(InspectionCatalogError::Unavailable);
@@ -151,7 +156,7 @@ async fn prepare(
                     .header("x-api-key", token)
                     .header("anthropic-version", "2023-06-01"),
                 AuthStyle::Bearer => request.bearer_auth(token),
-                AuthStyle::None | AuthStyle::OpenhumanJwt => request,
+                AuthStyle::None | AuthStyle::OpenhumanJwt | AuthStyle::Oci => request,
             };
         }
         let response = request.send().await.map_err(|error| {

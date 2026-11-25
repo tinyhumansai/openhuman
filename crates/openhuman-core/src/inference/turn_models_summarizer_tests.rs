@@ -58,6 +58,7 @@ async fn wire_models(summarizer_model: Option<&str>) -> WireModels {
         endpoint: format!("{}/api/v1", server.uri()),
         auth_style: AuthStyle::Bearer,
         default_model: Some(TURN_MODEL.into()),
+        oci: None,
     });
     config.chat_provider = Some(format!("openrouter:{TURN_MODEL}"));
     config.context.summarizer_model = summarizer_model.map(str::to_owned);

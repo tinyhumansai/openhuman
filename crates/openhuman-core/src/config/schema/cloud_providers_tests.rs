@@ -1,6 +1,9 @@
 //! Tests for the surrounding module.
 
-use super::{builtin_cloud_providers, builtin_presets, is_slug_reserved, AuthStyle};
+use super::{
+    builtin_cloud_providers, builtin_presets, is_slug_reserved, AuthStyle, CloudProviderCreds,
+    OciAuthMode, OciTransportKind,
+};
 use tinyinference_providers::builtin::endpoint_host;
 
 #[test]
@@ -23,7 +26,7 @@ fn auth_style_parse_accepts_rpc_spellings_and_preserves_unknown_error() {
     }
     assert_eq!(
         AuthStyle::parse("Strange").unwrap_err(),
-        "unknown auth_style 'strange'; valid: bearer, anthropic, openhuman_jwt, none"
+        "unknown auth_style 'strange'; valid: bearer, anthropic, openhuman_jwt, none, oci"
     );
 }
 
@@ -376,7 +379,111 @@ fn builtin_table_is_only_the_upstream_provider_catalog() {
         let expected = match upstream.auth_style {
             tinyinference_providers::builtin::BuiltinAuthStyle::Bearer => AuthStyle::Bearer,
             tinyinference_providers::builtin::BuiltinAuthStyle::Anthropic => AuthStyle::Anthropic,
+            tinyinference_providers::builtin::BuiltinAuthStyle::Oci => AuthStyle::Oci,
         };
         assert_eq!(mapped.auth_style, expected, "{}", mapped.slug);
     }
+}
+
+#[test]
+fn auth_style_parse_accepts_oci_and_the_existing_styles() {
+    for (wire, style) in [
+        ("oci", AuthStyle::Oci),
+        ("OCI", AuthStyle::Oci),
+        ("bearer", AuthStyle::Bearer),
+        ("anthropic", AuthStyle::Anthropic),
+        ("openhumanjwt", AuthStyle::OpenhumanJwt),
+        ("none", AuthStyle::None),
+    ] {
+        assert_eq!(AuthStyle::parse(wire), Ok(style), "{wire}");
+    }
+    assert_eq!(AuthStyle::Oci.as_str(), "oci");
+}
+
+#[test]
+fn auth_style_parse_error_lists_oci_among_the_valid_values() {
+    let error = AuthStyle::parse("Basic").unwrap_err();
+    assert!(error.contains("unknown auth_style 'basic'"), "{error}");
+    assert!(error.contains("oci"), "{error}");
+}
+
+#[test]
+fn oci_provider_entry_survives_the_rpc_payload_shape() {
+    // The settings panel echoes the whole entry back on every save; the OCI
+    // block must deserialize into the entry type unchanged.
+    let entry: CloudProviderCreds = serde_json::from_value(serde_json::json!({
+        "id": "p_oci_1",
+        "slug": "oci",
+        "label": "OCI Generative AI",
+        "endpoint": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+        "auth_style": "oci",
+        "oci": {
+            "auth_mode": "config_profile",
+            "profile": "DEFAULT",
+            "region": "us-chicago-1",
+            "compartment_id": "ocid1.compartment.oc1..example",
+            "transport": "native_cohere"
+        }
+    }))
+    .expect("entry deserializes");
+    let oci = entry.oci.expect("oci block");
+    assert_eq!(oci.auth_mode, OciAuthMode::ConfigProfile);
+    assert_eq!(oci.transport, OciTransportKind::NativeCohere);
+    assert_eq!(oci.profile.as_deref(), Some("DEFAULT"));
+}
+
+#[test]
+fn documented_toml_oci_entries_deserialize() {
+    #[derive(serde::Deserialize)]
+    struct Doc {
+        cloud_providers: Vec<CloudProviderCreds>,
+    }
+    let doc: Doc = toml::from_str(
+        r#"
+[[cloud_providers]]
+slug = "oci-cohere"
+auth_style = "oci"
+[cloud_providers.oci]
+auth_mode = "config_profile"
+config_file = "~/.oci/config"
+profile = "DEFAULT"
+compartment_id = "ocid1.compartment.oc1..example"
+transport = "native_cohere"
+
+[[cloud_providers]]
+slug = "oci-principal"
+auth_style = "oci"
+[cloud_providers.oci]
+auth_mode = "instance_principal"
+region = "us-ashburn-1"
+"#,
+    )
+    .expect("documented config parses");
+    assert_eq!(doc.cloud_providers.len(), 2);
+    assert_eq!(doc.cloud_providers[0].auth_style, AuthStyle::Oci);
+    let first = doc.cloud_providers[0].oci.as_ref().unwrap();
+    assert_eq!(first.transport, OciTransportKind::NativeCohere);
+    let second = doc.cloud_providers[1].oci.as_ref().unwrap();
+    assert_eq!(second.auth_mode, OciAuthMode::InstancePrincipal);
+    assert_eq!(second.transport, OciTransportKind::Openai);
+}
+
+#[test]
+fn oci_builtin_preset_maps_to_the_oci_auth_style() {
+    let preset = builtin_cloud_providers()
+        .into_iter()
+        .find(|p| p.slug == "oci")
+        .expect("oci preset");
+    assert_eq!(preset.label, "OCI Generative AI");
+    assert_eq!(preset.auth_style, AuthStyle::Oci);
+    for style in [
+        AuthStyle::Bearer,
+        AuthStyle::Anthropic,
+        AuthStyle::OpenhumanJwt,
+        AuthStyle::None,
+        AuthStyle::Oci,
+    ] {
+        assert_eq!(AuthStyle::parse(style.as_str()), Ok(style));
+    }
+    assert!(AuthStyle::parse("bogus").is_err());
 }

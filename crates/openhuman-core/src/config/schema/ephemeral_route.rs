@@ -202,6 +202,7 @@ pub fn apply(config: &mut crate::config::Config, route: EphemeralRoute) {
         endpoint: route.endpoint.clone(),
         auth_style: AuthStyle::Bearer,
         default_model: Some(model.clone()),
+        oci: None,
     });
 
     config.chat_provider = Some(provider_string.clone());

@@ -10,6 +10,7 @@ fn provider() -> CloudProviderCreds {
         endpoint: "https://api.openai.com/v1".into(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("gpt-default".into()),
+        oci: None,
     }
 }
 

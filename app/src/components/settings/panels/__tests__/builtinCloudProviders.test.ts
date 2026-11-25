@@ -19,6 +19,7 @@ describe('builtinCloudProviders', () => {
     ['minimax', 'https://api.minimax.io/v1', 'bearer'],
     ['sumopod', 'https://ai.sumopod.com/v1', 'bearer'],
     ['modelscope', 'https://api-inference.modelscope.cn/v1', 'bearer'],
+    ['oci', 'https://inference.generativeai.us-chicago-1.oci.oraclecloud.com', 'oci'],
   ] as const)('maps %s to its endpoint and auth style', (slug, endpoint, authStyle) => {
     expect(defaultEndpointForBuiltinCloudProvider(slug)).toBe(endpoint);
     expect(authStyleForBuiltinCloudProvider(slug)).toBe(authStyle);
@@ -46,6 +47,7 @@ describe('builtinCloudProviders', () => {
         'vercel-ai-gateway',
         'sumopod',
         'modelscope',
+        'oci',
       ])
     );
   });

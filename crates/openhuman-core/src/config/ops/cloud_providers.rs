@@ -22,6 +22,9 @@ pub struct CloudProviderUpdate {
     pub(crate) legacy_type: Option<String>,
     #[serde(default)]
     pub(crate) default_model: Option<String>,
+    /// OCI Generative AI settings (`auth_style = "oci"` only).
+    #[serde(default)]
+    pub(crate) oci: Option<crate::config::schema::cloud_providers::OciProviderSettings>,
 }
 
 /// Convert cloud-provider settings RPC inputs into validated config entries.
@@ -92,6 +95,7 @@ pub fn build_cloud_provider_creds(
                 endpoint,
                 auth_style,
                 default_model: entry.default_model,
+                oci: entry.oci,
             })
         })
         .collect()

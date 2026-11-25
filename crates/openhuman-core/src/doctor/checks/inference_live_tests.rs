@@ -69,6 +69,7 @@ fn add_cloud_provider(config: &mut Config, slug: &str, endpoint: &str, model: &s
         endpoint: endpoint.to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: Some(model.to_string()),
+        oci: None,
     });
 }
 

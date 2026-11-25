@@ -52,19 +52,7 @@ pub(crate) fn rewrite_document(document: &mut toml::Value) -> anyhow::Result<()>
             if let Some(provider) = builtin {
                 entry.insert(
                     "auth_style".into(),
-                    toml::Value::String(
-                        match provider.auth_style {
-                            crate::config::schema::cloud_providers::AuthStyle::Bearer => "bearer",
-                            crate::config::schema::cloud_providers::AuthStyle::Anthropic => {
-                                "anthropic"
-                            }
-                            crate::config::schema::cloud_providers::AuthStyle::OpenhumanJwt => {
-                                "openhuman_jwt"
-                            }
-                            crate::config::schema::cloud_providers::AuthStyle::None => "none",
-                        }
-                        .into(),
-                    ),
+                    toml::Value::String(provider.auth_style.as_str().into()),
                 );
             }
         }

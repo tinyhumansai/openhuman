@@ -18,6 +18,7 @@ fn provider(id: &str, slug: &str, endpoint: &str, auth_style: AuthStyle) -> Clou
         endpoint: endpoint.to_string(),
         auth_style,
         default_model: Some("provider-model".to_string()),
+        oci: None,
     }
 }
 
