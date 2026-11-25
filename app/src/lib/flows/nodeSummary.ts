@@ -27,6 +27,15 @@ function num(config: Record<string, unknown>, key: string): number | undefined {
 }
 
 /**
+ * Fill `{name}` placeholders in one pass. Values are config text the user typed
+ * (a prompt, a URL, an expression), so they must not be read as `replace`
+ * patterns (`$$`, `$&`) or have their own `{…}` filled by a later placeholder.
+ */
+function fill(template: string, values: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => values[name] ?? match);
+}
+
+/**
  * @param kind         the node kind (may be an unknown string for a future kind)
  * @param config       the node's free-form config object
  * @param outputPorts  effective output ports (used to hint branch routing)
@@ -49,10 +58,10 @@ export function describeNode(
       if (tk === 'app_event') {
         const parts = [str(config, 'toolkit'), str(config, 'trigger_slug')].filter(Boolean);
         return parts.length
-          ? t('flows.nodeSummary.trigger.appEventOn').replace('{parts}', parts.join(' · '))
+          ? fill(t('flows.nodeSummary.trigger.appEventOn'), { parts: parts.join(' · ') })
           : t('flows.nodeSummary.trigger.appEvent');
       }
-      return t('flows.nodeSummary.trigger.unknownKind').replace('{kind}', tk);
+      return fill(t('flows.nodeSummary.trigger.unknownKind'), { kind: tk });
     }
     case 'agent': {
       const prompt = str(config, 'prompt');
@@ -61,40 +70,39 @@ export function describeNode(
         ? model.replace(/^hint:/, '')
         : t('flows.nodeSummary.agent.defaultModel');
       return prompt
-        ? t('flows.nodeSummary.agent.withPrompt')
-            .replace('{prompt}', truncateText(prompt, 40))
-            .replace('{model}', modelLabel)
-        : t('flows.nodeSummary.agent.default').replace('{model}', modelLabel);
+        ? fill(t('flows.nodeSummary.agent.withPrompt'), {
+            prompt: truncateText(prompt, 40),
+            model: modelLabel,
+          })
+        : fill(t('flows.nodeSummary.agent.default'), { model: modelLabel });
     }
     case 'tool_call': {
       const slug = str(config, 'slug');
       if (str(config, 'provider') === 'openhuman' || slug.startsWith('oh:')) {
         const name = slug.replace(/^oh:/, '');
         return name
-          ? t('flows.nodeSummary.toolCall.runsNative').replace('{name}', name)
+          ? fill(t('flows.nodeSummary.toolCall.runsNative'), { name })
           : t('flows.nodeSummary.toolCall.pickNative');
       }
       return slug
-        ? t('flows.nodeSummary.toolCall.runs').replace('{slug}', slug)
+        ? fill(t('flows.nodeSummary.toolCall.runs'), { slug })
         : t('flows.nodeSummary.toolCall.pick');
     }
     case 'http_request': {
       const method = str(config, 'method') || 'GET';
       const url = str(config, 'url');
       return url
-        ? t('flows.nodeSummary.http.withUrl')
-            .replace('{method}', method)
-            .replace('{url}', truncateText(url, 40))
-        : t('flows.nodeSummary.http.noUrl').replace('{method}', method);
+        ? fill(t('flows.nodeSummary.http.withUrl'), { method, url: truncateText(url, 40) })
+        : fill(t('flows.nodeSummary.http.noUrl'), { method });
     }
     case 'code': {
       const lang = str(config, 'language') || 'javascript';
-      return t('flows.nodeSummary.code.runs').replace('{lang}', lang);
+      return fill(t('flows.nodeSummary.code.runs'), { lang });
     }
     case 'condition': {
       const field = str(config, 'field');
       return field
-        ? t('flows.nodeSummary.condition.withField').replace('{field}', field)
+        ? fill(t('flows.nodeSummary.condition.withField'), { field })
         : t('flows.nodeSummary.condition.default');
     }
     case 'switch': {
@@ -103,13 +111,11 @@ export function describeNode(
       const count = String(outputPorts.length);
       if (expr) {
         return hasRoutes
-          ? t('flows.nodeSummary.switch.byExprWithRoutes')
-              .replace('{expr}', expr)
-              .replace('{count}', count)
-          : t('flows.nodeSummary.switch.byExpr').replace('{expr}', expr);
+          ? fill(t('flows.nodeSummary.switch.byExprWithRoutes'), { expr, count })
+          : fill(t('flows.nodeSummary.switch.byExpr'), { expr });
       }
       return hasRoutes
-        ? t('flows.nodeSummary.switch.byValueWithRoutes').replace('{count}', count)
+        ? fill(t('flows.nodeSummary.switch.byValueWithRoutes'), { count })
         : t('flows.nodeSummary.switch.byValue');
     }
     case 'merge':
@@ -117,7 +123,7 @@ export function describeNode(
     case 'split_out': {
       const path = str(config, 'path');
       return path
-        ? t('flows.nodeSummary.splitOut.withPath').replace('{path}', path)
+        ? fill(t('flows.nodeSummary.splitOut.withPath'), { path })
         : t('flows.nodeSummary.splitOut.default');
     }
     case 'transform': {
@@ -128,7 +134,7 @@ export function describeNode(
         n === 1
           ? 'flows.nodeSummary.transform.setFieldsSingular'
           : 'flows.nodeSummary.transform.setFieldsPlural';
-      return t(key).replace('{n}', String(n));
+      return fill(t(key), { n: String(n) });
     }
     case 'output_parser':
       return t('flows.nodeSummary.outputParser');
@@ -140,7 +146,7 @@ export function describeNode(
       if (operation === 'flavour') {
         const flavour = str(config, 'flavour');
         return flavour
-          ? t('flows.nodeSummary.memory.flavourWith').replace('{flavour}', flavour)
+          ? fill(t('flows.nodeSummary.memory.flavourWith'), { flavour })
           : t('flows.nodeSummary.memory.flavour');
       }
       if (operation === 'people') return t('flows.nodeSummary.memory.people');
@@ -148,18 +154,18 @@ export function describeNode(
       if (operation === 'forget') return t('flows.nodeSummary.memory.forget');
       if (operation === 'search') {
         return scope
-          ? t('flows.nodeSummary.memory.searchScoped').replace('{scope}', scope)
+          ? fill(t('flows.nodeSummary.memory.searchScoped'), { scope })
           : t('flows.nodeSummary.memory.search');
       }
       // recall
       return scope
-        ? t('flows.nodeSummary.memory.recallScoped').replace('{scope}', scope)
+        ? fill(t('flows.nodeSummary.memory.recallScoped'), { scope })
         : t('flows.nodeSummary.memory.recall');
     }
     case 'dedup': {
       const key = str(config, 'key');
       return key
-        ? t('flows.nodeSummary.dedup.withKey').replace('{key}', truncateText(key, 40))
+        ? fill(t('flows.nodeSummary.dedup.withKey'), { key: truncateText(key, 40) })
         : t('flows.nodeSummary.dedup.default');
     }
     case 'loop': {
@@ -169,11 +175,12 @@ export function describeNode(
       const max = num(config, 'max_iterations');
       const condition = str(config, 'condition');
       if (condition) {
-        return t('flows.nodeSummary.loop.whileCondition')
-          .replace('{max}', String(max ?? 25))
-          .replace('{condition}', truncateText(condition, 30));
+        return fill(t('flows.nodeSummary.loop.whileCondition'), {
+          max: String(max ?? 25),
+          condition: truncateText(condition, 30),
+        });
       }
-      return t('flows.nodeSummary.loop.upTo').replace('{max}', String(max ?? 25));
+      return fill(t('flows.nodeSummary.loop.upTo'), { max: String(max ?? 25) });
     }
     default:
       return '';
