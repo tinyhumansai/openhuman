@@ -16,7 +16,6 @@
 //!   tools through a tool source.
 
 mod artifact_tool;
-mod progress;
 pub mod provider;
 pub mod tools;
 

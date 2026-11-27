@@ -70,9 +70,9 @@ pub async fn media_tools_for_config(
         action_dir,
         &root_config.workspace_dir,
         crate::artifacts::FileRoots::from_config(root_config),
-        // Each poll's job state feeds the call's progress heartbeat
-        // (`super::progress`, wired per call by `MediaArtifactTool`), so a
-        // multi-minute wait is not silent.
+        // Each poll's job state feeds the call's progress heartbeat (the
+        // 15s heartbeat in `tinyagents_harness_tools::media`'s artifact tool),
+        // so a multi-minute wait is not silent.
         WaitPolicy::new(VIDEO_POLL_INTERVAL, VIDEO_WAIT_BUDGET),
         allowed_references,
         floor,
