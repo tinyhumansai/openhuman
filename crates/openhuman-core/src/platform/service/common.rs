@@ -158,6 +158,34 @@ pub(crate) fn run_check_silent(cmd: &mut Command) -> bool {
         .unwrap_or(false)
 }
 
+/// File name of the Linux systemd user unit.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) const SYSTEMD_USER_UNIT_NAME: &str = "openhuman.service";
+
+/// Directory systemd loads per-user units from: `$XDG_CONFIG_HOME/systemd/user`,
+/// falling back to `$HOME/.config/systemd/user`.
+///
+/// Per the XDG Base Directory spec an empty or relative `XDG_CONFIG_HOME` is
+/// ignored (this matches `dirs::config_dir()` on Linux). Returns `None` when
+/// neither a usable `XDG_CONFIG_HOME` nor a home directory is available.
+///
+/// Pure (no environment access) and not cfg-gated so it is unit-tested on every
+/// OS; the Linux backend feeds it from the process environment.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn systemd_user_unit_dir(
+    xdg_config_home: Option<&std::ffi::OsStr>,
+    home: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    let config_home = xdg_config_home
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            home.filter(|h| !h.as_os_str().is_empty())
+                .map(|h| h.join(".config"))
+        })?;
+    Some(config_home.join("systemd").join("user"))
+}
+
 #[cfg(test)]
 #[path = "common_tests.rs"]
 mod tests;

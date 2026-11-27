@@ -77,7 +77,7 @@ Both subscribers are registered idempotently from `crates/openhuman-core/src/cor
 ## Persistence
 
 - Daemon-host prefs: `daemon_host_config.json` next to the main config (`DaemonHostConfig { show_tray }`, default `true`); read/written async by [`daemon_host.rs`](./daemon_host.rs).
-- Service unit files: written by the per-OS impls (macOS plist in `~/Library/LaunchAgents`, Linux systemd user unit, Windows scheduled task).
+- Service unit files: written by the per-OS impls (macOS plist in `~/Library/LaunchAgents`, Linux systemd user unit `openhuman.service` in `$XDG_CONFIG_HOME/systemd/user`, falling back to `~/.config/systemd/user` when `XDG_CONFIG_HOME` is unset, empty or relative, Windows scheduled task). Older builds wrote the Linux unit under the OpenHuman config dir (e.g. `~/.openhuman/.config/systemd/user/`), where systemd never looks; `install`/`uninstall` delete that stale file if it exists.
 - Mock state: `service-mock-state.json` (overridable via `OPENHUMAN_SERVICE_MOCK_STATE_FILE`) tracking `installed`/`running`/`agent_running`/forced `failures`, only when the mock is enabled.
 
 ## Dependencies

@@ -239,19 +239,14 @@ fn mock_unit_path(_config: &Config) -> Option<PathBuf> {
     )
 }
 
+/// Report-only: the mock never writes a unit file, it just mirrors the path the
+/// real Linux backend would use (as the macOS arm mirrors `~/Library/LaunchAgents`).
 #[cfg(target_os = "linux")]
-fn mock_unit_path(config: &Config) -> Option<PathBuf> {
-    Some(
-        config
-            .config_path
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".config")
-            .join("systemd")
-            .join("user")
-            .join("openhuman.service"),
-    )
+fn mock_unit_path(_config: &Config) -> Option<PathBuf> {
+    let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    super::common::systemd_user_unit_dir(xdg_config_home.as_deref(), home.as_deref())
+        .map(|dir| dir.join(super::common::SYSTEMD_USER_UNIT_NAME))
 }
 
 #[cfg(windows)]
