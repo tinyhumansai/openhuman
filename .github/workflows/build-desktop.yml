@@ -529,14 +529,11 @@ jobs:
             "crates/openhuman-app/target/${MATRIX_TARGET}/${PROFILE}/bundle" \
             "target/${MATRIX_TARGET}/${PROFILE}/bundle"
 
-      # Regression guard for #1403: if @sentry/vite-plugin silently no-op'd
-      # (e.g. SENTRY_AUTH_TOKEN missing, or the `sourcemaps.assets` glob
-      # didn't match dist/assets) production events arrive in Sentry as
-      # unsymbolicated minified frames. The plugin logs a warning then
-      # exits 0, so the only safe check is to inspect the shipped bundle
-      # for injected debug-IDs. Skipped when SENTRY_AUTH_TOKEN is empty
+      # Regression guard for #1403: inspect the bundle for injected debug IDs.
+      # This does not verify upload to Sentry or server-side symbolication.
+      # Skipped when SENTRY_AUTH_TOKEN is empty
       # (e.g. fork/PR builds where the upload was deliberately disabled).
-      - name: Verify Sentry source-map upload (frontend)
+      - name: Check Sentry debug-ID injection (frontend)
         if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
