@@ -118,12 +118,11 @@ step.
 
 | Path | What it does |
 | --- | --- |
-| [`mod.rs`](./mod.rs) | Cross-cutting tool modules, their built-in exports, and the `all_tools_*` controller pair. Domain factories are called explicitly from `ops.rs`; tool contracts come directly from `tinytools`. |
+| [`mod.rs`](./mod.rs) | Cross-cutting tool modules and their built-in exports. Domain factories are called explicitly from `ops.rs`; tool contracts come directly from `tinytools`. |
 | [`ops.rs`](./ops.rs) | Registry assembly (`default_tools*`, `all_tools*`), all config and feature gating, and `tool_group`. |
 | Deferred Composio action expansion | [`integrations/composio/orchestrator_actions.rs`](../integrations/composio/orchestrator_actions.rs). |
 | [`user_filter.rs`](./user_filter.rs) | `filter_tools_by_user_preference` and the UI toggle to tool-name map. |
 | [`host_extensions.rs`](./host_extensions.rs) | Readers over `tinytools`' erased host-extension slots: `pack_registry_handle`, `tool_call_id`. |
-| [`schemas.rs`](./schemas.rs), [`schemas/`](./schemas/) | The `tools.*` controllers: `registry.rs` (schemas and dispatch), `composio.rs`, `web_search.rs`. |
 | [`impl/`](impl/README.md) | Cross-cutting built-in tool families: `browser/`, `system/`, `ui/`, and `network.rs` (host wiring for the `tinyagents_harness_tools::net::network` tools). The `FsGate`/`NetGate` adapters live in [`security/tool_gates/`](../security/tool_gates/). |
 | [`toolpacks/`](toolpacks/README.md) | On-demand tool disclosure (`use_skill`, pack catalog, guides) and `ToolGroups` / `GroupMode`. |
 | [`agent_policy/`](agent_policy/README.md) | Per-session tool boundary against a channel's permission ceiling. |
@@ -169,8 +168,10 @@ Where the built-in tools come from:
 
 ## RPC surface
 
-Namespace `tools`, registered in `core/all.rs` through
-`all_tools_registered_controllers`. Wire names follow
+Namespace `tools`. This folder registers none of it: each controller lives
+with its owning domain and `core/all.rs` registers them in this order —
+`integrations/composio/tools_execute_rpc.rs` (`composio_execute`), then
+`search/schemas.rs` (the web search family). Wire names follow
 `openhuman.<namespace>_<function>`. The list is deliberately small; anything
 else is agent-only.
 

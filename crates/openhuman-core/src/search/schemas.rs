@@ -1,97 +1,50 @@
-//! Controller schema definitions and dispatch table for the `tools` namespace.
+//! Controller schemas and dispatch table for the search controllers in the
+//! `tools` RPC namespace.
 //!
-//! [`all_controller_schemas`] and [`all_registered_controllers`] enumerate the
-//! small allowlist of tool-like operations exposed over JSON-RPC (see the module
-//! doc on `super`). [`tools_schemas`] is the schema lookup shared by both.
+//! The Tauri host drives Parallel-backed web search itself during onboarding
+//! (orchestration in the renderer; external calls still go through the core's
+//! auth / proxy layer), and MCP clients call the provider-pinned SearXNG
+//! search. The wire names stay `tools.*`; the handlers live in [`super::rpc`].
 
 use crate::core::all::RegisteredController;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::composio::handle_composio_execute;
-use super::web_search::{
+use super::rpc::{
     handle_searxng_search, handle_web_answer, handle_web_contents, handle_web_search,
 };
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
-        tools_schemas("tools_composio_execute"),
-        tools_schemas("tools_web_search"),
-        tools_schemas("tools_web_answer"),
-        tools_schemas("tools_web_contents"),
-        tools_schemas("tools_searxng_search"),
+        schemas("tools_web_search"),
+        schemas("tools_web_answer"),
+        schemas("tools_web_contents"),
+        schemas("tools_searxng_search"),
     ]
 }
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
-            schema: tools_schemas("tools_composio_execute"),
-            handler: handle_composio_execute,
-        },
-        RegisteredController {
-            schema: tools_schemas("tools_web_search"),
+            schema: schemas("tools_web_search"),
             handler: handle_web_search,
         },
         RegisteredController {
-            schema: tools_schemas("tools_web_answer"),
+            schema: schemas("tools_web_answer"),
             handler: handle_web_answer,
         },
         RegisteredController {
-            schema: tools_schemas("tools_web_contents"),
+            schema: schemas("tools_web_contents"),
             handler: handle_web_contents,
         },
         RegisteredController {
-            schema: tools_schemas("tools_searxng_search"),
+            schema: schemas("tools_searxng_search"),
             handler: handle_searxng_search,
         },
     ]
 }
 
-pub fn tools_schemas(function: &str) -> ControllerSchema {
+pub fn schemas(function: &str) -> ControllerSchema {
     match function {
-        "tools_composio_execute" => ControllerSchema {
-            namespace: "tools",
-            function: "composio_execute",
-            description: "Execute a Composio action. Routes through the mode-aware \
-                          factory: backend mode proxies via the OpenHuman backend; \
-                          direct mode calls backend.composio.dev with the user's own \
-                          API key. Exposed for Tauri-driven flows (e.g. onboarding) \
-                          that orchestrate tool calls themselves.",
-            inputs: vec![
-                FieldSchema {
-                    name: "action",
-                    ty: TypeSchema::String,
-                    comment: "Composio action slug (e.g. `GMAIL_FETCH_EMAILS`).",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "params",
-                    ty: TypeSchema::Json,
-                    comment: "Action parameters object passed straight through to Composio.",
-                    required: false,
-                },
-            ],
-            outputs: vec![
-                FieldSchema {
-                    name: "successful",
-                    ty: TypeSchema::Bool,
-                    comment: "Whether the upstream provider reported success.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "data",
-                    ty: TypeSchema::Json,
-                    comment: "Raw provider response.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "error",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Provider error message if `successful` is false.",
-                    required: false,
-                },
-            ],
-        },
         "tools_web_search" => ControllerSchema {
             namespace: "tools",
             function: "web_search",
@@ -247,3 +200,7 @@ fn search_outputs(results_comment: &'static str) -> Vec<FieldSchema> {
         },
     ]
 }
+
+#[cfg(test)]
+#[path = "schemas_tests.rs"]
+mod tests;

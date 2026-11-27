@@ -549,12 +549,12 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Config,
         crate::config::workspace::all_workspace_registered_controllers(),
     );
-    // Workflow tool registry
-    push(
-        &mut controllers,
-        DomainGroup::Platform,
-        crate::tools::all_tools_registered_controllers(),
-    );
+    // `tools.*` controllers, each owned by its domain: Composio execute, then web search.
+    let tools = [
+        crate::integrations::composio::all_composio_tools_registered_controllers(),
+        crate::search::all_search_registered_controllers(),
+    ];
+    push(&mut controllers, DomainGroup::Platform, tools.concat());
     // Unified read-only registry across MCP stdio tools and controller-backed tools
     push_entries(
         &mut controllers,
@@ -659,7 +659,7 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     push(
         &mut controllers,
         DomainGroup::Agent,
-        crate::sessions::all_session_db_registered_controllers(),
+        crate::agent_runs::all_run_ledger_registered_controllers(),
     );
     // One-time legacy session import into TinyAgents stores
     push(

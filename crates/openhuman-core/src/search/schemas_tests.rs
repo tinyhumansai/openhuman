@@ -4,9 +4,7 @@ use crate::core::all::{
     assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
     expect_schema_output_fields,
 };
-use crate::tools::schemas::registry::tools_schemas;
-use serde_json::{json, Map};
-const BASE_CONTROLLERS: usize = 5;
+const BASE_CONTROLLERS: usize = 4;
 
 type InputContract = (&'static str, Option<bool>);
 type ToolSchemaContract = (&'static str, &'static [InputContract]);
@@ -28,21 +26,17 @@ fn apify_linkedin_scrape_controller_is_retired() {
     assert!(!all_controller_schemas()
         .iter()
         .any(|s| s.function == "apify_linkedin_scrape"));
-    assert_eq!(
-        tools_schemas("tools_apify_linkedin_scrape").function,
-        "unknown"
-    );
+    assert_eq!(schemas("tools_apify_linkedin_scrape").function, "unknown");
 }
 
 #[test]
-fn tools_schema_wire_contracts_are_preserved() {
+fn search_schema_wire_contracts_are_preserved() {
     assert_schema_controller_parity(
         &all_controller_schemas(),
         &all_registered_controllers(),
         "web_search",
     );
     let contracts: &[ToolSchemaContract] = &[
-        ("composio_execute", &[("action", Some(true))]),
         ("web_answer", &[("query", Some(true)), ("depth", None)]),
         ("web_contents", &[("urls", Some(true))]),
         (
@@ -52,19 +46,10 @@ fn tools_schema_wire_contracts_are_preserved() {
         ("web_search", &[("query", Some(true))]),
     ];
     for (function, inputs) in contracts {
-        let schema = tools_schemas(&format!("tools_{function}"));
+        let schema = schemas(&format!("tools_{function}"));
         expect_schema_identity(&schema, "tools", function);
         expect_schema_fields(&schema, inputs);
     }
-    expect_schema_output_fields(&tools_schemas("tools_web_answer"), &["citations"]);
-    expect_schema_output_fields(&tools_schemas("tools_web_search"), &["provider"]);
-}
-
-#[test]
-fn optional_string_array_trims_and_drops_blank_entries() {
-    let params = Map::from_iter([("categories".to_string(), json!([" web ", "", "  ", "news"]))]);
-
-    let values = optional_string_array(&params, "categories").expect("string array");
-
-    assert_eq!(values, vec!["web", "news"]);
+    expect_schema_output_fields(&schemas("tools_web_answer"), &["citations"]);
+    expect_schema_output_fields(&schemas("tools_web_search"), &["provider"]);
 }
