@@ -229,7 +229,10 @@ pub(super) fn handle_update_local_ai_settings(
             api_key: update.api_key,
             native_tool_calling: update.native_tool_calling,
         };
-        to_json(config_rpc::load_and_apply_local_ai_settings(&ctx, patch).await?)
+        // Same save as `inference.update_local_settings`: it drops a pending
+        // connect checkpoint (#8172) and resets the local probe, so the next
+        // status poll checks the new endpoint instead of the old verdict.
+        to_json(crate::inference::ops::inference_update_local_settings(&ctx, patch, false).await?)
     })
 }
 
