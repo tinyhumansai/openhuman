@@ -1,9 +1,9 @@
 use super::*;
 use crate::session::test_support::{EXPIRED_JWT, LIVE_JWT};
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::core::runtime::CoreContext;
+use openhuman_embed::__host::core::runtime::{CoreBuilder, CoreContext};
 use openhuman_embed::__host::doctor::{registered_checks, ComponentId, DoctorCheck};
-use openhuman_embed::{CoreBuilder, DomainSet, HostKind, ServiceSet};
+use openhuman_embed::{DomainSet, HostKind, ServiceSet};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -44,7 +44,6 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`ControllerSchema`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreAgent`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreBootMode`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
-- [`CoreBuilder`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`CoreRuntime`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Cron`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)

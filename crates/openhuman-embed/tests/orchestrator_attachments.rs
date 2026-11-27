@@ -6,21 +6,25 @@ use std::sync::Arc;
 
 use common::{offline_config, runtime};
 use openhuman_embed::{
-    Core, CoreBuilder, CoreError, DomainSet, HostAttachment, HostKind, ServiceSet,
+    Core, CoreError, DomainSet, HostAttachment, HostKind, RuntimeBuilder, ServiceSet, TokenSource,
 };
 
 #[test]
 fn the_orchestrator_refuses_attachments_it_cannot_carry() {
     runtime().block_on(async {
         tokio::spawn(async {
-            let built = CoreBuilder::new(HostKind::Library)
+            let built = RuntimeBuilder::new()
+                .host_kind(HostKind::Library)
                 .config(offline_config())
                 .services(ServiceSet::none())
                 .domains(DomainSet::embedded())
+                .token(TokenSource::Fixed(Arc::new(
+                    "orchestrator-attachments".into(),
+                )))
                 .build()
                 .await
                 .unwrap();
-            let core = Core::from_runtime(Arc::new(built));
+            let core = Core::from_runtime(Arc::clone(built.core_runtime()));
             let refused = core
                 .agent()
                 .turn("look")

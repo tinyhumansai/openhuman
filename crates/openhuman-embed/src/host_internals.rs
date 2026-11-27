@@ -89,6 +89,11 @@ pub mod core {
         };
     }
     pub mod runtime {
+        /// The core's raw initializer, for tinyhumans' doctor tests only:
+        /// they boot a second, plain core beside a hosted [`crate::Runtime`]
+        /// to compare their check registries, and a process holds one
+        /// `Runtime`. Every host builds through [`crate::RuntimeBuilder`].
+        pub use openhuman_core::core::runtime::CoreBuilder;
         pub use openhuman_core::core::runtime::{
             current_tenant, is_saas, CoreContext, CoreRuntime, DispatchCtx, Mode, SaasConfig,
         };
@@ -103,7 +108,8 @@ pub mod core {
         pub use openhuman_core::core::shutdown::{register, signal};
     }
     /// The generic extension slots every `register_*` below is built on;
-    /// `CoreBuilder::extensions` takes an [`Extensions`](slots::Extensions).
+    /// `RuntimeBuilder::configure_core_extensions` hands the host an
+    /// [`Extensions`](slots::Extensions) to fill.
     pub mod slots {
         pub use openhuman_core::core::slots::{Extensions, HookSlot, Registry};
     }
@@ -348,8 +354,8 @@ pub mod util {
 // ---------------------------------------------------------------------------
 // Extension points (tinyhumans). Generic, id-keyed registries the hosted layer
 // fills at install time; the core knows nothing about what it is handed. Each
-// `register_*` has an `_in` variant that binds to a `CoreBuilder::extensions`
-// set instead of the process.
+// `register_*` has an `_in` variant that binds to the extensions set a
+// `RuntimeBuilder::configure_core_extensions` call fills, instead of the process.
 // ---------------------------------------------------------------------------
 
 /// Tool sources: tools an outside crate appends to the agent catalogue.

@@ -197,3 +197,64 @@ async fn inspection_boot_rejects_missing_config_and_env_token() {
     );
     assert!(error.contains("fixed RPC bearer"), "{error}");
 }
+
+/// Every flag of every public `ServiceSet` preset, pinned. The host presets on
+/// `openhuman_embed::RuntimeBuilder` (desktop, cli, tui, library) and the rpc
+/// host builders start from these, so a silent flip here changes what a host
+/// runs.
+#[test]
+fn service_set_presets_pin_every_flag() {
+    let all_on = ServiceSet {
+        rpc_http: true,
+        socketio: true,
+        cron: true,
+        channels: true,
+        login_gated: true,
+        update_scheduler: true,
+        memory_queue: true,
+        skill_catalog_refresh: true,
+        mcp_boot: true,
+        integrations: true,
+        memory_sync: true,
+    };
+    let all_off = ServiceSet {
+        rpc_http: false,
+        socketio: false,
+        cron: false,
+        channels: false,
+        login_gated: false,
+        update_scheduler: false,
+        memory_queue: false,
+        skill_catalog_refresh: false,
+        mcp_boot: false,
+        integrations: false,
+        memory_sync: false,
+    };
+    assert_eq!(ServiceSet::desktop(), all_on);
+    assert_eq!(ServiceSet::none(), all_off);
+    assert_eq!(
+        ServiceSet::headless_api(),
+        ServiceSet {
+            rpc_http: true,
+            ..all_off
+        }
+    );
+    assert_eq!(
+        ServiceSet::embedded(),
+        ServiceSet {
+            cron: true,
+            login_gated: true,
+            memory_queue: true,
+            skill_catalog_refresh: true,
+            memory_sync: true,
+            ..all_off
+        }
+    );
+    assert_eq!(
+        ServiceSet::secret_preflight(),
+        ServiceSet {
+            rpc_http: true,
+            ..all_off
+        }
+    );
+}
